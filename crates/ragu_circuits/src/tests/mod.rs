@@ -1,0 +1,147 @@
+#![allow(non_snake_case)]
+
+use ff::Field;
+use ragu_core::{
+    Result,
+    drivers::{Driver, LinearExpression, Witness},
+    maybe::Maybe,
+};
+use ragu_pasta::Fp;
+use ragu_primitives::Element;
+
+use rand::thread_rng;
+
+use alloc::boxed::Box;
+
+use crate::{
+    Circuit, CircuitExt, CircuitObject,
+    polynomials::{R, Rank},
+};
+
+fn consistency_checks<R: Rank>(circuit: &Box<dyn CircuitObject<Fp, R>>) {
+    let x = Fp::random(thread_rng());
+    let y = Fp::random(thread_rng());
+
+    let sxy_eval = circuit.sxy(x, y).unwrap();
+    let s0y_eval = circuit.sxy(Fp::ZERO, y).unwrap();
+    let sx0_eval = circuit.sxy(x, Fp::ZERO).unwrap();
+    let s00_eval = circuit.sxy(Fp::ZERO, Fp::ZERO).unwrap();
+
+    let sxY_poly = circuit.sx(x).unwrap();
+    let sXy_poly = circuit.sy(y).unwrap().unstructured();
+    let s0Y_poly = circuit.sx(Fp::ZERO).unwrap();
+    let sX0_poly = circuit.sy(Fp::ZERO).unwrap().unstructured();
+
+    assert_eq!(sxy_eval, arithmetic::eval(&sXy_poly[..], x));
+    assert_eq!(sxy_eval, arithmetic::eval(&sxY_poly[..], y));
+    assert_eq!(s0y_eval, arithmetic::eval(&sXy_poly[..], Fp::ZERO));
+    assert_eq!(sx0_eval, arithmetic::eval(&sxY_poly[..], Fp::ZERO));
+    assert_eq!(s0y_eval, arithmetic::eval(&s0Y_poly[..], y));
+    assert_eq!(sx0_eval, arithmetic::eval(&sX0_poly[..], x));
+    assert_eq!(s00_eval, arithmetic::eval(&s0Y_poly[..], Fp::ZERO));
+    assert_eq!(s00_eval, arithmetic::eval(&sX0_poly[..], Fp::ZERO));
+}
+
+#[test]
+fn test_simple_circuit() {
+    // Simple circuit: prove knowledge of a and b such that a^5 = b^2 and a + b = c
+    // and a - b = d where c and d are public inputs.
+    struct MySimpleCircuit;
+
+    impl Circuit<Fp> for MySimpleCircuit {
+        type Instance<'instance> = (Fp, Fp); // Public inputs: c and d
+        type Output<'dr, D: Driver<'dr, F = Fp>> = (Element<'dr, D>, Element<'dr, D>);
+        type Witness<'witness> = (Fp, Fp); // Witness: a and b
+        type Aux<'witness> = ();
+
+        fn instance<'dr, 'instance: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            instance: Witness<D, Self::Instance<'instance>>,
+        ) -> Result<Self::Output<'dr, D>> {
+            let c = Element::alloc(dr, instance.view().map(|v| v.0))?;
+            let d = Element::alloc(dr, instance.view().map(|v| v.1))?;
+
+            Ok((c, d))
+        }
+
+        fn witness<'dr, 'witness: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            witness: Witness<D, Self::Witness<'witness>>,
+        ) -> Result<(Self::Output<'dr, D>, Witness<D, Self::Aux<'witness>>)> {
+            let a = Element::alloc(dr, witness.view().map(|w| w.0))?;
+            let b = Element::alloc(dr, witness.view().map(|w| w.1))?;
+
+            let a2 = a.square(dr)?;
+            let a4 = a2.square(dr)?;
+            let a5 = a4.mul(dr, &a)?;
+
+            let b2 = b.square(dr)?;
+
+            dr.enforce_zero(|lc| lc.add(a5.wire()).sub(b2.wire()))?;
+
+            let c = a.add(dr, &b);
+            let d = a.sub(dr, &b);
+
+            Ok(((c, d), D::just(|| ())))
+        }
+    }
+
+    let assignment = MySimpleCircuit
+        .rx::<MyRank>((
+            Fp::from_raw([
+                1833481853729904510,
+                5119040798866070668,
+                13106006979685074791,
+                104139735293675522,
+            ]),
+            Fp::from_raw([
+                1114250137190507128,
+                15522336584428696251,
+                4689053926428793931,
+                2277752110332726989,
+            ]),
+        ))
+        .unwrap()
+        .0;
+
+    type MyRank = R<5>;
+    let circuit = MySimpleCircuit.into_object::<MyRank>().unwrap();
+
+    consistency_checks(&circuit);
+
+    let y = Fp::random(thread_rng());
+    let z = Fp::random(thread_rng());
+
+    let a = assignment.clone();
+    let mut b = assignment.clone();
+    b.dilate(z);
+    b.add_assign(&circuit.sy(y).unwrap());
+    b.add_assign(&MyRank::tz(z));
+
+    let expected = arithmetic::eval(
+        &MySimpleCircuit
+            .ky((
+                Fp::from_raw([
+                    2947731990920411638,
+                    2194633309585215303,
+                    17795060906113868723,
+                    2381891845626402511,
+                ]),
+                Fp::from_raw([
+                    11756763772759733511,
+                    10513277942061441772,
+                    8416953053256280859,
+                    2438073643388336437,
+                ]),
+            ))
+            .unwrap(),
+        y,
+    );
+
+    let a = a.unstructured();
+    let b = b.unstructured();
+
+    assert_eq!(expected, arithmetic::dot(a.iter(), b.iter().rev()),);
+}

@@ -5,19 +5,26 @@ authors = [
     "Sean Bowe <ewillbefull@gmail.com>"
 ]
 description = """
-WIP
+Fundamental arithmetic traits and utilities for the Ragu project
 """
 license = "MIT OR Apache-2.0"
 edition = "2024"
 rust-version = "1.85"
 
-readme = "../../README.md"
+readme = "README.md"
 repository = "https://github.com/ebfull/ragu"
-documentation = "https://docs.rs/ragu"
+documentation = "https://docs.rs/ragu_arithmetic"
 categories = []
 keywords = []
+
+[package.metadata.docs.rs]
+rustdoc-args = [ "--html-in-header", "katex-header.html" ]
+all-features = true
 
 [features]
 default = []
 
 [dependencies]
+ff = { workspace = true }
+pasta_curves = { workspace = true }
+ragu_macros = { path = "../ragu_macros", version = "0.0.0" }

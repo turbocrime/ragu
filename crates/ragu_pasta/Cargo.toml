@@ -5,19 +5,36 @@ authors = [
     "Sean Bowe <ewillbefull@gmail.com>"
 ]
 description = """
-WIP
+Pasta curve cycle public parameters for the Ragu project
 """
 license = "MIT OR Apache-2.0"
 edition = "2024"
 rust-version = "1.85"
 
-readme = "../../README.md"
+readme = "README.md"
 repository = "https://github.com/ebfull/ragu"
-documentation = "https://docs.rs/ragu"
+documentation = "https://docs.rs/ragu_pasta"
 categories = []
 keywords = []
 
+[package.metadata.docs.rs]
+rustdoc-args = [ "--html-in-header", "katex-header.html" ]
+all-features = true
+
 [features]
 default = []
+baked = ["lazy_static"]
+
+[build-dependencies]
+arithmetic = { path = "../ragu_arithmetic", version = "0.0.0", package = "ragu_arithmetic" }
+ff = { workspace = true }
+group = { workspace = true }
+pasta_curves = { workspace = true }
 
 [dependencies]
+arithmetic = { path = "../ragu_arithmetic", version = "0.0.0", package = "ragu_arithmetic" }
+ff = { workspace = true }
+group = { workspace = true }
+pasta_curves = { workspace = true }
+
+lazy_static = { workspace = true, optional = true}

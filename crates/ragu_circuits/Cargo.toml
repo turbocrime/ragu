@@ -5,19 +5,32 @@ authors = [
     "Sean Bowe <ewillbefull@gmail.com>"
 ]
 description = """
-WIP
+Intended for internal use in the Ragu project
 """
 license = "MIT OR Apache-2.0"
 edition = "2024"
 rust-version = "1.85"
 
-readme = "../../README.md"
+readme = "README.md"
 repository = "https://github.com/ebfull/ragu"
-documentation = "https://docs.rs/ragu"
+documentation = "https://docs.rs/ragu_circuits"
 categories = []
 keywords = []
+
+[package.metadata.docs.rs]
+rustdoc-args = [ "--html-in-header", "katex-header.html" ]
+all-features = true
 
 [features]
 default = []
 
 [dependencies]
+arithmetic = { path = "../ragu_arithmetic", version = "0.0.0", package = "ragu_arithmetic" }
+ff = { workspace = true }
+group = { workspace = true }
+ragu_core = { path = "../ragu_core", version = "0.0.0" }
+ragu_primitives = { path = "../ragu_primitives", version = "0.0.0" }
+
+[dev-dependencies]
+rand = { workspace = true }
+ragu_pasta = { path = "../ragu_pasta", version = "0.0.0", features = ["baked"] }

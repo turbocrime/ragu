@@ -1,3 +1,9 @@
+<p align="center">
+  <img width="300" height="80" src="https://seanbowe.com/ragu_assets/header/v1_github600x160.png">
+</p>
+
+---
+
 # `ragu`
 
 ## License
