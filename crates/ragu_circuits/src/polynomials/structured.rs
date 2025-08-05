@@ -60,6 +60,29 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
         }
     }
 
+    /// Inner product of `self` with the reversed `other`.
+    pub fn revdot(&self, other: &Self) -> F {
+        let mut result = F::ZERO;
+
+        for (a, b) in self.u.iter().zip(other.v.iter()) {
+            result += *a * *b;
+        }
+
+        for (a, b) in self.v.iter().zip(other.u.iter()) {
+            result += *a * *b;
+        }
+
+        for (a, b) in self.w.iter().zip(other.d.iter()) {
+            result += *a * *b;
+        }
+
+        for (a, b) in self.d.iter().zip(other.w.iter()) {
+            result += *a * *b;
+        }
+
+        result
+    }
+
     /// Add the coefficients of `other` to `self`.
     pub fn add_assign(&mut self, other: &Self) {
         Self::combine_assign(&mut self.u, &other.u, |a, b| *a += *b);
@@ -537,4 +560,49 @@ fn test_commit_consistency() {
     let unstructured_commitment = poly.unstructured().commit(generators, blind);
 
     assert_eq!(structured_commitment, unstructured_commitment);
+}
+
+#[test]
+fn test_product_with_dot() {
+    use ragu_pasta::Fp;
+    use rand::thread_rng;
+
+    type R = super::R<5>;
+
+    let mut poly1 = Polynomial::<Fp, R>::new();
+    let mut poly2 = Polynomial::<Fp, R>::new();
+
+    for _ in 0..3 {
+        poly1.u.push(Fp::random(thread_rng()));
+    }
+    for _ in 0..5 {
+        poly1.v.push(Fp::random(thread_rng()));
+    }
+    for _ in 0..7 {
+        poly1.w.push(Fp::random(thread_rng()));
+    }
+    for _ in 0..2 {
+        poly1.d.push(Fp::random(thread_rng()));
+    }
+
+    for _ in 0..4 {
+        poly2.u.push(Fp::random(thread_rng()));
+    }
+    for _ in 0..6 {
+        poly2.v.push(Fp::random(thread_rng()));
+    }
+    for _ in 0..1 {
+        poly2.w.push(Fp::random(thread_rng()));
+    }
+    for _ in 0..8 {
+        poly2.d.push(Fp::random(thread_rng()));
+    }
+
+    assert_eq!(
+        poly1.revdot(&poly2),
+        arithmetic::dot(
+            poly1.unstructured().iter(),
+            poly2.unstructured().iter().rev(),
+        )
+    );
 }
