@@ -235,6 +235,23 @@ pub fn mul<
     acc
 }
 
+/// Computes the geometric sum $0 + 1 + r + ... + r^{m-1}$.
+pub fn geosum<F: Field>(mut r: F, mut m: usize) -> F {
+    let mut block = F::ONE;
+    let mut sum = F::ZERO;
+    let mut step = F::ONE;
+    while m > 0 {
+        if (m & 1) == 1 {
+            sum += step * block;
+            step *= r;
+        }
+        block += r * block;
+        r = r.square();
+        m >>= 1;
+    }
+    sum
+}
+
 #[test]
 fn test_mul() {
     use pasta_curves::group::{Curve, prime::PrimeCurveAffine};
@@ -296,4 +313,26 @@ fn test_factor() {
     assert_eq!(quot, quot_iter);
     let y = F::from(F::DELTA + F::from(100));
     assert_eq!(eval(quot.iter(), y) * (y - x), eval(poly.iter(), y) - v);
+}
+
+#[test]
+fn test_geosum() {
+    use pasta_curves::Fp as F;
+
+    fn geosum_slow<F: Field>(r: F, m: usize) -> F {
+        let mut sum = F::ZERO;
+        let mut power = F::ONE;
+        for _ in 0..m {
+            sum += power;
+            power *= r;
+        }
+        sum
+    }
+
+    let r = F::from(42u64) * F::MULTIPLICATIVE_GENERATOR;
+    for m in 0..33 {
+        assert_eq!(geosum(F::ZERO, m), geosum_slow(F::ZERO, m));
+        assert_eq!(geosum(F::ONE, m), geosum_slow(F::ONE, m));
+        assert_eq!(geosum(r, m), geosum_slow(r, m));
+    }
 }

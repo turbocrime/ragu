@@ -309,6 +309,7 @@ version = "0.0.0"
 dependencies = [
  "ff",
  "group",
+ "proptest",
  "ragu_arithmetic",
  "ragu_core",
  "ragu_pasta",

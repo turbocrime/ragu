@@ -5,6 +5,10 @@ use ff::Field;
 pub mod structured;
 pub mod unstructured;
 
+mod staging;
+
+pub use staging::Staging;
+
 mod private {
     pub trait Sealed {}
     impl<const RANK: u32> Sealed for super::R<RANK> {}

@@ -32,5 +32,6 @@ ragu_core = { path = "../ragu_core", version = "0.0.0" }
 ragu_primitives = { path = "../ragu_primitives", version = "0.0.0" }
 
 [dev-dependencies]
+proptest = { workspace = true }
 rand = { workspace = true }
 ragu_pasta = { path = "../ragu_pasta", version = "0.0.0", features = ["baked"] }
