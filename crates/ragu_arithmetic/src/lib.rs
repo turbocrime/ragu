@@ -88,7 +88,9 @@ pub use domain::Domain;
 pub use fft::Ring;
 pub use util::{dot, eval, factor, factor_iter, geosum, mul};
 
-pub use uendo::Uendo;
+// TODO(ebfull): Use this if we need to increase the bit size of endoscalars.
+// pub use uendo::Uendo;
+pub use u128 as Uendo;
 
 /// Represents a "cycle" of elliptic curves where the scalar field of one curve
 /// is the base field of the other, and vice-versa.
