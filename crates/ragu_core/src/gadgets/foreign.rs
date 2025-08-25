@@ -26,6 +26,18 @@ mod unit_impl {
         ) -> Result<Self::Rebind<'new_dr, ND::NewDriver>> {
             Ok(())
         }
+
+        fn enforce_equal<
+            'dr,
+            D1: Driver<'dr, F = F>,
+            D2: Driver<'dr, F = F, Wire = <D1 as Driver<'dr>>::Wire>,
+        >(
+            _: &mut D1,
+            _: &Self::Rebind<'dr, D2>,
+            _: &Self::Rebind<'dr, D2>,
+        ) -> Result<()> {
+            Ok(())
+        }
     }
 }
 
@@ -54,6 +66,21 @@ mod array_impl {
                 Err(_) => unreachable!(),
             }
         }
+
+        fn enforce_equal<
+            'dr,
+            D1: Driver<'dr, F = F>,
+            D2: Driver<'dr, F = F, Wire = <D1 as Driver<'dr>>::Wire>,
+        >(
+            dr: &mut D1,
+            a: &Self::Rebind<'dr, D2>,
+            b: &Self::Rebind<'dr, D2>,
+        ) -> Result<()> {
+            for (a, b) in a.iter().zip(b.iter()) {
+                G::enforce_equal(dr, a, b)?;
+            }
+            Ok(())
+        }
     }
 }
 
@@ -75,6 +102,20 @@ mod pair_impl {
         ) -> Result<Self::Rebind<'new_dr, ND::NewDriver>> {
             Ok((G1::map(&this.0, ndr)?, G2::map(&this.1, ndr)?))
         }
+
+        fn enforce_equal<
+            'dr,
+            D1: Driver<'dr, F = F>,
+            D2: Driver<'dr, F = F, Wire = <D1 as Driver<'dr>>::Wire>,
+        >(
+            dr: &mut D1,
+            a: &Self::Rebind<'dr, D2>,
+            b: &Self::Rebind<'dr, D2>,
+        ) -> Result<()> {
+            G1::enforce_equal(dr, &a.0, &b.0)?;
+            G2::enforce_equal(dr, &a.1, &b.1)?;
+            Ok(())
+        }
     }
 }
 
@@ -93,6 +134,18 @@ mod box_impl {
             ndr: &mut ND,
         ) -> Result<Self::Rebind<'new_dr, ND::NewDriver>> {
             Ok(Box::new(G::map(this, ndr)?))
+        }
+
+        fn enforce_equal<
+            'dr,
+            D1: Driver<'dr, F = F>,
+            D2: Driver<'dr, F = F, Wire = <D1 as Driver<'dr>>::Wire>,
+        >(
+            dr: &mut D1,
+            a: &Self::Rebind<'dr, D2>,
+            b: &Self::Rebind<'dr, D2>,
+        ) -> Result<()> {
+            G::enforce_equal(dr, a, b)
         }
     }
 }

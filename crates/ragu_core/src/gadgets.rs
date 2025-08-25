@@ -106,6 +106,15 @@ pub trait Gadget<'dr, D: Driver<'dr>>: Clone {
     ) -> Result<<Self::Kind as GadgetKind<D::F>>::Rebind<'new_dr, ND::NewDriver>> {
         Self::Kind::map(self, ndr)
     }
+
+    /// Proxy for the `GadgetKind::enforce_equal` method.
+    fn enforce_equal_gadget<D2: Driver<'dr, F = D::F, Wire = D::Wire>>(
+        &self,
+        dr: &mut D2,
+        other: &Self,
+    ) -> Result<()> {
+        Self::Kind::enforce_equal::<D2, D>(dr, self, other)
+    }
 }
 
 /// A driver-agnostic kindedness of a gadget.
@@ -143,6 +152,22 @@ pub unsafe trait GadgetKind<F: Field>: core::any::Any {
         this: &Self::Rebind<'dr, D>,
         ndr: &mut ND,
     ) -> Result<Self::Rebind<'new_dr, ND::NewDriver>>;
+
+    /// Enforces that two gadgets' wires are equal.
+    ///
+    /// The provided driver is used to create linear constraints between the
+    /// gadgets' wires through recursive descent through the gadget structure.
+    /// The provided gadgets can be for another driver, since it's only
+    /// important that the wire type be the same.
+    fn enforce_equal<
+        'dr,
+        D1: Driver<'dr, F = F>,
+        D2: Driver<'dr, F = F, Wire = <D1 as Driver<'dr>>::Wire>,
+    >(
+        dr: &mut D1,
+        a: &Self::Rebind<'dr, D2>,
+        b: &Self::Rebind<'dr, D2>,
+    ) -> Result<()>;
 }
 
 /// Automatically derives the [`Gadget`], [`GadgetKind`] and [`Clone`] traits

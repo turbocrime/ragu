@@ -131,4 +131,16 @@ unsafe impl<F: Field, G: GadgetKind<F>> GadgetKind<F> for DemotedKind<F, G> {
             gadget: G::map(&this.gadget, &mut Demoter { driver: ndr })?,
         })
     }
+
+    fn enforce_equal<
+        'dr,
+        D1: Driver<'dr, F = F>,
+        D2: Driver<'dr, F = F, Wire = <D1 as Driver<'dr>>::Wire>,
+    >(
+        dr: &mut D1,
+        a: &Self::Rebind<'dr, D2>,
+        b: &Self::Rebind<'dr, D2>,
+    ) -> Result<()> {
+        G::enforce_equal(dr, &a.gadget, &b.gadget)
+    }
 }
