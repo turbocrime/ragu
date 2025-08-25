@@ -52,6 +52,25 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
         })
     }
 
+    /// Obtain a constant point in the circuit. Fails if the point is the
+    /// identity.
+    pub fn constant(dr: &mut D, p: C) -> Result<Self> {
+        if let Some(coordinates) = p.coordinates().into_option() {
+            let x = Element::constant(dr, *coordinates.x());
+            let y = Element::constant(dr, *coordinates.y());
+
+            Ok(Point {
+                x,
+                y,
+                _marker: PhantomData,
+            })
+        } else {
+            Err(Error::InvalidWitness(
+                "point at infinity cannot be witnessed".into(),
+            ))
+        }
+    }
+
     /// Returns the point represented by this gadget.
     pub fn value(&self) -> Witness<D, C> {
         D::just(|| {
