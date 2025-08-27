@@ -8,14 +8,9 @@
 //! The [`Buffer`] trait allows destination buffers to receive a [`Driver`] for
 //! processing the elements they receive. This is handy for streaming hash
 //! functions. Specific gadgets can have more optimal serialization strategies
-//! by leveraging the provided [`Driver`] as well: a gadget that contains
-//! boolean wires can [pack](crate::boolean::multipack) many of them into far
-//! fewer [`Element`]s.
-//!
-//! ### Automatic Derivation
-//!
-//! Gadgets that consist mainly of other gadgets are candidates for [automatic
-//! derivation](derive@GadgetSerialize) of the [`GadgetSerialize`] trait.
+//! by leveraging the provided [`Driver`] as well: as an example, a gadget that
+//! contains multiple [`Boolean`](crate::Boolean)s can
+//! [pack](crate::boolean::multipack) many of them into far fewer [`Element`]s.
 
 use ff::Field;
 use ragu_core::{Result, drivers::Driver, gadgets::GadgetKind};
@@ -29,6 +24,11 @@ use crate::Element;
 /// satisfy Rust language restrictions and keep interfaces ergonomic. Concrete
 /// [`Gadget`](crate::Gadget)s can be serialized using the
 /// [`GadgetExt::serialize`](crate::GadgetExt::serialize) helper method.
+///
+/// ### Automatic Derivation
+///
+/// Gadgets that consist mainly of other gadgets are candidates for [automatic
+/// derivation](derive@GadgetSerialize) of this trait.
 pub trait GadgetSerialize<F: Field>: GadgetKind<F> {
     /// Serialize this gadget into wires that are written the provided buffer,
     /// using the driver to synthesize the elements if needed.

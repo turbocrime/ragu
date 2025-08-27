@@ -2,16 +2,34 @@
 //! guarantee about its length that allows it to be safely used as a gadget.
 //!
 //! [`Vec<G>`] cannot implement [`Gadget<D>`] because [`Vec`] has a dynamic
-//! length, which means that its [`GadgetKind::map`] implementation would vary
-//! in behavior depending on the state of the gadget. This is disallowed by its
-//! API contract. Ragu provides a generic implementation of [`Gadget`] for
+//! length, which means that its [`GadgetKind::map_gadget`] implementation could
+//! vary in behavior depending on the state of the gadget. This is disallowed by
+//! its API contract. Ragu provides a generic implementation of [`Gadget`] for
 //! `Box<[T; N]>` and `[T; N]` where `const N: usize`, but `const` generics are
 //! still [somewhat limited](https://github.com/rust-lang/rust/issues/60551) in
 //! Rust (as of 1.87).
 //!
-//! This module provides [`FixedVec`], a wrapper around `Vec` which enforces a
-//! fixed length based on a the parameterized [`Len`] type. [`FixedVec<G, L>`]
+//! This module provides [`FixedVec`], a wrapper around [`Vec`] which enforces a
+//! fixed length based on the parameterized [`Len`] type. [`FixedVec<G, L>`]
 //! implements [`Gadget`] if `G` implements [`Gadget`].
+//!
+//! ## Usage
+//!
+//! Create a [`FixedVec<T, L>`] by taking a [`Vec<T>`] which has the exact
+//! length [`L::len()`](Len::len) and supplying it to [`FixedVec::new`] or
+//! [`FixedVec::try_from`], both of which return an error if the length is
+//! incorrect. The [`FixedVec::from_fn`] constructor can also be used to
+//! construct a vector by initializing each individual element based on its
+//! index.
+//!
+//! [`FixedVec<T, L>`] dereferences to a `&[T]` (or `&mut [T]`), which allows
+//! you to inspect and modify elements of the vector, but not grow it. You can
+//! recover the vector by consuming the [`FixedVec`] using
+//! [`FixedVec::into_inner`].
+//!
+//! Finally, [`FixedVec<G, L>`] implements [`Gadget`] if `G` implements
+//! `Gadget`. [`FixedVec<G, L>`] also can be [serialized](crate::serialize) if
+//! `G::Kind` implements [`GadgetSerialize`].
 
 use ff::Field;
 use ragu_core::{
@@ -57,13 +75,14 @@ pub struct FixedVec<T, L: Len> {
 impl<T, L: Len> TryFrom<Vec<T>> for FixedVec<T, L> {
     type Error = Error;
 
-    fn try_from(v: Vec<T>) -> Result<Self> {
+    fn try_from(mut v: Vec<T>) -> Result<Self> {
         if v.len() != L::len() {
             Err(Error::VectorLengthMismatch {
                 expected: L::len(),
                 actual: v.len(),
             })
         } else {
+            v.shrink_to_fit();
             Ok(FixedVec {
                 v,
                 _marker: PhantomData,
