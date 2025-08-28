@@ -35,6 +35,7 @@ pub use poseidon::Sponge;
 
 use ragu_core::{Result, drivers::Driver, gadgets::Gadget};
 
+use demoted::Demoted;
 use serialize::{Buffer, GadgetSerialize};
 
 /// Primitive extension trait for all gadgets.
@@ -46,6 +47,11 @@ pub trait GadgetExt<'dr, D: Driver<'dr>>: Gadget<'dr, D> {
         Self::Kind: GadgetSerialize<D::F>,
     {
         <Self::Kind as GadgetSerialize<D::F>>::serialize_gadget(self, dr, buf)
+    }
+
+    /// Demote this gadget by stripping its witness data.
+    fn demote(&self) -> Result<Demoted<'dr, D, Self>> {
+        Demoted::new(self)
     }
 }
 

@@ -37,7 +37,7 @@ use crate::serialize::{Buffer, GadgetSerialize};
 /// As with all gadgets, an [`Element`] can be [demoted](crate::demoted) but
 /// because it only represents a wire it is preferable to demote by extracting
 /// the wire using [`Element::wire`]. Promotion via [`Element::promote`] takes a
-/// wire instead of a demoted gadget.
+/// wire instead of a demoted gadget to encourage this.
 #[derive(Gadget)]
 pub struct Element<'dr, D: Driver<'dr>> {
     /// A wire created by the driver

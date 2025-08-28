@@ -11,7 +11,7 @@ use alloc::{vec, vec::Vec};
 
 use crate::{
     Element, GadgetExt,
-    demoted::DemotedDriver,
+    demoted::{Demoted, Promotion},
     serialize::{Buffer, GadgetSerialize},
     util::InternalMaybe,
 };
@@ -95,16 +95,6 @@ impl<'dr, D: Driver<'dr>> Boolean<'dr, D> {
     }
 }
 
-impl<'dr, D: Driver<'dr>> Boolean<'dr, DemotedDriver<'dr, D>> {
-    /// Promotes a demoted boolean.
-    pub fn promote(&self, value: Witness<D, bool>) -> Boolean<'dr, D> {
-        Boolean {
-            value,
-            wire: self.wire.clone(),
-        }
-    }
-}
-
 impl<F: Field> GadgetSerialize<F> for Kind![F; @Boolean<'_, _>] {
     fn serialize_gadget<'dr, D: Driver<'dr, F = F>, B: Buffer<'dr, D>>(
         this: &Boolean<'dr, D>,
@@ -112,6 +102,20 @@ impl<F: Field> GadgetSerialize<F> for Kind![F; @Boolean<'_, _>] {
         buf: &mut B,
     ) -> Result<()> {
         this.element().serialize(dr, buf)
+    }
+}
+
+impl<F: Field> Promotion<F> for Kind![F; @Boolean<'_, _>] {
+    type Value = bool;
+
+    fn promote<'dr, D: Driver<'dr, F = F>>(
+        demoted: &Demoted<'dr, D, Boolean<'dr, D>>,
+        witness: Witness<D, bool>,
+    ) -> Boolean<'dr, D> {
+        Boolean {
+            wire: demoted.wire.clone(),
+            value: witness,
+        }
     }
 }
 
