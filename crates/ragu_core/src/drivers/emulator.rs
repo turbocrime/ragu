@@ -2,7 +2,7 @@ use ff::Field;
 
 use crate::{
     Result,
-    drivers::{Coeff, Driver, DriverTypes},
+    drivers::{Coeff, Driver, DriverTypes, FromDriver},
     gadgets::GadgetKind,
     maybe::{Always, MaybeKind},
     routines::{Prediction, Routine},
@@ -89,5 +89,13 @@ impl<'dr, F: Field> Driver<'dr> for Emulator<F> {
             Prediction::Known(output, _) => Ok(output),
             Prediction::Unknown(aux) => routine.execute(self, input, aux),
         }
+    }
+}
+
+impl<'dr, 'new_dr, D: Driver<'dr>> FromDriver<'dr, 'new_dr, D> for Emulator<D::F> {
+    type NewDriver = Self;
+
+    fn convert_wire(&mut self, _: &D::Wire) -> Result<()> {
+        Ok(())
     }
 }

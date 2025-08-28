@@ -3,11 +3,14 @@ use ff::Field;
 use crate::{
     Error, Result,
     drivers::{Coeff, DirectSum, Driver, DriverTypes},
+    gadgets::{Gadget, GadgetKind},
     maybe::{Always, MaybeKind},
+    routines::{Prediction, Routine},
 };
 
 /// A driver that fully simulates everything that happens during synthesis,
 /// primarily for testing purposes.
+#[derive(Clone)]
 pub struct Simulator<F: Field> {
     num_allocations: usize,
     num_multiplications: usize,
@@ -75,7 +78,7 @@ impl<F: Field> DriverTypes for Simulator<F> {
     type LCenforce = DirectSum<F>;
 }
 
-impl<F: Field> Driver<'_> for Simulator<F> {
+impl<'dr, F: Field> Driver<'dr> for Simulator<F> {
     type F = F;
     type Wire = F;
     const ONE: Self::Wire = F::ONE;
@@ -124,5 +127,23 @@ impl<F: Field> Driver<'_> for Simulator<F> {
         }
 
         Ok(())
+    }
+
+    fn routine<R: Routine<Self::F> + 'dr>(
+        &mut self,
+        routine: R,
+        input: <R::Input as GadgetKind<Self::F>>::Rebind<'dr, Self>,
+    ) -> Result<<R::Output as GadgetKind<Self::F>>::Rebind<'dr, Self>> {
+        let mut tmp = self.clone();
+        match routine.predict(&mut tmp, &input)? {
+            Prediction::Known(output, aux) => {
+                // Even if the output is known, we still need to execute the
+                // routine to ensure consistency with the prediction.
+                let expected = routine.execute(self, input, aux)?;
+                output.enforce_equal(self, &expected)?;
+                Ok(output)
+            }
+            Prediction::Unknown(aux) => routine.execute(self, input, aux),
+        }
     }
 }

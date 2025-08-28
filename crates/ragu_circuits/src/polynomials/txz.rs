@@ -110,3 +110,35 @@ impl<F: Field> Routine<F> for Evaluate {
         Ok(Prediction::Known(output, D::just(|| ())))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ragu_core::drivers::Simulator;
+    use ragu_pasta::Fp;
+    use rand::thread_rng;
+
+    #[test]
+    fn simulate_txz() -> Result<()> {
+        let x = Fp::random(thread_rng());
+        let z = Fp::random(thread_rng());
+        let log2_n = 11; // Small value for testing
+        let evaluator = Evaluate::new(log2_n);
+
+        Simulator::simulate((x, z), |dr, witness| {
+            let (x, z) = witness.cast();
+            let x = Element::alloc(dr, x)?;
+            let z = Element::alloc(dr, z)?;
+
+            dr.reset();
+            dr.routine(evaluator, (x, z))?;
+
+            assert_eq!(dr.num_allocations(), 0);
+            assert_eq!(dr.num_multiplications(), 76);
+
+            Ok(())
+        })?;
+
+        Ok(())
+    }
+}

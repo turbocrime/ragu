@@ -2,8 +2,10 @@ use arithmetic::Coeff;
 use ff::Field;
 use ragu_core::{
     Error, Result,
-    drivers::{Driver, DriverTypes, LinearExpression},
+    drivers::{Driver, DriverTypes, LinearExpression, Wireless},
+    gadgets::GadgetKind,
     maybe::Empty,
+    routines::{Prediction, Routine},
 };
 use ragu_primitives::GadgetExt;
 
@@ -41,7 +43,7 @@ impl<F: Field, R: Rank> DriverTypes for Collector<F, R> {
     type ImplWire = Wire<F>;
 }
 
-impl<F: Field, R: Rank> Driver<'_> for Collector<F, R> {
+impl<'dr, F: Field, R: Rank> Driver<'dr> for Collector<F, R> {
     type F = F;
     type Wire = Wire<F>;
 
@@ -93,6 +95,27 @@ impl<F: Field, R: Rank> Driver<'_> for Collector<F, R> {
         self.result[q] = lc(WireSum::new(self.one)).value;
 
         Ok(())
+    }
+
+    fn routine<Ro: Routine<Self::F> + 'dr>(
+        &mut self,
+        routine: Ro,
+        input: <Ro::Input as GadgetKind<Self::F>>::Rebind<'dr, Self>,
+    ) -> Result<<Ro::Output as GadgetKind<Self::F>>::Rebind<'dr, Self>> {
+        // Temporarily store currently `available_b` to reset the allocation
+        // logic within the routine.
+        let tmp = self.available_b.take();
+        let mut dummy = Wireless::<Self::MaybeKind, F>::default();
+        let dummy_input = Ro::Input::map_gadget(&input, &mut dummy)?;
+        let result = match routine.predict(&mut dummy, &dummy_input)? {
+            Prediction::Known(_, aux) | Prediction::Unknown(aux) => {
+                routine.execute(self, input, aux)?
+            }
+        };
+        // Restore the allocation logic state, discarding the state from within
+        // the routine.
+        self.available_b = tmp;
+        Ok(result)
     }
 }
 
