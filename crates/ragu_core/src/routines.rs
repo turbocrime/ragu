@@ -10,7 +10,7 @@ use ff::Field;
 
 use crate::{
     Result,
-    drivers::{Driver, Wireless, Witness},
+    drivers::{Driver, Emulator, Witness},
     gadgets::GadgetKind,
 };
 
@@ -87,7 +87,7 @@ pub trait RoutineExt<F: Field>: Routine<F> {
         dr: &mut D,
         input: <Self::Input as GadgetKind<F>>::Rebind<'dr, D>,
     ) -> Result<<Self::Output as GadgetKind<F>>::Rebind<'dr, D>> {
-        let mut dummy = Wireless::<D::MaybeKind, F>::default();
+        let mut dummy = Emulator::<D::MaybeKind, F>::default();
         let dummy_input = Self::Input::map_gadget(&input, &mut dummy)?;
         match self.predict(&mut dummy, &dummy_input)? {
             Prediction::Known(_, aux) | Prediction::Unknown(aux) => self.execute(dr, input, aux),

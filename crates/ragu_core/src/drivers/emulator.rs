@@ -1,10 +1,11 @@
+use core::marker::PhantomData;
 use ff::Field;
 
 use crate::{
     Result,
     drivers::{Coeff, Driver, DriverTypes, FromDriver},
     gadgets::GadgetKind,
-    maybe::{Always, MaybeKind},
+    maybe::MaybeKind,
     routines::{Prediction, Routine},
 };
 
@@ -12,21 +13,21 @@ use crate::{
 /// computation without enforcing constraints or collecting a witness. Useful
 /// for obtaining the result of a computation that is later executed with
 /// another driver.
-pub struct Emulator<F: Field> {
-    _marker: core::marker::PhantomData<F>,
+pub struct Emulator<M: MaybeKind, F: Field> {
+    _marker: PhantomData<(M, F)>,
 }
 
-impl<F: Field> Default for Emulator<F> {
+impl<M: MaybeKind, F: Field> Default for Emulator<M, F> {
     fn default() -> Self {
         Emulator::new()
     }
 }
 
-impl<F: Field> Emulator<F> {
+impl<M: MaybeKind, F: Field> Emulator<M, F> {
     /// Creates a new `Emulator` driver.
     pub fn new() -> Self {
         Emulator {
-            _marker: core::marker::PhantomData,
+            _marker: PhantomData,
         }
     }
 
@@ -40,26 +41,26 @@ impl<F: Field> Emulator<F> {
     pub fn with<R, W: Send>(
         &mut self,
         witness: W,
-        f: impl FnOnce(&mut Self, Always<W>) -> Result<R>,
+        f: impl FnOnce(&mut Self, M::Rebind<W>) -> Result<R>,
     ) -> Result<R> {
-        f(self, Always::maybe_just(|| witness))
+        f(self, M::maybe_just(|| witness))
     }
 }
 
-impl<F: Field> DriverTypes for Emulator<F> {
+impl<M: MaybeKind, F: Field> DriverTypes for Emulator<M, F> {
     type ImplField = F;
     type ImplWire = ();
-    type MaybeKind = Always<()>;
+    type MaybeKind = M;
     type LCadd = ();
     type LCenforce = ();
 }
 
-impl<'dr, F: Field> Driver<'dr> for Emulator<F> {
+impl<'dr, M: MaybeKind, F: Field> Driver<'dr> for Emulator<M, F> {
     type F = F;
     type Wire = ();
     const ONE: Self::Wire = ();
 
-    fn alloc(&mut self, _: impl Fn() -> Result<Coeff<Self::F>>) -> Result<()> {
+    fn alloc(&mut self, _: impl Fn() -> Result<Coeff<Self::F>>) -> Result<Self::Wire> {
         Ok(())
     }
 
@@ -92,7 +93,7 @@ impl<'dr, F: Field> Driver<'dr> for Emulator<F> {
     }
 }
 
-impl<'dr, D: Driver<'dr>> FromDriver<'dr, '_, D> for Emulator<D::F> {
+impl<'dr, D: Driver<'dr>> FromDriver<'dr, '_, D> for Emulator<D::MaybeKind, D::F> {
     type NewDriver = Self;
 
     fn convert_wire(&mut self, _: &D::Wire) -> Result<()> {

@@ -83,11 +83,11 @@ pub trait Rank:
 
         use ragu_core::{
             drivers::{Driver, Emulator},
-            maybe::Maybe,
+            maybe::{Always, Maybe},
         };
         use ragu_primitives::Element;
 
-        let mut dr = Emulator::<F>::default();
+        let mut dr = Emulator::<Always<()>, F>::default();
         *dr.with((x, z), |dr, xz| {
             let (x, z) = xz.cast();
             let x = Element::alloc(dr, x)?;

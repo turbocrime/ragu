@@ -2,7 +2,7 @@ use arithmetic::Coeff;
 use ff::Field;
 use ragu_core::{
     Error, Result,
-    drivers::{Driver, DriverTypes, LinearExpression, Wireless},
+    drivers::{Driver, DriverTypes, Emulator, LinearExpression},
     gadgets::GadgetKind,
     maybe::Empty,
     routines::{Prediction, Routine},
@@ -272,7 +272,7 @@ impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Collector<'table, 'sy, F
         // Temporarily store currently `available_b` to reset the allocation
         // logic within the routine.
         let tmp = self.available_b.take();
-        let mut dummy = Wireless::<Self::MaybeKind, F>::default();
+        let mut dummy = Emulator::<Self::MaybeKind, F>::default();
         let dummy_input = Ro::Input::map_gadget(&input, &mut dummy)?;
         let result = match routine.predict(&mut dummy, &dummy_input)? {
             Prediction::Known(_, aux) | Prediction::Unknown(aux) => {

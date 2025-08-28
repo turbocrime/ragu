@@ -58,12 +58,10 @@ mod emulator;
 mod linexp;
 mod phantom;
 mod simulator;
-mod wireless;
 
 pub use emulator::Emulator;
 pub use linexp::{DirectSum, LinearExpression};
 pub use simulator::Simulator;
-pub use wireless::Wireless;
 
 /// Alias for the concrete [`Maybe<T>`] type for a driver `D`, used to represent
 /// witness data.
