@@ -156,34 +156,33 @@ fn test_txz_consistency() {
     type DemoR = R<10>;
     let z = Fp::random(thread_rng());
     let x = Fp::random(thread_rng());
-    // Reference computation (original algorithm reproduced here)
-    let reference = {
-        if x == Fp::ZERO || z == Fp::ZERO {
-            Fp::ZERO
-        } else {
-            let xinv = x.invert().unwrap();
-            let zinv = z.invert().unwrap();
-            let mut xz_step = xinv * z;
-            let mut xzinv_step = xinv * zinv;
-            let mut l = x.pow([(4 * DemoR::n() - 1) as u64]) * z.pow([2 * DemoR::n() as u64]);
-            let mut r = l;
-            for _ in 0..DemoR::log2_n() {
-                l += l * xz_step;
-                r += r * xzinv_step;
-                xz_step = xz_step.square();
-                xzinv_step = xzinv_step.square();
-            }
-            -(l + r * zinv)
-        }
-    };
     let txz = DemoR::txz(x, z);
-    assert_eq!(txz, reference);
+    let tx0 = DemoR::txz(x, Fp::ZERO);
+    let t0z: Fp = DemoR::txz(Fp::ZERO, z);
+    let t00 = DemoR::txz(Fp::ZERO, Fp::ZERO);
     assert_eq!(
         txz,
         arithmetic::eval(&DemoR::tz::<Fp>(z).unstructured().coeffs, x)
     );
     assert_eq!(
+        tx0,
+        arithmetic::eval(&DemoR::tz::<Fp>(Fp::ZERO).unstructured().coeffs, x)
+    );
+    assert_eq!(
         txz,
         arithmetic::eval(&DemoR::tx::<Fp>(x).unstructured().coeffs, z)
+    );
+    assert_eq!(
+        t0z,
+        arithmetic::eval(&DemoR::tx::<Fp>(Fp::ZERO).unstructured().coeffs, z)
+    );
+
+    assert_eq!(
+        t00,
+        arithmetic::eval(&DemoR::tz::<Fp>(Fp::ZERO).unstructured().coeffs, Fp::ZERO)
+    );
+    assert_eq!(
+        t00,
+        arithmetic::eval(&DemoR::tx::<Fp>(Fp::ZERO).unstructured().coeffs, Fp::ZERO)
     );
 }
