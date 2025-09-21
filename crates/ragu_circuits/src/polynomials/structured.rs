@@ -99,6 +99,20 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
         }
     }
 
+    /// Folds an iterator of polynomials into a single polynomial with
+    /// successive powers of the provided scale factor.
+    pub fn fold<I, P>(polys: I, scale_factor: F) -> Self
+    where
+        I: DoubleEndedIterator<Item = P>,
+        P: core::ops::Deref<Target = Self>,
+    {
+        polys.rev().fold(Self::default(), |mut acc, poly| {
+            acc.scale(scale_factor);
+            acc.add_assign(&*poly);
+            acc
+        })
+    }
+
     /// Iterate over the coefficients of this polynomial in ascending order of
     /// degree.
     pub fn iter_coeffs(&self) -> impl DoubleEndedIterator<Item = F> {
