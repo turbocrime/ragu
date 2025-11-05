@@ -12,7 +12,13 @@ rust-version = "1.85"
 readme = "README.md"
 repository = "https://github.com/tachyon-zcash/ragu"
 documentation = "https://docs.rs/ragu_pcd"
-categories = ["cryptography", "mathematics", "algorithms", "development-tools", "no-std"]
+categories = [
+  "cryptography",
+  "mathematics",
+  "algorithms",
+  "development-tools",
+  "no-std",
+]
 keywords = []
 
 [package.metadata.docs.rs]
