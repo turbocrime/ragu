@@ -6,7 +6,7 @@ Ragu defines the witness $\v{r}$ as the concatenation $\v{c} || \v{\hat{b}} || \
 
 ### Virtual Wires
 
-The left hand side of all linear constraints are linear combinations of elements within $\v{a}, \v{b}, \v{c}$. Any linear combination of wires can itself be considered a _virtual_ wire (as opposed to an allocated wire) which imposes no cost on the protocol.
+The left-hand side of all linear constraints are linear combinations of elements within $\v{a}, \v{b}, \v{c}$. Any linear combination of wires can itself be considered a _virtual_ wire (as opposed to an allocated wire) which imposes no cost on the protocol.
 
 ### `ONE`
 

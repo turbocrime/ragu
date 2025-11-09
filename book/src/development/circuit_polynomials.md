@@ -1,6 +1,6 @@
 # Circuit Polynomials
 
-Individual arithmetic circuits are defined by the [structured vector](../design/structured.md) $\v{s} \in \F^{4n}$ that describes the [linear constraints](../design/linear.md) enforced over the witness, given a concrete choice of random challenge $y$. This vector is the coefficient vector of a special polynomial
+Individual arithmetic circuits are defined by the [structured vector](../design/circuits/constraints.md) $\v{s} \in \F^{4n}$ that describes the [linear constraints](../design/linear.md) enforced over the witness, given a concrete choice of random challenge $y$. This vector is the coefficient vector of a special polynomial
 
 $$
 s(X, Y) = \sum\limits_{j=0}^{4n - 1} Y^j \Big(
@@ -16,8 +16,8 @@ at the restriction $Y = y$. This is known as the "circuit polynomial."
 
 Ragu will directly synthesize circuit code into (partial) evaluations of the reduced circuit polynomial. There are two operations that influence this polynomial:
 
-* `enforce_zero` creates a [linear constraint](LinearConstraints.md) that enforces that a linear combination of wires must equal zero. This produces a new term in $Y^j$ for some unused $j$.
-* `mul` creates new wires $(a, b, c)$ that must satisfy a [multiplication constraint](MultiplicationConstraints.md) $ab = c$. This allocates (or assigns) the corresponding powers $(X^{2n + i}, X^{2n - 1 - i}, X^i)$ for some unused $i$.
+* `enforce_zero` creates a [linear constraint](../design/circuits/constraints.md) that enforces that a linear combination of wires must equal zero. This produces a new term in $Y^j$ for some unused $j$.
+* `mul` creates new wires $(a, b, c)$ that must satisfy a [multiplication constraint](../design/circuits/constraints.md) $ab = c$. This allocates (or assigns) the corresponding powers $(X^{2n + i}, X^{2n - 1 - i}, X^i)$ for some unused $i$.
 
 **Importantly, this synthesis process is procedural.** Any contiguous sequence of `enforce_zero` and `mul` operations is defined by the polynomials $g, h \in \F[X, Y]$ and transforms $s(X, Y)$ into $s'(X, Y)$ where for some $i, j$
 

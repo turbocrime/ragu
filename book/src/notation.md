@@ -4,7 +4,7 @@
 
 We write a vector $\v{a} \in \F^n$ in bold type, and generally use capital
 letters like $\v{G} \in \mathbb{G}^n$ to represent vectors of group elements.
-Similarly, individual field and group elements are written in a normal type face
+Similarly, individual field and group elements are written in a normal typeface
 like $a \in \F$ or $H \in \mathbb{G}$. All vectors are zero-indexed.
 
 ### Reversed Vector Notation
@@ -24,5 +24,5 @@ exists a (canonical) coefficient vector $\v{p} \in \F^n$ ordered such that
 $\v{p}_{n - 1}$ is the leading coefficient. Given $z \in \F$ the evaluation
 $p(z)$ is thus given by the inner (dot) product $\langle \v{p}, \v{z^n} \rangle$
 where $\v{z^n}$ denotes the power vector $(z^0, z^1, \cdots, z^{n - 1})$. We
-write the _dilation_ $p(zX)$ using the Hadamard (pair-wise) product $\v{z^n}
+write the _dilation_ $p(zX)$ using the Hadamard (pairwise) product $\v{z^n}
 \circ \v{p}$.

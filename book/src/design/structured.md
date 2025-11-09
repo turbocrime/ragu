@@ -59,7 +59,7 @@ $$
 X^{n - 1} p(1 / X) + X^n q(X)
 $$
 
-for $p, q \in F[X]$ of maximal degree $n - 1$. The prover can commit to $p, q$
+for $p, q \in \F[X]$ of maximal degree $n - 1$. The prover can commit to $p, q$
 and the verifier can test at a random point to ensure correctness. The claim is
 then reduced to the equality $p(0) = c$.
 

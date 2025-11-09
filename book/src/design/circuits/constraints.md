@@ -9,17 +9,17 @@ $$
 \v{k}_j
 $$
 
-for some (sparse) public input vector $\v{k}$ and fixed matrices $\v{u}, \v{v}, \v{w} \in \F^{n \times 4n}$. Because $n$ is fixed, individual circuits vary only by these matrices after this reduction.
+for some (sparse) public input vector $\v{k} \in \F^{4n}$ and fixed matrices $\v{u}, \v{v}, \v{w} \in \F^{n \times 4n}$, where $\v{u_{j}}, \v{v_{j}}, \v{w_{j}} \in \F^{4n}$ denote the _j-th column_ (selector) vectors of those matrices. Because $n$ is fixed, individual circuits vary only by these matrices after this reduction.
 
 ## Multiplication Constraints
 
 The multiplication constraints over the witness can be rewritten as $\v{a} \circ \v{b} = \v{c}$. It is possible to probabilistically reduce this to a dot product claim using a random challenge $z \in \F$, using the "folded" claim
 
 $$
-\dot{\v{a}}{\v{z^{4n}} \circ \v{b}} - \dot{\v{c}}{\v{z^{4n}}} = 0.
+\sum_{i=0}^{n-1} z^{i}\,\big(\mathbf a_i \mathbf b_i - \mathbf c_i\big) = 0 \;\Longleftrightarrow\; \dot{\v{a}}{\v{z^{n}} \circ \v{b}} - \dot{\v{c}}{\v{z^{n}}} = 0.
 $$
 
-By the definition of $\v{r}$ (as a [structured vector](structured.md)) we can do something mathematically identical. Observe the expansion
+By the definition of $\v{r}$ (as a [structured vector](../structured.md)) we can do something mathematically identical. Observe the expansion
 
 $$\revdot{\v{r}}{\v{r} \circ \v{z^{4n}}} =
 
@@ -30,7 +30,7 @@ $$\revdot{\v{r}}{\v{r} \circ \v{z^{4n}}} =
 
 $$
 
-and notice that a vector $\v{t}$ exists such that
+and notice that a vector $\v{t}$ exists ($\v{t}$ is picked to cancel the $c_{i}$ weights that appear alongside the $a_{i}b_{i}$ weights in the expansion) such that
 
 $$
 \revdot{\v{r}}{\v{t}} = -\sum_{i = 0}^{n - 1} \v{c}_i \big( \underline{ z^{2n - 1 - i} + z^{2n + i} } \big).
@@ -63,14 +63,15 @@ $$
 \revdot{\v{r}}{\v{s}} = \dot{\v{k}}{\v{y^{4n}}}
 $$
 
-for the [witness](witness.md) vector $\v{r}$.
+for the [witness](../witness.md) vector $\v{r}$.
 
 ## Consolidated Constraints
 
-The equation for enforcing [multiplication constraints](multiplication.md) (using random challenge $z$) and [linear constraints](linear.md) (using random challenge $y$) can be combined into a single equation
+The equation for enforcing _multiplication constraints_ (using random challenge $z$) and _linear constraints_ (using random challenge $y$) can be combined into a single equation
 
 $$
 \revdot{\v{r}}{\v{s} + \v{r} \circ{\v{z^{4n}}} - \v{t}} = \dot{\v{k}}{\v{y^{4n}}}
 $$
 
 because $\v{r} \circ \v{z^{4n}} - \v{t}$ is made independent of $\v{s}$ by random $z$ except at $\v{r}_0$, where $\v{s}_0 = 0$.
+

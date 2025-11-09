@@ -3,7 +3,7 @@
 The simplest circuits in Ragu involve a single polynomial $r(X)$ that commits to the entire witness. However, in several subprotocols of the construction it is necessary to commit to $r(X)$ in _stages_. As examples:
 
 1. It may be necessary to obtain a verifier challenge inside of a circuit, based on values already witnessed by the prover. However, to do this safely would require hashing all of the inputs within the circuit, which could be prohibitively expensive. **Partial witnesses are effectively Pedersen vector commitments, or collision resistant hashes, of possibly hundreds of wires.** Hashing commitments to these partial witnesses _is_ feasible and far more efficient.
-2. It may be necessary for multiple circuits to operate over the same information, but may be prohibitively expensive for that information to be communicated via public inputs. If the prover could commit to the information partially beforehand, and then seperate independent circuits could access that information _as though it were part of that circuit's witness_, it would also improve efficiency.
+2. It may be necessary for multiple circuits to operate over the same information, but may be prohibitively expensive for that information to be communicated via public inputs. If the prover could commit to the information partially beforehand, and then separate independent circuits could access that information _as though it were part of that circuit's witness_, it would also improve efficiency.
 
 In order to support this, Ragu occasionally employs a concept called **staged witnesses.** The $r(X)$ of a circuit can be linearly decomposed into several pieces like so:
 
