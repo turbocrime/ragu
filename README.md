@@ -13,3 +13,5 @@
 ## License
 
 This library is distributed under the terms of both the MIT license and the Apache License (Version 2.0). See [LICENSE-APACHE](./LICENSE-APACHE), [LICENSE-MIT](./LICENSE-MIT) and [COPYRIGHT](./COPYRIGHT).
+
+[![codecov](https://codecov.io/gh/tachyon-zcash/ragu/graph/badge.svg?token=HJARL1P2O4)](https://codecov.io/gh/tachyon-zcash/ragu)
