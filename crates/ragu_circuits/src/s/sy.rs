@@ -292,7 +292,7 @@ impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Collector<'table, 'sy, F
 pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
     circuit: &C,
     y: F,
-    k: F,
+    key: F,
     num_linear_constraints: usize,
 ) -> Result<structured::Polynomial<F, R>> {
     // Underflow protection.
@@ -326,14 +326,14 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
                 _marker: core::marker::PhantomData,
             };
 
-            let (a_0, _b_0, c_0) = collector.mul(|| unreachable!())?;
+            let (key_wire, _, one) = collector.mul(|| unreachable!())?;
 
-            // Bind circuit to mesh key K: enforce linear constraint a_0 = c_0 * K.
+            // Enforce linear constraint key_wire = key to randomize non-trivial
+            // evaluations of this circuit polynomial.
             collector.enforce_zero(|lc| {
-                let lc = lc.add(&a_0);
-                lc.add_term(&c_0, Coeff::Arbitrary(-k))
+                lc.add(&key_wire)
+                    .add_term(&one, Coeff::NegativeArbitrary(key))
             })?;
-            let one = c_0;
 
             let mut outputs = vec![];
             let (io, _) = circuit.witness(&mut collector, Empty)?;

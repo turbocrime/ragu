@@ -93,19 +93,17 @@ impl<'params, F: PrimeField, R: Rank> MeshBuilder<'params, F, R> {
         }
 
         // Create provisional mesh (circuits still have placeholder K).
-        let mut provisional_mesh = Mesh {
+        let mut mesh = Mesh {
             domain,
             circuits: self.circuits,
             omega_lookup,
-            mesh_key: None,
+            key: F::ONE,
         };
 
-        // Compute K = H(M(w, x, y)) which creates binding commitment to mesh structure.
-        let mesh_key = provisional_mesh.compute_mesh_key(poseidon);
+        // Set mesh key to H(M(w, x, y))
+        mesh.key = mesh.compute_mesh_digest(poseidon);
 
-        provisional_mesh.mesh_key = Some(mesh_key);
-
-        Ok(provisional_mesh)
+        Ok(mesh)
     }
 }
 
@@ -117,11 +115,13 @@ pub struct Mesh<'params, F: PrimeField, R: Rank> {
     domain: Domain<F>,
     circuits: Vec<Box<dyn CircuitObject<F, R> + 'params>>,
 
-    // Maps from the OmegaKey (which represents some `omega^j`) to the index `i`
-    // of the circuits vector.
+    /// Maps from the OmegaKey (which represents some `omega^j`) to the index `i`
+    /// of the circuits vector.
     omega_lookup: BTreeMap<OmegaKey, usize>,
 
-    mesh_key: Option<F>,
+    /// Key used to unpredictably change the mesh polynomial's evaluation at
+    /// non-trivial points.
+    key: F,
 }
 
 /// Represents a key for identifying a unique $\omega^j$ value where $\omega$ is
@@ -150,11 +150,10 @@ impl<F: PrimeField> From<F> for OmegaKey {
 impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
     /// Evaluate the mesh polynomial unrestricted at $W$.
     pub fn xy(&self, x: F, y: F) -> unstructured::Polynomial<F, R> {
-        let k = self.mesh_key.unwrap_or(F::ONE);
         let mut coeffs = unstructured::Polynomial::default();
         for (i, circuit) in self.circuits.iter().enumerate() {
             let j = bitreverse(i as u32, self.domain.log2_n()) as usize;
-            coeffs[j] = circuit.sxy(x, y, k);
+            coeffs[j] = circuit.sxy(x, y, self.key);
         }
         // Convert from the Lagrange basis.
         let domain = &self.domain;
@@ -165,12 +164,11 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
 
     /// Evaluate the mesh polynomial unrestricted at $X$.
     pub fn wy(&self, w: F, y: F) -> structured::Polynomial<F, R> {
-        let k = self.mesh_key.unwrap_or(F::ONE);
         self.w(
             w,
             structured::Polynomial::default,
             |circuit, circuit_coeff, poly| {
-                let mut tmp = circuit.sy(y, k);
+                let mut tmp = circuit.sy(y, self.key);
                 tmp.scale(circuit_coeff);
                 poly.add_assign(&tmp);
             },
@@ -179,12 +177,11 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
 
     /// Evaluate the mesh polynomial unrestricted at $Y$.
     pub fn wx(&self, w: F, x: F) -> unstructured::Polynomial<F, R> {
-        let k = self.mesh_key.unwrap_or(F::ONE);
         self.w(
             w,
             unstructured::Polynomial::default,
             |circuit, circuit_coeff, poly| {
-                let mut tmp = circuit.sx(x, k);
+                let mut tmp = circuit.sx(x, self.key);
                 tmp.scale(circuit_coeff);
                 poly.add_assign(&tmp);
             },
@@ -193,12 +190,11 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
 
     /// Evaluate the mesh polynomial at the provided point.
     pub fn wxy(&self, w: F, x: F, y: F) -> F {
-        let k = self.mesh_key.unwrap_or(F::ONE);
         self.w(
             w,
             || F::ZERO,
             |circuit, circuit_coeff, poly| {
-                *poly += circuit.sxy(x, y, k) * circuit_coeff;
+                *poly += circuit.sxy(x, y, self.key) * circuit_coeff;
             },
         )
     }
@@ -237,8 +233,8 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
         result
     }
 
-    /// Compute mesh binding key K through iterative hashing.
-    fn compute_mesh_key<P: PoseidonPermutation<F>>(&self, poseidon: &P) -> F {
+    /// Compute a digest of this mesh.
+    fn compute_mesh_digest<P: PoseidonPermutation<F>>(&self, poseidon: &P) -> F {
         let mut result = None;
         Simulator::simulate((), |dr, _| {
             // Placeholder "nothing-up-my-sleeve challenges" (small primes).
@@ -259,7 +255,7 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
 
             Ok(())
         })
-        .expect("mesh key computation failed");
+        .expect("mesh digest computation should always succeed");
 
         result.unwrap()
     }
@@ -431,22 +427,6 @@ mod tests {
             }
         }
 
-        Ok(())
-    }
-
-    #[test]
-    fn test_mesh_key_zero_handling() -> Result<()> {
-        let poseidon = Pasta::baked().circuit_poseidon();
-
-        let mesh = MeshBuilder::<Fp, TestRank>::new()
-            .register_circuit(SquareCircuit { times: 2 })?
-            .finalize(poseidon)?;
-
-        assert_ne!(
-            mesh.mesh_key.unwrap(),
-            Fp::ZERO,
-            "Mesh key should never be zero"
-        );
         Ok(())
     }
 

@@ -115,7 +115,7 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Collector<F, R> {
     }
 }
 
-pub fn eval<F: Field, C: Circuit<F>, R: Rank>(circuit: &C, x: F, y: F, k: F) -> Result<F> {
+pub fn eval<F: Field, C: Circuit<F>, R: Rank>(circuit: &C, x: F, y: F, key: F) -> Result<F> {
     if x == F::ZERO {
         // The polynomial is zero if x is zero.
         return Ok(F::ZERO);
@@ -150,14 +150,14 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(circuit: &C, x: F, y: F, k: F) -> 
         _marker: core::marker::PhantomData,
     };
 
-    let (a_0, _b_0, c_0) = dr.mul(|| unreachable!())?;
+    let (key_wire, _, one) = dr.mul(|| unreachable!())?;
 
-    // Bind circuit to mesh key K: enforce linear constraint a_0 = c_0 * K.
+    // Enforce linear constraint key_wire = key to randomize non-trivial
+    // evaluations of this circuit polynomial.
     dr.enforce_zero(|lc| {
-        let lc = lc.add(&a_0);
-        lc.add_term(&c_0, Coeff::Arbitrary(-k))
+        lc.add(&key_wire)
+            .add_term(&one, Coeff::NegativeArbitrary(key))
     })?;
-    let one = c_0;
 
     let mut outputs = vec![];
 
