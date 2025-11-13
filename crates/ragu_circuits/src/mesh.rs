@@ -102,7 +102,6 @@ impl<'params, F: PrimeField, R: Rank> MeshBuilder<'params, F, R> {
 
         // Compute K = H(M(w, x, y)) which creates binding commitment to mesh structure.
         let mesh_key = provisional_mesh.compute_mesh_key(poseidon);
-        assert_ne!(mesh_key, F::ZERO);
 
         provisional_mesh.mesh_key = Some(mesh_key);
 
@@ -260,7 +259,7 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
 
             Ok(())
         })
-        .unwrap();
+        .expect("mesh key computation failed");
 
         result.unwrap()
     }

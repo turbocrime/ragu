@@ -328,7 +328,7 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
 
             let (a_0, _b_0, c_0) = collector.mul(|| unreachable!())?;
 
-            // Placeholder linear constraint: a_0 - c_0 * K = 0.
+            // Bind circuit to mesh key K: enforce linear constraint a_0 = c_0 * K.
             collector.enforce_zero(|lc| {
                 let lc = lc.add(&a_0);
                 lc.add_term(&c_0, Coeff::Arbitrary(-k))
