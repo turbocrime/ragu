@@ -15,6 +15,7 @@ use ragu_core::Result;
 
 use core::marker::PhantomData;
 
+mod header;
 mod step;
 
 /// Builder for an [`Application`](crate::Application) for proof-carrying data.
