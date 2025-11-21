@@ -1,3 +1,13 @@
+use ff::Field;
+use ragu_core::{
+    Result,
+    drivers::{Driver, DriverValue},
+    gadgets::GadgetKind,
+};
+use ragu_primitives::io::Write;
+
+use core::any::Any;
+
 /// The number of prefixes used internally by Ragu.
 ///
 /// * `0` is reserved for all circuits that have a fixed ID, used internally for
@@ -60,4 +70,25 @@ fn test_prefix_map() {
     assert_eq!(Prefix::internal(1).get(), 1);
     assert_eq!(Prefix::new(0).get(), 2);
     assert_eq!(Prefix::new(1).get(), 3);
+}
+
+/// Headers are succinct representations of data, essentially used as public
+/// inputs to recursive proofs in order to represent the current state of the
+/// computation.
+pub trait Header<F: Field>: Send + Sync + Any {
+    /// Each header should use a unique prefix to distinguish itself from other
+    /// headers.
+    const PREFIX: Prefix;
+
+    /// The data needed to encode a header.
+    type Data<'source>: Send + Clone;
+
+    /// The output gadget that encodes the data for this header.
+    type Output: Write<F>;
+
+    /// Encode some data into a gadget representing this header.
+    fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+        dr: &mut D,
+        witness: DriverValue<D, Self::Data<'source>>,
+    ) -> Result<<Self::Output as GadgetKind<F>>::Rebind<'dr, D>>;
 }
