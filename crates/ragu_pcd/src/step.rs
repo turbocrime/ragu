@@ -9,6 +9,7 @@ use ragu_core::{
 use super::header::Header;
 pub use encoder::{Encoded, Encoder};
 
+pub(crate) mod adapter;
 mod encoder;
 mod padded;
 
