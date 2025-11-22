@@ -74,7 +74,7 @@ where
     fn write(&mut self, dr: &mut D, value: &Element<'dr, D>) -> Result<()> {
         if self.written >= N {
             return Err(ragu_core::Error::MalformedEncoding(
-                "padded buffer is too small to encode the gadget and prefix".into(),
+                alloc::format!("Header encoding size exceeded HEADER_SIZE ({})", N,).into(),
             ));
         }
         self.inner.write(dr, value)?;
