@@ -161,6 +161,12 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
         self.mul(dr, self)
     }
 
+    /// Enforces that this element equals zero.
+    pub fn enforce_zero(&self, dr: &mut D) -> Result<()> {
+        let zero = Self::zero(dr);
+        self.enforce_equal(dr, &zero)
+    }
+
     /// Negates this element.
     pub fn negate(&self, dr: &mut D) -> Self {
         self.scale(dr, Coeff::NegativeOne)
