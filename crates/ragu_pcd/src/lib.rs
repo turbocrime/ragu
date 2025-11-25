@@ -16,21 +16,17 @@ use ragu_circuits::{
     mesh::{Mesh, MeshBuilder, omega_j},
     polynomials::Rank,
 };
-use ragu_core::{
-    Error, Result,
-    drivers::emulator::{Emulator, Wireless},
-    maybe::{Always, Maybe, MaybeKind},
-};
-use ragu_primitives::GadgetExt;
+use ragu_core::{Error, Result};
+use ragu_primitives::vec::{ConstLen, FixedVec};
 use rand::Rng;
 
-use alloc::{collections::BTreeMap, vec, vec::Vec};
+use alloc::{collections::BTreeMap, vec};
 use core::{any::TypeId, marker::PhantomData};
 
 use circuits::{dummy::Dummy, internal_circuit_index};
 use header::Header;
 pub use proof::{Pcd, Proof};
-use step::{Step, adapter::Adapter};
+use step::{Step, adapter::Adapter, verify_adapter::VerifyAdapter};
 
 mod circuits;
 pub mod header;
@@ -258,33 +254,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         rhs.add_assign(&sy);
         rhs.add_assign(&tz);
 
-        let mut ky = Vec::with_capacity(1 + HEADER_SIZE * 3);
+        let left_header =
+            FixedVec::<_, ConstLen<HEADER_SIZE>>::try_from(pcd.proof.left_header.clone())
+                .map_err(|_| Error::MalformedEncoding("left_header has incorrect size".into()))?;
+        let right_header =
+            FixedVec::<_, ConstLen<HEADER_SIZE>>::try_from(pcd.proof.right_header.clone())
+                .map_err(|_| Error::MalformedEncoding("right_header has incorrect size".into()))?;
 
-        let mut emulator: Emulator<Wireless<Always<()>, _>> = Emulator::wireless();
-        let gadget = H::encode(&mut emulator, Always::maybe_just(|| pcd.data.clone()))?;
-        let gadget = step::padded::for_header::<H, HEADER_SIZE, _>(&mut emulator, gadget)?;
-
-        {
-            let mut buf = Vec::with_capacity(HEADER_SIZE);
-            gadget.write(&mut emulator, &mut buf)?;
-            for elem in buf {
-                ky.push(*elem.value().take());
-            }
-        }
-
-        if pcd.proof.left_header.len() != HEADER_SIZE || pcd.proof.right_header.len() != HEADER_SIZE
-        {
-            return Err(Error::MalformedEncoding(
-                "{left,right}_header has incorrect size".into(),
-            ));
-        }
-
-        ky.extend(pcd.proof.left_header.iter().cloned());
-        ky.extend(pcd.proof.right_header.iter().cloned());
-        ky.push(C::CircuitField::ONE);
-
-        ky.reverse();
-        assert_eq!(ky.len(), 1 + HEADER_SIZE * 3);
+        let ky = {
+            let adapter = Adapter::<C, VerifyAdapter<H>, R, HEADER_SIZE>::new(VerifyAdapter::new());
+            let instance = (pcd.data.clone(), left_header, right_header);
+            adapter.ky(instance)?
+        };
 
         let valid = rx.revdot(&rhs) == eval(ky.iter(), y);
 

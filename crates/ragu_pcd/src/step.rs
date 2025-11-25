@@ -13,6 +13,7 @@ pub(crate) mod adapter;
 mod encoder;
 pub(crate) mod padded;
 pub(crate) mod rerandomize;
+pub(crate) mod verify_adapter;
 
 /// Internal representation of a [`Step`] index distinguishing internal vs.
 /// application steps.
