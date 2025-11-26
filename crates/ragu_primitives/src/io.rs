@@ -17,6 +17,9 @@ use ragu_core::{Result, drivers::Driver, gadgets::GadgetKind};
 
 use crate::Element;
 
+mod pipe;
+pub use pipe::Pipe;
+
 /// Represents a gadget that can be serialized into a sequence of [`Element`]s
 /// that are written to a [`Buffer`].
 ///

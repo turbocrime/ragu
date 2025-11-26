@@ -52,7 +52,7 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
         DriverValue<D, Self::Aux<'source>>,
     )> {
         let left = left.raw_encode(dr)?;
-        let right = right.raw_encode(dr)?;
+        let right = right.encode(dr)?;
 
         // TODO(ebfull): It's possible that the witness for this step needs to
         // be populated with some random data, for actual re-randomization

@@ -6,16 +6,14 @@ use ragu_core::{
         emulator::{Emulator, Wireless},
     },
     gadgets::GadgetKind,
-    maybe::Maybe,
 };
 use ragu_primitives::{
     Element, GadgetExt,
-    io::Buffer,
+    io::Pipe,
     vec::{ConstLen, FixedVec},
 };
 
 use alloc::vec::Vec;
-use core::marker::PhantomData;
 
 use super::{Header, padded};
 
@@ -66,11 +64,12 @@ impl<'dr, D: Driver<'dr, F: PrimeField>, H: Header<D::F>, const HEADER_SIZE: usi
     }
 
     /// Returns a reference to the gadget if this is a `Gadget` encoding.
-    /// Returns `None` if this is a `Raw` encoding.
-    pub fn as_gadget(&self) -> Option<&<H::Output as GadgetKind<D::F>>::Rebind<'dr, D>> {
+    pub fn as_gadget(&self) -> &<H::Output as GadgetKind<D::F>>::Rebind<'dr, D> {
         match self {
-            Encoded::Gadget(g) => Some(g),
-            Encoded::Raw(_) => None,
+            Encoded::Gadget(g) => g,
+            Encoded::Raw(_) => unreachable!(
+                "as_gadget should not be called on a raw encoding; raw encodings are only used internally"
+            ),
         }
     }
 
@@ -80,10 +79,7 @@ impl<'dr, D: Driver<'dr, F: PrimeField>, H: Header<D::F>, const HEADER_SIZE: usi
                 padded::for_header::<H, HEADER_SIZE, _>(dr, gadget)?.write(dr, buf)?
             }
             Encoded::Raw(raw) => {
-                assert_eq!(raw.len(), HEADER_SIZE);
-                for element in raw.into_inner() {
-                    buf.push(element);
-                }
+                buf.extend(raw.into_inner());
             }
         }
         Ok(())
@@ -109,35 +105,8 @@ impl<'dr, 'source: 'dr, D: Driver<'dr, F: PrimeField>, H: Header<D::F>, const HE
         let gadget = H::encode(&mut emulator, self.witness)?;
         let gadget = padded::for_header::<H, HEADER_SIZE, _>(&mut emulator, gadget)?;
 
-        /// A buffer that pipes into another driver by allocating elements.
-        struct Pipe<'a, 'dr, D: Driver<'dr>> {
-            dr: &'a mut D,
-            buf: &'a mut Vec<Element<'dr, D>>,
-            _marker: PhantomData<&'dr ()>,
-        }
-
-        impl<'dr, D: Driver<'dr>> Buffer<'_, Emulator<Wireless<D::MaybeKind, D::F>>> for Pipe<'_, 'dr, D> {
-            fn write(
-                &mut self,
-                _: &mut Emulator<Wireless<D::MaybeKind, D::F>>,
-                value: &Element<'_, Emulator<Wireless<D::MaybeKind, D::F>>>,
-            ) -> Result<()> {
-                self.buf
-                    .push(Element::alloc(self.dr, value.value().map(|v| *v))?);
-                Ok(())
-            }
-        }
-
         let mut raw = Vec::with_capacity(HEADER_SIZE);
-        {
-            let mut buffer = Pipe {
-                dr,
-                buf: &mut raw,
-                _marker: PhantomData,
-            };
-            gadget.write(&mut emulator, &mut buffer)?;
-        }
-        assert_eq!(raw.len(), HEADER_SIZE);
+        gadget.write(&mut emulator, &mut Pipe::new(dr, &mut raw))?;
 
         Ok(Encoded::Raw(
             FixedVec::try_from(raw).expect("correct length"),

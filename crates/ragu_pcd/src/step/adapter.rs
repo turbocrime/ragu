@@ -7,14 +7,14 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Element,
-    vec::{FixedVec, Len},
+    Element, GadgetExt,
+    vec::{ConstLen, FixedVec, Len},
 };
 
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use super::{Encoder, Header, Step};
+use super::{Encoder, Header, Step, padded};
 
 /// Represents triple a length determined at compile time.
 pub struct TripleConstLen<const N: usize>;
@@ -42,7 +42,11 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Adapter<C, S, R, H
 impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::CircuitField>
     for Adapter<C, S, R, HEADER_SIZE>
 {
-    type Instance<'source> = ();
+    type Instance<'source> = (
+        FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
+        FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
+        <S::Output as Header<C::CircuitField>>::Data<'source>,
+    );
     type Witness<'source> = (
         <S::Left as Header<C::CircuitField>>::Data<'source>,
         <S::Right as Header<C::CircuitField>>::Data<'source>,
@@ -50,16 +54,35 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
     );
     type Output = Kind![C::CircuitField; FixedVec<Element<'_, _>, TripleConstLen<HEADER_SIZE>>];
     type Aux<'source> = (
-        (Vec<C::CircuitField>, Vec<C::CircuitField>),
+        (
+            FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
+            FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
+        ),
         S::Aux<'source>,
     );
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
-        _: &mut D,
-        _: DriverValue<D, Self::Instance<'source>>,
+        dr: &mut D,
+        instance: DriverValue<D, Self::Instance<'source>>,
     ) -> Result<<Self::Output as GadgetKind<C::CircuitField>>::Rebind<'dr, D>> {
-        unreachable!("instance method is not used by the Adapter")
+        let (left_header, right_header, output) = instance.cast();
+
+        let output_gadget = S::Output::encode(dr, output)?;
+        let output_gadget = padded::for_header::<S::Output, HEADER_SIZE, _>(dr, output_gadget)?;
+
+        let mut elements = Vec::with_capacity(HEADER_SIZE * 3);
+        output_gadget.write(dr, &mut elements)?;
+
+        for i in 0..HEADER_SIZE {
+            elements.push(Element::alloc(dr, D::just(|| left_header.snag()[i]))?);
+        }
+
+        for i in 0..HEADER_SIZE {
+            elements.push(Element::alloc(dr, D::just(|| right_header.snag()[i]))?);
+        }
+
+        Ok(FixedVec::try_from(elements).expect("correct length"))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -91,12 +114,14 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
             let left_header = elements[HEADER_SIZE..HEADER_SIZE * 2]
                 .iter()
                 .map(|e| *e.value().take())
-                .collect();
+                .collect::<Vec<_>>();
+            let left_header = FixedVec::try_from(left_header).expect("correct length");
 
             let right_header = elements[HEADER_SIZE * 2..HEADER_SIZE * 3]
                 .iter()
                 .map(|e| *e.value().take())
-                .collect();
+                .collect::<Vec<_>>();
+            let right_header = FixedVec::try_from(right_header).expect("correct length");
 
             ((left_header, right_header), aux.take())
         });

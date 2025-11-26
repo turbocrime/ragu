@@ -79,8 +79,8 @@ impl<'params, C: Cycle> Step<C> for Hash2<'params, C> {
         let right = right.encode(dr)?;
 
         let mut sponge = Sponge::new(dr, self.poseidon_params);
-        sponge.absorb(dr, left.as_gadget().unwrap())?;
-        sponge.absorb(dr, right.as_gadget().unwrap())?;
+        sponge.absorb(dr, left.as_gadget())?;
+        sponge.absorb(dr, right.as_gadget())?;
         let output = sponge.squeeze(dr)?;
         let output_value = output.value().map(|v| *v);
         let output = Encoded::from_gadget(output);
