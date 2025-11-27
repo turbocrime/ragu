@@ -25,8 +25,8 @@ do something identical. Observe the expansion
 $$\revdot{\v{r}}{\v{r} \circ \v{z^{4n}}} =
 
 \sum\limits_{i = 0}^{n - 1} \Big(
-  \v{a}_i \v{b}_i  \big( \textcolor{teal}{z^{2n - 1 - i} + z^{2n + i} } \big)
-+ \v{c}_i \v{d}_i  \big( \textcolor{violet}{z^{i} + z^{4n - 1 - i}} \big)
+  \v{a}_i \v{b}_i  \big( \textcolor{green}{z^{2n - 1 - i} + z^{2n + i} } \big)
++ {\v{c}_i \v{d}_i}  \big( {z^{i} + z^{4n - 1 - i}} \big)
 \Big)
 
 $$
@@ -34,7 +34,7 @@ $$
 and notice that for all $z \in \F$ and for any choice of $\v{r}$ there exists a unique vector[^tvectorcomputation] $\v{t} \in \F^{4n}$ such that
 
 $$
-\revdot{\v{r}}{\v{t}} = -\sum_{i = 0}^{n - 1} \v{c}_i \Big( \textcolor{teal}{ z^{2n - 1 - i} + z^{2n + i} } \Big)
+\revdot{\v{r}}{\v{t}} = -\sum_{i = 0}^{n - 1} \v{c}_i \Big( \textcolor{green}{ z^{2n - 1 - i} + z^{2n + i} } \Big)
 $$
 
 and so by adding the two equalities, we get
@@ -42,8 +42,8 @@ and so by adding the two equalities, we get
 $$
 \revdot{\v{r}}{\v{r} \circ{\v{z^{4n}}} + \v{t}} = 
 \sum\limits_{i = 0}^{n - 1} \Big(
-  (\textcolor{blue}{\v{a}_i \v{b}_i - \v{c}_i})  \big( \textcolor{teal}{z^{2n - 1 - i} + z^{2n + i} } \big)
- + \textcolor{magenta}{\v{c}_i \v{d}_i}  \big( \textcolor{violet}{z^{i} + z^{4n - 1 - i}} \big)
+  (\textcolor{blue}{\v{a}_i \v{b}_i - \v{c}_i})  \big( \textcolor{green}{z^{2n - 1 - i} + z^{2n + i} } \big)
+ + {\v{c}_i \v{d}_i}  \big( {z^{i} + z^{4n - 1 - i}} \big)
 \Big).
 $$
 
@@ -53,7 +53,7 @@ $$
 \revdot{\v{r}}{\v{r} \circ{\v{z^{4n}}} + \v{t}} = 0
 $$
 
-holds for a random $z$, then $\textcolor{blue}{\v{a} \circ \v{b} = \v{c}}$ and $\textcolor{magenta}{\v{c} \circ \v{d} = \v{0^n}}$ each hold with high probability. (The latter claim is useless and redundant for our purposes, since $\v{d} = \v{0^n}$ for [witness vectors](witness.md) anyway.)
+holds for a random $z$, then $\textcolor{blue}{\v{a} \circ \v{b} = \v{c}}$ and ${\v{c} \circ \v{d} = \v{0^n}}$ each hold with high probability. (The latter claim is useless and redundant for our purposes, since $\v{d} = \v{0^n}$ for [witness vectors](witness.md) anyway.)
 
 ## Linear Constraints
 
