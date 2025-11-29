@@ -209,22 +209,28 @@ impl<F: Field, R: Rank> CircuitObject<F, R> for StageObject<R> {
 
 #[cfg(test)]
 mod tests {
+    use core::marker::PhantomData;
+
     use arithmetic::{Coeff, Uendo};
     use ff::Field;
     use group::prime::PrimeCurveAffine;
     use proptest::prelude::*;
     use ragu_core::{
         Result,
-        drivers::{Driver, DriverValue, LinearExpression},
-        gadgets::GadgetKind,
+        drivers::{Driver, DriverValue, LinearExpression, emulator::Emulator},
+        gadgets::{Gadget, GadgetKind},
         maybe::Maybe,
     };
     use ragu_pasta::{EpAffine, Fp, Fq};
-    use ragu_primitives::{Endoscalar, Point};
+    use ragu_primitives::{Element, Endoscalar, Point};
     use rand::{Rng, thread_rng};
 
     use crate::{
-        CircuitExt, CircuitObject, metrics, polynomials::Rank, s::sy, tests::SquareCircuit,
+        CircuitExt, CircuitObject, metrics,
+        polynomials::Rank,
+        s::sy,
+        staging::{StageBuilder, StagedCircuit},
+        tests::SquareCircuit,
     };
 
     use super::{
@@ -532,5 +538,111 @@ mod tests {
             check(Fp::ZERO, Fp::ZERO)?;
 
         }
+    }
+
+    struct ConstrainedStage;
+
+    #[derive(ragu_core::gadgets::Gadget, ragu_primitives::io::Write)]
+    struct TwoElements<'dr, #[ragu(driver)] D: Driver<'dr>> {
+        #[ragu(gadget)]
+        a: Element<'dr, D>,
+        #[ragu(gadget)]
+        b: Element<'dr, D>,
+    }
+
+    impl Stage<Fp, R> for ConstrainedStage {
+        type Parent = ();
+        type Witness<'source> = (Fp, Fp);
+        type OutputKind =
+            <TwoElements<'static, PhantomData<Fp>> as Gadget<'static, PhantomData<Fp>>>::Kind;
+
+        fn values() -> usize {
+            2
+        }
+
+        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            dr: &mut D,
+            witness: DriverValue<D, Self::Witness<'source>>,
+        ) -> Result<<Self::OutputKind as GadgetKind<Fp>>::Rebind<'dr, D>>
+        where
+            Self: 'dr,
+        {
+            let witness_a = witness.view().map(|w| w.0);
+            let witness_b = witness.view().map(|w| w.1);
+
+            let a = Element::alloc(dr, witness_a)?;
+            let b = Element::alloc(dr, witness_b)?;
+
+            dr.enforce_zero(|lc| lc.add(a.wire()).sub(b.wire()))?;
+
+            Ok(TwoElements { a, b })
+        }
+    }
+
+    struct EnforceStageCircuit;
+
+    impl StagedCircuit<Fp, R> for EnforceStageCircuit {
+        type Final = ConstrainedStage;
+        type Instance<'source> = ();
+        type Witness<'source> = (Fp, Fp);
+        type Output = TwoElements<'static, PhantomData<Fp>>;
+        type Aux<'source> = ();
+
+        fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            _dr: &mut D,
+            _instance: DriverValue<D, Self::Instance<'source>>,
+        ) -> Result<<Self::Output as GadgetKind<Fp>>::Rebind<'dr, D>> {
+            Err(ragu_core::Error::InvalidWitness(
+                "instance not used in this test".into(),
+            ))
+        }
+
+        fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            builder: StageBuilder<'a, 'dr, D, R, (), Self::Final>,
+            witness: DriverValue<D, Self::Witness<'source>>,
+        ) -> Result<(
+            <Self::Output as GadgetKind<Fp>>::Rebind<'dr, D>,
+            DriverValue<D, Self::Aux<'source>>,
+        )> {
+            let (gaurd, builder) = builder.add_stage::<ConstrainedStage>()?;
+            let gadget = gaurd.enforced(builder.finish(), witness)?;
+            Ok((gadget, D::just(|| ())))
+        }
+    }
+
+    #[test]
+    fn test_enforce_stage_works() {
+        let result =
+            Emulator::emulate_wireless((Fp::from(42u64), Fp::from(42u64)), |dr, witness| {
+                let builder = StageBuilder::<_, R, (), ConstrainedStage>::new(dr);
+                let (gaurd, builder) = builder.add_stage::<ConstrainedStage>()?;
+                let _gagdet = gaurd.enforced(builder.finish(), witness)?;
+                Ok(())
+            });
+
+        assert!(result.is_ok(), "enforce_stage should succeed");
+    }
+
+    #[test]
+    fn test_stage_well_formedness_with_valid_witness() {
+        let valid_witness = (Fp::from(7u64), Fp::from(7u64));
+
+        let rx = ConstrainedStage::rx(valid_witness).unwrap();
+
+        let stage_obj = ConstrainedStage::into_object::<'_>().unwrap();
+
+        // rx.revdot(&stage_object) == 0 for well-formed stages
+        let y = Fp::random(thread_rng());
+        let k = Fp::ONE;
+        let sy = stage_obj.sy(y, k);
+
+        let check = rx.revdot(&sy);
+        assert_eq!(
+            check,
+            Fp::ZERO,
+            "valid witness should produce well-formed stage polynomial"
+        );
     }
 }
