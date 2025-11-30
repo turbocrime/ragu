@@ -14,6 +14,7 @@ use ragu_primitives::{
 };
 
 use crate::{
+    composition::endoscalar,
     polynomials::Rank,
     staging::{Stage, StageBuilder, StagedCircuit},
 };
@@ -139,11 +140,12 @@ impl<C: CurveAffine, R: Rank, const NUM_SLOTS: usize> StagedCircuit<C::Base, R>
         <Self::Output as GadgetKind<C::Base>>::Rebind<'dr, D>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
-        let (endoscalar, dr) =
-            dr.add_stage::<EndoscalarStage>(witness.view().map(|w| w.endoscalar))?;
-        let (slots, dr) =
-            dr.add_stage::<SlotStage<C, NUM_SLOTS>>(witness.view().map(|w| w.slots.clone()))?;
+        let (endoscalar_gaurd, dr) = dr.add_stage::<EndoscalarStage>()?;
+        let (slots_gaurd, dr) = dr.add_stage::<SlotStage<C, NUM_SLOTS>>()?;
         let dr = dr.finish();
+
+        let (endoscalar, _) = endoscalar_gaurd.unenforced(witness.view().map(|w| w.endoscalar))?;
+        let (slots, _) = slots_gaurd.unenforced(witness.view().map(|w| w.slots.clone()))?;
 
         let input = Point::alloc(dr, witness.view().map(|w| w.input))?;
         let dummy = Point::constant(dr, C::generator())?;
