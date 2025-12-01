@@ -45,13 +45,10 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Target: Stage<D::F, R>>
 struct StageWireAllocator<'a, 'dr, D: Driver<'dr>> {
     underlying: &'a mut D,
     stage_wires: Vec<D::Wire>,
-    _marker: PhantomData<D::F>,
 }
 
-impl<'dr, D: Driver<'dr>, F: ff::Field> FromDriver<'_, 'dr, Emulator<Wireless<Empty, F>>>
+impl<'dr, D: Driver<'dr>> FromDriver<'_, '_, Emulator<Wireless<Empty, D::F>>>
     for StageWireAllocator<'_, 'dr, D>
-where
-    D: Driver<'dr, F = F>,
 {
     type NewDriver = PhantomData<D::F>;
 
@@ -112,15 +109,12 @@ impl<'dr, D: Driver<'dr>> FromDriver<'_, 'dr, Emulator<Wireless<D::MaybeKind, D:
 ///
 /// Implicitely, dropping this guard without calling either method effectively "skips"
 /// the stage, where the wire positions are reserved but no gadget is returned.
-pub struct StageGuard<'dr, D: Driver<'dr>, R: Rank, Next: Stage<D::F, R>> {
+pub struct StageGuard<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R>> {
     stage_wires: Vec<D::Wire>,
-    _marker: PhantomData<(&'dr (), R, Next)>,
+    _marker: PhantomData<(&'dr (), R, S)>,
 }
 
-impl<'dr, D: Driver<'dr>, R: Rank, Next: Stage<D::F, R>> StageGuard<'dr, D, R, Next>
-where
-    Next: 'dr,
-{
+impl<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R> + 'dr> StageGuard<'dr, D, R, S> {
     /// Enforce constraints and inject stage wires.
     ///
     /// Runs the stage's witness method on the real driver (enforcing all
@@ -129,10 +123,10 @@ where
     pub fn enforced<'a, 'source: 'dr>(
         self,
         driver: &'a mut D,
-        witness: DriverValue<D, Next::Witness<'source>>,
-    ) -> Result<<Next::OutputKind as GadgetKind<D::F>>::Rebind<'dr, D>> {
+        witness: DriverValue<D, S::Witness<'source>>,
+    ) -> Result<<S::OutputKind as GadgetKind<D::F>>::Rebind<'dr, D>> {
         // Run witness on the real driver, enforcing all constraints.
-        let computed_gadget = Next::witness(driver, witness)?;
+        let computed_gadget = S::witness(driver, witness)?;
 
         // Map the computed gadget, enforcing equality and substituting stage wires.
         let mut injector = EnforcingInjector {
@@ -150,10 +144,10 @@ where
     /// into the resulting gadget.
     pub fn unenforced<'source: 'dr>(
         self,
-        witness: DriverValue<D, Next::Witness<'source>>,
-    ) -> Result<<Next::OutputKind as GadgetKind<D::F>>::Rebind<'dr, D>> {
+        witness: DriverValue<D, S::Witness<'source>>,
+    ) -> Result<<S::OutputKind as GadgetKind<D::F>>::Rebind<'dr, D>> {
         let mut emulator: Emulator<Wireless<D::MaybeKind, D::F>> = Emulator::wireless();
-        let computed_gadget = Next::witness(&mut emulator, witness)?;
+        let computed_gadget = S::witness(&mut emulator, witness)?;
 
         let mut injector = StageWireInjector::<D> {
             stage_wires: self.stage_wires.iter(),
@@ -188,7 +182,6 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
         let mut allocator = StageWireAllocator {
             underlying: self.driver,
             stage_wires: Vec::new(),
-            _marker: PhantomData,
         };
 
         dummy_gadget.map(&mut allocator)?;
@@ -197,7 +190,7 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
             return Err(ragu_core::Error::MultiplicationBoundExceeded(
                 Next::num_multiplications(),
             ));
-        };
+        }
 
         let mut alloc_count = allocator.stage_wires.len();
 
@@ -209,7 +202,7 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
         if alloc_count % 2 == 1 {
             allocator.underlying.alloc(|| Ok(Coeff::Zero))?;
             alloc_count += 1;
-        };
+        }
 
         assert_eq!(alloc_count / 2, Next::num_multiplications());
 
