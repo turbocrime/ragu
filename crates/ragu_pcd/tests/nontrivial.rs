@@ -50,7 +50,7 @@ struct Hash2<'params, C: Cycle> {
     poseidon_params: &'params C::CircuitPoseidon,
 }
 
-impl<'params, C: Cycle> Step<C> for Hash2<'params, C> {
+impl<C: Cycle> Step<C> for Hash2<'_, C> {
     const INDEX: Index = Index::new(1);
     type Witness<'source> = ();
     type Aux<'source> = C::CircuitField;
@@ -93,7 +93,7 @@ struct WitnessLeaf<'params, C: Cycle> {
     poseidon_params: &'params C::CircuitPoseidon,
 }
 
-impl<'params, C: Cycle> Step<C> for WitnessLeaf<'params, C> {
+impl<C: Cycle> Step<C> for WitnessLeaf<'_, C> {
     const INDEX: Index = Index::new(0);
     type Witness<'source> = C::CircuitField;
     type Aux<'source> = C::CircuitField;

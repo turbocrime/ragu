@@ -92,10 +92,7 @@ fn test_index_map() -> Result<()> {
     assert_eq!(Index::new(0).circuit_index(num_application_steps)?, 0);
     assert_eq!(Index::new(1).circuit_index(num_application_steps)?, 1);
     assert_eq!(Index::new(999).circuit_index(None)?, 999);
-    assert_eq!(
-        Index::new(10).circuit_index(num_application_steps).is_err(),
-        true
-    );
+    assert!(Index::new(10).circuit_index(num_application_steps).is_err());
 
     Ok(())
 }

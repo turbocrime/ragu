@@ -283,6 +283,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::useless_conversion)]
     fn test_endoscaling_consistency() {
         use group::prime::PrimeCurveAffine;
         use ragu_pasta::{EpAffine, Fq};

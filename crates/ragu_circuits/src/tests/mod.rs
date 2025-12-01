@@ -1,6 +1,5 @@
 #![allow(non_snake_case)]
 
-use alloc::boxed::Box;
 use ff::Field;
 use ragu_core::{
     Result,
@@ -54,7 +53,7 @@ impl Circuit<Fp> for SquareCircuit {
     }
 }
 
-fn consistency_checks<R: Rank>(circuit: &Box<dyn CircuitObject<Fp, R>>) {
+fn consistency_checks<R: Rank>(circuit: &dyn CircuitObject<Fp, R>) {
     let x = Fp::random(thread_rng());
     let y = Fp::random(thread_rng());
     let k = Fp::random(thread_rng());
@@ -152,7 +151,7 @@ fn test_simple_circuit() {
     type MyRank = R<5>;
     let circuit = MySimpleCircuit.into_object::<MyRank>().unwrap();
 
-    consistency_checks(&circuit);
+    consistency_checks(&*circuit);
 
     let y = Fp::random(thread_rng());
     let z = Fp::random(thread_rng());

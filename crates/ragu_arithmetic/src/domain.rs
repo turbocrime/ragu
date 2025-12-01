@@ -207,8 +207,8 @@ fn test_fft() {
 
     {
         let mut p = F::ONE;
-        for i in 0..params.n {
-            assert_eq!(evals[i], eval(&coeffs, p));
+        for e in evals.iter().take(params.n) {
+            assert_eq!(*e, eval(&coeffs, p));
             p *= params.omega;
         }
     }

@@ -417,7 +417,6 @@ fn test_backward_forward() {
             forward_view.b.push(b);
             forward_view.c.push(c);
         }
-        drop(forward_view);
 
         let unstructured1 = poly.unstructured();
         assert_eq!(unstructured1.coeffs.len(), R::num_coeffs());
@@ -432,7 +431,6 @@ fn test_backward_forward() {
             backward_view.b.push(b);
             backward_view.c.push(c);
         }
-        drop(backward_view);
 
         let mut unstructured2 = poly.unstructured();
         assert_eq!(unstructured2.coeffs.len(), R::num_coeffs());
@@ -705,8 +703,8 @@ fn ring_poly_test() {
     big.ring_fft::<Polynomial<Fp, R>>(&mut b_polys);
 
     let mut big_c = vec![];
-    for i in 0..8 {
-        big_c.push(a_polys[i].revdot(&b_polys[i]));
+    for (a, b) in a_polys.iter().zip(b_polys.iter()).take(8) {
+        big_c.push(a.revdot(b));
     }
 
     big.ifft(&mut big_c);
@@ -729,8 +727,8 @@ fn ring_poly_test() {
     }
     let mut cur = Fp::ONE;
     let mut cx = Fp::ZERO;
-    for i in 0..8 {
-        cx += big_c[i] * cur;
+    for item in big_c.iter().take(8) {
+        cx += *item * cur;
         cur *= x;
     }
 

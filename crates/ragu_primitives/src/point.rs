@@ -363,9 +363,9 @@ fn test_double_and_add_incomplete() -> Result<()> {
                 Ok(())
             });
 
-            if p.coordinates().unwrap().x() == q.coordinates().unwrap().x() {
-                assert!(sim.is_err());
-            } else if (p.to_curve().double() + q.to_curve()).is_identity().into() {
+            if p.coordinates().unwrap().x() == q.coordinates().unwrap().x()
+                || (p.to_curve().double() + q.to_curve()).is_identity().into()
+            {
                 assert!(sim.is_err());
             } else {
                 let sim = sim?;

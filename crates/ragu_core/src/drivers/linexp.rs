@@ -109,6 +109,7 @@ fn test_linexp_direct() {
 }
 
 #[test]
+#[allow(clippy::unit_cmp)]
 fn test_linexp_trivial() {
     use alloc::vec;
     use ragu_pasta::Fp;
