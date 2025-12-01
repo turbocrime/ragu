@@ -115,6 +115,30 @@ pub trait Gadget<'dr, D: Driver<'dr>>: Clone {
     ) -> Result<()> {
         Self::Kind::enforce_equal_gadget::<D2, D>(dr, self, other)
     }
+
+    /// Returns how many wires are in this gadget.
+    ///
+    /// Gadgets do not vary in the number of wires they contain, so this should
+    /// return the same quantity regardless of the specific instance of this
+    /// [`Gadget`] implementation.
+    fn num_wires(&self) -> usize {
+        struct WireCounter {
+            count: usize,
+        }
+
+        impl<'dr, D: Driver<'dr>> FromDriver<'dr, 'dr, D> for WireCounter {
+            type NewDriver = core::marker::PhantomData<D::F>;
+
+            fn convert_wire(&mut self, _: &D::Wire) -> Result<()> {
+                self.count += 1;
+                Ok(())
+            }
+        }
+
+        let mut dr = WireCounter { count: 0 };
+        self.map(&mut dr).expect("wire counting should never fail");
+        dr.count
+    }
 }
 
 /// A driver-agnostic kindness of a gadget.
