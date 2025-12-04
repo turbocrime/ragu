@@ -4,7 +4,7 @@ use ragu_circuits::{
     CircuitExt,
     mesh::{Mesh, omega_j},
     polynomials::Rank,
-    staging::{StageExt, Staged},
+    staging::StageExt,
 };
 use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::{GadgetExt, Point, Sponge};
@@ -64,12 +64,10 @@ pub fn merge<'source, C: Cycle, R: Rank, RNG: Rng, S: Step<C>, const HEADER_SIZE
     // See: c.rs
     let internal_circuit_c = internal_circuits::c::Circuit::<C, R>::new(circuit_poseidon);
     let internal_circuit_c_witness = internal_circuits::c::Witness { unified_instance };
-    let internal_circuit_c_staged = Staged::new(internal_circuit_c);
     let (internal_circuit_c_rx, _) =
-        internal_circuit_c_staged.rx::<R>(internal_circuit_c_witness, circuit_mesh.get_key())?;
+        internal_circuit_c.rx::<R>(internal_circuit_c_witness, circuit_mesh.get_key())?;
 
-    let ky = Staged::new(internal_circuits::c::Circuit::<C, R>::new(circuit_poseidon))
-        .ky(unified_instance)?;
+    let ky = internal_circuit_c.ky(unified_instance)?;
 
     {
         let mut combined_rx = preamble_rx.clone();

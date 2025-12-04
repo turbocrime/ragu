@@ -13,7 +13,6 @@ use arithmetic::Cycle;
 use ragu_circuits::{
     mesh::{Mesh, MeshBuilder},
     polynomials::Rank,
-    staging::Staged,
 };
 use ragu_core::{Error, Result};
 use rand::Rng;
@@ -122,9 +121,11 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             .circuit_mesh
             .register_circuit(internal_circuits::dummy::Circuit)?;
 
-        self.circuit_mesh = self.circuit_mesh.register_circuit(Staged::new(
-            internal_circuits::c::Circuit::<C, R>::new(params.circuit_poseidon()),
-        ))?;
+        self.circuit_mesh = self
+            .circuit_mesh
+            .register_circuit(internal_circuits::c::Circuit::<C, R>::new(
+                params.circuit_poseidon(),
+            ))?;
 
         Ok(Application {
             circuit_mesh: self.circuit_mesh.finalize(params.circuit_poseidon())?,

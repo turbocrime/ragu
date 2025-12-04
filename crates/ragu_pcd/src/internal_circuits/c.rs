@@ -1,7 +1,7 @@
 use arithmetic::Cycle;
 use ragu_circuits::{
     polynomials::Rank,
-    staging::{StageBuilder, StagedCircuit},
+    staging::{StageBuilder, Staged, StagedCircuit},
 };
 use ragu_core::{
     Result,
@@ -24,12 +24,12 @@ pub struct Circuit<'a, C: Cycle, R> {
     _marker: PhantomData<(C, R)>,
 }
 
-impl<'a, C: Cycle, R> Circuit<'a, C, R> {
-    pub fn new(circuit_poseidon: &'a C::CircuitPoseidon) -> Self {
-        Circuit {
+impl<'a, C: Cycle, R: Rank> Circuit<'a, C, R> {
+    pub fn new(circuit_poseidon: &'a C::CircuitPoseidon) -> Staged<C::CircuitField, R, Self> {
+        Staged::new(Circuit {
             circuit_poseidon,
             _marker: PhantomData,
-        }
+        })
     }
 }
 
