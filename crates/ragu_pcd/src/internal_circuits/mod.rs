@@ -10,7 +10,7 @@ pub mod unified;
 const DUMMY_CIRCUIT_ID: usize = 0;
 const C_STAGED_ID: usize = 1;
 const C_CIRCUIT_ID: usize = 2;
-const NATIVE_PREAMBLE_CIRCUIT_ID: usize = 3;
+const NATIVE_PREAMBLE_STAGING_ID: usize = 3;
 
 pub fn index(num_application_steps: usize, internal_index: usize) -> usize {
     num_application_steps + super::step::NUM_INTERNAL_STEPS + internal_index

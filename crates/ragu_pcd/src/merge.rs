@@ -76,7 +76,7 @@ pub fn merge<'source, C: Cycle, R: Rank, RNG: Rng, S: Step<C>, const HEADER_SIZE
                 &[],
                 circuit_mesh,
                 num_application_steps,
-                internal_circuits::stages::native::preamble::CIRCUIT_ID,
+                internal_circuits::stages::native::preamble::STAGING_ID,
                 rng,
             );
         }
