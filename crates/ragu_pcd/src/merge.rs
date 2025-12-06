@@ -83,7 +83,7 @@ pub fn merge<'source, C: Cycle, R: Rank, RNG: Rng, S: Step<C>, const HEADER_SIZE
     }
 
     // Application
-    let application_circuit_id = S::INDEX.circuit_index(Some(num_application_steps))?;
+    let application_circuit_id = S::INDEX.circuit_index(num_application_steps)?;
     let (application_rx, aux) = Adapter::<C, S, R, HEADER_SIZE>::new(step)
         .rx::<R>((left.data, right.data, witness), circuit_mesh.get_key())?;
     let ((left_header, right_header), aux) = aux;

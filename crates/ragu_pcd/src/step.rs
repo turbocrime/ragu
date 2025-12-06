@@ -46,24 +46,17 @@ impl Index {
 
     /// Returns the circuit index for this step.
     ///
-    /// Pass `None` when the number of application steps is not yet known, or
-    /// `Some(n)` to validate and compute the final index. Returns an error if
-    /// an application step index exceeds `n`.
-    ///
-    /// ## Panics
-    ///
-    /// Panics if called on an internal step with `None`, since internal steps
-    /// are indexed after application steps.
-    pub(crate) fn circuit_index(&self, num_application_steps: Option<usize>) -> Result<usize> {
+    /// Pass the known number of application steps to validate and compute the
+    /// final index of this step. Returns an error if an application step index
+    /// exceeds the number of registered steps.
+    pub(crate) fn circuit_index(&self, num_application_steps: usize) -> Result<usize> {
         match self.index {
-            StepIndex::Internal(i) => Ok(num_application_steps.unwrap() + i),
+            StepIndex::Internal(i) => Ok(num_application_steps + i),
             StepIndex::Application(i) => {
-                if let Some(num_application_steps) = num_application_steps {
-                    if i >= num_application_steps {
-                        return Err(ragu_core::Error::Initialization(
+                if i >= num_application_steps {
+                    return Err(ragu_core::Error::Initialization(
                             "attempted to use application Step index that exceeds Application registered steps".into(),
                         ));
-                    }
                 }
 
                 Ok(i)
@@ -82,16 +75,37 @@ impl Index {
             index: StepIndex::Internal(value),
         }
     }
+
+    /// Called during application step registration to assert the appropriate
+    /// next sequential index.
+    ///
+    /// ## Panics
+    ///
+    /// Panics if called on an internal step.
+    pub(crate) fn assert_index(&self, expect_id: usize) -> Result<()> {
+        match self.index {
+            StepIndex::Application(i) => {
+                if i != expect_id {
+                    return Err(ragu_core::Error::Initialization(
+                        "steps must be registered in sequential order".into(),
+                    ));
+                }
+
+                Ok(())
+            }
+            StepIndex::Internal(_) => panic!("step should be application-defined"),
+        }
+    }
 }
 
 #[test]
 fn test_index_map() -> Result<()> {
-    let num_application_steps = Some(10);
+    let num_application_steps = 10;
 
     assert_eq!(Index::internal(0).circuit_index(num_application_steps)?, 10);
     assert_eq!(Index::new(0).circuit_index(num_application_steps)?, 0);
     assert_eq!(Index::new(1).circuit_index(num_application_steps)?, 1);
-    assert_eq!(Index::new(999).circuit_index(None)?, 999);
+    Index::new(999).assert_index(999)?;
     assert!(Index::new(10).circuit_index(num_application_steps).is_err());
 
     Ok(())
