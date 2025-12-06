@@ -13,7 +13,6 @@ use arithmetic::Cycle;
 use ragu_circuits::{
     mesh::{Mesh, MeshBuilder},
     polynomials::Rank,
-    staging::Staged,
 };
 use ragu_core::{Error, Result};
 use rand::Rng;
@@ -22,7 +21,6 @@ use alloc::collections::BTreeMap;
 use core::{any::TypeId, marker::PhantomData};
 
 use header::Header;
-use internal_circuits::dummy;
 pub use proof::{Pcd, Proof};
 use step::{Step, adapter::Adapter};
 
@@ -30,7 +28,6 @@ pub mod header;
 mod internal_circuits;
 mod merge;
 mod proof;
-mod stages;
 pub mod step;
 mod verify;
 
@@ -111,12 +108,8 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
                     step::rerandomize::Rerandomize::<()>::new(),
                 ))?;
 
-        // Then, insert all of the "internal circuits" used for recursion plumbing.
-        self.circuit_mesh = self.circuit_mesh.register_circuit(dummy::Circuit)?;
-
-        self.circuit_mesh = self.circuit_mesh.register_circuit(Staged::new(
-            crate::internal_circuits::c::Circuit::<C, R>::new(params.circuit_poseidon()),
-        ))?;
+        // Then, insert all of the internal circuits used for recursion plumbing.
+        self.circuit_mesh = internal_circuits::register_all::<C, R>(self.circuit_mesh, params)?;
 
         Ok(Application {
             circuit_mesh: self.circuit_mesh.finalize(params.circuit_poseidon())?,
@@ -140,7 +133,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     /// This may or may not be identical to any previously constructed (trivial)
     /// proof, and so is not guaranteed to be freshly randomized.
     pub fn trivial(&self) -> Proof<C, R> {
-        proof::trivial::<C, R, HEADER_SIZE>(self.num_application_steps, &self.circuit_mesh)
+        proof::trivial::<C, R, HEADER_SIZE>(
+            self.num_application_steps,
+            &self.circuit_mesh,
+            self.params,
+        )
     }
 
     /// Creates a random trivial proof for the empty [`Header`] implementation
@@ -217,6 +214,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         pcd: &Pcd<'_, C, R, H>,
         rng: RNG,
     ) -> Result<bool> {
-        verify::verify::<C, R, RNG, H, HEADER_SIZE>(&self.circuit_mesh, pcd, rng)
+        verify::verify::<C, R, RNG, H, HEADER_SIZE>(
+            &self.circuit_mesh,
+            pcd,
+            self.num_application_steps,
+            self.params,
+            rng,
+        )
     }
 }
