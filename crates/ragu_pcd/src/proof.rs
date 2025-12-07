@@ -6,7 +6,6 @@ use ragu_circuits::{
     staging::StageExt,
 };
 use ragu_core::{
-    Result,
     drivers::{Driver, emulator::Emulator},
     maybe::{Always, Maybe, MaybeKind},
 };
@@ -15,7 +14,7 @@ use rand::rngs::OsRng;
 use alloc::{vec, vec::Vec};
 use ragu_primitives::{
     Element, GadgetExt, Point, Sponge,
-    vec::{ConstLen, FixedVec, Len},
+    vec::{CollectFixed, ConstLen, FixedVec, Len},
 };
 
 use crate::{
@@ -173,7 +172,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let mu = C::CircuitField::random(OsRng);
         let nu = C::CircuitField::random(OsRng);
         let mu_inv = mu.invert().unwrap();
-        let error_terms: Vec<C::CircuitField> = (0..NUM_REVDOT_CLAIMS * (NUM_REVDOT_CLAIMS - 1))
+        let error_terms: Vec<C::CircuitField> = (0..ErrorTermsLen::<NUM_REVDOT_CLAIMS>::len())
             .map(|_| C::CircuitField::random(OsRng))
             .collect();
 
@@ -183,11 +182,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             let nu = Element::alloc(dr, Always::maybe_just(|| nu))?;
             let mu_inv = Element::alloc(dr, Always::maybe_just(|| mu_inv))?;
 
-            let error_elements = (0..ErrorTermsLen::<NUM_REVDOT_CLAIMS>::len())
-                .map(|i| Element::alloc(dr, Always::maybe_just(|| error_terms[i])))
-                .collect::<Result<Vec<_>>>()?;
             let error_matrix = ErrorMatrix::new(
-                FixedVec::<_, ErrorTermsLen<NUM_REVDOT_CLAIMS>>::new(error_elements).expect("len"),
+                (0..ErrorTermsLen::<NUM_REVDOT_CLAIMS>::len())
+                    .map(|i| Element::alloc(dr, Always::maybe_just(|| error_terms[i])))
+                    .try_collect_fixed()?,
             );
 
             // TODO: Use zeros for ky_values for now.

@@ -16,7 +16,7 @@ use ragu_core::{
 };
 use ragu_primitives::{
     Element, GadgetExt, Sponge,
-    vec::{ConstLen, FixedVec, Len},
+    vec::{CollectFixed, ConstLen, FixedVec, Len},
 };
 
 use core::marker::PhantomData;
@@ -111,11 +111,8 @@ impl<C: Cycle, R: Rank, const NUM_REVDOT_CLAIMS: usize> StagedCircuit<C::Circuit
             // Allocate error terms from witness as an error matrix.
             let error_elements = (0..ErrorTermsLen::<NUM_REVDOT_CLAIMS>::len())
                 .map(|i| Element::alloc(dr, witness.view().map(|w| w.error_terms[i])))
-                .collect::<Result<Vec<_>>>()?;
-            let error_matrix = ErrorMatrix::new(
-                FixedVec::<_, ErrorTermsLen<NUM_REVDOT_CLAIMS>>::new(error_elements)
-                    .expect("error_terms length"),
-            );
+                .try_collect_fixed()?;
+            let error_matrix = ErrorMatrix::new(error_elements);
 
             // TODO: Use zeros for ky_values for now.
             let ky_values_vec: Vec<_> = (0..NUM_REVDOT_CLAIMS).map(|_| Element::zero(dr)).collect();
