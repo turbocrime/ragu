@@ -56,6 +56,8 @@ pub(crate) struct InternalCircuits<C: Cycle, R: Rank> {
     pub(crate) w: C::CircuitField,
     pub(crate) c: C::CircuitField,
     pub(crate) c_rx: structured::Polynomial<C::CircuitField, R>,
+    pub(crate) mu: C::CircuitField,
+    pub(crate) nu: C::CircuitField,
 }
 
 impl<C: Cycle, R: Rank> Clone for Proof<C, R> {
@@ -98,6 +100,8 @@ impl<C: Cycle, R: Rank> Clone for InternalCircuits<C, R> {
             w: self.w,
             c: self.c,
             c_rx: self.c_rx.clone(),
+            mu: self.mu,
+            nu: self.nu,
         }
     }
 }
@@ -202,13 +206,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             nested_preamble_commitment,
             w,
             c,
+            mu,
+            nu,
         };
         let internal_circuit_c =
             internal_circuits::c::Circuit::<C, R, NUM_REVDOT_CLAIMS>::new(circuit_poseidon);
         let internal_circuit_c_witness = internal_circuits::c::Witness {
             unified_instance: &unified_instance,
-            mu,
-            nu,
             error_terms,
         };
         let (c_rx, _) = internal_circuit_c
@@ -230,7 +234,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 nested_preamble_commitment,
                 nested_preamble_blind,
             },
-            internal_circuits: InternalCircuits { w, c, c_rx },
+            internal_circuits: InternalCircuits { w, c, c_rx, mu, nu },
             application: ApplicationProof {
                 rx: application_rx,
                 circuit_id: internal_circuits::index(self.num_application_steps, dummy::CIRCUIT_ID),

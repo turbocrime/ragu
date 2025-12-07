@@ -114,6 +114,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             nested_preamble_commitment,
             w,
             c,
+            mu,
+            nu,
         };
 
         // C staged circuit.
@@ -122,8 +124,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 .rx::<R>(
                     internal_circuits::c::Witness {
                         unified_instance,
-                        mu,
-                        nu,
                         error_terms,
                     },
                     self.circuit_mesh.get_key(),
@@ -147,7 +147,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     nested_preamble_commitment,
                     nested_preamble_blind,
                 },
-                internal_circuits: InternalCircuits { w, c, c_rx },
+                internal_circuits: InternalCircuits { w, c, c_rx, mu, nu },
                 application: ApplicationProof {
                     circuit_id: application_circuit_id,
                     left_header: left_header.into_inner(),

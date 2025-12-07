@@ -40,8 +40,6 @@ impl<'a, C: Cycle, R: Rank, const NUM_REVDOT_CLAIMS: usize> Circuit<'a, C, R, NU
 
 pub struct Witness<'a, C: Cycle, const NUM_REVDOT_CLAIMS: usize> {
     pub unified_instance: &'a unified::Instance<C>,
-    pub mu: C::CircuitField,
-    pub nu: C::CircuitField,
     pub error_terms: FixedVec<C::CircuitField, ErrorTermsLen<NUM_REVDOT_CLAIMS>>,
 }
 
@@ -99,9 +97,9 @@ impl<C: Cycle, R: Rank, const NUM_REVDOT_CLAIMS: usize> StagedCircuit<C::Circuit
 
         // Compute c, the folded revdot product claim.
         {
-            // TODO: witnessing these values for now; derive them later
-            let mu = Element::alloc(dr, witness.view().map(|w| w.mu))?;
-            let nu = Element::alloc(dr, witness.view().map(|w| w.nu))?;
+            // Grab mu and nu from the unified instance
+            let mu = unified_output.mu.get(dr, unified_instance);
+            let nu = unified_output.nu.get(dr, unified_instance);
 
             // Allocate error terms.
             let error_terms = ErrorTermsLen::<NUM_REVDOT_CLAIMS>::range()
