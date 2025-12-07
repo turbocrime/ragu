@@ -1,14 +1,9 @@
-use alloc::vec::Vec;
 use arithmetic::Cycle;
 use ragu_circuits::{
     polynomials::Rank,
     staging::{StageBuilder, Staged, StagedCircuit},
 };
 
-use crate::routines::{
-    ErrorTermsLen,
-    compute_c::{ComputeRevdotClaim, ErrorMatrix, RevdotClaimInput},
-};
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
@@ -19,11 +14,16 @@ use ragu_primitives::{
     vec::{CollectFixed, ConstLen, FixedVec, Len},
 };
 
+use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use super::{
     stages::native::preamble,
     unified::{self, OutputBuilder},
+};
+use crate::routines::{
+    ErrorTermsLen,
+    compute_c::{ComputeRevdotClaim, ErrorMatrix, RevdotClaimInput},
 };
 
 pub const CIRCUIT_ID: usize = super::C_CIRCUIT_ID;

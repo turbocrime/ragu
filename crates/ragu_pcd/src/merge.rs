@@ -1,4 +1,3 @@
-use alloc::vec::Vec;
 use arithmetic::Cycle;
 use ff::Field;
 use ragu_circuits::{CircuitExt, polynomials::Rank, staging::StageExt};
@@ -12,6 +11,8 @@ use ragu_primitives::{
     vec::{CollectFixed, ConstLen, FixedVec, Len},
 };
 use rand::Rng;
+
+use alloc::vec::Vec;
 
 use crate::{
     Application, internal_circuits,

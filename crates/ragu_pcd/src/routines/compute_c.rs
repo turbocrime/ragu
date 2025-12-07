@@ -1,7 +1,5 @@
 //! Routine for computing c, the revdot claim for the folded accumulator.
 
-use super::ErrorTermsLen;
-use alloc::vec::Vec;
 use ff::Field;
 use ragu_core::{
     Result,
@@ -13,6 +11,10 @@ use ragu_primitives::{
     Element,
     vec::{ConstLen, FixedVec},
 };
+
+use alloc::vec::Vec;
+
+use super::ErrorTermsLen;
 
 /// Off-diagonal error terms.
 #[derive(Gadget)]

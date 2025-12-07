@@ -9,26 +9,23 @@ use ragu_core::{
     drivers::{Driver, emulator::Emulator},
     maybe::{Always, Maybe, MaybeKind},
 };
-use rand::rngs::OsRng;
-
-use alloc::{vec, vec::Vec};
 use ragu_primitives::{
     Element, GadgetExt, Point, Sponge,
     vec::{CollectFixed, ConstLen, FixedVec, Len},
 };
+use rand::rngs::OsRng;
 
-use crate::{
-    merge::NUM_REVDOT_CLAIMS,
-    routines::{
-        ErrorTermsLen,
-        compute_c::{ComputeRevdotClaim, ErrorMatrix, RevdotClaimInput},
-    },
-};
+use alloc::{vec, vec::Vec};
 
 use crate::{
     Application,
     header::Header,
     internal_circuits::{self, dummy},
+    merge::NUM_REVDOT_CLAIMS,
+    routines::{
+        ErrorTermsLen,
+        compute_c::{ComputeRevdotClaim, ErrorMatrix, RevdotClaimInput},
+    },
 };
 
 /// Represents a recursive proof for the correctness of some computation.
