@@ -168,9 +168,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let mu = C::CircuitField::random(OsRng);
         let nu = C::CircuitField::random(OsRng);
         let mu_inv = mu.invert().unwrap();
-        let error_terms: Vec<C::CircuitField> = (0..ErrorTermsLen::<NUM_REVDOT_CLAIMS>::len())
+        let error_terms = (0..ErrorTermsLen::<NUM_REVDOT_CLAIMS>::len())
             .map(|_| C::CircuitField::random(OsRng))
-            .collect();
+            .collect_fixed()
+            .expect("error_terms collection should not fail");
 
         // Compute c, the folded revdot product claim, by invoking the routine within a wireless emulator.
         let c = Emulator::emulate_wireless((mu, nu, mu_inv, error_terms.clone()), |dr, _| {
@@ -178,8 +179,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             let nu = Element::alloc(dr, Always::maybe_just(|| nu))?;
 
             let error_matrix = ErrorMatrix::new(
-                (0..ErrorTermsLen::<NUM_REVDOT_CLAIMS>::len())
-                    .map(|i| Element::alloc(dr, Always::maybe_just(|| error_terms[i])))
+                error_terms
+                    .iter()
+                    .map(|&et| Element::alloc(dr, Always::maybe_just(|| et)))
                     .try_collect_fixed()?,
             );
 
@@ -196,8 +198,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             };
             let c = dr.routine(ComputeRevdotClaim::<NUM_REVDOT_CLAIMS>, input)?;
             Ok(*c.value().take())
-        });
-        let c = c.expect("c should not fail");
+        })
+        .expect("c should not fail");
 
         // Create unified instance and compute c_rx
         let unified_instance = internal_circuits::unified::Instance {

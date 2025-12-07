@@ -12,8 +12,6 @@ use ragu_primitives::{
 };
 use rand::Rng;
 
-use alloc::vec::Vec;
-
 use crate::{
     Application,
     components::{
@@ -83,9 +81,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let mu = C::CircuitField::random(&mut *rng);
         let nu = C::CircuitField::random(&mut *rng);
         let mu_inv = mu.invert().unwrap();
-        let error_terms: Vec<C::CircuitField> = (0..ErrorTermsLen::<NUM_REVDOT_CLAIMS>::len())
+
+        let error_terms = (0..ErrorTermsLen::<NUM_REVDOT_CLAIMS>::len())
             .map(|_| C::CircuitField::random(&mut *rng))
-            .collect();
+            .collect_fixed()?;
 
         // Compute c by running the routine in a wireless emulator
         let c: C::CircuitField =
@@ -94,8 +93,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 let nu = Element::alloc(dr, Always::maybe_just(|| nu))?;
 
                 let error_matrix = ErrorMatrix::new(
-                    (0..ErrorTermsLen::<NUM_REVDOT_CLAIMS>::len())
-                        .map(|i| Element::alloc(dr, Always::maybe_just(|| error_terms[i])))
+                    error_terms
+                        .iter()
+                        .map(|&et| Element::alloc(dr, Always::maybe_just(|| et)))
                         .try_collect_fixed()?,
                 );
 

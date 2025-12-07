@@ -10,10 +10,9 @@ use ragu_core::{
 };
 use ragu_primitives::{
     Element, GadgetExt, Sponge,
-    vec::{CollectFixed, Len},
+    vec::{CollectFixed, FixedVec, Len},
 };
 
-use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use super::{
@@ -42,11 +41,11 @@ impl<'a, C: Cycle, R: Rank, const NUM_REVDOT_CLAIMS: usize> Circuit<'a, C, R, NU
     }
 }
 
-pub struct Witness<'a, C: Cycle> {
+pub struct Witness<'a, C: Cycle, const NUM_REVDOT_CLAIMS: usize> {
     pub unified_instance: &'a unified::Instance<C>,
     pub mu: C::CircuitField,
     pub nu: C::CircuitField,
-    pub error_terms: Vec<C::CircuitField>,
+    pub error_terms: FixedVec<C::CircuitField, ErrorTermsLen<NUM_REVDOT_CLAIMS>>,
 }
 
 impl<C: Cycle, R: Rank, const NUM_REVDOT_CLAIMS: usize> StagedCircuit<C::CircuitField, R>
@@ -55,7 +54,7 @@ impl<C: Cycle, R: Rank, const NUM_REVDOT_CLAIMS: usize> StagedCircuit<C::Circuit
     type Final = preamble::Stage<C, R>;
 
     type Instance<'source> = &'source unified::Instance<C>;
-    type Witness<'source> = Witness<'source, C>;
+    type Witness<'source> = Witness<'source, C, NUM_REVDOT_CLAIMS>;
     type Output = unified::OutputKind<C>;
     type Aux<'source> = ();
 
