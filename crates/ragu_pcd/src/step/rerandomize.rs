@@ -15,6 +15,8 @@ use core::marker::PhantomData;
 
 use super::{Encoded, Encoder, Header, Index, Step};
 
+pub(crate) use crate::step::InternalStepIndex::Rerandomize as INTERNAL_ID;
+
 pub(crate) struct Rerandomize<H> {
     _marker: PhantomData<H>,
 }
@@ -28,7 +30,7 @@ impl<H> Rerandomize<H> {
 }
 
 impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
-    const INDEX: Index = Index::internal(0);
+    const INDEX: Index = Index::internal(INTERNAL_ID);
 
     type Witness<'source> = ();
     type Aux<'source> = ();

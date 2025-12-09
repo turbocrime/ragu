@@ -14,17 +14,22 @@ mod encoder;
 pub(crate) mod padded;
 pub(crate) mod rerandomize;
 
+#[derive(Copy, Clone)]
+#[repr(usize)]
+pub(crate) enum InternalStepIndex {
+    /// Internal step for [`self::rerandomize`].
+    Rerandomize = 0,
+}
+
 /// Internal representation of a [`Step`] index distinguishing internal vs.
 /// application steps.
 enum StepIndex {
-    Internal(usize),
+    Internal(InternalStepIndex),
     Application(usize),
 }
 
 /// The number of internal steps used by Ragu for things like rerandomization or
 /// proof decompression.
-///
-/// * `0` is used for the rerandomization step (see [`rerandomize`]).
 pub(crate) const NUM_INTERNAL_STEPS: usize = 1;
 
 /// The index of a [`Step`] in an application.
@@ -51,7 +56,7 @@ impl Index {
     /// exceeds the number of registered steps.
     pub(crate) fn circuit_index(&self, num_application_steps: usize) -> Result<usize> {
         match self.index {
-            StepIndex::Internal(i) => Ok(num_application_steps + i),
+            StepIndex::Internal(i) => Ok(num_application_steps + (i as usize)),
             StepIndex::Application(i) => {
                 if i >= num_application_steps {
                     return Err(ragu_core::Error::Initialization(
@@ -66,11 +71,7 @@ impl Index {
 
     /// Creates a new internal-defined [`Step`] index. Only called internally by
     /// Ragu.
-    pub(crate) const fn internal(value: usize) -> Self {
-        if value >= NUM_INTERNAL_STEPS {
-            panic!("invalid internal step index");
-        }
-
+    pub(crate) const fn internal(value: InternalStepIndex) -> Self {
         Index {
             index: StepIndex::Internal(value),
         }
@@ -102,7 +103,11 @@ impl Index {
 fn test_index_map() -> Result<()> {
     let num_application_steps = 10;
 
-    assert_eq!(Index::internal(0).circuit_index(num_application_steps)?, 10);
+    assert_eq!(
+        Index::internal(InternalStepIndex::Rerandomize).circuit_index(num_application_steps)?,
+        10
+    );
+
     assert_eq!(Index::new(0).circuit_index(num_application_steps)?, 0);
     assert_eq!(Index::new(1).circuit_index(num_application_steps)?, 1);
     Index::new(999).assert_index(999)?;
