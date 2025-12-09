@@ -109,9 +109,8 @@ jobs:
       - name: Setup Rust
         uses: ./.github/actions/rust-setup
       - name: Install mdbook and plugins
-        run: |
-          cargo install mdbook@0.4.52 --locked
-          cargo install mdbook-katex@0.9.4 --locked
-          cargo install mdbook-mermaid@0.16.2 --locked
+        uses: taiki-e/install-action@v2
+        with:
+          tool: mdbook@0.4.52,mdbook-katex@0.9.4,mdbook-mermaid@0.16.2
       - name: Build book
         run: mdbook build ./book
