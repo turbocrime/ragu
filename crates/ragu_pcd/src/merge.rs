@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 use arithmetic::Cycle;
 use ff::Field;
-use ragu_circuits::{CircuitExt, polynomials::Rank, staging::StageExt};
+use ragu_circuits::{CircuitExt, mesh::omega_j, polynomials::Rank, staging::StageExt};
 use ragu_core::{Error, Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::{
     Element,
@@ -89,6 +89,19 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let preamble_witness = preamble::Witness {
             left: extract_headers::<C::CircuitField, HEADER_SIZE>(left_ky_poly),
             right: extract_headers::<C::CircuitField, HEADER_SIZE>(right_ky_poly),
+            // Circuit IDs from left / right proofs
+            left_circuit_id: omega_j(left.proof.application.circuit_id as u32),
+            right_circuit_id: omega_j(right.proof.application.circuit_id as u32),
+            // Unified instance data from left proof
+            left_w: left.proof.internal_circuits.w,
+            left_c: left.proof.internal_circuits.c,
+            left_mu: left.proof.internal_circuits.mu,
+            left_nu: left.proof.internal_circuits.nu,
+            // Unified instance data from right proof
+            right_w: right.proof.internal_circuits.w,
+            right_c: right.proof.internal_circuits.c,
+            right_mu: right.proof.internal_circuits.mu,
+            right_nu: right.proof.internal_circuits.nu,
         };
 
         // Compute native preamble
@@ -97,15 +110,17 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let native_preamble_commitment =
             native_preamble_rx.commit(host_generators, native_preamble_blind);
 
-        let nested_preamble_points: [C::HostCurve; 3] = [
+        let nested_preamble_points: [C::HostCurve; 5] = [
             native_preamble_commitment,
             left.proof.application.commitment,
             right.proof.application.commitment,
+            left.proof.internal_circuits.c_rx_commitment,
+            right.proof.internal_circuits.c_rx_commitment,
         ];
 
         // Compute nested preamble
         let nested_preamble_rx =
-            internal_circuits::stages::nested::preamble::Stage::<C::HostCurve, R, 3>::rx(
+            internal_circuits::stages::nested::preamble::Stage::<C::HostCurve, R, 5>::rx(
                 &nested_preamble_points,
             )?;
         let nested_preamble_blind: <C as Cycle>::ScalarField = C::ScalarField::random(&mut *rng);

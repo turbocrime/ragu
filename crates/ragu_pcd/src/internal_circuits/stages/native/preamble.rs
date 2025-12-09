@@ -29,17 +29,44 @@ pub struct ProofHeaders<F, const HEADER_SIZE: usize> {
 pub struct Witness<F, const HEADER_SIZE: usize> {
     pub left: ProofHeaders<F, HEADER_SIZE>,
     pub right: ProofHeaders<F, HEADER_SIZE>,
+
+    pub left_circuit_id: F,
+    pub right_circuit_id: F,
+
+    pub left_w: F,
+    pub left_c: F,
+    pub left_mu: F,
+    pub left_nu: F,
+    pub right_w: F,
+    pub right_c: F,
+    pub right_mu: F,
+    pub right_nu: F,
 }
 
+/// Unified instance data from a single proof: ((w, c), (mu, nu))
+type ProofUnified<'dr, D> = (
+    (Element<'dr, D>, Element<'dr, D>),
+    (Element<'dr, D>, Element<'dr, D>),
+);
+
 /// Output of the native preamble stage.
-pub type Output<'dr, D, const HEADER_SIZE: usize> = (
+#[allow(type_alias_bounds)]
+pub type Output<'dr, D: Driver<'dr>, const HEADER_SIZE: usize> = (
+    // Headers: ((left_right, (left_left, left_output)), (right_right, (right_left, right_output)))
     (
-        Header<'dr, D, HEADER_SIZE>,
-        (Header<'dr, D, HEADER_SIZE>, Header<'dr, D, HEADER_SIZE>),
+        (
+            Header<'dr, D, HEADER_SIZE>,
+            (Header<'dr, D, HEADER_SIZE>, Header<'dr, D, HEADER_SIZE>),
+        ),
+        (
+            Header<'dr, D, HEADER_SIZE>,
+            (Header<'dr, D, HEADER_SIZE>, Header<'dr, D, HEADER_SIZE>),
+        ),
     ),
+    // Circuit IDs and unified instance data: ((left_id, right_id), (left_unified, right_unified))
     (
-        Header<'dr, D, HEADER_SIZE>,
-        (Header<'dr, D, HEADER_SIZE>, Header<'dr, D, HEADER_SIZE>),
+        (Element<'dr, D>, Element<'dr, D>),
+        (ProofUnified<'dr, D>, ProofUnified<'dr, D>),
     ),
 );
 
@@ -55,7 +82,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     type OutputKind = Kind![C::CircuitField; Output<'_, _, HEADER_SIZE>];
 
     fn values() -> usize {
-        2 * 3 * HEADER_SIZE
+        2 * 3 * HEADER_SIZE + 10
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -85,9 +112,36 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
         let right_left = alloc_header(dr, witness.view().map(|w| &w.right.left_header))?;
         let right_output = alloc_header(dr, witness.view().map(|w| &w.right.output_header))?;
 
+        // Circuit IDs
+        let left_circuit_id = Element::alloc(dr, witness.view().map(|w| w.left_circuit_id))?;
+        let right_circuit_id = Element::alloc(dr, witness.view().map(|w| w.right_circuit_id))?;
+
+        // Unified instance data from left proof
+        let left_w = Element::alloc(dr, witness.view().map(|w| w.left_w))?;
+        let left_c = Element::alloc(dr, witness.view().map(|w| w.left_c))?;
+        let left_mu = Element::alloc(dr, witness.view().map(|w| w.left_mu))?;
+        let left_nu = Element::alloc(dr, witness.view().map(|w| w.left_nu))?;
+
+        // Unified instance data from right proof
+        let right_w = Element::alloc(dr, witness.view().map(|w| w.right_w))?;
+        let right_c = Element::alloc(dr, witness.view().map(|w| w.right_c))?;
+        let right_mu = Element::alloc(dr, witness.view().map(|w| w.right_mu))?;
+        let right_nu = Element::alloc(dr, witness.view().map(|w| w.right_nu))?;
+
         Ok((
-            (left_right, (left_left, left_output)),
-            (right_right, (right_left, right_output)),
+            // Headers
+            (
+                (left_right, (left_left, left_output)),
+                (right_right, (right_left, right_output)),
+            ),
+            // Circuit IDs and unified instance data
+            (
+                (left_circuit_id, right_circuit_id),
+                (
+                    ((left_w, left_c), (left_mu, left_nu)),
+                    ((right_w, right_c), (right_mu, right_nu)),
+                ),
+            ),
         ))
     }
 }

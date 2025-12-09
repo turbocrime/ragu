@@ -33,9 +33,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // proof.
         let verifier = Verifier::new(&self.circuit_mesh, self.num_application_steps, &mut rng);
 
-        // TODO: Verify the preamble's public inputs match what's in the proof – verifier needs to
-        // reconstruct the expected preamble witness and check it.
-
         // Preamble verification
         let preamble_valid = verifier.check_stage(
             &pcd.proof.preamble.native_preamble_rx,

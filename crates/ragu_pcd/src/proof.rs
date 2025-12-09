@@ -2,6 +2,7 @@ use arithmetic::Cycle;
 use ff::Field;
 use ragu_circuits::{
     CircuitExt,
+    mesh::omega_j,
     polynomials::{Rank, structured},
     staging::StageExt,
 };
@@ -158,7 +159,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let application_commitment =
             application_rx.commit(self.params.host_generators(), application_blind);
 
-        // Preamble rx polynomial with dummy headers
+        // Preamble rx polynomial with dummy headers and zero unified instance data
         let preamble_witness: preamble::Witness<C::CircuitField, HEADER_SIZE> = preamble::Witness {
             left: preamble::ProofHeaders {
                 output_header: [C::CircuitField::ZERO; HEADER_SIZE],
@@ -170,6 +171,24 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 left_header: [C::CircuitField::ZERO; HEADER_SIZE],
                 right_header: [C::CircuitField::ZERO; HEADER_SIZE],
             },
+            // Dummy circuit IDs (trivial proof uses dummy circuit)
+            left_circuit_id: omega_j(internal_circuits::index(
+                self.num_application_steps,
+                dummy::CIRCUIT_ID,
+            ) as u32),
+            right_circuit_id: omega_j(internal_circuits::index(
+                self.num_application_steps,
+                dummy::CIRCUIT_ID,
+            ) as u32),
+            // Zero unified instance data for trivial proofs
+            left_w: C::CircuitField::ZERO,
+            left_c: C::CircuitField::ZERO,
+            left_mu: C::CircuitField::ZERO,
+            left_nu: C::CircuitField::ZERO,
+            right_w: C::CircuitField::ZERO,
+            right_c: C::CircuitField::ZERO,
+            right_mu: C::CircuitField::ZERO,
+            right_nu: C::CircuitField::ZERO,
         };
 
         let native_preamble_rx = preamble::Stage::<C, R, HEADER_SIZE>::rx(&preamble_witness)
@@ -178,15 +197,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let native_preamble_commitment =
             native_preamble_rx.commit(self.params.host_generators(), native_preamble_blind);
 
-        let nested_preamble_points: [C::HostCurve; 3] = [
+        let nested_preamble_points: [C::HostCurve; 5] = [
             native_preamble_commitment,
+            application_commitment,
+            application_commitment,
+            // placeholder for left.c_rx_commitment and right.c_rx_commitment
             application_commitment,
             application_commitment,
         ];
 
         // Nested preamble rx polynomial
         let nested_preamble_rx =
-            stages::nested::preamble::Stage::<C::HostCurve, R, 3>::rx(&nested_preamble_points)?;
+            stages::nested::preamble::Stage::<C::HostCurve, R, 5>::rx(&nested_preamble_points)?;
         let nested_preamble_blind = C::ScalarField::random(&mut *rng);
         let nested_preamble_commitment =
             nested_preamble_rx.commit(self.params.nested_generators(), nested_preamble_blind);
