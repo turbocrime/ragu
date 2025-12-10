@@ -2,6 +2,22 @@
 
 > explain Bootle16 CS -> revdot product relation
 
+**Additional Notation**:
+We further generalize the power vector notation to arbitrary range $[n,m)$ in the
+exponent: $\v{z^{n:m}}=(z^n,\ldots,z^{m-1})$.
+Combining the power vector and vector reversal:
+$\rv{z}^{\mathbf{n:2n}}=(z^{2n-1},\ldots,z^n)$ and
+$\v{z^{2n:3n}}=(z^{2n},\ldots,z^{3n-1})$.
+
+**Userful Facts**:
+A few arithmetic facts (assume all vectors have the same length):
+- $\dot{\v{a}\|\v{b}}{\v{c}\|\v{d}} = \dot{\v{a}}{\v{c}} + \dot{\v{b}}{\v{d}}$
+- $\alpha\cdot \dot{\v{a}}{\v{c}} + \beta\cdot \dot{\v{b}}{\v{c}} =
+\dot{\alpha\cdot\v{a}+\beta\cdot\v{b}}{\v{c}}$ where $\alpha,\beta\in\F$
+- $\dot{\rv{a}}{\rv{a}}=\dot{\v{a}}{\v{a}}$
+- $\dot{\rv{b}}{\rv{a} \circ \v{d}} = \dot{\v{b}}{\widehat{\rv{a}\circ\v{d}}}=
+\dot{\v{b}}{\v{a}\circ\rv{d}}$
+
 ## Constraint System
 
 The witness vectors $\v{a}, \v{b}, \v{c} \in \F^n$ must satisfy $n$ _multiplication constraints_, where the $i$th such constraint takes the form $\v{a}_i \cdot \v{b}_i = \v{c}_i$. In addition, the witness must satisfy a set of $4n$ _linear constraints_, where the $j$th such constraint is of the form
