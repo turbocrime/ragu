@@ -55,6 +55,45 @@ pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle, const HEADER_SIZE: usize> 
     pub unified: unified::Output<'dr, D, C>,
 }
 
+impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usize>
+    ProofInputs<'dr, D, C, HEADER_SIZE>
+{
+    /// Allocate ProofInputs from a proof reference and pre-computed output header.
+    pub fn alloc<R: Rank>(
+        dr: &mut D,
+        proof: DriverValue<D, &Proof<C, R>>,
+        output_header: DriverValue<D, &[D::F; HEADER_SIZE]>,
+    ) -> Result<Self> {
+        fn alloc_header<'dr, D: Driver<'dr>, const N: usize>(
+            dr: &mut D,
+            data: DriverValue<D, &[D::F]>,
+        ) -> Result<FixedVec<Element<'dr, D>, ConstLen<N>>> {
+            (0..N)
+                .map(|i| Element::alloc(dr, data.view().map(|d| d[i])))
+                .try_collect_fixed()
+        }
+
+        Ok(ProofInputs {
+            right_header: alloc_header(
+                dr,
+                proof.view().map(|p| p.application.right_header.as_slice()),
+            )?,
+            left_header: alloc_header(
+                dr,
+                proof.view().map(|p| p.application.left_header.as_slice()),
+            )?,
+            output_header: alloc_header(dr, output_header.view().map(|h| h.as_slice()))?,
+            circuit_id: Element::alloc(
+                dr,
+                proof
+                    .view()
+                    .map(|p| omega_j(p.application.circuit_id as u32)),
+            )?,
+            unified: unified::Output::alloc_from_proof(dr, proof)?,
+        })
+    }
+}
+
 /// Output of the native preamble stage.
 #[derive(Gadget)]
 pub struct Output<'dr, D: Driver<'dr>, C: Cycle, const HEADER_SIZE: usize> {
@@ -148,69 +187,17 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     where
         Self: 'dr,
     {
-        /// Allocate a fixed-size header from a slice of field elements.
-        fn alloc_header<'dr, D: Driver<'dr>, const HEADER_SIZE: usize>(
-            dr: &mut D,
-            data: DriverValue<D, &[D::F]>,
-        ) -> Result<FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>>> {
-            (0..HEADER_SIZE)
-                .map(|i| Element::alloc(dr, data.view().map(|d| d[i])))
-                .try_collect_fixed()
-        }
+        let left = ProofInputs::alloc(
+            dr,
+            witness.view().map(|w| w.left),
+            witness.view().map(|w| &w.left_output_header),
+        )?;
 
-        // Allocate left proof inputs.
-        let left = ProofInputs {
-            right_header: alloc_header(
-                dr,
-                witness
-                    .view()
-                    .map(|w| w.left.application.right_header.as_slice()),
-            )?,
-            left_header: alloc_header(
-                dr,
-                witness
-                    .view()
-                    .map(|w| w.left.application.left_header.as_slice()),
-            )?,
-            output_header: alloc_header(
-                dr,
-                witness.view().map(|w| w.left_output_header.as_slice()),
-            )?,
-            circuit_id: Element::alloc(
-                dr,
-                witness
-                    .view()
-                    .map(|w| omega_j(w.left.application.circuit_id as u32)),
-            )?,
-            unified: unified::Output::alloc_from_proof(dr, witness.view().map(|w| w.left))?,
-        };
-
-        // Allocate right proof inputs.
-        let right = ProofInputs {
-            right_header: alloc_header(
-                dr,
-                witness
-                    .view()
-                    .map(|w| w.right.application.right_header.as_slice()),
-            )?,
-            left_header: alloc_header(
-                dr,
-                witness
-                    .view()
-                    .map(|w| w.right.application.left_header.as_slice()),
-            )?,
-            output_header: alloc_header(
-                dr,
-                witness.view().map(|w| w.right_output_header.as_slice()),
-            )?,
-            circuit_id: Element::alloc(
-                dr,
-                witness
-                    .view()
-                    .map(|w| omega_j(w.right.application.circuit_id as u32)),
-            )?,
-            unified: unified::Output::alloc_from_proof(dr, witness.view().map(|w| w.right))?,
-        };
+        let right = ProofInputs::alloc(
+            dr,
+            witness.view().map(|w| w.right),
+            witness.view().map(|w| &w.right_output_header),
+        )?;
 
         Ok(Output { left, right })
     }
