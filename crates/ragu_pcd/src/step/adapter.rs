@@ -72,8 +72,6 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
         let output_gadget = padded::for_header::<S::Output, HEADER_SIZE, _>(dr, output_gadget)?;
 
         let mut elements = Vec::with_capacity(HEADER_SIZE * 3);
-        output_gadget.write(dr, &mut elements)?;
-
         for i in 0..HEADER_SIZE {
             elements.push(Element::alloc(dr, D::just(|| left_header.snag()[i]))?);
         }
@@ -82,7 +80,8 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
             elements.push(Element::alloc(dr, D::just(|| right_header.snag()[i]))?);
         }
 
-        elements.reverse();
+        output_gadget.write(dr, &mut elements)?;
+
         FixedVec::try_from(elements)
     }
 
@@ -107,17 +106,17 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
             .witness::<_, HEADER_SIZE>(dr, witness, left, right)?;
 
         let mut elements = Vec::with_capacity(HEADER_SIZE * 3);
-        output.write(dr, &mut elements)?;
         left.write(dr, &mut elements)?;
         right.write(dr, &mut elements)?;
+        output.write(dr, &mut elements)?;
 
         let aux = D::with(|| {
-            let left_header = elements[HEADER_SIZE..HEADER_SIZE * 2]
+            let left_header = elements[0..HEADER_SIZE]
                 .iter()
                 .map(|e| *e.value().take())
                 .collect_fixed()?;
 
-            let right_header = elements[HEADER_SIZE * 2..HEADER_SIZE * 3]
+            let right_header = elements[HEADER_SIZE..HEADER_SIZE * 2]
                 .iter()
                 .map(|e| *e.value().take())
                 .collect_fixed()?;
@@ -125,7 +124,6 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
             Ok(((left_header, right_header), aux.take()))
         })?;
 
-        elements.reverse();
         Ok((FixedVec::try_from(elements)?, aux))
     }
 }

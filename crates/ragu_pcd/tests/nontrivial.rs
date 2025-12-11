@@ -10,7 +10,7 @@ use ragu_core::{
 use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::{
     ApplicationBuilder,
-    header::{Header, Prefix},
+    header::{Header, Suffix},
     step::{Encoded, Encoder, Index, Step},
 };
 use ragu_primitives::{Element, Sponge};
@@ -19,7 +19,7 @@ use rand::{SeedableRng, rngs::StdRng};
 struct LeafNode;
 
 impl<F: Field> Header<F> for LeafNode {
-    const PREFIX: Prefix = Prefix::new(0);
+    const SUFFIX: Suffix = Suffix::new(0);
     type Data<'source> = F;
     type Output = Kind![F; Element<'_, _>];
 
@@ -34,7 +34,7 @@ impl<F: Field> Header<F> for LeafNode {
 struct InternalNode;
 
 impl<F: Field> Header<F> for InternalNode {
-    const PREFIX: Prefix = Prefix::new(1);
+    const SUFFIX: Suffix = Suffix::new(1);
     type Data<'source> = F;
     type Output = Kind![F; Element<'_, _>];
 

@@ -6,6 +6,7 @@ use ragu_circuits::{
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
+    gadgets::GadgetKind,
     maybe::Maybe,
 };
 use ragu_primitives::{
@@ -52,14 +53,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const NUM_REVDOT_CLAIMS: usize
 
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, NUM_REVDOT_CLAIMS>;
-    type Output = unified::OutputKind<C>;
+    type Output = unified::InternalOutputKind<C>;
     type Aux<'source> = ();
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
         dr: &mut D,
         instance: DriverValue<D, Self::Instance<'source>>,
-    ) -> Result<unified::Output<'dr, D, C>> {
+    ) -> Result<<Self::Output as GadgetKind<C::CircuitField>>::Rebind<'dr, D>> {
         OutputBuilder::new().finish(dr, &instance)
     }
 
@@ -68,7 +69,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const NUM_REVDOT_CLAIMS: usize
         builder: StageBuilder<'a, 'dr, D, R, (), Self::Final>,
         witness: DriverValue<D, Self::Witness<'source>>,
     ) -> Result<(
-        unified::Output<'dr, D, C>,
+        <Self::Output as GadgetKind<C::CircuitField>>::Rebind<'dr, D>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where

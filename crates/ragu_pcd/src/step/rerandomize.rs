@@ -71,7 +71,7 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
 
 #[test]
 fn test_rerandomize_consistency() {
-    use crate::header::{Header, Prefix};
+    use crate::header::{Header, Suffix};
     use ragu_circuits::{CircuitExt, polynomials};
     use ragu_core::{
         Result,
@@ -87,7 +87,7 @@ fn test_rerandomize_consistency() {
 
     struct Single;
     impl Header<Fp> for Single {
-        const PREFIX: Prefix = Prefix::new(0);
+        const SUFFIX: Suffix = Suffix::new(0);
         type Data<'source> = Fp;
         type Output = Kind![Fp; Element<'_, _>];
         fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
@@ -100,7 +100,7 @@ fn test_rerandomize_consistency() {
 
     struct Pair;
     impl Header<Fp> for Pair {
-        const PREFIX: Prefix = Prefix::new(1);
+        const SUFFIX: Suffix = Suffix::new(1);
         type Data<'source> = (Fp, Fp);
         type Output = Kind![Fp; (Element<'_, _>, Element<'_, _>)];
         fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(

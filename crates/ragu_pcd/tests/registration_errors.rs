@@ -9,18 +9,18 @@ use ragu_pasta::Pasta;
 use ragu_pcd::step::{Encoded, Encoder, Index, Step};
 use ragu_pcd::{
     ApplicationBuilder,
-    header::{Header, Prefix},
+    header::{Header, Suffix},
 };
 
-// Header A with prefix 0
-struct HPrefixA;
-// Header B with prefix 1
-struct HPrefixB;
-// Different type, same prefix 0 (duplicate)
-struct HPrefixAOther;
+// Header A with suffix 0
+struct HSuffixA;
+// Header B with suffix 1
+struct HSuffixB;
+// Different type, same suffix 0 (duplicate)
+struct HSuffixAOther;
 
-impl<F: Field> Header<F> for HPrefixA {
-    const PREFIX: Prefix = Prefix::new(0);
+impl<F: Field> Header<F> for HSuffixA {
+    const SUFFIX: Suffix = Suffix::new(0);
     type Data<'source> = ();
     type Output = ();
     fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
@@ -31,8 +31,8 @@ impl<F: Field> Header<F> for HPrefixA {
     }
 }
 
-impl<F: Field> Header<F> for HPrefixB {
-    const PREFIX: Prefix = Prefix::new(1);
+impl<F: Field> Header<F> for HSuffixB {
+    const SUFFIX: Suffix = Suffix::new(1);
     type Data<'source> = ();
     type Output = ();
     fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
@@ -43,8 +43,8 @@ impl<F: Field> Header<F> for HPrefixB {
     }
 }
 
-impl<F: Field> Header<F> for HPrefixAOther {
-    const PREFIX: Prefix = Prefix::new(0); // duplicate prefix
+impl<F: Field> Header<F> for HSuffixAOther {
+    const SUFFIX: Suffix = Suffix::new(0); // duplicate suffix
     type Data<'source> = ();
     type Output = ();
     fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
@@ -55,7 +55,7 @@ impl<F: Field> Header<F> for HPrefixAOther {
     }
 }
 
-// Step 0 -> produces HPrefixA
+// Step 0 -> produces HSuffixA
 struct Step0;
 impl<C: arithmetic::Cycle> Step<C> for Step0 {
     const INDEX: Index = Index::new(0);
@@ -63,7 +63,7 @@ impl<C: arithmetic::Cycle> Step<C> for Step0 {
     type Aux<'source> = ();
     type Left = ();
     type Right = ();
-    type Output = HPrefixA;
+    type Output = HSuffixA;
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
@@ -92,9 +92,9 @@ impl<C: arithmetic::Cycle> Step<C> for Step1 {
     const INDEX: Index = Index::new(1);
     type Witness<'source> = ();
     type Aux<'source> = ();
-    type Left = HPrefixA;
-    type Right = HPrefixA;
-    type Output = HPrefixB;
+    type Left = HSuffixA;
+    type Right = HSuffixA;
+    type Output = HSuffixB;
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
@@ -117,15 +117,15 @@ impl<C: arithmetic::Cycle> Step<C> for Step1 {
     }
 }
 
-// Duplicate prefix step (index 1) producing different header with same prefix
+// Duplicate suffix step (index 1) producing different header with same suffix
 struct Step1Dup;
 impl<C: arithmetic::Cycle> Step<C> for Step1Dup {
     const INDEX: Index = Index::new(1);
     type Witness<'source> = ();
     type Aux<'source> = ();
-    type Left = HPrefixA;
-    type Right = HPrefixA;
-    type Output = HPrefixAOther;
+    type Left = HSuffixA;
+    type Right = HSuffixA;
+    type Output = HSuffixAOther;
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
@@ -169,7 +169,7 @@ fn register_steps_out_of_order_should_fail() {
 
 #[test]
 #[should_panic]
-fn register_steps_duplicate_prefix_should_fail() {
+fn register_steps_duplicate_suffix_should_fail() {
     ApplicationBuilder::<Pasta, R<13>, 4>::new()
         .register(Step0)
         .unwrap()

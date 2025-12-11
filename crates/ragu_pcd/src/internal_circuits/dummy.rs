@@ -9,8 +9,8 @@ use ragu_primitives::Element;
 pub use crate::internal_circuits::InternalCircuitIndex::DummyCircuit as CIRCUIT_ID;
 
 /// The dummy circuit for trivial proofs. Outputs a single `1` element
-/// representing the trivial header prefix, which sits in the lowest degree
-/// term of k(y) after reversal in the adapter.
+/// representing the trivial header suffix, which sits in the lowest degree term
+/// of $k(Y)$ after reversal in the adapter.
 pub struct Circuit;
 
 impl<F: Field> ragu_circuits::Circuit<F> for Circuit {

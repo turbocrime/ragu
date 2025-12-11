@@ -40,7 +40,7 @@ impl<'dr, 'source: 'dr, D: Driver<'dr>, H: Header<D::F>, const HEADER_SIZE: usiz
 pub enum Encoded<'dr, D: Driver<'dr>, H: Header<D::F>, const HEADER_SIZE: usize> {
     /// A gadget form of the header produced by `Header::encode`.
     Gadget(<H::Output as GadgetKind<D::F>>::Rebind<'dr, D>),
-    /// A fixed-length serialized header (including prefix), padded to `HEADER_SIZE`.
+    /// A fixed-length serialized header (including suffix), padded to `HEADER_SIZE`.
     Raw(FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>>),
 }
 

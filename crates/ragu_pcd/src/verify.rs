@@ -1,6 +1,7 @@
 //! This module provides the [`Application::verify`] method implementation.
 
 mod stub_step;
+mod stub_unified;
 
 use arithmetic::{Cycle, eval};
 use ff::PrimeField;
@@ -16,11 +17,12 @@ use rand::Rng;
 use crate::{
     Application, Pcd,
     header::Header,
-    internal_circuits::{self, InternalCircuitIndex, NUM_REVDOT_CLAIMS},
+    internal_circuits::{self, InternalCircuitIndex},
     step::adapter::Adapter,
 };
 
 use stub_step::StubStep;
+use stub_unified::StubUnified;
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
     /// Verifies some [`Pcd`] for the provided [`Header`].
@@ -77,32 +79,30 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             nested_eval_commitment: pcd.proof.eval.nested_eval_commitment,
         };
 
+        // Compute unified k(Y) once for both C and V circuits.
+        let unified_ky = {
+            let stub = StubUnified::<C>::new();
+            stub.ky(&unified_instance)?
+        };
+        use ff::Field;
+        assert!(unified_ky[1] == C::CircuitField::ZERO);
+
         // C circuit verification with ky.
         // C's final stage is preamble, so combine preamble_rx with c_rx.
         let c_circuit_valid = {
-            let c = internal_circuits::c::Circuit::<C, R, HEADER_SIZE, NUM_REVDOT_CLAIMS>::new(
-                self.params,
-            );
-            let c_unified_ky = c.ky(&unified_instance)?;
-
             let mut c_combined_rx = pcd.proof.preamble.native_preamble_rx.clone();
             c_combined_rx.add_assign(&pcd.proof.internal_circuits.c_rx);
 
             verifier.check_internal_circuit(
                 &c_combined_rx,
                 internal_circuits::c::CIRCUIT_ID,
-                &c_unified_ky,
+                &unified_ky,
             )
         };
 
         // V circuit verification with ky.
         // V's final stage is eval, so combine preamble_rx + query_rx + eval_rx with v_rx.
         let v_circuit_valid = {
-            let v = internal_circuits::v::Circuit::<C, R, HEADER_SIZE, NUM_REVDOT_CLAIMS>::new(
-                self.params,
-            );
-            let v_unified_ky = v.ky(&unified_instance)?;
-
             let mut v_combined_rx = pcd.proof.preamble.native_preamble_rx.clone();
             v_combined_rx.add_assign(&pcd.proof.query.native_query_rx);
             v_combined_rx.add_assign(&pcd.proof.eval.native_eval_rx);
@@ -111,7 +111,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             verifier.check_internal_circuit(
                 &v_combined_rx,
                 internal_circuits::v::CIRCUIT_ID,
-                &v_unified_ky,
+                &unified_ky,
             )
         };
 

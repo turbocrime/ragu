@@ -7,7 +7,7 @@ use ragu_circuits::{
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
-    gadgets::{Gadget, GadgetKind, Kind},
+    gadgets::{Gadget, GadgetKind},
     maybe::Maybe,
 };
 
@@ -50,7 +50,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const NUM_REVDOT_CLAIMS: usize
 
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C>;
-    type Output = Kind![C::CircuitField; unified::Output<'_, _, C>];
+    type Output = unified::InternalOutputKind<C>;
     type Aux<'source> = ();
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

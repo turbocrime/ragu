@@ -36,7 +36,7 @@ use step::{Step, adapter::Adapter};
 pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     circuit_mesh: MeshBuilder<'params, C::CircuitField, R>,
     num_application_steps: usize,
-    header_map: BTreeMap<header::Prefix, TypeId>,
+    header_map: BTreeMap<header::Suffix, TypeId>,
     _marker: PhantomData<[(); HEADER_SIZE]>,
 }
 
@@ -67,9 +67,9 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
     pub fn register<S: Step<C> + 'params>(mut self, step: S) -> Result<Self> {
         S::INDEX.assert_index(self.num_application_steps)?;
 
-        self.prevent_duplicate_prefixes::<S::Output>()?;
-        self.prevent_duplicate_prefixes::<S::Left>()?;
-        self.prevent_duplicate_prefixes::<S::Right>()?;
+        self.prevent_duplicate_suffixes::<S::Output>()?;
+        self.prevent_duplicate_suffixes::<S::Left>()?;
+        self.prevent_duplicate_suffixes::<S::Right>()?;
 
         self.circuit_mesh = self
             .circuit_mesh
@@ -79,17 +79,17 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         Ok(self)
     }
 
-    fn prevent_duplicate_prefixes<H: Header<C::CircuitField>>(&mut self) -> Result<()> {
-        match self.header_map.get(&H::PREFIX) {
+    fn prevent_duplicate_suffixes<H: Header<C::CircuitField>>(&mut self) -> Result<()> {
+        match self.header_map.get(&H::SUFFIX) {
             Some(ty) => {
                 if *ty != TypeId::of::<H>() {
                     return Err(Error::Initialization(
-                        "two different Header implementations using the same prefix".into(),
+                        "two different Header implementations using the same suffix".into(),
                     ));
                 }
             }
             None => {
-                self.header_map.insert(H::PREFIX, TypeId::of::<H>());
+                self.header_map.insert(H::SUFFIX, TypeId::of::<H>());
             }
         }
 

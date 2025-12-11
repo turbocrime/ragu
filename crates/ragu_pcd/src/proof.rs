@@ -19,7 +19,7 @@ use crate::{
     Application,
     components::fold_revdot::{self, ErrorTermsLen},
     header::Header,
-    internal_circuits::{self, NUM_REVDOT_CLAIMS, dummy, stages},
+    internal_circuits::{self, NUM_NATIVE_REVDOT_CLAIMS, dummy, stages},
 };
 
 /// Represents a recursive proof for the correctness of some computation.
@@ -362,7 +362,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // Generate dummy values for mu, nu, and error_terms (for now – these will be derived challenges)
         let mu = C::CircuitField::random(&mut *rng);
         let nu = C::CircuitField::random(&mut *rng);
-        let error_terms = ErrorTermsLen::<NUM_REVDOT_CLAIMS>::range()
+        let error_terms = ErrorTermsLen::<NUM_NATIVE_REVDOT_CLAIMS>::range()
             .map(|_| C::CircuitField::random(&mut *rng))
             .collect_fixed()?;
 
@@ -373,16 +373,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             let mu = Element::alloc(dr, mu)?;
             let nu = Element::alloc(dr, nu)?;
 
-            let error_terms = ErrorTermsLen::<NUM_REVDOT_CLAIMS>::range()
+            let error_terms = ErrorTermsLen::<NUM_NATIVE_REVDOT_CLAIMS>::range()
                 .map(|i| Element::alloc(dr, error_terms.view().map(|et| et[i])))
                 .try_collect_fixed()?;
 
             // TODO: Use zeros for ky_values for now.
-            let ky_values = (0..NUM_REVDOT_CLAIMS)
+            let ky_values = (0..NUM_NATIVE_REVDOT_CLAIMS)
                 .map(|_| Element::zero(dr))
                 .collect_fixed()?;
 
-            Ok(*fold_revdot::compute_c::<_, NUM_REVDOT_CLAIMS>(
+            Ok(*fold_revdot::compute_c::<_, NUM_NATIVE_REVDOT_CLAIMS>(
                 dr,
                 &mu,
                 &nu,
@@ -473,7 +473,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             nested_eval_commitment,
         };
         let internal_circuit_c =
-            internal_circuits::c::Circuit::<C, R, HEADER_SIZE, NUM_REVDOT_CLAIMS>::new(self.params);
+            internal_circuits::c::Circuit::<C, R, HEADER_SIZE, NUM_NATIVE_REVDOT_CLAIMS>::new(
+                self.params,
+            );
         let internal_circuit_c_witness = internal_circuits::c::Witness {
             unified_instance: &unified_instance,
             error_terms,
@@ -487,7 +489,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         // Compute v_rx using the V-staged circuit
         let internal_circuit_v =
-            internal_circuits::v::Circuit::<C, R, HEADER_SIZE, NUM_REVDOT_CLAIMS>::new(self.params);
+            internal_circuits::v::Circuit::<C, R, HEADER_SIZE, NUM_NATIVE_REVDOT_CLAIMS>::new(
+                self.params,
+            );
         let internal_circuit_v_witness = internal_circuits::v::Witness {
             unified_instance: &unified_instance,
             query_witness: &query_witness,

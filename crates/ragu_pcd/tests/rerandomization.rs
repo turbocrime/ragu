@@ -9,17 +9,17 @@ use ragu_core::{
 use ragu_pasta::Pasta;
 use ragu_pcd::{
     ApplicationBuilder,
-    header::{Header, Prefix},
+    header::{Header, Suffix},
     step::{Encoded, Encoder, Index, Step},
 };
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 
-// Header A (prefix 0)
+// Header A (suffix 0)
 struct HeaderA;
 
 impl<F: Field> Header<F> for HeaderA {
-    const PREFIX: Prefix = Prefix::new(0);
+    const SUFFIX: Suffix = Suffix::new(0);
     type Data<'source> = ();
     type Output = ();
     fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(

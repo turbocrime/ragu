@@ -13,7 +13,7 @@ pub mod unified;
 pub mod v;
 
 // TODO: Placeholder value for the number of revdot claims.
-pub const NUM_REVDOT_CLAIMS: usize = 3;
+pub const NUM_NATIVE_REVDOT_CLAIMS: usize = 3;
 
 #[derive(Clone, Copy, Debug)]
 #[repr(usize)]
@@ -40,12 +40,12 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
 ) -> Result<MeshBuilder<'params, C::CircuitField, R>> {
     let mesh = mesh.register_circuit(dummy::Circuit)?;
     let mesh = {
-        let c = c::Circuit::<C, R, HEADER_SIZE, NUM_REVDOT_CLAIMS>::new(params);
+        let c = c::Circuit::<C, R, HEADER_SIZE, NUM_NATIVE_REVDOT_CLAIMS>::new(params);
         mesh.register_circuit_object(c.final_into_object()?)?
             .register_circuit(c)?
     };
     let mesh = {
-        let v = v::Circuit::<C, R, HEADER_SIZE, NUM_REVDOT_CLAIMS>::new(params);
+        let v = v::Circuit::<C, R, HEADER_SIZE, NUM_NATIVE_REVDOT_CLAIMS>::new(params);
         mesh.register_circuit_object(v.final_into_object()?)?
             .register_circuit(v)?
     };

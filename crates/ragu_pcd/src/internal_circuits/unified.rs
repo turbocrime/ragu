@@ -9,18 +9,18 @@ use ragu_circuits::polynomials::Rank;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
-    gadgets::{Gadget, Kind},
+    gadgets::{Gadget, GadgetKind, Kind},
     maybe::Maybe,
 };
 use ragu_primitives::{Element, Point, io::Write};
 
-use crate::proof::Proof;
+use crate::{components::suffix::Suffix, proof::Proof};
 
 #[allow(type_alias_bounds)]
-pub type OutputKind<C: Cycle> = Kind![C::CircuitField; Output<'_, _, C>];
+pub type InternalOutputKind<C: Cycle> = Kind![C::CircuitField; Suffix<'_, _, Output<'_, _, C>>];
 
 /// The number of wires in an `Output` gadget.
-pub const NUM_WIRES: usize = 15;
+pub const NUM_WIRES: usize = 14;
 
 #[derive(Gadget, Write)]
 pub struct Output<'dr, D: Driver<'dr>, C: Cycle> {
@@ -44,10 +44,6 @@ pub struct Output<'dr, D: Driver<'dr>, C: Cycle> {
     pub u: Element<'dr, D>,
     #[ragu(gadget)]
     pub nested_eval_commitment: Point<'dr, D, C::NestedCurve>,
-
-    /// This is used to ensure k(Y) has a zero coefficient for the linear term.
-    #[ragu(gadget)]
-    zero: Element<'dr, D>,
 }
 
 pub struct Instance<C: Cycle> {
@@ -112,7 +108,6 @@ pub struct OutputBuilder<'a, 'dr, D: Driver<'dr>, C: Cycle> {
 }
 
 impl<'dr, D: Driver<'dr>, C: Cycle> Output<'dr, D, C> {
-    // TODO: Expose a gadget for the "trailing zero element" pattern to simplify values() counting.
     /// Allocate an Output from a proof reference.
     pub fn alloc_from_proof<R: Rank>(
         dr: &mut D,
@@ -149,7 +144,6 @@ impl<'dr, D: Driver<'dr>, C: Cycle> Output<'dr, D, C> {
             nested_f_commitment,
             u,
             nested_eval_commitment,
-            zero: Element::zero(dr),
         })
     }
 }
@@ -188,20 +182,23 @@ impl<'a, 'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle> OutputBuilder<'a, '
         self,
         dr: &mut D,
         instance: &DriverValue<D, &'a Instance<C>>,
-    ) -> Result<Output<'dr, D, C>> {
-        Ok(Output {
-            nested_preamble_commitment: self.nested_preamble_commitment.take(dr, instance)?,
-            w: self.w.take(dr, instance)?,
-            c: self.c.take(dr, instance)?,
-            mu: self.mu.take(dr, instance)?,
-            nu: self.nu.take(dr, instance)?,
-            nested_query_commitment: self.nested_query_commitment.take(dr, instance)?,
-            alpha: self.alpha.take(dr, instance)?,
-            nested_f_commitment: self.nested_f_commitment.take(dr, instance)?,
-            u: self.u.take(dr, instance)?,
-            nested_eval_commitment: self.nested_eval_commitment.take(dr, instance)?,
-            zero: Element::zero(dr),
-        })
+    ) -> Result<<InternalOutputKind<C> as GadgetKind<D::F>>::Rebind<'dr, D>> {
+        let zero = Element::zero(dr);
+        Ok(Suffix::new(
+            Output {
+                nested_preamble_commitment: self.nested_preamble_commitment.take(dr, instance)?,
+                w: self.w.take(dr, instance)?,
+                c: self.c.take(dr, instance)?,
+                mu: self.mu.take(dr, instance)?,
+                nu: self.nu.take(dr, instance)?,
+                nested_query_commitment: self.nested_query_commitment.take(dr, instance)?,
+                alpha: self.alpha.take(dr, instance)?,
+                nested_f_commitment: self.nested_f_commitment.take(dr, instance)?,
+                u: self.u.take(dr, instance)?,
+                nested_eval_commitment: self.nested_eval_commitment.take(dr, instance)?,
+            },
+            zero,
+        ))
     }
 }
 
