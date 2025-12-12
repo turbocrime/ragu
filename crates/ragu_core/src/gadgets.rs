@@ -30,14 +30,27 @@
 //!
 //! #### Fungibility
 //!
-//! Gadgets must be _fungible_, meaning that two instances of the same
-//! [`Gadget`] implementation must behave the same during circuit synthesis.
-//! Wires are already fungible, and witness data cannot affect circuit synthesis
-//! by design, and so this means gadgets cannot otherwise carry state under most
-//! conditions. As a consequence, gadgets also cannot contain _dynamic_-length
-//! vectors and likely cannot use `enum`s.
+//! Gadgets must be _fungible_: a gadget's behavior during circuit synthesis
+//! must be fully determined by its type, not by any particular instance's
+//! state. This ensures deterministic synthesis and allows drivers to substitute
+//! or transform gadgets without affecting circuit behavior.
 //!
-//! Fungibility is imposed on gadgets that are automatically derived.
+//! From this principle, three consequences follow:
+//!
+//! 1. **No dynamic-length collections.** The number of wires must be
+//!    type-determined. Use `FixedVec` with a compile-time `Len` bound instead
+//!    of `Vec`.
+//!
+//! 2. **No enum discriminants.** Which variant is active constitutes instance
+//!    state that affects synthesis.
+//!
+//! 3. **No non-witness runtime state.** Any runtime data must be _stable_
+//!    (identical across all instances of that type). See `Raw` for handling
+//!    stable non-witness values.
+//!
+//! Wires are fungible by definition, and witness data cannot affect synthesis,
+//! so gadgets containing only these (plus `PhantomData` and nested gadgets)
+//! automatically satisfy fungibility. The derive macro enforces this.
 //!
 //! #### Transformations between Drivers
 //!
@@ -86,11 +99,12 @@ pub use sendable::Sendable;
 ///
 /// ## Fungibility
 ///
-/// Gadgets must be fungible, meaning that two instances of the same [`Gadget`]
-/// implementation must behave the same during circuit synthesis. Wires are
-/// already fungible in this sense, and witness data cannot affect circuit
-/// synthesis by design, and so gadgets generally should not carry state. This
-/// precludes the use of `enum` discriminants or dynamic-length vectors.
+/// Gadgets must be _fungible_: a gadget's behavior during circuit synthesis
+/// must be fully determined by its type, not by any particular instance's
+/// state. Wires are fungible by definition, and witness data cannot affect
+/// synthesis, so gadgets containing only these automatically satisfy this
+/// requirement. This precludes enum discriminants, dynamic-length collections,
+/// and non-stable runtime state.
 ///
 /// ## Implementations
 ///
@@ -198,8 +212,9 @@ pub unsafe trait GadgetKind<F: Field>: core::any::Any {
 /// Automatically derives the [`Gadget`], [`GadgetKind`] and [`Clone`] traits
 /// for common gadget types.
 ///
-/// This only works for structs with named fields, as `enum`s likely break the
-/// fungibility requirement of gadgets.
+/// This only works for structs with named fields. Enums are disallowed because
+/// their discriminants constitute instance state that would violate the
+/// fungibility requirement.
 ///
 /// ## Example
 ///
@@ -218,8 +233,8 @@ pub unsafe trait GadgetKind<F: Field>: core::any::Any {
 /// implementations for your struct. The fields are annotated with
 /// * `#[ragu(wire)]` for fields that represent wires in the driver, which are
 ///   converted using [`FromDriver::convert_wire`].
-/// * `#[ragu(value)]` for fields that represent driver-specific values,
-///   which are converted or cloned using
+/// * `#[ragu(value)]` for fields that represent driver-specific values, which
+///   are converted or cloned using
 ///   [`DriverValue::just`](crate::maybe::Maybe::just).
 /// * `#[ragu(gadget)]` for fields that are themselves gadgets, which are
 ///   converted using [`GadgetKind::map_gadget`].
