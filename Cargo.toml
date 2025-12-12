@@ -1,16 +1,16 @@
 [package]
 name = "ragu"
-version = "0.0.0"
-authors = ["Sean Bowe <ewillbefull@gmail.com>"]
+version.workspace = true
+authors.workspace = true
 description = """
 Proof-carrying data (PCD) framework for Rust
 """
-license = "MIT OR Apache-2.0"
-edition = "2024"
-rust-version = "1.90"
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 
 readme = "README.md"
-repository = "https://github.com/tachyon-zcash/ragu"
+repository.workspace = true
 documentation = "https://docs.rs/ragu"
 categories = ["cryptography", "mathematics", "algorithms", "science", "no-std"]
 keywords = []
@@ -42,6 +42,14 @@ members = [
 ]
 
 resolver = "2"
+
+[workspace.package]
+version = "0.0.0"
+authors = ["Sean Bowe <ewillbefull@gmail.com>"]
+license = "MIT OR Apache-2.0"
+edition = "2024"
+rust-version = "1.90"
+repository = "https://github.com/tachyon-zcash/ragu"
 
 [workspace.dependencies]
 ff = { version = "0.13", default-features = false }

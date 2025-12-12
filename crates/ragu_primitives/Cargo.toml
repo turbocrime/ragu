@@ -1,16 +1,16 @@
 [package]
 name = "ragu_primitives"
-version = "0.0.0"
-authors = ["Sean Bowe <ewillbefull@gmail.com>"]
+version.workspace = true
+authors.workspace = true
 description = """
 Intended for internal use in the Ragu project
 """
-license = "MIT OR Apache-2.0"
-edition = "2024"
-rust-version = "1.90"
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 
 readme = "README.md"
-repository = "https://github.com/tachyon-zcash/ragu"
+repository.workspace = true
 documentation = "https://docs.rs/ragu_primitives"
 categories = [
   "cryptography",
