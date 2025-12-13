@@ -103,7 +103,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const NUM_REVDOT_CLAIMS: usize
             let nested_ab_commitment = unified_output
                 .nested_ab_commitment
                 .get(dr, unified_instance)?;
-            let x = transcript::derive_x::<_, C>(dr, &mu, &nu, &nested_ab_commitment, self.params)?;
+            let x = transcript::derive_x::<_, C>(dr, &mu, &nested_ab_commitment, self.params)?;
             x.enforce_equal(dr, &query.x)?;
             x
         };

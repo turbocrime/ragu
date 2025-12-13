@@ -525,12 +525,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             nested_ab_rx.commit(self.params.nested_generators(), nested_ab_blind);
 
         // Derive x = H(mu, nu, nested_ab_commitment).
-        let x = crate::components::transcript::emulate_x::<C>(
-            mu,
-            nu,
-            nested_ab_commitment,
-            self.params,
-        )?;
+        let x =
+            crate::components::transcript::emulate_x::<C>(mu, nested_ab_commitment, self.params)?;
 
         // Compute query witness (stubbed for now).
         let query_witness = internal_circuits::stages::native::query::Witness {

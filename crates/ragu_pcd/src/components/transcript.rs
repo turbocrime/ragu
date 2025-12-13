@@ -114,13 +114,11 @@ pub fn emulate_mu_nu<C: Cycle>(
 pub fn derive_x<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
     dr: &mut D,
     mu: &Element<'dr, D>,
-    nu: &Element<'dr, D>,
     nested_ab_commitment: &Point<'dr, D, C::NestedCurve>,
     params: &'dr C,
 ) -> Result<Element<'dr, D>> {
     let mut sponge = Sponge::new(dr, params.circuit_poseidon());
     sponge.absorb(dr, mu)?;
-    sponge.absorb(dr, nu)?;
     nested_ab_commitment.write(dr, &mut sponge)?;
     sponge.squeeze(dr)
 }
@@ -129,16 +127,14 @@ pub fn derive_x<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
 /// contexts.
 pub fn emulate_x<C: Cycle>(
     mu: C::CircuitField,
-    nu: C::CircuitField,
     nested_ab_commitment: C::NestedCurve,
     params: &C,
 ) -> Result<C::CircuitField> {
-    Emulator::emulate_wireless((mu, nu, nested_ab_commitment), |dr, witness| {
-        let (mu, nu, comm) = witness.cast();
+    Emulator::emulate_wireless((mu, nested_ab_commitment), |dr, witness| {
+        let (mu, comm) = witness.cast();
         let mu_elem = Element::alloc(dr, mu)?;
-        let nu_elem = Element::alloc(dr, nu)?;
         let point = Point::alloc(dr, comm)?;
-        Ok(*derive_x::<_, C>(dr, &mu_elem, &nu_elem, &point, params)?
+        Ok(*derive_x::<_, C>(dr, &mu_elem, &point, params)?
             .value()
             .take())
     })
