@@ -90,6 +90,7 @@ impl<'dr, D: Driver<'dr>> FromDriver<'_, 'dr, Emulator<Wireless<D::MaybeKind, D:
 /// Implicitly, dropping this guard without calling either method effectively "skips"
 /// the stage, where the wire positions are reserved but no gadget is returned.
 pub struct StageGuard<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R>> {
+    stage: S,
     stage_wires: Vec<D::Wire>,
     _marker: PhantomData<(&'dr (), R, S)>,
 }
@@ -106,7 +107,7 @@ impl<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R> + 'dr> StageGuard<'dr, D, R
         witness: DriverValue<D, S::Witness<'source>>,
     ) -> Result<<S::OutputKind as GadgetKind<D::F>>::Rebind<'dr, D>> {
         // Run witness on the real driver, enforcing all constraints.
-        let computed_gadget = S::witness(driver, witness)?;
+        let computed_gadget = self.stage.witness(driver, witness)?;
 
         // Map the computed gadget, enforcing equality and substituting stage wires.
         let mut injector = EnforcingInjector {
@@ -127,7 +128,7 @@ impl<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R> + 'dr> StageGuard<'dr, D, R
         witness: DriverValue<D, S::Witness<'source>>,
     ) -> Result<<S::OutputKind as GadgetKind<D::F>>::Rebind<'dr, D>> {
         let mut emulator: Emulator<Wireless<D::MaybeKind, D::F>> = Emulator::wireless();
-        let computed_gadget = S::witness(&mut emulator, witness)?;
+        let computed_gadget = self.stage.witness(&mut emulator, witness)?;
 
         let mut injector = StageWireInjector::<D> {
             stage_wires: self.stage_wires.iter(),
@@ -147,8 +148,9 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
     /// not compute the witness. Call [`StageGuard::unenforced`] or
     /// [`StageGuard::enforced`] on the returned guard to provide the witness
     /// and obtain the output gadget.
-    pub fn add_stage<Next: Stage<D::F, R, Parent = Current> + 'dr>(
+    pub fn configure_stage<Next: Stage<D::F, R, Parent = Current> + 'dr>(
         self,
+        stage: Next,
     ) -> Result<(
         StageGuard<'dr, D, R, Next>,
         StageBuilder<'a, 'dr, D, R, Next, Target>,
@@ -156,7 +158,7 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
         // Invoke wireless emulator with dummy witness to get gadget structure.
         // The emulator never actually reads the witness values.
         let mut emulator = Emulator::<Wireless<Empty, D::F>>::wireless();
-        let mut num_wires = Next::witness(&mut emulator, Empty)?.num_wires();
+        let mut num_wires = stage.witness(&mut emulator, Empty)?.num_wires();
 
         // Check bounds
         if num_wires > Next::values() {
@@ -179,6 +181,7 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
 
         Ok((
             StageGuard {
+                stage,
                 stage_wires: wires,
                 _marker: PhantomData,
             },
@@ -187,6 +190,20 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
                 _marker: PhantomData,
             },
         ))
+    }
+
+    /// Add the next stage to the builder using [`Self::configure_stage`]
+    /// assuming the stage implements [`Default`].
+    pub fn add_stage<Next>(
+        self,
+    ) -> Result<(
+        StageGuard<'dr, D, R, Next>,
+        StageBuilder<'a, 'dr, D, R, Next, Target>,
+    )>
+    where
+        Next: Stage<D::F, R, Parent = Current> + Default + 'dr,
+    {
+        self.configure_stage(Next::default())
     }
 }
 

@@ -46,6 +46,7 @@ pub struct Output<'dr, D: Driver<'dr>> {
 }
 
 /// The eval stage of the merge witness.
+#[derive(Default)]
 pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize> {
     _marker: PhantomData<(C, R)>,
 }
@@ -63,6 +64,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
+        &self,
         dr: &mut D,
         witness: DriverValue<D, Self::Witness<'source>>,
     ) -> Result<<Self::OutputKind as GadgetKind<C::CircuitField>>::Rebind<'dr, D>>

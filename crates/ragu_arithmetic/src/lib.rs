@@ -99,7 +99,7 @@ pub use u128 as Uendo;
 ///
 /// Implementations of this trait provide the types, their relationships, and
 /// the ability to conveniently access common parameters.
-pub trait Cycle: Send + Sync + 'static {
+pub trait Cycle: Default + Send + Sync + 'static {
     /// The field that circuit developers will primarily work with, and the
     /// scalar field of the [`HostCurve`](Cycle::HostCurve).
     type CircuitField: WithSmallOrderMulGroup<3>;

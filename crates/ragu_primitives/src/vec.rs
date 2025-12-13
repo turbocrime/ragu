@@ -1,17 +1,20 @@
-//! Provides [`FixedVec`], a wrapper around [`Vec<T>`] with a runtime-enforced
-//! guarantee about its length that allows it to be safely used as a gadget.
+//! Provides [`FixedVec`], a wrapper around [`Vec<T>`] with a compile-time
+//! length guarantee that allows it to implement [`Gadget`].
 //!
-//! [`Vec<G>`] cannot implement [`Gadget<D>`] because [`Vec`] has a dynamic
-//! length, which means that its [`GadgetKind::map_gadget`] implementation could
-//! vary in behavior depending on the state of the gadget. This is disallowed by
-//! its API contract. Ragu provides a generic implementation of [`Gadget`] for
-//! `Box<[T; N]>` and `[T; N]` where `const N: usize`, but `const` generics are
-//! still [somewhat limited](https://github.com/rust-lang/rust/issues/60551) in
-//! Rust (as of 1.87).
+//! [`Vec<G>`] cannot implement [`Gadget`] because gadgets must be _fungible_:
+//! their synthesis behavior must be type-determined, not instance-determined.
+//! A `Vec` has dynamic length, meaning different instances could have different
+//! wire counts, causing [`GadgetKind::map_gadget`] to behave differently per
+//! instance.
 //!
-//! This module provides [`FixedVec`], a wrapper around [`Vec`] which enforces a
-//! fixed length based on the parameterized [`Len`] type. [`FixedVec<G, L>`]
-//! implements [`Gadget`] if `G` implements [`Gadget`].
+//! [`FixedVec<G, L>`] solves this by parameterizing on a [`Len`] type `L` that
+//! statically determines the vector's length. All instances of `FixedVec<G, L>`
+//! have exactly `L::len()` elements, making their synthesis behavior
+//! type-determined.
+//!
+//! Ragu also provides [`Gadget`] implementations for `[T; N]` and `Box<[T; N]>`
+//! where `const N: usize`, but const generics are still
+//! [somewhat limited](https://github.com/rust-lang/rust/issues/60551) in Rust.
 //!
 //! ## Usage
 //!

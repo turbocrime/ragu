@@ -145,6 +145,7 @@ pub trait Stage<F: Field, R: Rank> {
 
     /// Computes the witness for this stage.
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+        &self,
         dr: &mut D,
         witness: DriverValue<D, Self::Witness<'source>>,
     ) -> Result<<Self::OutputKind as GadgetKind<F>>::Rebind<'dr, D>>
@@ -170,6 +171,7 @@ impl<F: Field, R: Rank> Stage<F, R> for () {
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+        &self,
         _: &mut D,
         _: DriverValue<D, Self::Witness<'source>>,
     ) -> Result<<Self::OutputKind as GadgetKind<F>>::Rebind<'dr, D>>
@@ -307,10 +309,10 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
     }
 
     /// Compute the (partial) witness polynomial $r(X)$ for this stage.
-    fn rx(witness: Self::Witness<'_>) -> Result<structured::Polynomial<F, R>> {
+    fn rx_configured(&self, witness: Self::Witness<'_>) -> Result<structured::Polynomial<F, R>> {
         let values = {
             let mut dr = Emulator::extractor();
-            let out = Self::witness(&mut dr, Always::maybe_just(|| witness))?;
+            let out = self.witness(&mut dr, Always::maybe_just(|| witness))?;
             dr.always_wires(&out)?
         };
 
@@ -348,6 +350,15 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
         }
 
         Ok(rx)
+    }
+
+    /// Compute the (partial) witness polynomial $r(X)$ for this stage, using a
+    /// default implementation.
+    fn rx(witness: Self::Witness<'_>) -> Result<structured::Polynomial<F, R>>
+    where
+        Self: Default,
+    {
+        Self::default().rx_configured(witness)
     }
 
     /// Converts this stage into a circuit object that _only_ enforces

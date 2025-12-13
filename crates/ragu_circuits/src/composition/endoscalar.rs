@@ -19,8 +19,10 @@ use crate::{
     staging::{Stage, StageBuilder, StagedCircuit},
 };
 
+#[derive(Default)]
 pub struct EndoscalarStage;
 
+#[derive(Default)]
 pub struct SlotStage<C: CurveAffine, const NUM_SLOTS: usize>(core::marker::PhantomData<C>);
 
 impl<F: Field, R: Rank> Stage<F, R> for EndoscalarStage {
@@ -34,6 +36,7 @@ impl<F: Field, R: Rank> Stage<F, R> for EndoscalarStage {
     type OutputKind = Kind![F; Endoscalar<'_, _>];
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+        &self,
         dr: &mut D,
         witness: DriverValue<D, Self::Witness<'source>>,
     ) -> Result<<Self::OutputKind as GadgetKind<F>>::Rebind<'dr, D>>
@@ -58,6 +61,7 @@ impl<C: CurveAffine, R: Rank, const NUM_SLOTS: usize> Stage<C::Base, R>
     type OutputKind = Kind![C::Base; FixedVec<Point<'_, _, C>, ConstLen<NUM_SLOTS>>];
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
+        &self,
         dr: &mut D,
         witness: DriverValue<D, Self::Witness<'source>>,
     ) -> Result<<Self::OutputKind as GadgetKind<C::Base>>::Rebind<'dr, D>>

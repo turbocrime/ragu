@@ -18,7 +18,7 @@ mod private {
 /// to prevent accidental conflation between different polynomial types or over
 /// different fields.
 pub trait Rank:
-    private::Sealed + Clone + Send + Sync + 'static + PartialEq + Eq + core::fmt::Debug
+    private::Sealed + Clone + Send + Sync + 'static + PartialEq + Eq + core::fmt::Debug + Default
 {
     /// Ragu currently only supports ranks between $2$ and $28$ to avoid
     /// overflows on 32-bit architectures.
@@ -105,7 +105,7 @@ pub trait Rank:
 
 /// Explicit implementations for various basis sizes supported for use in Ragu.
 /// `R<N>` implements [`Rank`] for $N \in [2, 28]$.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct R<const RANK: u32>;
 
 /// Macro to implement [`Rank`] for various `R<N>`.

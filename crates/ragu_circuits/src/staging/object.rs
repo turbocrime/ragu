@@ -286,7 +286,9 @@ mod tests {
 
     #[test]
     fn test_staging_valid() -> Result<()> {
+        #[derive(Default)]
         struct MyStage1;
+        #[derive(Default)]
         struct MyStage2;
 
         impl Stage<Fp, R> for MyStage1 {
@@ -300,6 +302,7 @@ mod tests {
             type OutputKind = Endoscalar<'static, core::marker::PhantomData<Fp>>;
 
             fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+                &self,
                 dr: &mut D,
                 witness: DriverValue<D, Self::Witness<'source>>,
             ) -> Result<<Self::OutputKind as GadgetKind<Fp>>::Rebind<'dr, D>>
@@ -324,6 +327,7 @@ mod tests {
             );
 
             fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+                &self,
                 dr: &mut D,
                 witness: DriverValue<D, Self::Witness<'source>>,
             ) -> Result<<Self::OutputKind as GadgetKind<Fp>>::Rebind<'dr, D>>
@@ -537,6 +541,7 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
     struct ConstrainedStage;
 
     #[derive(ragu_core::gadgets::Gadget, ragu_primitives::io::Write)]
@@ -558,6 +563,7 @@ mod tests {
         }
 
         fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
             dr: &mut D,
             witness: DriverValue<D, Self::Witness<'source>>,
         ) -> Result<<Self::OutputKind as GadgetKind<Fp>>::Rebind<'dr, D>>

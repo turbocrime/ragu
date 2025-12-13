@@ -27,13 +27,28 @@ The [`Element::one`](ragu_primitives::Element::one) and [`Element::zero`](ragu_p
 
 ## [`Boolean`][boolean-gadget]
 
-The [`Boolean`][boolean-gadget] gadget provides a way to interact with wires that are constrained to be $0$ or $1$ in the field. The logical `AND` of two booleans can be computed by multiplying two booleans, and given a boolean wire `a` its logical `NOT` can be obtained with the virtual wire `1 - a`. The `Boolean` gadget guards the underlying wire (guaranteeing that it is boolean constrained) and allows it to be manipulated in these ways to produce new `Boolean` values.
+The [`Boolean`][boolean-gadget] gadget provides a way to interact with wires
+that are constrained to be $0$ or $1$ in the field. The logical `AND` of two
+booleans can be computed by multiplying two booleans, and given a boolean wire
+`a` its logical `NOT` can be obtained with the virtual wire `1 - a`. The
+`Boolean` gadget guards the underlying wire (guaranteeing that it is boolean
+constrained) and allows it to be manipulated in these ways to produce new
+`Boolean` values.
 
-`Boolean`s, like `Element`s, can be allocated or constants. However, they do not carry with them any state that would indicate if they are a constant or not. This means that `Boolean` itself cannot be used to optimize away boolean logic between constants, and so a non-[`Gadget`][gadget-trait] abstraction must be built to enable these kinds of optimizations.
+`Boolean`s, like `Element`s, can be allocated or constants. However, they do not
+carry instance state indicating whether they are constants (doing so would
+violate fungibility). This means that `Boolean` itself cannot be used to
+optimize away boolean logic between constants, and so a
+non-[`Gadget`][gadget-trait] abstraction must be built to enable these kinds of
+optimizations.
 
 ## [`FixedVec`][fixedvec-gadget]
 
-The [`Gadget`][gadget-trait] trait does not allow gadgets to represent a dynamic number of wires. The [`FixedVec`][fixedvec-gadget] gadget wraps `Vec<G>` (where `G` is a [`Gadget`][gadget-trait]) using a statically guaranteed length for the underlying vector so that [`Gadget`][gadget-trait] can be implemented.
+Gadgets cannot represent a dynamic number of wires (this would violate
+fungibility, since wire count must be type-determined). The
+[`FixedVec`][fixedvec-gadget] gadget wraps `Vec<G>` (where `G` is a
+[`Gadget`][gadget-trait]) using a statically guaranteed length for the
+underlying vector so that [`Gadget`][gadget-trait] can be implemented.
 
 [gadget-trait]: ragu_core::gadgets::Gadget
 [boolean-gadget]: ragu_primitives::Boolean
