@@ -108,6 +108,7 @@ macro_rules! define_nested_multi_point_stage {
 
 pub mod nested {
     define_nested_multi_point_stage!(preamble, parent = ());
+    define_nested_multi_point_stage!(s_prime, parent = ());
     define_nested_point_stage!(error, parent = ());
     define_nested_multi_point_stage!(ab, parent = ());
     define_nested_point_stage!(query, parent = ());

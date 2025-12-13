@@ -20,7 +20,7 @@ use crate::{components::suffix::Suffix, proof::Proof};
 pub type InternalOutputKind<C: Cycle> = Kind![C::CircuitField; Suffix<'_, _, Output<'_, _, C>>];
 
 /// The number of wires in an `Output` gadget.
-pub const NUM_WIRES: usize = 22;
+pub const NUM_WIRES: usize = 24;
 
 #[derive(Gadget, Write)]
 pub struct Output<'dr, D: Driver<'dr>, C: Cycle> {
@@ -28,6 +28,8 @@ pub struct Output<'dr, D: Driver<'dr>, C: Cycle> {
     pub nested_preamble_commitment: Point<'dr, D, C::NestedCurve>,
     #[ragu(gadget)]
     pub w: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub nested_s_prime_commitment: Point<'dr, D, C::NestedCurve>,
     #[ragu(gadget)]
     pub y: Element<'dr, D>,
     #[ragu(gadget)]
@@ -59,12 +61,12 @@ pub struct Output<'dr, D: Driver<'dr>, C: Cycle> {
 }
 
 // TODO: Missing fields to add:
-//   - nested_s_prime_commitment: C::NestedCurve (after w, before y)
 //   - nested_s_doubleprime_commitment: C::NestedCurve (after z, before nested_error_commitment)
 //   - nested_s_commitment: C::NestedCurve (after x, before nested_query_commitment)
 pub struct Instance<C: Cycle> {
     pub nested_preamble_commitment: C::NestedCurve,
     pub w: C::CircuitField,
+    pub nested_s_prime_commitment: C::NestedCurve,
     pub y: C::CircuitField,
     pub z: C::CircuitField,
     pub nested_error_commitment: C::NestedCurve,
@@ -119,6 +121,7 @@ impl<'a, 'dr, D: Driver<'dr>, T: Clone, C: Cycle> Slot<'a, 'dr, D, T, C> {
 pub struct OutputBuilder<'a, 'dr, D: Driver<'dr>, C: Cycle> {
     pub nested_preamble_commitment: Slot<'a, 'dr, D, Point<'dr, D, C::NestedCurve>, C>,
     pub w: Slot<'a, 'dr, D, Element<'dr, D>, C>,
+    pub nested_s_prime_commitment: Slot<'a, 'dr, D, Point<'dr, D, C::NestedCurve>, C>,
     pub y: Slot<'a, 'dr, D, Element<'dr, D>, C>,
     pub z: Slot<'a, 'dr, D, Element<'dr, D>, C>,
     pub nested_error_commitment: Slot<'a, 'dr, D, Point<'dr, D, C::NestedCurve>, C>,
@@ -149,6 +152,10 @@ impl<'dr, D: Driver<'dr>, C: Cycle> Output<'dr, D, C> {
             proof.view().map(|p| p.preamble.nested_preamble_commitment),
         )?;
         let w = Element::alloc(dr, proof.view().map(|p| p.internal_circuits.w))?;
+        let nested_s_prime_commitment = Point::alloc(
+            dr,
+            proof.view().map(|p| p.s_prime.nested_s_prime_commitment),
+        )?;
         let y = Element::alloc(dr, proof.view().map(|p| p.internal_circuits.y))?;
         let z = Element::alloc(dr, proof.view().map(|p| p.internal_circuits.z))?;
         let nested_error_commitment =
@@ -171,6 +178,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle> Output<'dr, D, C> {
         Ok(Output {
             nested_preamble_commitment,
             w,
+            nested_s_prime_commitment,
             y,
             z,
             nested_error_commitment,
@@ -208,6 +216,7 @@ impl<'a, 'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle> OutputBuilder<'a, '
         OutputBuilder {
             nested_preamble_commitment: point_slot!(nested_preamble_commitment),
             w: element_slot!(w),
+            nested_s_prime_commitment: point_slot!(nested_s_prime_commitment),
             y: element_slot!(y),
             z: element_slot!(z),
             nested_error_commitment: point_slot!(nested_error_commitment),
@@ -235,6 +244,7 @@ impl<'a, 'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle> OutputBuilder<'a, '
             Output {
                 nested_preamble_commitment: self.nested_preamble_commitment.take(dr, instance)?,
                 w: self.w.take(dr, instance)?,
+                nested_s_prime_commitment: self.nested_s_prime_commitment.take(dr, instance)?,
                 y: self.y.take(dr, instance)?,
                 z: self.z.take(dr, instance)?,
                 nested_error_commitment: self.nested_error_commitment.take(dr, instance)?,

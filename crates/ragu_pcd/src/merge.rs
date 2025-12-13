@@ -14,7 +14,7 @@ use crate::{
     internal_circuits::{self, NUM_NATIVE_REVDOT_CLAIMS, stages, unified},
     proof::{
         ABProof, ApplicationProof, ErrorProof, EvalProof, FProof, InternalCircuits, Pcd,
-        PreambleProof, Proof, QueryProof,
+        PreambleProof, Proof, QueryProof, SPrimeProof,
     },
     step::{Step, adapter::Adapter},
 };
@@ -78,9 +78,31 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let w =
             crate::components::transcript::emulate_w::<C>(nested_preamble_commitment, self.params)?;
 
-        // TODO: Derive (y, z) = H(w, nested_s_prime_commitment). For now, use dummy values.
-        let y = C::CircuitField::random(&mut *rng);
-        let z = C::CircuitField::random(&mut *rng);
+        // We compute a nested commitment to s' = m(w, x_i, Y).
+        let x0 = left.proof.internal_circuits.x;
+        let x1 = right.proof.internal_circuits.x;
+        let mesh_wx0 = self.circuit_mesh.wx(w, x0);
+        let mesh_wx0_blind = C::CircuitField::random(&mut *rng);
+        let mesh_wx0_commitment = mesh_wx0.commit(host_generators, mesh_wx0_blind);
+        let mesh_wx1 = self.circuit_mesh.wx(w, x1);
+        let mesh_wx1_blind = C::CircuitField::random(&mut *rng);
+        let mesh_wx1_commitment = mesh_wx1.commit(host_generators, mesh_wx1_blind);
+
+        // We compute a nested commitment to s' = m(w, x_i, Y).
+        let nested_s_prime_rx = stages::nested::s_prime::Stage::<C::HostCurve, R, 2>::rx(&[
+            mesh_wx0_commitment,
+            mesh_wx1_commitment,
+        ])?;
+        let nested_s_prime_blind = C::ScalarField::random(&mut *rng);
+        let nested_s_prime_commitment =
+            nested_s_prime_rx.commit(nested_generators, nested_s_prime_blind);
+
+        // Derive (y, z) = H(w, nested_s_prime_commitment).
+        let (y, z) = crate::components::transcript::emulate_y_z::<C>(
+            w,
+            nested_s_prime_commitment,
+            self.params,
+        )?;
 
         // Compute error stage first so we can derive mu/nu from nested_error_commitment.
         // Create error witness with dummy z and error terms.
@@ -229,11 +251,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             crate::components::transcript::emulate_beta::<C>(nested_eval_commitment, self.params)?;
 
         // Create the unified instance.
-        // TODO: Missing fields: nested_s_prime_commitment,
-        // nested_s_doubleprime_commitment, nested_s_commitment
+        // TODO: Missing fields: nested_s_doubleprime_commitment, nested_s_commitment
         let unified_instance = &unified::Instance {
             nested_preamble_commitment,
             w,
+            nested_s_prime_commitment,
             y,
             z,
             nested_error_commitment,
@@ -304,6 +326,17 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     nested_preamble_rx,
                     nested_preamble_commitment,
                     nested_preamble_blind,
+                },
+                s_prime: SPrimeProof {
+                    mesh_wx0,
+                    mesh_wx0_blind,
+                    mesh_wx0_commitment,
+                    mesh_wx1,
+                    mesh_wx1_blind,
+                    mesh_wx1_commitment,
+                    nested_s_prime_rx,
+                    nested_s_prime_blind,
+                    nested_s_prime_commitment,
                 },
                 error: ErrorProof {
                     native_error_rx,

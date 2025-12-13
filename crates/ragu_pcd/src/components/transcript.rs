@@ -31,6 +31,37 @@ pub fn emulate_w<C: Cycle>(
     })
 }
 
+/// Computation of (y, z) = H(w, nested_s_prime_commitment)
+pub fn derive_y_z<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
+    dr: &mut D,
+    w: &Element<'dr, D>,
+    nested_s_prime_commitment: &Point<'dr, D, C::NestedCurve>,
+    params: &'dr C,
+) -> Result<(Element<'dr, D>, Element<'dr, D>)> {
+    let mut sponge = Sponge::new(dr, params.circuit_poseidon());
+    sponge.absorb(dr, w)?;
+    nested_s_prime_commitment.write(dr, &mut sponge)?;
+    let y = sponge.squeeze(dr)?;
+    let z = sponge.squeeze(dr)?;
+    Ok((y, z))
+}
+
+/// Compute $(y, z)$ challenges using the [`Emulator`] for use outside of circuit
+/// contexts.
+pub fn emulate_y_z<C: Cycle>(
+    w: C::CircuitField,
+    nested_s_prime_commitment: C::NestedCurve,
+    params: &C,
+) -> Result<(C::CircuitField, C::CircuitField)> {
+    Emulator::emulate_wireless((w, nested_s_prime_commitment), |dr, witness| {
+        let (w, comm) = witness.cast();
+        let w_elem = Element::alloc(dr, w)?;
+        let point = Point::alloc(dr, comm)?;
+        let (y, z) = derive_y_z::<_, C>(dr, &w_elem, &point, params)?;
+        Ok((*y.value().take(), *z.value().take()))
+    })
+}
+
 /// Computation of alpha = H(nested_query_commitment)
 pub fn derive_alpha<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
     dr: &mut D,
