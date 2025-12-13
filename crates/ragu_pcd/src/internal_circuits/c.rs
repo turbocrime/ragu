@@ -22,7 +22,7 @@ use super::{
 };
 use crate::components::{
     fold_revdot::{self, ErrorTermsLen},
-    root_of_unity::RootOfUnity,
+    root_of_unity::enforce_root_of_unity,
 };
 
 pub use crate::internal_circuits::InternalCircuitIndex::ClaimCircuit as CIRCUIT_ID;
@@ -90,12 +90,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const NUM_REVDOT_CLAIMS: usize
             preamble_guard.enforced(dr, witness.view().map(|w| w.preamble_witness))?;
 
         // Check that circuit IDs are valid domain elements.
-        // TODO: We shouldn't do it like this, was just experimenting with the gadget. Instead,
-        // we should store circuit_id as `RootOfUnity` inside `ProofInputs`.
-        RootOfUnity::unchecked(preamble_output.left.circuit_id.clone(), self.log2_circuits)
-            .enforce(dr)?;
-        RootOfUnity::unchecked(preamble_output.right.circuit_id.clone(), self.log2_circuits)
-            .enforce(dr)?;
+        enforce_root_of_unity(
+            dr,
+            preamble_output.left.circuit_id.clone(),
+            self.log2_circuits,
+        )?;
+        enforce_root_of_unity(
+            dr,
+            preamble_output.right.circuit_id.clone(),
+            self.log2_circuits,
+        )?;
 
         let unified_instance = &witness.view().map(|w| w.unified_instance);
         let mut unified_output = OutputBuilder::new();

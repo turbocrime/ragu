@@ -1,103 +1,30 @@
-//! Gadget for asserting that an element is a root of unity.
-
-use core::ops::Deref;
-
-use ff::Field;
-use ragu_core::{
-    Result,
-    drivers::{Driver, FromDriver},
-    gadgets::{Gadget, GadgetKind},
-};
+use ragu_core::{Result, drivers::Driver};
 use ragu_primitives::Element;
 
-/// A wrapper around an [`Element`] that should be constrained to be a $2^k$ root of unity.
-///
-/// The `k` value is stored in the gadget and used when [`Self::enforce`] is called.
-pub struct RootOfUnity<'dr, D: Driver<'dr>> {
-    element: Element<'dr, D>,
+/// Checks that the provided value `omega` is a valid $2^k$ root of unity.
+pub fn enforce_root_of_unity<'dr, D: Driver<'dr>>(
+    dr: &mut D,
+    omega: Element<'dr, D>,
     k: u32,
-}
+) -> Result<()> {
+    // This works by constraining that `omega`^(2^k) - 1 == 0.
 
-impl<'dr, D: Driver<'dr>> Clone for RootOfUnity<'dr, D> {
-    fn clone(&self) -> Self {
-        RootOfUnity {
-            element: self.element.clone(),
-            k: self.k,
-        }
-    }
-}
-
-impl<'dr, D: Driver<'dr>> RootOfUnity<'dr, D> {
-    /// Wrap an element without adding constraints.
-    ///
-    /// Use [`Self::enforce`] to add the root-of-unity constraint later.
-    pub fn unchecked(element: Element<'dr, D>, k: u32) -> Self {
-        RootOfUnity { element, k }
+    let mut value = omega;
+    for _ in 0..k {
+        value = value.square(dr)?;
     }
 
-    /// Enforce that the element is a $2^k$ root of unity.
-    ///
-    /// This costs `k` multiplication constraints plus one linear constraint.
-    pub fn enforce(&self, dr: &mut D) -> Result<()> {
-        let mut value = self.element.clone();
-        for _ in 0..self.k {
-            value = value.square(dr)?;
-        }
-        let one = Element::one();
-        let diff = value.sub(dr, &one);
-        diff.enforce_zero(dr)?;
-        Ok(())
-    }
-}
+    let one = Element::one();
+    let diff = value.sub(dr, &one);
 
-impl<'dr, D: Driver<'dr>> Deref for RootOfUnity<'dr, D> {
-    type Target = Element<'dr, D>;
+    diff.enforce_zero(dr)?;
 
-    fn deref(&self) -> &Self::Target {
-        &self.element
-    }
-}
-
-/// The [`GadgetKind`] for [`RootOfUnity`].
-pub struct RootOfUnityKind<F: Field>(core::marker::PhantomData<F>);
-
-unsafe impl<F: Field> GadgetKind<F> for RootOfUnityKind<F> {
-    type Rebind<'dr, D: Driver<'dr, F = F>> = RootOfUnity<'dr, D>;
-
-    fn map_gadget<'dr, 'new_dr, D: Driver<'dr, F = F>, ND: FromDriver<'dr, 'new_dr, D>>(
-        this: &Self::Rebind<'dr, D>,
-        ndr: &mut ND,
-    ) -> Result<Self::Rebind<'new_dr, ND::NewDriver>> {
-        Ok(RootOfUnity {
-            element: this.element.map(ndr)?,
-            k: this.k,
-        })
-    }
-
-    fn enforce_equal_gadget<'dr, D2: Driver<'dr, F = F, Wire = D::Wire>, D: Driver<'dr, F = F>>(
-        dr: &mut D2,
-        a: &Self::Rebind<'dr, D>,
-        b: &Self::Rebind<'dr, D>,
-    ) -> Result<()> {
-        a.element.enforce_equal(dr, &b.element)?;
-        debug_assert_eq!(a.k, b.k, "RootOfUnity k values must match");
-
-        Ok(())
-    }
-}
-
-impl<'dr, D: Driver<'dr>> Gadget<'dr, D> for RootOfUnity<'dr, D> {
-    type Kind = RootOfUnityKind<D::F>;
-
-    fn num_wires(&self) -> usize {
-        self.element.num_wires()
-    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloc::{vec, vec::Vec};
     use ff::Field;
     use ragu_pasta::{Fp, fp};
     use ragu_primitives::Simulator;
@@ -154,12 +81,11 @@ mod tests {
     }
 
     #[test]
-    fn test_root_of_unity() -> Result<()> {
+    fn test_enforce_root_of_unity() -> Result<()> {
         for (i, (omega, k, should_pass)) in test_cases().into_iter().enumerate() {
             let result = Simulator::simulate(omega, |dr, witness| {
                 let omega = Element::alloc(dr, witness)?;
-                let root = RootOfUnity::unchecked(omega, k);
-                root.enforce(dr)?;
+                enforce_root_of_unity(dr, omega, k)?;
                 Ok(())
             });
 
