@@ -1,7 +1,7 @@
 use crate::components::transcript;
 use arithmetic::Cycle;
 use ragu_circuits::{
-    polynomials::Rank,
+    polynomials::{Evaluate, Rank},
     staging::{StageBuilder, Staged, StagedCircuit},
 };
 use ragu_core::{
@@ -110,7 +110,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const NUM_REVDOT_CLAIMS: usize
 
         unified_output.mu.set(mu);
         unified_output.nu.set(nu);
-        unified_output.x.set(x);
+        unified_output.x.set(x.clone());
 
         // Derive alpha challenge.
         let alpha = {
@@ -139,6 +139,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const NUM_REVDOT_CLAIMS: usize
             let beta = transcript::derive_beta::<_, C>(dr, &nested_eval_commitment, self.params)?;
             unified_output.beta.set(beta);
         }
+
+        let z = unified_output.z.get(dr, unified_instance)?;
+
+        // TODO: what to do with txz? launder out as aux data?
+        let evaluate_txz = Evaluate::new(R::RANK);
+        let _txz = dr.routine(evaluate_txz, (x, z))?;
 
         Ok((unified_output.finish(dr, unified_instance)?, D::just(|| ())))
     }

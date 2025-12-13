@@ -61,6 +61,8 @@ pub(crate) struct PreambleProof<C: Cycle, R: Rank> {
 /// Fiat-Shamir challenges and C/V circuit polynomials.
 pub(crate) struct InternalCircuits<C: Cycle, R: Rank> {
     pub(crate) w: C::CircuitField,
+    pub(crate) y: C::CircuitField,
+    pub(crate) z: C::CircuitField,
     pub(crate) c: C::CircuitField,
     pub(crate) c_rx: structured::Polynomial<C::CircuitField, R>,
     pub(crate) c_rx_blind: C::CircuitField,
@@ -209,6 +211,8 @@ impl<C: Cycle, R: Rank> Clone for InternalCircuits<C, R> {
     fn clone(&self) -> Self {
         InternalCircuits {
             w: self.w,
+            y: self.y,
+            z: self.z,
             c: self.c,
             c_rx: self.c_rx.clone(),
             c_rx_blind: self.c_rx_blind,
@@ -363,6 +367,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             },
             internal_circuits: InternalCircuits {
                 w: C::CircuitField::random(&mut *rng),
+                y: C::CircuitField::random(&mut *rng),
+                z: C::CircuitField::random(&mut *rng),
                 c: C::CircuitField::random(&mut *rng),
                 c_rx: c_rx_dummy_rx.clone(),
                 c_rx_blind: c_rx_dummy_blind,
@@ -449,9 +455,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let w =
             crate::components::transcript::emulate_w::<C>(nested_preamble_commitment, self.params)?;
 
+        // TODO: Derive (y, z) = H(w, nested_s_prime_commitment). For now, use dummy values.
+        let y = C::CircuitField::random(&mut *rng);
+        let z = C::CircuitField::random(&mut *rng);
+
         // Compute error stage first so we can derive mu/nu from nested_error_commitment.
         // Create error witness with dummy z and error terms.
-        let z = C::CircuitField::random(&mut *rng);
         let error_witness = stages::native::error::Witness::<C, NUM_NATIVE_REVDOT_CLAIMS> {
             z,
             nested_s_doubleprime_commitment: self.params.nested_generators().g()[0],
@@ -600,11 +609,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             crate::components::transcript::emulate_beta::<C>(nested_eval_commitment, self.params)?;
 
         // Create unified instance and compute c_rx
-        // TODO: Missing fields: nested_s_prime_commitment, y, z,
+        // TODO: Missing fields: nested_s_prime_commitment,
         // nested_s_doubleprime_commitment, nested_s_commitment
         let unified_instance = internal_circuits::unified::Instance {
             nested_preamble_commitment,
             w,
+            y,
+            z,
             nested_error_commitment,
             mu,
             nu,
@@ -680,6 +691,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             },
             internal_circuits: InternalCircuits {
                 w,
+                y,
+                z,
                 c,
                 c_rx,
                 c_rx_blind,

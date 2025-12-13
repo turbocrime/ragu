@@ -78,9 +78,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let w =
             crate::components::transcript::emulate_w::<C>(nested_preamble_commitment, self.params)?;
 
+        // TODO: Derive (y, z) = H(w, nested_s_prime_commitment). For now, use dummy values.
+        let y = C::CircuitField::random(&mut *rng);
+        let z = C::CircuitField::random(&mut *rng);
+
         // Compute error stage first so we can derive mu/nu from nested_error_commitment.
         // Create error witness with dummy z and error terms.
-        let z = C::CircuitField::random(&mut *rng);
         let error_witness = stages::native::error::Witness::<C, NUM_NATIVE_REVDOT_CLAIMS> {
             z,
             nested_s_doubleprime_commitment: nested_generators.g()[0],
@@ -155,6 +158,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let x =
             crate::components::transcript::emulate_x::<C>(nu, nested_ab_commitment, self.params)?;
 
+        // Compute t(x, z), the TXZ polynomial evaluation derived from x and z.
+        let _xz = x * z;
+        let _txz_claimed = R::txz(x, z);
+
         // Compute query witness (stubbed for now).
         let query_witness = internal_circuits::stages::native::query::Witness {
             x,
@@ -222,11 +229,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             crate::components::transcript::emulate_beta::<C>(nested_eval_commitment, self.params)?;
 
         // Create the unified instance.
-        // TODO: Missing fields: nested_s_prime_commitment, y, z,
+        // TODO: Missing fields: nested_s_prime_commitment,
         // nested_s_doubleprime_commitment, nested_s_commitment
         let unified_instance = &unified::Instance {
             nested_preamble_commitment,
             w,
+            y,
+            z,
             nested_error_commitment,
             mu,
             nu,
@@ -341,6 +350,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 },
                 internal_circuits: InternalCircuits {
                     w,
+                    y,
+                    z,
                     c,
                     c_rx,
                     c_rx_commitment,

@@ -3,6 +3,7 @@
 pub mod structured;
 mod txz;
 pub mod unstructured;
+pub use txz::Evaluate;
 
 use ff::Field;
 
