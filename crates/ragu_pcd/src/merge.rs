@@ -201,10 +201,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let nested_s_blind = C::ScalarField::random(&mut *rng);
         let nested_s_commitment = nested_s_rx.commit(nested_generators, nested_s_blind);
 
-        // Compute t(x, z), the TXZ polynomial evaluation derived from x and z.
-        let _xz = x * z;
-        let _txz_claimed = R::txz(x, z);
-
         // Compute query witness (stubbed for now).
         let query_witness = internal_circuits::stages::native::query::Witness {
             x,

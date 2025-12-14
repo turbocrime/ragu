@@ -118,8 +118,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const NUM_REVDOT_CLAIMS: usize
             unified_output.w.set(w);
         }
 
-        // TODO: Computation of (y, z)
-
         // TODO: Call Horner's method routine to evaluate k(Y) polynomials at y.
 
         // Compute c, the folded revdot product claim.

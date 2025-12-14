@@ -57,7 +57,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const NUM_REVDOT_CLAIMS: usize
     type OutputKind = Kind![C::CircuitField; Output<'_, _, C, NUM_REVDOT_CLAIMS>];
 
     fn values() -> usize {
-        // 1 for z + 2 for the point + error terms
+        // 1 for z + 2 for S'' + error terms
         1 + 2 + ErrorTermsLen::<NUM_REVDOT_CLAIMS>::len()
     }
 

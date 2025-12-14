@@ -16,7 +16,6 @@ use rand::Rng;
 
 use crate::{
     Application, Pcd,
-    components::transcript,
     header::Header,
     internal_circuits::{self, InternalCircuitIndex},
     step::adapter::Adapter,
@@ -30,19 +29,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     pub fn verify<RNG: Rng, H: Header<C::CircuitField>>(
         &self,
         pcd: &Pcd<'_, C, R, H>,
-        _rng: RNG,
+        mut rng: RNG,
     ) -> Result<bool> {
-        // Derive (y, z) = H(w, nested_s_prime_commitment) via Fiat-Shamir.
-        let (y, z) = transcript::emulate_y_z::<C>(
-            pcd.proof.internal_circuits.w,
-            pcd.proof.s_prime.nested_s_prime_commitment,
-            self.params,
-        )?;
-
         // The `Verifier` helper struct holds onto a verification context to
         // simplify performing revdot claims on different polynomials in the
         // proof.
-        let verifier = Verifier::new(&self.circuit_mesh, self.num_application_steps, y, z);
+        let verifier = Verifier::new(&self.circuit_mesh, self.num_application_steps, &mut rng);
 
         // Preamble verification
         let preamble_valid = verifier.check_stage(
@@ -183,7 +175,13 @@ struct Verifier<'a, F: PrimeField, R: Rank> {
 }
 
 impl<'a, F: PrimeField, R: Rank> Verifier<'a, F, R> {
-    fn new(circuit_mesh: &'a Mesh<'a, F, R>, num_application_steps: usize, y: F, z: F) -> Self {
+    fn new<RNG: Rng>(
+        circuit_mesh: &'a Mesh<'a, F, R>,
+        num_application_steps: usize,
+        rng: &mut RNG,
+    ) -> Self {
+        let y = F::random(&mut *rng);
+        let z = F::random(&mut *rng);
         let tz = R::tz(z);
         Self {
             circuit_mesh,
