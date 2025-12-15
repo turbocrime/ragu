@@ -47,16 +47,34 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let host_generators = self.params.host_generators();
         let nested_generators = self.params.nested_generators();
 
-        // Create preamble witness from PCDs.
+        // The preamble stage commits to all of the C::CircuitField elements
+        // used as public inputs to the circuits being merged together. This
+        // includes the unified instance values for both proofs, but also their
+        // circuit IDs (the omega^j value that corresponds to each element of
+        // the mesh domain that corresponds to the Step circuit being checked).
+        //
+        // Let's assemble the witness needed to generate the preamble stage.
         let preamble_witness = stages::native::preamble::Witness::from_pcds(&left, &right)?;
 
-        // Compute native preamble
+        // Now, compute the partial witness polynomial (stage polynomial) for
+        // the preamble.
         let native_preamble_rx =
             stages::native::preamble::Stage::<C, R, HEADER_SIZE>::rx(&preamble_witness)?;
+        // ... and commit to it, with a random blinding factor.
         let native_preamble_blind = C::CircuitField::random(&mut *rng);
         let native_preamble_commitment =
             native_preamble_rx.commit(host_generators, native_preamble_blind);
 
+        // In order to circle back to C::CircuitField, because our
+        // `native_preamble_commitment` has base points in C::ScalarField, we
+        // need to commit to a stage polynomial over the C::NestedCurve that
+        // contains all of the `C::HostCurve` points. This includes the
+        // native_preamble_commitment we just computed, but also contains
+        // commitments to circuit and stage polynomials that were created in the
+        // merge operations that produced each of the two input proofs.
+        //
+        // TODO: For now, we just shove these into an array. Later we can create
+        // a more structured witness type.
         let nested_preamble_points: [C::HostCurve; 7] = [
             native_preamble_commitment,
             left.proof.application.commitment,
@@ -67,28 +85,39 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             right.proof.internal_circuits.v_rx_commitment,
         ];
 
-        // Compute nested preamble
+        // Compute the stage polynomial that commits to the `C::HostCurve`
+        // points.
         let nested_preamble_rx =
             stages::nested::preamble::Stage::<C::HostCurve, R, 7>::rx(&nested_preamble_points)?;
+        // ... and again commit to it, this time producing a point that is
+        // represented using base field elements in `C::CircuitField` that we
+        // can manipulate as the "native" field.
         let nested_preamble_blind: <C as Cycle>::ScalarField = C::ScalarField::random(&mut *rng);
         let nested_preamble_commitment =
             nested_preamble_rx.commit(nested_generators, nested_preamble_blind);
 
-        // Compute w = H(nested_preamble_commitment)
+        // We now simulate the computation of `w`, the first challenge of the
+        // protocol. The challenges we compute in this manner are produced so as
+        // to simulate the verification of the two proofs simultaneously.
+        //
+        // Derive w = H(nested_preamble_commitment)
         let w =
             crate::components::transcript::emulate_w::<C>(nested_preamble_commitment, self.params)?;
 
-        // We compute a nested commitment to s' = m(w, x_i, Y).
+        // In order to check that the two proofs' commitments to s (the mesh polynomial
+        // evaluated at (x_0, y_0) and (x_1, y_1)) are correct, we need to
+        // compute s' = m(w, x_i, Y) for both proofs.
         let x0 = left.proof.internal_circuits.x;
         let x1 = right.proof.internal_circuits.x;
+
+        // ... commit to both...
         let mesh_wx0 = self.circuit_mesh.wx(w, x0);
         let mesh_wx0_blind = C::CircuitField::random(&mut *rng);
         let mesh_wx0_commitment = mesh_wx0.commit(host_generators, mesh_wx0_blind);
         let mesh_wx1 = self.circuit_mesh.wx(w, x1);
         let mesh_wx1_blind = C::CircuitField::random(&mut *rng);
         let mesh_wx1_commitment = mesh_wx1.commit(host_generators, mesh_wx1_blind);
-
-        // We compute a nested commitment to s' = m(w, x_i, Y).
+        // ... and then compute the nested commitment S' that contains them.
         let nested_s_prime_rx = stages::nested::s_prime::Stage::<C::HostCurve, R, 2>::rx(&[
             mesh_wx0_commitment,
             mesh_wx1_commitment,
@@ -97,6 +126,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let nested_s_prime_commitment =
             nested_s_prime_rx.commit(nested_generators, nested_s_prime_blind);
 
+        // Once S' is committed, we can compute the challenges (y, z).
+        //
         // Derive (y, z) = H(w, nested_s_prime_commitment).
         let (y, z) = crate::components::transcript::emulate_y_z::<C>(
             w,
@@ -116,8 +147,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let nested_s_doubleprime_commitment =
             nested_s_doubleprime_rx.commit(nested_generators, nested_s_doubleprime_blind);
 
-        // Compute error stage first so we can derive mu/nu from nested_error_commitment.
-        // Create error witness with dummy z and error terms.
+        // Compute error stage first so we can derive mu/nu from
+        // nested_error_commitment. Create error witness with z and error terms.
+        // The inclusion of z binds the error stage to the earlier "transcript".
         let error_witness = stages::native::error::Witness::<C, NUM_NATIVE_REVDOT_CLAIMS> {
             z,
             nested_s_doubleprime_commitment,
