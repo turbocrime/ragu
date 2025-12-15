@@ -5,18 +5,20 @@ use ragu_circuits::Circuit;
 use ragu_core::{
     Result,
     drivers::{Driver, emulator::Emulator},
-    maybe::{Always, Maybe, MaybeKind},
+    maybe::Maybe,
 };
 use ragu_primitives::{Element, GadgetExt, io::Buffer};
 
-/// Evaluate k(Y) at point `y` for a circuit instance.
-pub fn eval<F: Field, C: Circuit<F>>(circuit: &C, instance: C::Instance<'_>, y: F) -> Result<F> {
-    let mut dr = Emulator::extractor();
-    let output = circuit.instance(&mut dr, Always::maybe_just(|| instance))?;
-    let y_elem = Element::constant(&mut dr, y);
-    let mut ky = Ky::new(&mut dr, y_elem);
-    output.write(&mut dr, &mut ky)?;
-    Ok(*ky.finish(&mut dr)?.value().take())
+/// Emulate k(Y) evaluation at point `y` for a circuit instance.
+pub fn emulate<F: Field, C: Circuit<F>>(circuit: &C, instance: C::Instance<'_>, y: F) -> Result<F> {
+    Emulator::emulate_wired((instance, y), |dr, witness| {
+        let (instance, y) = witness.cast();
+        let output = circuit.instance(dr, instance)?;
+        let y_elem = Element::constant(dr, y.take());
+        let mut ky = Ky::new(dr, y_elem);
+        output.write(dr, &mut ky)?;
+        Ok(ky.finish(dr)?.wire().clone().value().take())
+    })
 }
 
 /// A buffer that evaluates k(Y) at a point `y` using Horner's method.

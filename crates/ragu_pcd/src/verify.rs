@@ -99,7 +99,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // Compute unified k(Y) once for both C and V circuits.
         let unified_ky = {
             let stub = StubUnified::<C>::new();
-            crate::components::ky::eval(&stub, &unified_instance, verifier.y)?
+            crate::components::ky::emulate(&stub, &unified_instance, verifier.y)?
         };
 
         // C circuit verification with ky.
@@ -144,7 +144,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let application_ky = {
             let adapter = Adapter::<C, StubStep<H>, R, HEADER_SIZE>::new(StubStep::new());
             let instance = (left_header, right_header, pcd.data.clone());
-            crate::components::ky::eval(&adapter, instance, verifier.y)?
+            crate::components::ky::emulate(&adapter, instance, verifier.y)?
         };
 
         let application_valid = verifier.check_circuit(
