@@ -131,12 +131,12 @@ mod tests {
         type M = ConstLen<3>;
     }
 
-    /// Test parameters with configurable N (and M=N for testing purposes).
+    /// Test parameters with configurable N and M.
     #[derive(Clone, Copy, Default)]
-    struct TestParams<const N: usize>;
-    impl<const N: usize> Parameters for TestParams<N> {
+    struct TestParams<const N: usize, const M: usize>;
+    impl<const N: usize, const M: usize> Parameters for TestParams<N, M> {
         type N = ConstLen<N>;
-        type M = ConstLen<N>;
+        type M = ConstLen<M>;
     }
 
     #[test]
@@ -215,40 +215,46 @@ mod tests {
             Ok(sim.num_multiplications())
         }
 
-        // Formula: 2*m^2 + m + 2
-        assert_eq!(measure::<TestParams<5>>()?, 57);
-        assert_eq!(measure::<TestParams<15>>()?, 467);
-        assert_eq!(measure::<TestParams<30>>()?, 1832);
-        assert_eq!(measure::<TestParams<60>>()?, 7262);
+        // Formula: 2*n^2 + n + 2 (only P::N is used in compute_c_n)
+        assert_eq!(measure::<TestParams<5, 1>>()?, 57);
+        assert_eq!(measure::<TestParams<15, 1>>()?, 467);
+        assert_eq!(measure::<TestParams<30, 1>>()?, 1832);
+        assert_eq!(measure::<TestParams<60, 1>>()?, 7262);
 
         Ok(())
     }
 
     #[test]
     fn test_multireduce() -> Result<()> {
-        fn measure<PM: Parameters, PN: Parameters>() -> Result<usize> {
+        fn measure<P: Parameters>() -> Result<usize> {
             let rng = OsRng;
             let sim = Simulator::simulate(rng, |dr, mut rng| {
                 let mu = Element::alloc(dr, rng.view_mut().map(Fp::random))?;
                 let nu = Element::alloc(dr, rng.view_mut().map(Fp::random))?;
-                let error_terms = (0..ErrorTermsLen::<PM::N>::len())
+
+                // Layer 1: N instances of M-sized reductions (mimicking c.rs)
+                let error_terms_m: FixedVec<_, ErrorTermsLen<P::M>> = (0
+                    ..ErrorTermsLen::<P::M>::len())
                     .map(|_| Element::alloc(dr, rng.view_mut().map(Fp::random)))
                     .try_collect_fixed()?;
-                let ky_values = (0..PM::N::len())
+                let ky_values_m: FixedVec<_, P::M> = (0..P::M::len())
                     .map(|_| Element::alloc(dr, rng.view_mut().map(Fp::random)))
                     .try_collect_fixed()?;
 
                 let mut collapsed = vec![];
-                for _ in 0..PN::N::len() {
-                    let v = compute_c_m::<_, PM>(dr, &mu, &nu, &error_terms, &ky_values)?;
+                for _ in 0..P::N::len() {
+                    let v = compute_c_m::<_, P>(dr, &mu, &nu, &error_terms_m, &ky_values_m)?;
                     collapsed.push(v);
                 }
-                let collapsed = FixedVec::new(collapsed)?;
-                let error_terms = (0..ErrorTermsLen::<PN::N>::len())
+                let collapsed: FixedVec<_, P::N> = FixedVec::new(collapsed)?;
+
+                // Layer 2: Single N-sized reduction using collapsed as ky_values
+                let error_terms_n: FixedVec<_, ErrorTermsLen<P::N>> = (0
+                    ..ErrorTermsLen::<P::N>::len())
                     .map(|_| Element::alloc(dr, rng.view_mut().map(Fp::random)))
                     .try_collect_fixed()?;
 
-                compute_c_n::<_, PN>(dr, &mu, &nu, &error_terms, &collapsed)?;
+                compute_c_n::<_, P>(dr, &mu, &nu, &error_terms_n, &collapsed)?;
 
                 Ok(())
             })?;
@@ -261,16 +267,17 @@ mod tests {
                 n * cost(m) + cost(n)
             };
 
-            assert_eq!(num, expected(PM::N::len(), PN::N::len()));
+            assert_eq!(num, expected(P::M::len(), P::N::len()));
 
             Ok(sim.num_multiplications())
         }
 
-        assert_eq!(measure::<TestParams<2>, TestParams<2>>()?, 36);
-        assert_eq!(measure::<TestParams<3>, TestParams<7>>()?, 268);
-        assert_eq!(measure::<TestParams<6>, TestParams<11>>()?, 1135);
-        assert_eq!(measure::<TestParams<5>, TestParams<10>>()?, 782);
-        assert_eq!(measure::<TestParams<10>, TestParams<10>>()?, 2332);
+        // TestParams<N, M> where N is layer 2 size and M is layer 1 size
+        assert_eq!(measure::<TestParams<2, 2>>()?, 36);
+        assert_eq!(measure::<TestParams<7, 3>>()?, 268);
+        assert_eq!(measure::<TestParams<11, 6>>()?, 1135);
+        assert_eq!(measure::<TestParams<10, 5>>()?, 782);
+        assert_eq!(measure::<TestParams<10, 10>>()?, 2332);
 
         Ok(())
     }
