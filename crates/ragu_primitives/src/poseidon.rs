@@ -1,3 +1,9 @@
+//! Poseidon sponge hash function implementation.
+//!
+//! This module provides [`Sponge`], an implementation of the
+//! [Poseidon](https://eprint.iacr.org/2019/458) sponge construction for
+//! in-circuit hashing.
+
 use arithmetic::Coeff;
 use ff::Field;
 use ragu_core::{
@@ -17,7 +23,7 @@ use crate::{
     vec::{FixedVec, Len},
 };
 
-pub struct T<F: Field, P: arithmetic::PoseidonPermutation<F>>(F, P);
+struct T<F: Field, P: arithmetic::PoseidonPermutation<F>>(F, P);
 
 impl<F: Field, P: arithmetic::PoseidonPermutation<F>> Len for T<F, P> {
     fn len() -> usize {
@@ -141,6 +147,11 @@ impl<'dr, D: Driver<'dr>, P: arithmetic::PoseidonPermutation<D::F>> Sponge<'dr, 
     }
 }
 
+/// The raw state of a Poseidon sponge permutation.
+///
+/// This type holds `P::T` field elements representing the internal state
+/// of the sponge. It can be used to save and resume sponge progress via
+/// [`Sponge::save_state`] and [`Sponge::resume_and_squeeze`].
 #[derive(Gadget)]
 pub struct SpongeState<'dr, D: Driver<'dr>, P: arithmetic::PoseidonPermutation<D::F>> {
     #[ragu(gadget)]

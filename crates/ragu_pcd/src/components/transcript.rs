@@ -8,7 +8,7 @@ use ragu_core::{
     drivers::{Driver, emulator::Emulator},
     maybe::Maybe,
 };
-use ragu_primitives::{Element, GadgetExt, Point, Sponge};
+use ragu_primitives::{Element, GadgetExt, Point, poseidon::Sponge};
 
 /// Computation of $w = H(\\text{nested\\_preamble\\_commitment})$.
 pub fn derive_w<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
@@ -118,7 +118,7 @@ pub fn emulate_u<C: Cycle>(
 }
 
 /// Computation of $(\\mu, \\nu) = H(C)$ where $C \in E_p$.
-/// 
+///
 /// This is used to derive $(\mu, \nu)$ from
 /// $\\text{nested\\_error\\_m\\_commitment}$ and $(\mu', \nu')$ from
 /// $\\text{nested\\_error\\_n\\_commitment}$.
