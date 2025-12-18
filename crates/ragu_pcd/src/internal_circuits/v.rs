@@ -16,22 +16,16 @@ use super::{
     stages::native::{eval as native_eval, preamble as native_preamble, query as native_query},
     unified::{self, OutputBuilder},
 };
-use crate::components::fold_revdot::Parameters;
-
 pub use crate::internal_circuits::InternalCircuitIndex::VCircuit as CIRCUIT_ID;
 pub use crate::internal_circuits::InternalCircuitIndex::VStaged as STAGED_ID;
 
-pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, P: Parameters> {
-    _params: &'params C,
-    _marker: PhantomData<(C, R, P)>,
+pub struct Circuit<C: Cycle, R, const HEADER_SIZE: usize> {
+    _marker: PhantomData<(C, R)>,
 }
 
-impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, P: Parameters>
-    Circuit<'params, C, R, HEADER_SIZE, P>
-{
-    pub fn new(params: &'params C) -> Staged<C::CircuitField, R, Self> {
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Circuit<C, R, HEADER_SIZE> {
+    pub fn new() -> Staged<C::CircuitField, R, Self> {
         Staged::new(Circuit {
-            _params: params,
             _marker: PhantomData,
         })
     }
@@ -41,8 +35,8 @@ pub struct Witness<'a, C: Cycle> {
     pub unified_instance: &'a unified::Instance<C>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, P: Parameters> StagedCircuit<C::CircuitField, R>
-    for Circuit<'_, C, R, HEADER_SIZE, P>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> StagedCircuit<C::CircuitField, R>
+    for Circuit<C, R, HEADER_SIZE>
 {
     type Final = native_eval::Stage<C, R, HEADER_SIZE>;
 

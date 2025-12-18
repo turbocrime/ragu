@@ -402,7 +402,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         // C staged circuit.
         let (c_rx, _) = internal_circuits::c::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new(
-            self.params,
             circuit_counts(self.num_application_steps).1,
         )
         .rx::<R>(
@@ -417,12 +416,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let c_rx_commitment = c_rx.commit(host_generators, c_rx_blind);
 
         // V staged circuit.
-        let (v_rx, _) =
-            internal_circuits::v::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new(self.params)
-                .rx::<R>(
-                    internal_circuits::v::Witness { unified_instance },
-                    self.circuit_mesh.get_key(),
-                )?;
+        let (v_rx, _) = internal_circuits::v::Circuit::<C, R, HEADER_SIZE>::new().rx::<R>(
+            internal_circuits::v::Witness { unified_instance },
+            self.circuit_mesh.get_key(),
+        )?;
         let v_rx_blind = C::CircuitField::random(&mut *rng);
         let v_rx_commitment = v_rx.commit(host_generators, v_rx_blind);
 
@@ -459,7 +456,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // Ky staged circuit (layer 1 folding verification).
         let (ky_rx, _) =
             internal_circuits::ky::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new(
-                self.params,
                 circuit_counts(self.num_application_steps).1,
             )
             .rx::<R>(

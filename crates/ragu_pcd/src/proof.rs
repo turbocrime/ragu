@@ -932,7 +932,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         };
         let internal_circuit_c =
             internal_circuits::c::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new(
-                self.params,
                 circuit_counts(self.num_application_steps).1,
             );
         let internal_circuit_c_witness = internal_circuits::c::Witness {
@@ -948,8 +947,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let c_rx_commitment = c_rx.commit(self.params.host_generators(), c_rx_blind);
 
         // Compute v_rx using the V-staged circuit
-        let internal_circuit_v =
-            internal_circuits::v::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new(self.params);
+        let internal_circuit_v = internal_circuits::v::Circuit::<C, R, HEADER_SIZE>::new();
         let internal_circuit_v_witness = internal_circuits::v::Witness {
             unified_instance: &unified_instance,
         };
@@ -993,7 +991,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // Compute ky_rx using the ky circuit
         let internal_circuit_ky =
             internal_circuits::ky::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new(
-                self.params,
                 circuit_counts(self.num_application_steps).1,
             );
         let internal_circuit_ky_witness = internal_circuits::ky::Witness {

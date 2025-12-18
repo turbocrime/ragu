@@ -36,19 +36,15 @@ pub use crate::internal_circuits::InternalCircuitIndex::KyCircuit as CIRCUIT_ID;
 pub use crate::internal_circuits::InternalCircuitIndex::KyStaged as STAGED_ID;
 
 /// Circuit that verifies layer 1 revdot folding.
-pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, P: Parameters> {
-    _params: &'params C,
+pub struct Circuit<C: Cycle, R, const HEADER_SIZE: usize, P: Parameters> {
     log2_circuits: u32,
-    _marker: PhantomData<(R, P)>,
+    _marker: PhantomData<(C, R, P)>,
 }
 
-impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, P: Parameters>
-    Circuit<'params, C, R, HEADER_SIZE, P>
-{
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, P: Parameters> Circuit<C, R, HEADER_SIZE, P> {
     /// Create a new ky circuit.
-    pub fn new(params: &'params C, log2_circuits: u32) -> Staged<C::CircuitField, R, Self> {
+    pub fn new(log2_circuits: u32) -> Staged<C::CircuitField, R, Self> {
         Staged::new(Circuit {
-            _params: params,
             log2_circuits,
             _marker: PhantomData,
         })
@@ -68,7 +64,7 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, P: Parameter
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, P: Parameters> StagedCircuit<C::CircuitField, R>
-    for Circuit<'_, C, R, HEADER_SIZE, P>
+    for Circuit<C, R, HEADER_SIZE, P>
 {
     type Final = native_error_n::Stage<C, R, HEADER_SIZE, P>;
 
