@@ -130,29 +130,32 @@ Each future IVC step now consists of two halves working in tandem:
   producing new NARK public instance $\inst_{app,i+1}^{(1)}$
 - **Merge Circuit**: Folds (relevant part of) the previous step's instance into
   the accumulator
-  - folds scalars in instances $\inst_{app,i+1}^{(1)}$ and $\inst_{merge,i}^{(1)}$
-    into accumulator $\acc_i^{(1)}$ 
-  - folds groups in instances $\inst_i^{(2)}=(\inst_{app,i}^{(2)},\inst_{merge,i}^{(2)})$
-    into accumulator $\acc_i^{(2)}$
+  - commits (but not folds) new application step instances $\inst_{app,i+1}^{(1)}$
+  - **base case**: if $i=0$, set $\acc'_{i+1}=\acc_0=\acc_\bot$ and skip the rest
+  - folds scalars in the last step instances $\inst_{app,i}^{(1)}$ and
+    $\inst_{merge,i}^{(1)}$ into accumulator $\acc_i^{(1)}$ 
+  - folds groups in the last step instances $\inst_{app,i}^{(2)}$ and
+    $\inst_{merge,i}^{(2)}$ into accumulator $\acc_i^{(2)}$
   - enforces [deferred operations](../../prelim/nested_commitment.md#deferreds)
     captured in $\inst_i^{(2)}$ from $CS^{(2)}$ of the last step (whose group
     operations are native here)
-  - produces a new NARK instance $\inst_{i+1}^{(1)}$ to be (partially) folded in
-    the second half
+  - produces a NARK instance $\inst_{i+1}^{(1)}$ to be folded in _the next step_
 
 **Secondary circuits** $CS^{(2)}$:
 - **App Circuit**: Advances application state $z_i^{(2)} \to z_{i+1}^{(2)}$,
   producing new NARK public instance $\inst_{app,i+1}^{(2)}$
 - **Merge Circuit**: Folds (relevant part of) the current step's instance into
   the accumulator
-  - folds scalars in instances $\inst_{app,i+1}^{(2)}$ and $\inst_{merge,i+1}^{(2)}$
-    into accumulator $\acc_i^{(2)}$ (further update it)
-  - folds groups in instances $\inst_{i+1}^{(1)}=(\inst_{app,i+1}^{(1)},\inst_{merge,i+1}^{(1)})$
-    into accumulator $\acc_i^{(1)}$ (further update it)
-  - enforces deferred operations captured in $\inst_{i+1}^{(1)}$ from $CS^{(1)}$
-    of _the same step_
-  - produces a new NARK instance $\inst_{i+1}^{(2)}$ to be (partially) folded in
-    the primary half of _the next step_
+  - commits (but not folds) new application step instances $\inst_{app,i+1}^{(2)}$
+  - **base case**: if $i=0$, set $\acc_{i+1}=\acc'_{i+1}$ without any folding
+    and skip the rest
+  - folds scalars in the last step instances $\inst_{app,i}^{(2)}$
+    and $\inst_{merge,i}^{(2)}$ into accumulator $\acc_i^{(2)}$ (further update it)
+  - folds groups in the last step instances $\inst_{app,i}^{(1)}$ and
+    $\inst_{merge,i}^{(1)}$ into accumulator $\acc_i^{(1)}$ (further update it)
+  - enforces deferred operations captured in $\inst_{i}^{(1)}$ from $CS^{(1)}$
+    of _the last step_
+  - produces a NARK instance $\inst_{i+1}^{(2)}$ to be folded in _the next step_
 
 Both circuits run accumulation verifiers $\mathsf{Acc.V}$ for the [3
 subprotocols inside the NARK](../nark.md#nark) to verifiably update their
@@ -167,14 +170,19 @@ chain from the _verifier's perspective_ and omits auxiliary advice and witness
 parts of the NARK instance and accumulator managed by the prover.
 
 ```admonish note title="Split-up of the folding work"
-The accumulator for one curve contains both group and field elements. E.g.,
-$\acc^{(1)}=(S,\bar{A},\bar{B},c,\bar{P},u,v)$ where
-$S,\bar{A},\bar{B},P\in\G^{(1)}$ and $c,u,v\in\F^{(1)}\equiv\F_p$.
-To avoid all non-native arithemtic, we partially fold scalars (i.e. $c,v$)
-directly in $CS_{merge}^{(1)}$ and defer the folding of commitments (i.e.
-$\bar{A},\bar{B},\bar{P}$) to $CS_{merge}^{(2)}$.
-Additionally, scalars in the NARK instance for $CS_{merge,i}^{(1)}$ can only be
-folded during the next step in $CS_{merge,i+1}^{(1)}$.
+
+- NARK instances for both the application circuit and merge circuits in step $i$
+  is **only folded in the step $i+1$**.
+- The NARK instance for the application circuit is first committed via
+  [nested commitment](../../prelim/nested_commitment.md) in the primary merge
+  ciruict of _the same step_ before being accumulated in the next.
+- The accumulator for one curve contains both group and field elements. E.g.,
+  $\acc^{(1)}=(S,\bar{A},\bar{B},c,\bar{P},u,v)$ where
+  $S,\bar{A},\bar{B},P\in\G^{(1)}$ and $c,u,v\in\F^{(1)}\equiv\F_p$.
+  To avoid all non-native arithmetic, scalars are folded natively while
+  commitments are folded on the other circuit. E.g. $c,v\in\F_p$ are folded in
+  $CS_{merge}^{(1)}$ (of the next step), and $\bar{A},\bar{B},\bar{P}$ are
+  folded in $CS_{merge}^{(2)}$ (of the next step); vice versa for $\acc^{(2)}$.
 ```
 
 ## 2-arity PCD
