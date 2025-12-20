@@ -1,4 +1,4 @@
-use arithmetic::{Cycle, FixedGenerators};
+use arithmetic::{Cycle, FixedGenerators, PrimeFieldExt};
 use ff::Field;
 use ragu_circuits::{
     CircuitExt,
@@ -18,7 +18,7 @@ use alloc::{vec, vec::Vec};
 
 use crate::{
     Application, circuit_counts,
-    components::fold_revdot::{self, NativeParameters, Parameters},
+    components::fold_revdot::{self, NativeParameters},
     header::Header,
     internal_circuits::{self, dummy, stages},
 };
@@ -671,7 +671,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         // Compute error_m stage (Layer 1: N instances of M-sized reductions)
         let error_m_witness = stages::native::error_m::Witness::<C, NativeParameters> {
-            error_terms: FixedVec::from_fn(|_| FixedVec::from_fn(|_| C::CircuitField::ZERO)),
+            error_terms: FixedVec::from_fn(|_| FixedVec::from_fn(|_| C::CircuitField::todo())),
         };
         let native_error_m_rx =
             stages::native::error_m::Stage::<C, R, HEADER_SIZE, NativeParameters>::rx(
@@ -716,10 +716,30 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let mu = *mu.value().take();
         let nu = *sponge.squeeze(&mut dr)?.value().take();
 
+        // Compute collapsed values (layer 1 folding) now that mu, nu are known.
+        let collapsed =
+            Emulator::emulate_wireless((mu, nu, &error_m_witness.error_terms), |dr, witness| {
+                let (mu, nu, error_terms_m) = witness.cast();
+                let mu = Element::alloc(dr, mu)?;
+                let nu = Element::alloc(dr, nu)?;
+                // TODO: compute ky_values properly
+                let ky_values = FixedVec::from_fn(|_| Element::todo(dr));
+
+                FixedVec::try_from_fn(|i| {
+                    let errors = FixedVec::try_from_fn(|j| {
+                        Element::alloc(dr, error_terms_m.view().map(|et| et[i][j]))
+                    })?;
+                    let v = fold_revdot::compute_c_m::<_, NativeParameters>(
+                        dr, &mu, &nu, &errors, &ky_values,
+                    )?;
+                    Ok(*v.value().take())
+                })
+            })?;
+
         // Compute error_n stage (Layer 2: Single N-sized reduction)
         let error_n_witness = stages::native::error_n::Witness::<C, NativeParameters> {
-            error_terms: FixedVec::from_fn(|_| C::CircuitField::ZERO),
-            collapsed: FixedVec::from_fn(|_| C::CircuitField::ZERO),
+            error_terms: FixedVec::from_fn(|_| C::CircuitField::todo()),
+            collapsed,
             sponge_state_elements,
         };
         let native_error_n_rx =
@@ -745,53 +765,27 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let mu_prime = *sponge.squeeze(&mut dr)?.value().take();
         let nu_prime = *sponge.squeeze(&mut dr)?.value().take();
 
-        // Compute c, the folded revdot product claim using two-layer reduction.
-        let c = Emulator::emulate_wireless(
+        // Compute c, the folded revdot product claim (layer 2 only).
+        // Layer 1 was already computed above to produce the collapsed values.
+        let c: C::CircuitField = Emulator::emulate_wireless(
             (
-                mu,
-                nu,
                 mu_prime,
                 nu_prime,
-                &error_m_witness.error_terms,
                 &error_n_witness.error_terms,
+                &error_n_witness.collapsed,
             ),
             |dr, witness| {
-                let (mu, nu, mu_prime, nu_prime, error_terms_m, error_terms_n) = witness.cast();
+                let (mu_prime, nu_prime, error_terms_n, collapsed) = witness.cast();
 
-                let mu = Element::alloc(dr, mu)?;
-                let nu = Element::alloc(dr, nu)?;
                 let mu_prime = Element::alloc(dr, mu_prime)?;
                 let nu_prime = Element::alloc(dr, nu_prime)?;
 
-                // Allocate error_m error terms (nested structure)
-                let error_terms_m: FixedVec<_, <NativeParameters as Parameters>::N> =
-                    FixedVec::try_from_fn(|i| {
-                        FixedVec::try_from_fn(|j| {
-                            Element::alloc(dr, error_terms_m.view().map(|et| et[i][j]))
-                        })
-                    })?;
-
-                // Allocate error_n error terms
                 let error_terms_n = FixedVec::try_from_fn(|i| {
                     Element::alloc(dr, error_terms_n.view().map(|et| et[i]))
                 })?;
 
-                // Layer 1: N instances of M-sized reductions
-                // ky_values stay as zeros for now
-                let ky_values_m = FixedVec::from_fn(|_| Element::zero(dr));
-
-                let mut collapsed = vec![];
-                for error_terms_i in error_terms_m.iter() {
-                    let v = fold_revdot::compute_c_m::<_, NativeParameters>(
-                        dr,
-                        &mu,
-                        &nu,
-                        error_terms_i,
-                        &ky_values_m,
-                    )?;
-                    collapsed.push(v);
-                }
-                let collapsed = FixedVec::new(collapsed)?;
+                let collapsed =
+                    FixedVec::try_from_fn(|i| Element::alloc(dr, collapsed.view().map(|c| c[i])))?;
 
                 // Layer 2: Single N-sized reduction using collapsed as ky_values
                 let c = fold_revdot::compute_c_n::<_, NativeParameters>(
@@ -838,7 +832,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         // Compute query witness (stubbed for now).
         let query_witness = internal_circuits::stages::native::query::Witness {
-            queries: FixedVec::from_fn(|_| C::CircuitField::ZERO),
+            queries: FixedVec::from_fn(|_| C::CircuitField::todo()),
         };
 
         let native_query_rx =
@@ -885,7 +879,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         // Compute eval witness (stubbed for now).
         let eval_witness = internal_circuits::stages::native::eval::Witness {
-            evals: FixedVec::from_fn(|_| C::CircuitField::ZERO),
+            evals: FixedVec::from_fn(|_| C::CircuitField::todo()),
         };
         let native_eval_rx =
             internal_circuits::stages::native::eval::Stage::<C, R, HEADER_SIZE>::rx(&eval_witness)?;

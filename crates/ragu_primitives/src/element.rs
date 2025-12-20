@@ -1,5 +1,6 @@
 use arithmetic::Coeff;
-use ff::Field;
+use arithmetic::PrimeFieldExt;
+use ff::{Field, PrimeField};
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverValue, LinearExpression},
@@ -104,6 +105,16 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
         let value = D::just(|| D::F::ZERO);
 
         Element { value, wire }
+    }
+
+    /// Creates an element with a non-trivial constant for use as a stub.
+    ///
+    /// See [`PrimeFieldExt::todo`] for the equivalent on bare field elements.
+    pub fn todo(dr: &mut D) -> Self
+    where
+        D::F: PrimeField,
+    {
+        Self::constant(dr, D::F::todo())
     }
 
     /// Creates an element for the provided constant value.
