@@ -1,7 +1,9 @@
 //! This module provides the [`Application::verify`] method implementation.
 
-mod stub_step;
-mod stub_unified;
+// TODO: these should be made private, since if the trivial proof API is
+// improved these will only be used by the verifier.
+pub(crate) mod stub_step;
+pub(crate) mod stub_unified;
 
 use arithmetic::Cycle;
 use ff::PrimeField;

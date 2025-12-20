@@ -1,7 +1,7 @@
 use arithmetic::{Cycle, PrimeFieldExt};
 use ff::Field;
 use ragu_circuits::{CircuitExt, polynomials::Rank, staging::StageExt};
-use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
+use ragu_core::{Error, Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::{
     Element, GadgetExt, Point,
     poseidon::Sponge,
@@ -13,13 +13,17 @@ use alloc::vec;
 
 use crate::{
     Application, circuit_counts,
-    components::fold_revdot::{self, NativeParameters},
+    components::{
+        fold_revdot::{self, NativeParameters},
+        ky,
+    },
     internal_circuits::{self, stages, unified},
     proof::{
         ABProof, ApplicationProof, ErrorProof, EvalProof, FProof, InternalCircuits, MeshWyProof,
         MeshXyProof, Pcd, PreambleProof, Proof, QueryProof, SPrimeProof,
     },
     step::{Step, adapter::Adapter},
+    verify::{stub_step::StubStep, stub_unified::StubUnified},
 };
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
@@ -145,6 +149,50 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let y = *sponge.squeeze(&mut dr)?.value().take();
         let z = *sponge.squeeze(&mut dr)?.value().take();
 
+        // Compute k(y) values for the folding claims
+        let (left_app_ky, right_app_ky, left_unified_ky, right_unified_ky) = {
+            // Application k(y) for left child proof
+            let left_app_ky = {
+                let adapter = Adapter::<C, StubStep<S::Left>, R, HEADER_SIZE>::new(StubStep::new());
+                let left_header = FixedVec::try_from(left.proof.application.left_header.clone())
+                    .map_err(|_| Error::MalformedEncoding("left child left header size".into()))?;
+                let right_header = FixedVec::try_from(left.proof.application.right_header.clone())
+                    .map_err(|_| Error::MalformedEncoding("left child right header size".into()))?;
+                ky::emulate(&adapter, (left_header, right_header, left.data.clone()), y)?
+            };
+
+            // Application k(y) for right child proof
+            let right_app_ky = {
+                let adapter =
+                    Adapter::<C, StubStep<S::Right>, R, HEADER_SIZE>::new(StubStep::new());
+                let left_header = FixedVec::try_from(right.proof.application.left_header.clone())
+                    .map_err(|_| {
+                    Error::MalformedEncoding("right child left header size".into())
+                })?;
+                let right_header = FixedVec::try_from(right.proof.application.right_header.clone())
+                    .map_err(|_| {
+                        Error::MalformedEncoding("right child right header size".into())
+                    })?;
+                ky::emulate(&adapter, (left_header, right_header, right.data.clone()), y)?
+            };
+
+            // Unified k(y) for left child proof
+            let left_unified_ky = {
+                let stub = StubUnified::<C>::new();
+                let unified_instance = unified::Instance::from_proof(&left.proof);
+                ky::emulate(&stub, &unified_instance, y)?
+            };
+
+            // Unified k(y) for right child proof
+            let right_unified_ky = {
+                let stub = StubUnified::<C>::new();
+                let unified_instance = unified::Instance::from_proof(&right.proof);
+                ky::emulate(&stub, &unified_instance, y)?
+            };
+
+            (left_app_ky, right_app_ky, left_unified_ky, right_unified_ky)
+        };
+
         // Given (w, y), we can compute m(w, X, y) and commit to it.
         let mesh_wy = self.circuit_mesh.wy(w, y);
         let mesh_wy_blind = C::CircuitField::random(&mut *rng);
@@ -198,13 +246,35 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let nu = *sponge.squeeze(&mut dr)?.value().take();
 
         // Compute collapsed values (layer 1 folding) now that mu, nu are known.
-        let collapsed =
-            Emulator::emulate_wireless((mu, nu, &error_m_witness.error_terms), |dr, witness| {
-                let (mu, nu, error_terms_m) = witness.cast();
+        let collapsed = Emulator::emulate_wireless(
+            (
+                mu,
+                nu,
+                &error_m_witness.error_terms,
+                left_app_ky,
+                right_app_ky,
+                left_unified_ky,
+                right_unified_ky,
+            ),
+            |dr, witness| {
+                let (
+                    mu,
+                    nu,
+                    error_terms_m,
+                    left_app_ky,
+                    right_app_ky,
+                    left_unified_ky,
+                    right_unified_ky,
+                ) = witness.cast();
                 let mu = Element::alloc(dr, mu)?;
                 let nu = Element::alloc(dr, nu)?;
-                // TODO: compute ky_values properly
-                let mut ky_values = vec![Element::todo(dr)].into_iter();
+                let mut ky_values = vec![
+                    Element::alloc(dr, left_app_ky)?,
+                    Element::alloc(dr, right_app_ky)?,
+                    Element::alloc(dr, left_unified_ky)?,
+                    Element::alloc(dr, right_unified_ky)?,
+                ]
+                .into_iter();
 
                 FixedVec::try_from_fn(|i| {
                     let errors = FixedVec::try_from_fn(|j| {
@@ -218,7 +288,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     )?;
                     Ok(*v.value().take())
                 })
-            })?;
+            },
+        )?;
 
         // Compute error_n stage (Layer 2: Single N-sized reduction).
         let error_n_witness = stages::native::error_n::Witness::<C, NativeParameters> {

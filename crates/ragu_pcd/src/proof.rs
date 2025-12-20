@@ -18,9 +18,13 @@ use alloc::{vec, vec::Vec};
 
 use crate::{
     Application, circuit_counts,
-    components::fold_revdot::{self, NativeParameters},
+    components::{
+        fold_revdot::{self, NativeParameters},
+        ky,
+    },
     header::Header,
-    internal_circuits::{self, dummy, stages},
+    internal_circuits::{self, dummy, stages, unified},
+    verify::stub_unified::StubUnified,
 };
 
 /// Represents a recursive proof for the correctness of some computation.
@@ -664,6 +668,19 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let y = *sponge.squeeze(&mut dr)?.value().take();
         let z = *sponge.squeeze(&mut dr)?.value().take();
 
+        // Compute k(y) values for the trivial proof.
+        // The ky circuit computes k(y) from the preamble headers (left_header,
+        // right_header, output_header). For a trivial proof, all headers are zeros,
+        // so k(y) = 1 (just the constant term from Horner's method finish).
+        let app_ky = C::CircuitField::ONE;
+
+        // For the unified circuit, k(y) encodes the dummy_proof's commitments and challenges.
+        let unified_ky = {
+            let stub = StubUnified::<C>::new();
+            let unified_instance = unified::Instance::from_proof(&dummy_proof);
+            ky::emulate(&stub, &unified_instance, y)?
+        };
+
         // We compute a nested commitment to S'' = m(w, X, y).
         let mesh_wy = structured::Polynomial::new();
         let mesh_wy_blind = C::CircuitField::random(&mut *rng);
@@ -717,13 +734,35 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let nu = *sponge.squeeze(&mut dr)?.value().take();
 
         // Compute collapsed values (layer 1 folding) now that mu, nu are known.
-        let collapsed =
-            Emulator::emulate_wireless((mu, nu, &error_m_witness.error_terms), |dr, witness| {
-                let (mu, nu, error_terms_m) = witness.cast();
+        let collapsed = Emulator::emulate_wireless(
+            (
+                mu,
+                nu,
+                &error_m_witness.error_terms,
+                app_ky,
+                app_ky,
+                unified_ky,
+                unified_ky,
+            ),
+            |dr, witness| {
+                let (
+                    mu,
+                    nu,
+                    error_terms_m,
+                    left_app_ky,
+                    right_app_ky,
+                    left_unified_ky,
+                    right_unified_ky,
+                ) = witness.cast();
                 let mu = Element::alloc(dr, mu)?;
                 let nu = Element::alloc(dr, nu)?;
-                // TODO: compute ky_values properly
-                let mut ky_values = vec![Element::todo(dr)].into_iter();
+                let mut ky_values = vec![
+                    Element::alloc(dr, left_app_ky)?,
+                    Element::alloc(dr, right_app_ky)?,
+                    Element::alloc(dr, left_unified_ky)?,
+                    Element::alloc(dr, right_unified_ky)?,
+                ]
+                .into_iter();
 
                 FixedVec::try_from_fn(|i| {
                     let errors = FixedVec::try_from_fn(|j| {
@@ -737,7 +776,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     )?;
                     Ok(*v.value().take())
                 })
-            })?;
+            },
+        )?;
 
         // Compute error_n stage (Layer 2: Single N-sized reduction)
         let error_n_witness = stages::native::error_n::Witness::<C, NativeParameters> {

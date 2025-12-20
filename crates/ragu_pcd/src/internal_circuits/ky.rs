@@ -17,7 +17,7 @@ use ragu_core::{
     gadgets::{Gadget, GadgetKind},
     maybe::Maybe,
 };
-use ragu_primitives::{Element, vec::FixedVec};
+use ragu_primitives::{Element, GadgetExt, vec::FixedVec};
 
 use alloc::vec;
 use core::marker::PhantomData;
@@ -28,7 +28,7 @@ use super::{
     },
     unified::{self, OutputBuilder},
 };
-use crate::components::{fold_revdot, root_of_unity};
+use crate::components::{fold_revdot, ky::Ky, root_of_unity};
 
 pub use crate::internal_circuits::InternalCircuitIndex::KyCircuit as CIRCUIT_ID;
 pub use crate::internal_circuits::InternalCircuitIndex::KyStaged as STAGED_ID;
@@ -114,12 +114,48 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         root_of_unity::enforce(dr, preamble.left.circuit_id.clone(), self.log2_circuits)?;
         root_of_unity::enforce(dr, preamble.right.circuit_id.clone(), self.log2_circuits)?;
 
-        // Get mu, nu from unified instance
+        // Get y, mu, nu from unified instance
+        let y = unified_output.y.get(dr, unified_instance)?;
         let mu = unified_output.mu.get(dr, unified_instance)?;
         let nu = unified_output.nu.get(dr, unified_instance)?;
 
+        // Compute k(y) for left application circuit (headers).
+        let left_app_ky = {
+            let mut ky = Ky::new(dr, y.clone());
+            preamble.left.left_header.write(dr, &mut ky)?;
+            preamble.left.right_header.write(dr, &mut ky)?;
+            preamble.left.output_header.write(dr, &mut ky)?;
+            ky.finish(dr)?
+        };
+
+        // Compute k(y) for right application circuit (headers).
+        let right_app_ky = {
+            let mut ky = Ky::new(dr, y.clone());
+            preamble.right.left_header.write(dr, &mut ky)?;
+            preamble.right.right_header.write(dr, &mut ky)?;
+            preamble.right.output_header.write(dr, &mut ky)?;
+            ky.finish(dr)?
+        };
+
+        // Compute k(y) for left unified circuit.
+        let left_unified_ky = {
+            let mut ky = Ky::new(dr, y.clone());
+            preamble.left.unified.write(dr, &mut ky)?;
+            Element::zero(dr).write(dr, &mut ky)?;
+            ky.finish(dr)?
+        };
+
+        // Compute k(y) for right unified circuit.
+        let right_unified_ky = {
+            let mut ky = Ky::new(dr, y.clone());
+            preamble.right.unified.write(dr, &mut ky)?;
+            Element::zero(dr).write(dr, &mut ky)?;
+            ky.finish(dr)?
+        };
+
         // TODO: Compute ky values properly based on the preamble
-        let mut ky_values = vec![Element::todo(dr)].into_iter();
+        let mut ky_values =
+            vec![left_app_ky, right_app_ky, left_unified_ky, right_unified_ky].into_iter();
 
         for (i, error_terms) in error_m.error_terms.iter().enumerate() {
             let ky_values =
@@ -128,6 +164,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             fold_revdot::compute_c_m::<_, FP>(dr, &mu, &nu, error_terms, &ky_values)?
                 .enforce_equal(dr, &error_n.collapsed[i])?;
         }
+
+        assert!(ky_values.next().is_none());
 
         Ok((unified_output.finish(dr, unified_instance)?, D::just(|| ())))
     }
