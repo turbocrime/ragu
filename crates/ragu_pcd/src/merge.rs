@@ -150,9 +150,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let z = *sponge.squeeze(&mut dr)?.value().take();
 
         // Compute k(y) values for the folding claims
-        let (left_app_ky, right_app_ky, left_unified_ky, right_unified_ky) = {
+        let (left_application_ky, right_application_ky, left_unified_ky, right_unified_ky) = {
             // Application k(y) for left child proof
-            let left_app_ky = {
+            let left_application_ky = {
                 let adapter = Adapter::<C, StubStep<S::Left>, R, HEADER_SIZE>::new(StubStep::new());
                 let left_header = FixedVec::try_from(left.proof.application.left_header.clone())
                     .map_err(|_| Error::MalformedEncoding("left child left header size".into()))?;
@@ -162,7 +162,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             };
 
             // Application k(y) for right child proof
-            let right_app_ky = {
+            let right_application_ky = {
                 let adapter =
                     Adapter::<C, StubStep<S::Right>, R, HEADER_SIZE>::new(StubStep::new());
                 let left_header = FixedVec::try_from(right.proof.application.left_header.clone())
@@ -190,7 +190,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 ky::emulate(&stub, &unified_instance, y)?
             };
 
-            (left_app_ky, right_app_ky, left_unified_ky, right_unified_ky)
+            (
+                left_application_ky,
+                right_application_ky,
+                left_unified_ky,
+                right_unified_ky,
+            )
         };
 
         // Given (w, y), we can compute m(w, X, y) and commit to it.
@@ -251,8 +256,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 mu,
                 nu,
                 &error_m_witness.error_terms,
-                left_app_ky,
-                right_app_ky,
+                left_application_ky,
+                right_application_ky,
                 left_unified_ky,
                 right_unified_ky,
             ),
@@ -261,16 +266,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     mu,
                     nu,
                     error_terms_m,
-                    left_app_ky,
-                    right_app_ky,
+                    left_application_ky,
+                    right_application_ky,
                     left_unified_ky,
                     right_unified_ky,
                 ) = witness.cast();
                 let mu = Element::alloc(dr, mu)?;
                 let nu = Element::alloc(dr, nu)?;
                 let mut ky_values = vec![
-                    Element::alloc(dr, left_app_ky)?,
-                    Element::alloc(dr, right_app_ky)?,
+                    Element::alloc(dr, left_application_ky)?,
+                    Element::alloc(dr, right_application_ky)?,
                     Element::alloc(dr, left_unified_ky)?,
                     Element::alloc(dr, right_unified_ky)?,
                 ]
@@ -296,8 +301,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let error_n_witness = stages::native::error_n::Witness::<C, NativeParameters> {
             error_terms: FixedVec::from_fn(|_| C::CircuitField::todo()),
             collapsed,
-            left_app_ky,
-            right_app_ky,
+            left_application_ky,
+            right_application_ky,
             left_unified_ky,
             right_unified_ky,
             sponge_state_elements,

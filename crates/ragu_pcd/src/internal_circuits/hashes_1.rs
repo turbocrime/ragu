@@ -19,7 +19,7 @@ use ragu_core::{
     gadgets::{Gadget, GadgetKind},
     maybe::Maybe,
 };
-use ragu_primitives::{Element, GadgetExt, poseidon::Sponge};
+use ragu_primitives::{GadgetExt, poseidon::Sponge};
 
 use core::marker::PhantomData;
 
@@ -29,7 +29,7 @@ use super::{
     },
     unified::{self, OutputBuilder},
 };
-use crate::components::{fold_revdot, ky::Ky, root_of_unity};
+use crate::components::{fold_revdot, root_of_unity};
 
 pub use crate::internal_circuits::InternalCircuitIndex::Hashes1Circuit as CIRCUIT_ID;
 pub use crate::internal_circuits::InternalCircuitIndex::Hashes1Staged as STAGED_ID;
@@ -136,47 +136,28 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         unified_output.y.set(y.clone());
         unified_output.z.set(z);
 
-        // Compute k(y) values from preamble headers and enforce equality with staged values.
+        // Compute k(y) values from preamble and enforce equality with staged
+        // values.
         {
-            // Compute k(y) for left application circuit (headers).
-            let left_app_ky = {
-                let mut ky = Ky::new(dr, y.clone());
-                preamble.left.left_header.write(dr, &mut ky)?;
-                preamble.left.right_header.write(dr, &mut ky)?;
-                preamble.left.output_header.write(dr, &mut ky)?;
-                ky.finish(dr)?
-            };
+            preamble
+                .left
+                .application_ky(dr, y.clone())?
+                .enforce_equal(dr, &error_n.left_application_ky)?;
 
-            // Compute k(y) for right application circuit (headers).
-            let right_app_ky = {
-                let mut ky = Ky::new(dr, y.clone());
-                preamble.right.left_header.write(dr, &mut ky)?;
-                preamble.right.right_header.write(dr, &mut ky)?;
-                preamble.right.output_header.write(dr, &mut ky)?;
-                ky.finish(dr)?
-            };
+            preamble
+                .right
+                .application_ky(dr, y.clone())?
+                .enforce_equal(dr, &error_n.right_application_ky)?;
 
-            // Compute k(y) for left unified circuit.
-            let left_unified_ky = {
-                let mut ky = Ky::new(dr, y.clone());
-                preamble.left.unified.write(dr, &mut ky)?;
-                Element::zero(dr).write(dr, &mut ky)?;
-                ky.finish(dr)?
-            };
+            preamble
+                .left
+                .unified_ky(dr, y.clone())?
+                .enforce_equal(dr, &error_n.left_unified_ky)?;
 
-            // Compute k(y) for right unified circuit.
-            let right_unified_ky = {
-                let mut ky = Ky::new(dr, y);
-                preamble.right.unified.write(dr, &mut ky)?;
-                Element::zero(dr).write(dr, &mut ky)?;
-                ky.finish(dr)?
-            };
-
-            // Enforce k(y) values match staged values from error_n.
-            left_app_ky.enforce_equal(dr, &error_n.left_app_ky)?;
-            right_app_ky.enforce_equal(dr, &error_n.right_app_ky)?;
-            left_unified_ky.enforce_equal(dr, &error_n.left_unified_ky)?;
-            right_unified_ky.enforce_equal(dr, &error_n.right_unified_ky)?;
+            preamble
+                .right
+                .unified_ky(dr, y)?
+                .enforce_equal(dr, &error_n.right_unified_ky)?;
         }
 
         // Absorb nested_error_m_commitment and verify saved sponge state

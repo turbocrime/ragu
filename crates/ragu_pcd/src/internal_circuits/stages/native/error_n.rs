@@ -34,9 +34,9 @@ pub struct Witness<C: Cycle, FP: fold_revdot::Parameters> {
     /// These are the outputs of N M-sized revdot reductions.
     pub collapsed: FixedVec<C::CircuitField, FP::N>,
     /// k(y) for left application circuit (from left proof headers).
-    pub left_app_ky: C::CircuitField,
+    pub left_application_ky: C::CircuitField,
     /// k(y) for right application circuit (from right proof headers).
-    pub right_app_ky: C::CircuitField,
+    pub right_application_ky: C::CircuitField,
     /// k(y) for left unified circuit.
     pub left_unified_ky: C::CircuitField,
     /// k(y) for right unified circuit.
@@ -63,10 +63,10 @@ pub struct Output<
     pub collapsed: FixedVec<Element<'dr, D>, FP::N>,
     /// k(y) for left application circuit.
     #[ragu(gadget)]
-    pub left_app_ky: Element<'dr, D>,
+    pub left_application_ky: Element<'dr, D>,
     /// k(y) for right application circuit.
     #[ragu(gadget)]
-    pub right_app_ky: Element<'dr, D>,
+    pub right_application_ky: Element<'dr, D>,
     /// k(y) for left unified circuit.
     #[ragu(gadget)]
     pub left_unified_ky: Element<'dr, D>,
@@ -114,8 +114,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         let collapsed = FP::N::range()
             .map(|i| Element::alloc(dr, witness.view().map(|w| w.collapsed[i])))
             .try_collect_fixed()?;
-        let left_app_ky = Element::alloc(dr, witness.view().map(|w| w.left_app_ky))?;
-        let right_app_ky = Element::alloc(dr, witness.view().map(|w| w.right_app_ky))?;
+        let left_application_ky =
+            Element::alloc(dr, witness.view().map(|w| w.left_application_ky))?;
+        let right_application_ky =
+            Element::alloc(dr, witness.view().map(|w| w.right_application_ky))?;
         let left_unified_ky = Element::alloc(dr, witness.view().map(|w| w.left_unified_ky))?;
         let right_unified_ky = Element::alloc(dr, witness.view().map(|w| w.right_unified_ky))?;
         let sponge_state = SpongeState::from_elements(FixedVec::try_from_fn(|i| {
@@ -125,8 +127,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         Ok(Output {
             error_terms,
             collapsed,
-            left_app_ky,
-            right_app_ky,
+            left_application_ky,
+            right_application_ky,
             left_unified_ky,
             right_unified_ky,
             sponge_state,

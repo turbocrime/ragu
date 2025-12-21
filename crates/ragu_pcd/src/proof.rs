@@ -749,16 +749,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     mu,
                     nu,
                     error_terms_m,
-                    left_app_ky,
-                    right_app_ky,
+                    left_application_ky,
+                    right_application_ky,
                     left_unified_ky,
                     right_unified_ky,
                 ) = witness.cast();
                 let mu = Element::alloc(dr, mu)?;
                 let nu = Element::alloc(dr, nu)?;
                 let mut ky_values = vec![
-                    Element::alloc(dr, left_app_ky)?,
-                    Element::alloc(dr, right_app_ky)?,
+                    Element::alloc(dr, left_application_ky)?,
+                    Element::alloc(dr, right_application_ky)?,
                     Element::alloc(dr, left_unified_ky)?,
                     Element::alloc(dr, right_unified_ky)?,
                 ]
@@ -784,8 +784,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let error_n_witness = stages::native::error_n::Witness::<C, NativeParameters> {
             error_terms: FixedVec::from_fn(|_| C::CircuitField::todo()),
             collapsed,
-            left_app_ky: app_ky,
-            right_app_ky: app_ky,
+            left_application_ky: app_ky,
+            right_application_ky: app_ky,
             left_unified_ky: unified_ky,
             right_unified_ky: unified_ky,
             sponge_state_elements,

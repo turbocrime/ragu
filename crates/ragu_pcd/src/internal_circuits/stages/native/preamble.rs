@@ -16,6 +16,7 @@ use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use crate::{
+    components::ky::Ky,
     header::Header,
     internal_circuits::unified,
     proof::{Pcd, Proof},
@@ -121,6 +122,25 @@ pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle, const HEADER_SIZE: usize> 
     pub circuit_id: Element<'dr, D>,
     #[ragu(gadget)]
     pub unified: unified::Output<'dr, D, C>,
+}
+
+impl<'dr, D: Driver<'dr>, C: Cycle, const HEADER_SIZE: usize> ProofInputs<'dr, D, C, HEADER_SIZE> {
+    /// Compute k(y) for application circuit headers.
+    pub fn application_ky(&self, dr: &mut D, y: Element<'dr, D>) -> Result<Element<'dr, D>> {
+        let mut ky = Ky::new(dr, y);
+        self.left_header.write(dr, &mut ky)?;
+        self.right_header.write(dr, &mut ky)?;
+        self.output_header.write(dr, &mut ky)?;
+        ky.finish(dr)
+    }
+
+    /// Compute k(y) for unified circuit instance.
+    pub fn unified_ky(&self, dr: &mut D, y: Element<'dr, D>) -> Result<Element<'dr, D>> {
+        let mut ky = Ky::new(dr, y);
+        self.unified.write(dr, &mut ky)?;
+        Element::zero(dr).write(dr, &mut ky)?;
+        ky.finish(dr)
+    }
 }
 
 impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usize>

@@ -111,8 +111,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
 
         // Read k(y) values from error_n stage (computed and verified in hashes_1).
         let mut ky_values = [
-            error_n.left_app_ky,
-            error_n.right_app_ky,
+            error_n.left_application_ky,
+            error_n.right_application_ky,
             error_n.left_unified_ky,
             error_n.right_unified_ky,
         ]
