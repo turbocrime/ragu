@@ -209,21 +209,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let alpha = *sponge.squeeze(&mut dr)?.value().take();
 
         // Compute the F polynomial commitment (stubbed for now).
-        let native_f_rx =
-            ragu_circuits::polynomials::structured::Polynomial::<C::CircuitField, R>::new();
-        let native_f_blind = C::CircuitField::random(&mut *rng);
-        let native_f_commitment = native_f_rx.commit(host_generators, native_f_blind);
-
-        let nested_f_witness = internal_circuits::stages::nested::f::Witness {
-            native_f: native_f_commitment,
-        };
-        let nested_f_rx =
-            internal_circuits::stages::nested::f::Stage::<C::HostCurve, R>::rx(&nested_f_witness)?;
-        let nested_f_blind = C::ScalarField::random(&mut *rng);
-        let nested_f_commitment = nested_f_rx.commit(nested_generators, nested_f_blind);
+        let f = self.compute_f(rng)?;
 
         // Derive u = H(nested_f_commitment).
-        Point::constant(&mut dr, nested_f_commitment)?.write(&mut dr, &mut sponge)?;
+        Point::constant(&mut dr, f.nested_f_commitment)?.write(&mut dr, &mut sponge)?;
         let u = *sponge.squeeze(&mut dr)?.value().take();
 
         // Compute eval witness (stubbed for now).
@@ -266,7 +255,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             x,
             nested_query_commitment: query.nested_query_commitment,
             alpha,
-            nested_f_commitment,
+            nested_f_commitment: f.nested_f_commitment,
             u,
             nested_eval_commitment,
             beta,
@@ -374,14 +363,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 ab,
                 mesh_xy,
                 query,
-                f: FProof {
-                    native_f_rx,
-                    native_f_blind,
-                    native_f_commitment,
-                    nested_f_rx,
-                    nested_f_blind,
-                    nested_f_commitment,
-                },
+                f,
                 eval: EvalProof {
                     native_eval_rx,
                     native_eval_blind,
@@ -980,6 +962,34 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             nested_query_rx,
             nested_query_blind,
             nested_query_commitment,
+        })
+    }
+
+    /// Compute the F polynomial proof.
+    fn compute_f<RNG: Rng>(&self, rng: &mut RNG) -> Result<FProof<C, R>> {
+        let host_generators = self.params.host_generators();
+        let nested_generators = self.params.nested_generators();
+
+        let native_f_rx =
+            ragu_circuits::polynomials::structured::Polynomial::<C::CircuitField, R>::new();
+        let native_f_blind = C::CircuitField::random(&mut *rng);
+        let native_f_commitment = native_f_rx.commit(host_generators, native_f_blind);
+
+        let nested_f_witness = internal_circuits::stages::nested::f::Witness {
+            native_f: native_f_commitment,
+        };
+        let nested_f_rx =
+            internal_circuits::stages::nested::f::Stage::<C::HostCurve, R>::rx(&nested_f_witness)?;
+        let nested_f_blind = C::ScalarField::random(&mut *rng);
+        let nested_f_commitment = nested_f_rx.commit(nested_generators, nested_f_blind);
+
+        Ok(FProof {
+            native_f_rx,
+            native_f_blind,
+            native_f_commitment,
+            nested_f_rx,
+            nested_f_blind,
+            nested_f_commitment,
         })
     }
 }
