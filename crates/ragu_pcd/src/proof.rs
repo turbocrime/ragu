@@ -556,12 +556,4 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             },
         }
     }
-
-    /// Creates a trivial proof for the empty [`Header`] implementation `()`.
-    ///
-    /// This returns a minimal proof with zero polynomials and deterministic
-    /// blindings. It can be used as input to `fuse()` to seed new computations.
-    pub fn trivial(&self) -> Proof<C, R> {
-        self.trivial_internal()
-    }
 }
