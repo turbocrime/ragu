@@ -20,13 +20,16 @@ pub const DEFAULT_EQ_K: usize = 13;
 ///
 /// This type implements [`Clone`] and is used as the [`Cycle`](arithmetic::Cycle)
 /// type parameter. The actual curve parameters are stored in [`PastaParams`].
+/// 
+/// Marker type used as type parameter, never instantiated.
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Pasta;
 
 /// Contains the actual parameters for the Pasta curve cycle, including
 /// generators for both Pallas and Vesta curves.
 ///
-/// This type is returned by [`Pasta::new()`] or [`Pasta::baked()`].
+/// This type is returned by [`Pasta::generate()`] or [`Pasta::baked()`].
 pub struct PastaParams {
     pub(crate) pallas: PallasGenerators,
     pub(crate) vesta: VestaGenerators,
@@ -66,9 +69,9 @@ fn params_for_curve<C: CurveExt>(n: usize) -> (Vec<C::AffineExt>, C::AffineExt) 
 }
 
 impl PastaParams {
-    /// Creates new Pasta parameters by computing generators for both curves.
+    /// Generates Pasta parameters by computing generators for both curves.
     /// This is expensive; prefer [`Pasta::baked()`] when available.
-    pub fn new() -> Self {
+    pub fn generate() -> Self {
         let (ep_g, ep_h) = params_for_curve::<Ep>(1usize << DEFAULT_EP_K);
         let (eq_g, eq_h) = params_for_curve::<Eq>(1usize << DEFAULT_EQ_K);
 

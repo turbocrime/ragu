@@ -1,3 +1,4 @@
+// TODO: Remove once verification is implemented and fields are used.
 #![allow(dead_code)]
 
 use arithmetic::{Cycle, FixedGenerators};

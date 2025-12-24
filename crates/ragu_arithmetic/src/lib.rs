@@ -156,9 +156,9 @@ pub trait Cycle: Clone + Default + Send + Sync + 'static {
     /// [`ScalarField`](Cycle::ScalarField).
     type ScalarPoseidon: PoseidonPermutation<Self::ScalarField>;
 
-    /// Creates new cycle parameters. This is typically expensive as it
-    /// computes curve generators. Prefer [`baked`](Pasta::baked) when available.
-    fn new() -> Self::Params;
+    /// Generates cycle parameters. This is typically expensive as it
+    /// computes curve generators. Prefer `baked()` when available.
+    fn generate() -> Self::Params;
 
     /// Returns the fixed generators for the [`NestedCurve`](Cycle::NestedCurve).
     fn nested_generators(params: &Self::Params) -> &Self::NestedGenerators;

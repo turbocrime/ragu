@@ -9,7 +9,7 @@
 //!
 //! ## Parameter Initialization
 //!
-//! Runtime initialization can be done through [`Pasta::new()`]. This can be
+//! Runtime initialization can be done through [`Pasta::generate()`]. This can be
 //! time consuming, which is obnoxious for tests and other purposes.
 //!
 //! Alternatively, the crate feature `baked` can be enabled to generate the
@@ -59,8 +59,8 @@ impl Cycle for Pasta {
     type CircuitPoseidon = poseidon_fp::PoseidonFp;
     type ScalarPoseidon = poseidon_fq::PoseidonFq;
 
-    fn new() -> Self::Params {
-        PastaParams::new()
+    fn generate() -> Self::Params {
+        PastaParams::generate()
     }
 
     fn host_generators(params: &Self::Params) -> &Self::HostGenerators {
@@ -172,7 +172,7 @@ mod baked {
             1 << crate::common::DEFAULT_EQ_K
         );
 
-        let regenerated = Pasta::new();
+        let regenerated = Pasta::generate();
 
         assert_eq!(
             Pasta::nested_generators(params).g(),
