@@ -205,6 +205,12 @@ impl<F: Field, R: Rank> CircuitObject<F, R> for StageObject<R> {
 
         poly
     }
+
+    fn constraint_counts(&self) -> (usize, usize) {
+        let num_multiplication_constraints = R::n();
+        let num_linear_constraints = 3 * (R::n() - self.num_multiplications - 1) + 2;
+        (num_multiplication_constraints, num_linear_constraints)
+    }
 }
 
 #[cfg(test)]
@@ -614,5 +620,29 @@ mod tests {
             Fp::ZERO,
             "valid witness should produce well-formed stage polynomial"
         );
+    }
+
+    #[test]
+    fn test_constraint_counts_matches_metrics() {
+        for skip in 0..10 {
+            for num in 0..(R::n() - skip - 1) {
+                let stage_object = StageObject::<R>::new(skip, num).unwrap();
+                let (mul_from_method, linear_from_method) =
+                    <StageObject<R> as CircuitObject<Fp, R>>::constraint_counts(&stage_object);
+
+                let metrics = metrics::eval::<Fp, _>(&stage_object).unwrap();
+
+                assert_eq!(
+                    mul_from_method, metrics.num_multiplication_constraints,
+                    "multiplication constraints mismatch for skip={}, num={}",
+                    skip, num
+                );
+                assert_eq!(
+                    linear_from_method, metrics.num_linear_constraints,
+                    "linear constraints mismatch for skip={}, num={}",
+                    skip, num
+                );
+            }
+        }
     }
 }

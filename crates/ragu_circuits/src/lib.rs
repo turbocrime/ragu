@@ -122,6 +122,12 @@ pub trait CircuitExt<F: Field>: Circuit<F> {
                 s::sy::eval(&self.circuit, y, key, self.metrics.num_linear_constraints)
                     .expect("should succeed if metrics succeeded")
             }
+            fn constraint_counts(&self) -> (usize, usize) {
+                (
+                    self.metrics.num_multiplication_constraints,
+                    self.metrics.num_linear_constraints,
+                )
+            }
         }
 
         let circuit = ProcessedCircuit {
@@ -160,4 +166,7 @@ pub trait CircuitObject<F: Field, R: Rank>: Send + Sync {
 
     /// Computes the polynomial restriction $s(X, y)$ for some $y \in \mathbb{F}$.
     fn sy(&self, y: F, key: F) -> structured::Polynomial<F, R>;
+
+    /// Returns the number of constraints: `(multiplication, linear)`.
+    fn constraint_counts(&self) -> (usize, usize);
 }
