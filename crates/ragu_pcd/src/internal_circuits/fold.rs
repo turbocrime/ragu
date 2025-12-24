@@ -115,8 +115,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             error_n.right_application_ky,
             error_n.left_unified_ky,
             error_n.right_unified_ky,
-            error_n.left_bridge_ky,
-            error_n.right_bridge_ky,
+            error_n.left_unified_bridge_ky,
+            error_n.right_unified_bridge_ky,
         ]
         .into_iter();
 

@@ -259,31 +259,40 @@ impl<'a, 'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle> OutputBuilder<'a, '
         instance: &DriverValue<D, &'a Instance<C>>,
     ) -> Result<<InternalOutputKind<C> as GadgetKind<D::F>>::Rebind<'dr, D>> {
         let zero = Element::zero(dr);
-        Ok(Suffix::new(
-            Output {
-                nested_preamble_commitment: self.nested_preamble_commitment.take(dr, instance)?,
-                w: self.w.take(dr, instance)?,
-                nested_s_prime_commitment: self.nested_s_prime_commitment.take(dr, instance)?,
-                y: self.y.take(dr, instance)?,
-                z: self.z.take(dr, instance)?,
-                nested_error_m_commitment: self.nested_error_m_commitment.take(dr, instance)?,
-                mu: self.mu.take(dr, instance)?,
-                nu: self.nu.take(dr, instance)?,
-                nested_error_n_commitment: self.nested_error_n_commitment.take(dr, instance)?,
-                mu_prime: self.mu_prime.take(dr, instance)?,
-                nu_prime: self.nu_prime.take(dr, instance)?,
-                c: self.c.take(dr, instance)?,
-                nested_ab_commitment: self.nested_ab_commitment.take(dr, instance)?,
-                x: self.x.take(dr, instance)?,
-                nested_query_commitment: self.nested_query_commitment.take(dr, instance)?,
-                alpha: self.alpha.take(dr, instance)?,
-                nested_f_commitment: self.nested_f_commitment.take(dr, instance)?,
-                u: self.u.take(dr, instance)?,
-                nested_eval_commitment: self.nested_eval_commitment.take(dr, instance)?,
-                beta: self.beta.take(dr, instance)?,
-            },
-            zero,
-        ))
+        Ok(Suffix::new(self.finish_no_suffix(dr, instance)?, zero))
+    }
+
+    /// Finish building the output without wrapping in Suffix.
+    ///
+    /// This is useful for circuits that need to include additional data
+    /// in their output alongside the unified instance.
+    pub fn finish_no_suffix(
+        self,
+        dr: &mut D,
+        instance: &DriverValue<D, &'a Instance<C>>,
+    ) -> Result<Output<'dr, D, C>> {
+        Ok(Output {
+            nested_preamble_commitment: self.nested_preamble_commitment.take(dr, instance)?,
+            w: self.w.take(dr, instance)?,
+            nested_s_prime_commitment: self.nested_s_prime_commitment.take(dr, instance)?,
+            y: self.y.take(dr, instance)?,
+            z: self.z.take(dr, instance)?,
+            nested_error_m_commitment: self.nested_error_m_commitment.take(dr, instance)?,
+            mu: self.mu.take(dr, instance)?,
+            nu: self.nu.take(dr, instance)?,
+            nested_error_n_commitment: self.nested_error_n_commitment.take(dr, instance)?,
+            mu_prime: self.mu_prime.take(dr, instance)?,
+            nu_prime: self.nu_prime.take(dr, instance)?,
+            c: self.c.take(dr, instance)?,
+            nested_ab_commitment: self.nested_ab_commitment.take(dr, instance)?,
+            x: self.x.take(dr, instance)?,
+            nested_query_commitment: self.nested_query_commitment.take(dr, instance)?,
+            alpha: self.alpha.take(dr, instance)?,
+            nested_f_commitment: self.nested_f_commitment.take(dr, instance)?,
+            u: self.u.take(dr, instance)?,
+            nested_eval_commitment: self.nested_eval_commitment.take(dr, instance)?,
+            beta: self.beta.take(dr, instance)?,
+        })
     }
 }
 

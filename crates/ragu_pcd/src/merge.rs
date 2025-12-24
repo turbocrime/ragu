@@ -93,8 +93,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             right_application_ky,
             left_unified_ky,
             right_unified_ky,
-            left_bridge_ky,
-            right_bridge_ky,
+            left_unified_bridge_ky,
+            right_unified_bridge_ky,
         ) = self.compute_ky_values(&preamble_witness, y)?;
 
         // Phase 5: Mesh WY.
@@ -138,8 +138,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             right_application_ky,
             left_unified_ky,
             right_unified_ky,
-            left_bridge_ky,
-            right_bridge_ky,
+            left_unified_bridge_ky,
+            right_unified_bridge_ky,
             mu,
             nu,
         )?;
@@ -156,8 +156,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             right_application_ky,
             left_unified_ky,
             right_unified_ky,
-            left_bridge_ky,
-            right_bridge_ky,
+            left_unified_bridge_ky,
+            right_unified_bridge_ky,
             sponge_state_elements,
         )?;
 
@@ -379,8 +379,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             right_hashes_1: right.internal_circuits.hashes_1_rx_commitment,
             left_hashes_2: left.internal_circuits.hashes_2_rx_commitment,
             right_hashes_2: right.internal_circuits.hashes_2_rx_commitment,
-            left_bridge: left.internal_circuits.bridge_rx_commitment,
-            right_bridge: right.internal_circuits.bridge_rx_commitment,
         };
 
         // Compute the stage polynomial that commits to the `C::HostCurve`
@@ -473,18 +471,20 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         Emulator::emulate_wireless(y, |dr, y| {
             let y = Element::alloc(dr, y)?;
 
-            let (left_application, left_bridge) =
-                preamble.left.application_and_bridge_ky(dr, &y)?;
-            let (right_application, right_bridge) =
-                preamble.right.application_and_bridge_ky(dr, &y)?;
+            let left_application = preamble.left.application_ky(dr, &y)?;
+            let right_application = preamble.right.application_ky(dr, &y)?;
+            let (left_unified_ky, left_unified_bridge_ky) =
+                preamble.left.unified_ky_values(dr, &y)?;
+            let (right_unified_ky, right_unified_bridge_ky) =
+                preamble.right.unified_ky_values(dr, &y)?;
 
             Ok((
                 *left_application.value().take(),
                 *right_application.value().take(),
-                *preamble.left.unified_ky(dr, &y)?.value().take(),
-                *preamble.right.unified_ky(dr, &y)?.value().take(),
-                *left_bridge.value().take(),
-                *right_bridge.value().take(),
+                *left_unified_ky.value().take(),
+                *right_unified_ky.value().take(),
+                *left_unified_bridge_ky.value().take(),
+                *right_unified_bridge_ky.value().take(),
             ))
         })
     }
@@ -573,8 +573,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         right_application_ky: C::CircuitField,
         left_unified_ky: C::CircuitField,
         right_unified_ky: C::CircuitField,
-        left_bridge_ky: C::CircuitField,
-        right_bridge_ky: C::CircuitField,
+        left_unified_bridge_ky: C::CircuitField,
+        right_unified_bridge_ky: C::CircuitField,
         mu: C::CircuitField,
         nu: C::CircuitField,
     ) -> Result<FixedVec<C::CircuitField, <NativeParameters as fold_revdot::Parameters>::N>> {
@@ -587,8 +587,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 right_application_ky,
                 left_unified_ky,
                 right_unified_ky,
-                left_bridge_ky,
-                right_bridge_ky,
+                left_unified_bridge_ky,
+                right_unified_bridge_ky,
             ),
             |dr, witness| {
                 let (
@@ -599,8 +599,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     right_application_ky,
                     left_unified_ky,
                     right_unified_ky,
-                    left_bridge_ky,
-                    right_bridge_ky,
+                    left_unified_bridge_ky,
+                    right_unified_bridge_ky,
                 ) = witness.cast();
                 let mu = Element::alloc(dr, mu)?;
                 let nu = Element::alloc(dr, nu)?;
@@ -610,8 +610,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     Element::alloc(dr, right_application_ky)?,
                     Element::alloc(dr, left_unified_ky)?,
                     Element::alloc(dr, right_unified_ky)?,
-                    Element::alloc(dr, left_bridge_ky)?,
-                    Element::alloc(dr, right_bridge_ky)?,
+                    Element::alloc(dr, left_unified_bridge_ky)?,
+                    Element::alloc(dr, right_unified_bridge_ky)?,
                 ]
                 .into_iter();
 
@@ -641,8 +641,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         right_application_ky: C::CircuitField,
         left_unified_ky: C::CircuitField,
         right_unified_ky: C::CircuitField,
-        left_bridge_ky: C::CircuitField,
-        right_bridge_ky: C::CircuitField,
+        left_unified_bridge_ky: C::CircuitField,
+        right_unified_bridge_ky: C::CircuitField,
         sponge_state_elements: FixedVec<
             C::CircuitField,
             ragu_primitives::poseidon::PoseidonStateLen<C::CircuitField, C::CircuitPoseidon>,
@@ -667,8 +667,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             right_application_ky,
             left_unified_ky,
             right_unified_ky,
-            left_bridge_ky,
-            right_bridge_ky,
+            left_unified_bridge_ky,
+            right_unified_bridge_ky,
             sponge_state_elements,
         };
         let native_error_n_rx =
@@ -988,16 +988,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let ky_rx_blind = C::CircuitField::random(&mut *rng);
         let ky_rx_commitment = ky_rx.commit(self.params.host_generators(), ky_rx_blind);
 
-        // Bridge staged circuit.
-        let (bridge_rx, _) =
-            internal_circuits::bridge::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new()
-                .rx::<R>(
-                    internal_circuits::bridge::Witness { preamble_witness },
-                    self.circuit_mesh.get_key(),
-                )?;
-        let bridge_rx_blind = C::CircuitField::random(&mut *rng);
-        let bridge_rx_commitment = bridge_rx.commit(self.params.host_generators(), bridge_rx_blind);
-
         Ok(InternalCircuits {
             w,
             y,
@@ -1018,9 +1008,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             ky_rx,
             ky_rx_blind,
             ky_rx_commitment,
-            bridge_rx,
-            bridge_rx_blind,
-            bridge_rx_commitment,
             mu,
             nu,
             mu_prime,

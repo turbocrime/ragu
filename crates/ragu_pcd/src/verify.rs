@@ -88,14 +88,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             internal_circuits::hashes_2::STAGED_ID,
         );
 
-        // Internal circuit bridge stage verification
-        let bridge_stage_valid = verifier.check_stage(
-            &pcd.proof.internal_circuits.bridge_rx,
-            internal_circuits::bridge::STAGED_ID,
-        );
-
-        // Compute unified k(Y), application k(Y), and bridge k(Y).
-        let (unified_ky, application_ky, bridge_ky) = Emulator::emulate_wireless(
+        // Compute unified k(Y), unified_bridge k(Y), and application k(Y).
+        let (unified_ky, unified_bridge_ky, application_ky) = Emulator::emulate_wireless(
             (&pcd.proof, pcd.data.clone(), verifier.y),
             |dr, witness| {
                 let (proof, data, y) = witness.cast();
@@ -103,12 +97,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 let proof_inputs =
                     ProofInputs::<_, C, HEADER_SIZE>::alloc_for_verify::<R, H>(dr, proof, data)?;
 
-                let unified_ky = *proof_inputs.unified_ky(dr, &y)?.value().take();
-                let (application_ky, bridge_ky) = proof_inputs.application_and_bridge_ky(dr, &y)?;
-                let application_ky = *application_ky.value().take();
-                let bridge_ky = *bridge_ky.value().take();
+                let (unified_ky, unified_bridge_ky) = proof_inputs.unified_ky_values(dr, &y)?;
+                let unified_ky = *unified_ky.value().take();
+                let unified_bridge_ky = *unified_bridge_ky.value().take();
+                let application_ky = *proof_inputs.application_ky(dr, &y)?.value().take();
 
-                Ok((unified_ky, application_ky, bridge_ky))
+                Ok((unified_ky, unified_bridge_ky, application_ky))
             },
         )?;
 
@@ -133,8 +127,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             unified_ky,
         );
 
-        // Hashes_1 circuit verification with ky.
+        // Hashes_1 circuit verification with unified_bridge_ky.
         // Hashes_1's final stage is error_n, so combine preamble_rx + error_m_rx + error_n_rx with hashes_1_rx.
+        // Uses unified_bridge_ky to bind ApplicationProof headers to preamble output headers.
         let hashes_1_valid = {
             let mut hashes_1_combined_rx = pcd.proof.preamble.native_preamble_rx.clone();
             hashes_1_combined_rx.add_assign(&pcd.proof.error.native_error_m_rx);
@@ -144,7 +139,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             verifier.check_internal_circuit(
                 &hashes_1_combined_rx,
                 internal_circuits::hashes_1::CIRCUIT_ID,
-                unified_ky,
+                unified_bridge_ky,
             )
         };
 
@@ -175,18 +170,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             )
         };
 
-        // Bridge circuit verification with bridge_ky.
-        let bridge_circuit_valid = {
-            let mut bridge_combined_rx = pcd.proof.preamble.native_preamble_rx.clone();
-            bridge_combined_rx.add_assign(&pcd.proof.internal_circuits.bridge_rx);
-
-            verifier.check_internal_circuit(
-                &bridge_combined_rx,
-                internal_circuits::bridge::CIRCUIT_ID,
-                bridge_ky,
-            )
-        };
-
         // Application verification (application_ky was computed earlier with unified_ky)
         let application_valid = verifier.check_circuit(
             &pcd.proof.application.rx,
@@ -204,13 +187,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             && fold_stage_valid
             && hashes_1_stage_valid
             && hashes_2_stage_valid
-            && bridge_stage_valid
             && c_circuit_valid
             && v_circuit_valid
             && hashes_1_valid
             && hashes_2_valid
             && fold_circuit_valid
-            && bridge_circuit_valid
             && application_valid)
     }
 }

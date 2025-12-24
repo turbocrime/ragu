@@ -6,7 +6,6 @@ use ragu_circuits::{
 };
 use ragu_core::Result;
 
-pub mod bridge;
 pub mod compute_c;
 pub mod compute_v;
 pub mod dummy;
@@ -32,18 +31,16 @@ pub enum InternalCircuitIndex {
     ComputeCCircuit = 8,
     ComputeVStaged = 9,
     ComputeVCircuit = 10,
-    BridgeStaged = 11,
-    BridgeCircuit = 12,
-    PreambleStage = 13,
-    ErrorMStage = 14,
-    ErrorNStage = 15,
-    QueryStage = 16,
-    EvalStage = 17,
+    PreambleStage = 11,
+    ErrorMStage = 12,
+    ErrorNStage = 13,
+    QueryStage = 14,
+    EvalStage = 15,
 }
 
 /// The number of internal circuits registered by [`register_all`],
 /// and the number of variants in [`InternalCircuitIndex`].
-pub const NUM_INTERNAL_CIRCUITS: usize = 18;
+pub const NUM_INTERNAL_CIRCUITS: usize = 16;
 
 impl InternalCircuitIndex {
     pub fn circuit_index(self, num_application_steps: usize) -> CircuitIndex {
@@ -84,11 +81,6 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
         let compute_v = compute_v::Circuit::<C, R, HEADER_SIZE>::new();
         mesh.register_circuit_object(compute_v.final_into_object()?)?
             .register_circuit(compute_v)?
-    };
-    let mesh = {
-        let bridge = bridge::Circuit::<C, R, HEADER_SIZE, NativeParameters>::new();
-        mesh.register_circuit_object(bridge.final_into_object()?)?
-            .register_circuit(bridge)?
     };
 
     let mesh = mesh.register_circuit_object(

@@ -7,6 +7,11 @@
 //!
 //! The remaining challenges (mu, nu, mu_prime, nu_prime, x, alpha, u, beta) are
 //! derived in hashes_2 by resuming from the saved sponge state.
+//!
+//! This circuit also provides the bridge binding between ApplicationProof headers
+//! and preamble output headers by including headers in its output. The verifier
+//! computes k(y) from ApplicationProof headers, and verification ensures these
+//! match the preamble headers output by the circuit.
 
 use arithmetic::Cycle;
 use ragu_circuits::{
@@ -16,10 +21,15 @@ use ragu_circuits::{
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
-    gadgets::{Gadget, GadgetKind},
+    gadgets::{Gadget, GadgetKind, Kind},
     maybe::Maybe,
 };
-use ragu_primitives::{GadgetExt, poseidon::Sponge};
+use ragu_primitives::{
+    Element, GadgetExt,
+    io::Write,
+    poseidon::Sponge,
+    vec::{ConstLen, FixedVec},
+};
 
 use core::marker::PhantomData;
 
@@ -29,10 +39,25 @@ use super::{
     },
     unified::{self, OutputBuilder},
 };
-use crate::components::{fold_revdot, root_of_unity};
+use crate::components::{fold_revdot, root_of_unity, suffix::Suffix};
 
 pub use crate::internal_circuits::InternalCircuitIndex::Hashes1Circuit as CIRCUIT_ID;
 pub use crate::internal_circuits::InternalCircuitIndex::Hashes1Staged as STAGED_ID;
+
+/// Output: headers + unified instance for bridge binding.
+#[derive(Gadget, Write)]
+pub struct Output<'dr, D: Driver<'dr>, C: Cycle, const HEADER_SIZE: usize> {
+    #[ragu(gadget)]
+    pub unified: unified::Output<'dr, D, C>,
+    #[ragu(gadget)]
+    pub left_header: FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>>,
+    #[ragu(gadget)]
+    pub right_header: FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>>,
+}
+
+#[allow(type_alias_bounds)]
+pub type OutputKind<C: Cycle, const HEADER_SIZE: usize> =
+    Kind![C::CircuitField; Suffix<'_, _, Output<'_, _, C, HEADER_SIZE>>];
 
 pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
     params: &'params C,
@@ -66,7 +91,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
 
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, R, HEADER_SIZE, FP>;
-    type Output = unified::InternalOutputKind<C>;
+    type Output = OutputKind<C, HEADER_SIZE>;
     type Aux<'source> = ();
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -139,26 +164,21 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         // Compute k(y) values from preamble and enforce equality with staged
         // values.
         {
-            let (left_application_ky, left_bridge_ky) =
-                preamble.left.application_and_bridge_ky(dr, &y)?;
-            let (right_application_ky, right_bridge_ky) =
-                preamble.right.application_and_bridge_ky(dr, &y)?;
+            let left_application_ky = preamble.left.application_ky(dr, &y)?;
+            let right_application_ky = preamble.right.application_ky(dr, &y)?;
 
             left_application_ky.enforce_equal(dr, &error_n.left_application_ky)?;
             right_application_ky.enforce_equal(dr, &error_n.right_application_ky)?;
 
-            preamble
-                .left
-                .unified_ky(dr, &y)?
-                .enforce_equal(dr, &error_n.left_unified_ky)?;
+            let (left_unified_ky, left_unified_bridge_ky) =
+                preamble.left.unified_ky_values(dr, &y)?;
+            let (right_unified_ky, right_unified_bridge_ky) =
+                preamble.right.unified_ky_values(dr, &y)?;
 
-            preamble
-                .right
-                .unified_ky(dr, &y)?
-                .enforce_equal(dr, &error_n.right_unified_ky)?;
-
-            left_bridge_ky.enforce_equal(dr, &error_n.left_bridge_ky)?;
-            right_bridge_ky.enforce_equal(dr, &error_n.right_bridge_ky)?;
+            left_unified_ky.enforce_equal(dr, &error_n.left_unified_ky)?;
+            right_unified_ky.enforce_equal(dr, &error_n.right_unified_ky)?;
+            left_unified_bridge_ky.enforce_equal(dr, &error_n.left_unified_bridge_ky)?;
+            right_unified_bridge_ky.enforce_equal(dr, &error_n.right_unified_bridge_ky)?;
         }
 
         // Absorb nested_error_m_commitment and verify saved sponge state
@@ -176,6 +196,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
                 .enforce_equal(dr, &error_n.sponge_state)?;
         }
 
-        Ok((unified_output.finish(dr, unified_instance)?, D::just(|| ())))
+        // Output headers from preamble + unified instance.
+        // Verification with `unified_bridge_ky` ensures preamble headers match
+        // ApplicationProof headers.
+        let output = Output {
+            left_header: preamble.left.output_header,
+            right_header: preamble.right.output_header,
+            unified: unified_output.finish_no_suffix(dr, unified_instance)?,
+        };
+
+        let zero = Element::zero(dr);
+        Ok((Suffix::new(output, zero), D::just(|| ())))
     }
 }
