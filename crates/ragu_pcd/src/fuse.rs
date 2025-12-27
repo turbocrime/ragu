@@ -111,57 +111,61 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let mu = *transcript.squeeze(&mut dr)?.value().take();
         let nu = *transcript.squeeze(&mut dr)?.value().take();
 
-        // Phase 6: Collapsed values (layer 1 folding).
-        let ky_values = self.compute_ky_values(&preamble_witness, y)?;
-        let collapsed = self.compute_collapsed(&error_m_witness, &ky_values, mu, nu)?;
-
-        // Phase 7: Error N (Layer 2: Single N-sized reduction).
+        // Phase 6: Error N (k(y) computation, layer 1 folding, and N-sized reduction).
         let (
             (native_error_n_rx, native_error_n_blind, native_error_n_commitment),
             (nested_error_n_rx, nested_error_n_blind, nested_error_n_commitment),
             error_n_witness,
-        ) = self.compute_error_n(rng, collapsed, ky_values, saved_transcript_state)?;
+        ) = self.compute_error_n(
+            rng,
+            &preamble_witness,
+            &error_m_witness,
+            y,
+            mu,
+            nu,
+            saved_transcript_state,
+        )?;
 
         // Derive (mu', nu') = H(nested_error_n_commitment).
         Point::constant(&mut dr, nested_error_n_commitment)?.write(&mut dr, &mut transcript)?;
         let mu_prime = *transcript.squeeze(&mut dr)?.value().take();
         let nu_prime = *transcript.squeeze(&mut dr)?.value().take();
 
-        // Phase 8: Compute C, the folded revdot product claim.
+        // Phase 7: Compute C, the folded revdot product claim.
         let c = self.compute_c(mu_prime, nu_prime, &error_n_witness)?;
 
-        // Phase 9: A/B polynomials.
+        // Phase 8: A/B polynomials.
         let ab = self.compute_ab(rng)?;
 
         // Derive x = H(nested_ab_commitment).
         Point::constant(&mut dr, ab.nested_ab_commitment)?.write(&mut dr, &mut transcript)?;
         let x = *transcript.squeeze(&mut dr)?.value().take();
 
-        // Phase 10: Mesh XY.
+        // Phase 9: Mesh XY.
         let mesh_xy = self.compute_mesh_xy(rng, x, y);
 
-        // Phase 11: Query.
+        // Phase 10: Query.
         let query = self.compute_query(rng, mesh_xy.mesh_xy_commitment)?;
 
         // Derive alpha = H(nested_query_commitment).
         Point::constant(&mut dr, query.nested_query_commitment)?.write(&mut dr, &mut transcript)?;
         let alpha = *transcript.squeeze(&mut dr)?.value().take();
 
-        // Phase 12: F polynomial.
+        // Phase 11: F polynomial.
         let f = self.compute_f(rng)?;
 
         // Derive u = H(nested_f_commitment).
         Point::constant(&mut dr, f.nested_f_commitment)?.write(&mut dr, &mut transcript)?;
         let u = *transcript.squeeze(&mut dr)?.value().take();
 
-        // Phase 13: Eval.
+        // Phase 12: Eval.
         let eval = self.compute_eval(rng)?;
 
         // Derive beta = H(nested_eval_commitment).
         Point::constant(&mut dr, eval.nested_eval_commitment)?.write(&mut dr, &mut transcript)?;
         let beta = *transcript.squeeze(&mut dr)?.value().take();
 
-        // Phase 14: Unified instance.
+        // Phase 13: Unified instance.
         let unified_instance = &unified::Instance {
             nested_preamble_commitment: preamble.nested_preamble_commitment,
             w,
@@ -185,7 +189,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             beta,
         };
 
-        // Phase 15: Internal circuits.
+        // Phase 14: Internal circuits.
         let internal_circuits = self.compute_internal_circuits(
             rng,
             unified_instance,
@@ -412,37 +416,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         })
     }
 
-    /// Compute k(y) header values from preamble witness.
-    fn compute_ky_values(
-        &self,
-        preamble_witness: &stages::native::preamble::Witness<'_, C, R, HEADER_SIZE>,
-        y: C::CircuitField,
-    ) -> Result<KyValues<C::CircuitField>> {
-        let preamble = Emulator::emulate_wireless(preamble_witness, |dr, witness| {
-            stages::native::preamble::Stage::<C, R, HEADER_SIZE>::default().witness(dr, witness)
-        })?;
-
-        Emulator::emulate_wireless(y, |dr, y| {
-            let y = Element::alloc(dr, y)?;
-
-            let left_application_ky = preamble.left.application_ky(dr, &y)?;
-            let right_application_ky = preamble.right.application_ky(dr, &y)?;
-            let (left_unified_ky, left_unified_bridge_ky) =
-                preamble.left.unified_ky_values(dr, &y)?;
-            let (right_unified_ky, right_unified_bridge_ky) =
-                preamble.right.unified_ky_values(dr, &y)?;
-
-            Ok(KyValues {
-                left_application: *left_application_ky.value().take(),
-                right_application: *right_application_ky.value().take(),
-                left_unified: *left_unified_ky.value().take(),
-                right_unified: *right_unified_ky.value().take(),
-                left_unified_bridge: *left_unified_bridge_ky.value().take(),
-                right_unified_bridge: *right_unified_bridge_ky.value().take(),
-            })
-        })
-    }
-
     /// Given (w, y), we can compute m(w, X, y) and commit to it.
     fn compute_mesh_wy<RNG: Rng>(
         &self,
@@ -516,53 +489,19 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         ))
     }
 
-    /// Compute collapsed values from layer 1 folding.
-    ///
-    /// Performs N M-sized reductions using the error_m witness and k(y) values,
-    /// producing N collapsed values for layer 2.
-    fn compute_collapsed(
-        &self,
-        error_m_witness: &stages::native::error_m::Witness<C, NativeParameters>,
-        ky: &KyValues<C::CircuitField>,
-        mu: C::CircuitField,
-        nu: C::CircuitField,
-    ) -> Result<FixedVec<C::CircuitField, <NativeParameters as fold_revdot::Parameters>::N>> {
-        Emulator::emulate_wireless((mu, nu, &error_m_witness.error_terms, ky), |dr, witness| {
-            let (mu, nu, error_terms_m, ky) = witness.cast();
-            let mu = Element::alloc(dr, mu)?;
-            let nu = Element::alloc(dr, nu)?;
-
-            let mut ky_values = vec![
-                Element::alloc(dr, ky.view().map(|ky| ky.left_application))?,
-                Element::alloc(dr, ky.view().map(|ky| ky.right_application))?,
-                Element::alloc(dr, ky.view().map(|ky| ky.left_unified))?,
-                Element::alloc(dr, ky.view().map(|ky| ky.right_unified))?,
-                Element::alloc(dr, ky.view().map(|ky| ky.left_unified_bridge))?,
-                Element::alloc(dr, ky.view().map(|ky| ky.right_unified_bridge))?,
-            ]
-            .into_iter();
-
-            let fold_c = fold_revdot::FoldC::new(dr, &mu, &nu)?;
-
-            FixedVec::try_from_fn(|i| {
-                let errors = FixedVec::try_from_fn(|j| {
-                    Element::alloc(dr, error_terms_m.view().map(|et| et[i][j]))
-                })?;
-                let ky_values =
-                    FixedVec::from_fn(|_| ky_values.next().unwrap_or_else(|| Element::zero(dr)));
-
-                let v = fold_c.compute_m::<NativeParameters>(dr, &errors, &ky_values)?;
-                Ok(*v.value().take())
-            })
-        })
-    }
-
     /// Compute error_n stage (Layer 2: Single N-sized reduction).
+    ///
+    /// Computes k(y) values from the preamble witness, performs layer 1 folding
+    /// to get collapsed values, then builds the error_n stage witness and
+    /// commitments.
     fn compute_error_n<RNG: Rng>(
         &self,
         rng: &mut RNG,
-        collapsed: FixedVec<C::CircuitField, <NativeParameters as fold_revdot::Parameters>::N>,
-        ky: KyValues<C::CircuitField>,
+        preamble_witness: &stages::native::preamble::Witness<'_, C, R, HEADER_SIZE>,
+        error_m_witness: &stages::native::error_m::Witness<C, NativeParameters>,
+        y: C::CircuitField,
+        mu: C::CircuitField,
+        nu: C::CircuitField,
         sponge_state_elements: FixedVec<
             C::CircuitField,
             ragu_primitives::poseidon::PoseidonStateLen<C::CircuitField, C::CircuitPoseidon>,
@@ -580,6 +519,66 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         ),
         stages::native::error_n::Witness<C, NativeParameters>,
     )> {
+        let (ky, collapsed) = Emulator::emulate_wireless(
+            (preamble_witness, &error_m_witness.error_terms, y, mu, nu),
+            |dr, witness| {
+                let (preamble_witness, error_terms_m, y, mu, nu) = witness.cast();
+
+                // Run preamble stage to get proof inputs.
+                let preamble = stages::native::preamble::Stage::<C, R, HEADER_SIZE>::default()
+                    .witness(dr, preamble_witness.view().map(|w| *w))?;
+
+                // Compute k(y) values.
+                let y = Element::alloc(dr, y)?;
+                let left_application_ky = preamble.left.application_ky(dr, &y)?;
+                let right_application_ky = preamble.right.application_ky(dr, &y)?;
+                let (left_unified_ky, left_unified_bridge_ky) =
+                    preamble.left.unified_ky_values(dr, &y)?;
+                let (right_unified_ky, right_unified_bridge_ky) =
+                    preamble.right.unified_ky_values(dr, &y)?;
+
+                // Compute collapsed values using the k(y) elements directly.
+                let mu = Element::alloc(dr, mu)?;
+                let nu = Element::alloc(dr, nu)?;
+
+                let mut ky_elements = vec![
+                    left_application_ky.clone(),
+                    right_application_ky.clone(),
+                    left_unified_ky.clone(),
+                    right_unified_ky.clone(),
+                    left_unified_bridge_ky.clone(),
+                    right_unified_bridge_ky.clone(),
+                ]
+                .into_iter();
+
+                let fold_c = fold_revdot::FoldC::new(dr, &mu, &nu)?;
+
+                let collapsed = FixedVec::try_from_fn(|i| {
+                    let errors = FixedVec::try_from_fn(|j| {
+                        Element::alloc(dr, error_terms_m.view().map(|et| et[i][j]))
+                    })?;
+                    let ky_values = FixedVec::from_fn(|_| {
+                        ky_elements.next().unwrap_or_else(|| Element::zero(dr))
+                    });
+
+                    let v = fold_c.compute_m::<NativeParameters>(dr, &errors, &ky_values)?;
+                    Ok(*v.value().take())
+                })?;
+
+                // Extract k(y) scalar values.
+                let ky = KyValues {
+                    left_application: *left_application_ky.value().take(),
+                    right_application: *right_application_ky.value().take(),
+                    left_unified: *left_unified_ky.value().take(),
+                    right_unified: *right_unified_ky.value().take(),
+                    left_unified_bridge: *left_unified_bridge_ky.value().take(),
+                    right_unified_bridge: *right_unified_bridge_ky.value().take(),
+                };
+
+                Ok((ky, collapsed))
+            },
+        )?;
+
         let error_n_witness = stages::native::error_n::Witness::<C, NativeParameters> {
             error_terms: FixedVec::from_fn(|_| C::CircuitField::todo()),
             collapsed,
