@@ -355,7 +355,7 @@ mod tests {
 
     #[test]
     fn test_mesh_circuit_consistency() -> Result<()> {
-        let poseidon = Pasta::baked().circuit_poseidon();
+        let poseidon = Pasta::circuit_poseidon(Pasta::baked());
 
         let mesh = MeshBuilder::<Fp, TestRank>::new()
             .register_circuit(SquareCircuit { times: 2 })?
@@ -433,7 +433,7 @@ mod tests {
 
     #[test]
     fn test_single_circuit_mesh() -> Result<()> {
-        let poseidon = Pasta::baked().circuit_poseidon();
+        let poseidon = Pasta::circuit_poseidon(Pasta::baked());
 
         // Checks that a single circuit can be finalized without bit-shift overflows.
         let _mesh = MeshBuilder::<Fp, TestRank>::new()
@@ -487,7 +487,7 @@ mod tests {
 
     #[test]
     fn test_non_power_of_two_mesh_sizes() -> Result<()> {
-        let poseidon = Pasta::baked().circuit_poseidon();
+        let poseidon = Pasta::circuit_poseidon(Pasta::baked());
 
         type TestRank = crate::polynomials::R<8>;
         for num_circuits in 0..21 {

@@ -40,9 +40,9 @@ fn main() {
     let out_dir = env::var("OUT_DIR").unwrap();
     let out_path = Path::new(&out_dir).join("pasta_parameters.bin");
 
-    let pasta = common::Pasta::default();
+    let params = common::PastaParams::generate();
 
     let mut f = File::create(out_path).unwrap();
-    write_params_for_curve(&mut f, &pasta.pallas.g, &pasta.pallas.h).unwrap();
-    write_params_for_curve(&mut f, &pasta.vesta.g, &pasta.vesta.h).unwrap();
+    write_params_for_curve(&mut f, &params.pallas.g, &params.pallas.h).unwrap();
+    write_params_for_curve(&mut f, &params.vesta.g, &params.vesta.h).unwrap();
 }

@@ -580,7 +580,7 @@ fn test_commit_consistency() {
     type R = super::R<10>;
 
     let pasta = Pasta::baked();
-    let generators = pasta.host_generators();
+    let generators = Pasta::host_generators(pasta);
 
     let blind = Fp::random(thread_rng());
 

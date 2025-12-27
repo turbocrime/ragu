@@ -59,7 +59,7 @@ impl InternalCircuitIndex {
 
 pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
     mesh: MeshBuilder<'params, C::CircuitField, R>,
-    params: &'params C,
+    params: &'params C::Params,
     log2_circuits: u32,
 ) -> Result<MeshBuilder<'params, C::CircuitField, R>> {
     let initial_num_circuits = mesh.num_circuits();

@@ -7,12 +7,12 @@
 //!
 //! ## Parameter Initialization
 //!
-//! Runtime initialization can be done through [`Pasta::default`]. This can be
+//! Runtime initialization can be done through [`Pasta::generate`]. This can be
 //! time consuming, which is obnoxious for tests and other purposes.
 //!
 //! Alternatively, the crate feature `baked` can be enabled to generate the
 //! parameters at compile time and store them as a static in memory.
-//! [`Pasta::baked`] can then be used to obtain a `&'static Pasta` with
+//! [`Pasta::baked`] can then be used to obtain a `&'static PastaParams` with
 //! substantially lower computational cost for initialization, at the expense of
 //! a larger binary size.
 
@@ -38,10 +38,18 @@ mod poseidon_fq;
 
 use arithmetic::{Cycle, FixedGenerators};
 
-pub use common::{PallasGenerators, Pasta, VestaGenerators};
+pub use common::{PallasGenerators, PastaParams, VestaGenerators};
 pub use pasta_curves::{Ep, EpAffine, Eq, EqAffine, Fp, Fq};
 pub use poseidon_fp::PoseidonFp;
 pub use poseidon_fq::PoseidonFq;
+
+/// Zero-sized marker type for the [Pasta
+/// curve](https://electriccoin.co/blog/the-pasta-curves-for-halo-2-and-beyond/)
+/// cycle.
+///
+/// Runtime parameters are stored in [`PastaParams`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Pasta;
 
 impl Cycle for Pasta {
     type CircuitField = pasta_curves::Fp;
@@ -52,22 +60,29 @@ impl Cycle for Pasta {
     type HostGenerators = VestaGenerators;
     type NestedGenerators = PallasGenerators;
 
-    fn host_generators(&self) -> &Self::HostGenerators {
-        &self.vesta
-    }
-
-    fn nested_generators(&self) -> &Self::NestedGenerators {
-        &self.pallas
-    }
-
     type CircuitPoseidon = poseidon_fp::PoseidonFp;
     type ScalarPoseidon = poseidon_fq::PoseidonFq;
 
-    fn circuit_poseidon(&self) -> &Self::CircuitPoseidon {
+    type Params = PastaParams;
+
+    fn host_generators(params: &Self::Params) -> &Self::HostGenerators {
+        &params.vesta
+    }
+
+    fn nested_generators(params: &Self::Params) -> &Self::NestedGenerators {
+        &params.pallas
+    }
+
+    fn circuit_poseidon(_params: &Self::Params) -> &Self::CircuitPoseidon {
         &poseidon_fp::PoseidonFp
     }
-    fn scalar_poseidon(&self) -> &Self::ScalarPoseidon {
+
+    fn scalar_poseidon(_params: &Self::Params) -> &Self::ScalarPoseidon {
         &poseidon_fq::PoseidonFq
+    }
+
+    fn generate() -> Self::Params {
+        PastaParams::generate()
     }
 }
 
@@ -98,7 +113,7 @@ mod baked {
     use lazy_static::lazy_static;
     use pasta_curves::arithmetic::CurveAffine;
 
-    use super::{PallasGenerators, Pasta, VestaGenerators};
+    use super::{PallasGenerators, Pasta, PastaParams, VestaGenerators};
 
     const RAW_PARAMETERS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/pasta_parameters.bin"));
 
@@ -126,7 +141,7 @@ mod baked {
     }
 
     lazy_static! {
-        static ref PASTA_PARAMETERS: Pasta = {
+        static ref PASTA_PARAMETERS: PastaParams = {
             let mut params = RAW_PARAMETERS;
 
             let (ep_g, ep_h) = get_points_for_curve(&mut params, 1 << crate::common::DEFAULT_EP_K);
@@ -134,7 +149,7 @@ mod baked {
 
             assert_eq!(params.len(), 0);
 
-            Pasta {
+            PastaParams {
                 pallas: PallasGenerators { g: ep_g, h: ep_h },
                 vesta: VestaGenerators { g: eq_g, h: eq_h },
             }
@@ -143,7 +158,7 @@ mod baked {
 
     impl Pasta {
         /// Returns a static reference to the baked-in parameters for the Pasta cycle.
-        pub fn baked() -> &'static Self {
+        pub fn baked() -> &'static PastaParams {
             &PASTA_PARAMETERS
         }
     }
@@ -152,34 +167,34 @@ mod baked {
     fn test_baked_params() {
         use arithmetic::{Cycle, FixedGenerators};
 
-        let pasta = Pasta::baked();
+        let params = Pasta::baked();
 
         assert_eq!(
-            pasta.nested_generators().g().len(),
+            Pasta::nested_generators(params).g().len(),
             1 << crate::common::DEFAULT_EP_K
         );
         assert_eq!(
-            pasta.host_generators().g().len(),
+            Pasta::host_generators(params).g().len(),
             1 << crate::common::DEFAULT_EQ_K
         );
 
-        let regenerated = Pasta::default();
+        let regenerated = Pasta::generate();
 
         assert_eq!(
-            pasta.nested_generators().g(),
-            regenerated.nested_generators().g()
+            Pasta::nested_generators(params).g(),
+            Pasta::nested_generators(&regenerated).g()
         );
         assert_eq!(
-            pasta.host_generators().g(),
-            regenerated.host_generators().g()
+            Pasta::host_generators(params).g(),
+            Pasta::host_generators(&regenerated).g()
         );
         assert_eq!(
-            pasta.nested_generators().h(),
-            regenerated.nested_generators().h()
+            Pasta::nested_generators(params).h(),
+            Pasta::nested_generators(&regenerated).h()
         );
         assert_eq!(
-            pasta.host_generators().h(),
-            regenerated.host_generators().h()
+            Pasta::host_generators(params).h(),
+            Pasta::host_generators(&regenerated).h()
         );
     }
 }

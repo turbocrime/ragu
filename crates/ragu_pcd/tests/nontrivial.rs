@@ -141,10 +141,10 @@ fn various_merging_operations() -> Result<()> {
     let pasta = Pasta::baked();
     let app = ApplicationBuilder::<Pasta, R<13>, 4>::new()
         .register(WitnessLeaf {
-            poseidon_params: pasta.circuit_poseidon(),
+            poseidon_params: Pasta::circuit_poseidon(pasta),
         })?
         .register(Hash2 {
-            poseidon_params: pasta.circuit_poseidon(),
+            poseidon_params: Pasta::circuit_poseidon(pasta),
         })?
         .finalize(pasta)?;
 
@@ -153,7 +153,7 @@ fn various_merging_operations() -> Result<()> {
     let leaf1 = app.seed(
         &mut rng,
         WitnessLeaf {
-            poseidon_params: pasta.circuit_poseidon(),
+            poseidon_params: Pasta::circuit_poseidon(pasta),
         },
         Fp::from(42u64),
     )?;
@@ -163,7 +163,7 @@ fn various_merging_operations() -> Result<()> {
     let leaf2 = app.seed(
         &mut rng,
         WitnessLeaf {
-            poseidon_params: pasta.circuit_poseidon(),
+            poseidon_params: Pasta::circuit_poseidon(pasta),
         },
         Fp::from(42u64),
     )?;
@@ -173,7 +173,7 @@ fn various_merging_operations() -> Result<()> {
     let node1 = app.fuse(
         &mut rng,
         Hash2 {
-            poseidon_params: pasta.circuit_poseidon(),
+            poseidon_params: Pasta::circuit_poseidon(pasta),
         },
         (),
         leaf1,

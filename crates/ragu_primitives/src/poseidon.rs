@@ -397,7 +397,7 @@ mod tests {
         let sim = Simulator::simulate(Fp::from(1), |dr, value| {
             let mut sponge = Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(
                 dr,
-                params.circuit_poseidon(),
+                Pasta::circuit_poseidon(params),
             );
             let value = Element::alloc(dr, value)?;
             sponge.absorb(dr, &value)?;
@@ -419,7 +419,7 @@ mod tests {
         Simulator::simulate((), |dr, _| {
             let sponge = Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(
                 dr,
-                params.circuit_poseidon(),
+                Pasta::circuit_poseidon(params),
             );
             // Try to save without absorbing anything
             let result = sponge.save_state(dr);
@@ -438,7 +438,7 @@ mod tests {
         Simulator::simulate(Fp::from(1), |dr, value| {
             let mut sponge = Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(
                 dr,
-                params.circuit_poseidon(),
+                Pasta::circuit_poseidon(params),
             );
             let value = Element::alloc(dr, value)?;
             sponge.absorb(dr, &value)?;
@@ -461,7 +461,7 @@ mod tests {
         Simulator::simulate(Fp::from(1), |dr, value| {
             let mut sponge = Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(
                 dr,
-                params.circuit_poseidon(),
+                Pasta::circuit_poseidon(params),
             );
             let value = Element::alloc(dr, value)?;
             sponge.absorb(dr, &value)?;
@@ -481,7 +481,7 @@ mod tests {
         Simulator::simulate(Fp::from(42), |dr, value| {
             let mut sponge = Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(
                 dr,
-                params.circuit_poseidon(),
+                Pasta::circuit_poseidon(params),
             );
             let value = Element::alloc(dr, value)?;
             sponge.absorb(dr, &value)?;
@@ -489,7 +489,7 @@ mod tests {
 
             // Resume and squeeze
             let (element, _sponge) =
-                Sponge::resume_and_squeeze(dr, state, params.circuit_poseidon())?;
+                Sponge::resume_and_squeeze(dr, state, Pasta::circuit_poseidon(params))?;
 
             // Just verify we got an element (the actual value depends on Poseidon params)
             let _ = element.value().take();
@@ -514,7 +514,7 @@ mod tests {
         Simulator::simulate(Fp::from(123), |dr, value| {
             let mut sponge = Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(
                 dr,
-                params.circuit_poseidon(),
+                Pasta::circuit_poseidon(params),
             );
             let value = Element::alloc(dr, value)?;
             sponge.absorb(dr, &value)?;
@@ -527,12 +527,13 @@ mod tests {
         Simulator::simulate(Fp::from(123), |dr, value| {
             let mut sponge = Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(
                 dr,
-                params.circuit_poseidon(),
+                Pasta::circuit_poseidon(params),
             );
             let value = Element::alloc(dr, value)?;
             sponge.absorb(dr, &value)?;
             let state = sponge.save_state(dr).expect("save_state should succeed");
-            let (squeezed, _) = Sponge::resume_and_squeeze(dr, state, params.circuit_poseidon())?;
+            let (squeezed, _) =
+                Sponge::resume_and_squeeze(dr, state, Pasta::circuit_poseidon(params))?;
             save_resume_output.set(*squeezed.value().take());
             Ok(())
         })?;

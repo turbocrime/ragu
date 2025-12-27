@@ -83,7 +83,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
     /// [`Application`].
     pub fn finalize(
         mut self,
-        params: &'params C,
+        params: &'params C::Params,
     ) -> Result<Application<'params, C, R, HEADER_SIZE>> {
         // First, insert all of the internal steps.
         self.circuit_mesh =
@@ -116,7 +116,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         }
 
         Ok(Application {
-            circuit_mesh: self.circuit_mesh.finalize(params.circuit_poseidon())?,
+            circuit_mesh: self.circuit_mesh.finalize(C::circuit_poseidon(params))?,
             params,
             num_application_steps: self.num_application_steps,
             _marker: PhantomData,
@@ -144,7 +144,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
 /// The recursion context that is used to create and verify proof-carrying data.
 pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     circuit_mesh: Mesh<'params, C::CircuitField, R>,
-    params: &'params C,
+    params: &'params C::Params,
     num_application_steps: usize,
     _marker: PhantomData<[(); HEADER_SIZE]>,
 }

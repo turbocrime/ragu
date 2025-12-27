@@ -130,7 +130,7 @@ pub struct Output<'dr, D: Driver<'dr>, C: Cycle, const HEADER_SIZE: usize> {
 ///
 /// [module-level documentation]: self
 pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
-    params: &'params C,
+    params: &'params C::Params,
     log2_circuits: u32,
     _marker: PhantomData<(R, FP)>,
 }
@@ -145,7 +145,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Para
     /// - `params`: Curve cycle parameters providing Poseidon configuration.
     /// - `log2_circuits`: Log₂ of the mesh domain size (number of circuits).
     ///   Used to verify circuit IDs are valid roots of unity.
-    pub fn new(params: &'params C, log2_circuits: u32) -> Staged<C::CircuitField, R, Self> {
+    pub fn new(params: &'params C::Params, log2_circuits: u32) -> Staged<C::CircuitField, R, Self> {
         Staged::new(Circuit {
             params,
             log2_circuits,
@@ -226,7 +226,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         let mut unified_output = OutputBuilder::new();
 
         // Create a single long-lived sponge for all challenge derivations
-        let mut sponge = Sponge::new(dr, self.params.circuit_poseidon());
+        let mut sponge = Sponge::new(dr, C::circuit_poseidon(self.params));
 
         // Derive w by absorbing nested_preamble_commitment and squeezing
         let w = {
