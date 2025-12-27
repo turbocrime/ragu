@@ -201,7 +201,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 circuits,
                 application,
             },
-            // We return the application auxillary data for potential use by the
+            // We return the application auxiliary data for potential use by the
             // caller.
             application_aux,
         ))
@@ -210,7 +210,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     /// Compute the application circuit proof.
     ///
     /// We process the application circuit first because it consumes the
-    /// `Pcd`'s `data` fields inside of the `Step` circuit. The adaptor
+    /// `Pcd`'s `data` fields inside of the `Step` circuit. The adapter
     /// handles encoding for us, so that we can use the resulting (encoded)
     /// headers to construct the proof. We can also then use the encoded
     /// headers later to construct witnesses for other internal circuits
