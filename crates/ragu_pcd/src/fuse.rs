@@ -150,11 +150,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             w,
             y,
             z,
-            c,
             mu,
             nu,
             mu_prime,
             nu_prime,
+            c,
             x,
             alpha,
             u,
@@ -180,6 +180,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         Ok((
             Proof {
+                application,
                 preamble,
                 s_prime,
                 error_m,
@@ -190,7 +191,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 eval,
                 challenges,
                 circuits,
-                application,
             },
             // We return the application auxiliary data for potential use by the
             // caller.
@@ -315,11 +315,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         Ok((
             PreambleProof {
                 stage_rx,
-                stage_commitment,
                 stage_blind,
+                stage_commitment,
                 nested_rx,
-                nested_commitment,
                 nested_blind,
+                nested_commitment,
             },
             preamble_witness,
         ))
@@ -586,14 +586,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     /// Commits to A and B polynomials, then creates the nested commitment.
     fn compute_ab<RNG: Rng>(&self, rng: &mut RNG) -> Result<ABProof<C, R>> {
         // TODO: For now, stub out fake A and B polynomials.
+        // A polynomial
         let a_poly =
             ragu_circuits::polynomials::structured::Polynomial::<C::CircuitField, R>::new();
-        let b_poly =
-            ragu_circuits::polynomials::structured::Polynomial::<C::CircuitField, R>::new();
-
-        // Commit to A and B, then create the nested commitment.
         let a_blind = C::CircuitField::random(&mut *rng);
         let a_commitment = a_poly.commit(self.params.host_generators(), a_blind);
+
+        // B polynomial
+        let b_poly =
+            ragu_circuits::polynomials::structured::Polynomial::<C::CircuitField, R>::new();
         let b_blind = C::CircuitField::random(&mut *rng);
         let b_commitment = b_poly.commit(self.params.host_generators(), b_blind);
 
