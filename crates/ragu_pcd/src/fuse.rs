@@ -25,8 +25,7 @@ use crate::{
     },
     proof::{
         ABProof, ApplicationProof, Challenges, CircuitCommitments, ErrorMProof, ErrorNProof,
-        EvalProof, FProof, MeshWyProof, MeshXyProof, Pcd, PreambleProof, Proof, QueryProof,
-        SPrimeProof,
+        EvalProof, FProof, Pcd, PreambleProof, Proof, QueryProof, SPrimeProof,
     },
     step::{Step, adapter::Adapter},
 };
@@ -82,11 +81,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let y = *transcript.squeeze(&mut dr)?.value().take();
         let z = *transcript.squeeze(&mut dr)?.value().take();
 
-        // Phase 4: Compute m(w, X, y).
-        let mesh_wy = self.compute_mesh_wy(rng, w, y);
-
-        // Phase 5: Error M (Layer 1: N instances of M-sized reductions).
-        let (error_m, error_m_witness) = self.compute_error_m(rng, mesh_wy.mesh_wy_commitment)?;
+        // Phase 4: Error M with mesh_wy (Layer 1: N instances of M-sized reductions).
+        let (error_m, error_m_witness) = self.compute_error_m(rng, w, y)?;
         Point::constant(&mut dr, error_m.nested_commitment)?.write(&mut dr, &mut transcript)?;
 
         // Save a copy of the transcript state. This is used as part of the
@@ -104,7 +100,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let mu = *transcript.squeeze(&mut dr)?.value().take();
         let nu = *transcript.squeeze(&mut dr)?.value().take();
 
-        // Phase 6: Error N (k(y) computation, layer 1 folding, and N-sized reduction).
+        // Phase 5: Error N (k(y) computation, layer 1 folding, and N-sized reduction).
         let (error_n, error_n_witness) = self.compute_error_n(
             rng,
             &preamble_witness,
@@ -120,39 +116,36 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let mu_prime = *transcript.squeeze(&mut dr)?.value().take();
         let nu_prime = *transcript.squeeze(&mut dr)?.value().take();
 
-        // Phase 7: Compute C, the folded revdot product claim.
+        // Phase 6: Compute C, the folded revdot product claim.
         let c = self.compute_c(mu_prime, nu_prime, &error_n_witness)?;
 
-        // Phase 8: A/B polynomials.
+        // Phase 7: A/B polynomials.
         let ab = self.compute_ab(rng)?;
 
         // Derive x = H(nested_ab_commitment).
         Point::constant(&mut dr, ab.nested_commitment)?.write(&mut dr, &mut transcript)?;
         let x = *transcript.squeeze(&mut dr)?.value().take();
 
-        // Phase 9: Mesh XY.
-        let mesh_xy = self.compute_mesh_xy(rng, x, y);
-
-        // Phase 10: Query.
-        let query = self.compute_query(rng, mesh_xy.mesh_xy_commitment)?;
+        // Phase 8: Query with mesh_xy.
+        let query = self.compute_query(rng, x, y)?;
 
         // Derive alpha = H(nested_query_commitment).
         Point::constant(&mut dr, query.nested_commitment)?.write(&mut dr, &mut transcript)?;
         let alpha = *transcript.squeeze(&mut dr)?.value().take();
 
-        // Phase 11: F polynomial.
+        // Phase 9: F polynomial.
         let f = self.compute_f(rng)?;
 
         // Derive u = H(nested_f_commitment).
         Point::constant(&mut dr, f.nested_commitment)?.write(&mut dr, &mut transcript)?;
         let u = *transcript.squeeze(&mut dr)?.value().take();
 
-        // Phase 12: Eval.
+        // Phase 10: Eval.
         let eval = self.compute_eval(rng)?;
         Point::constant(&mut dr, eval.nested_commitment)?.write(&mut dr, &mut transcript)?;
         let beta = *transcript.squeeze(&mut dr)?.value().take();
 
-        // Phase 13: Challenges.
+        // Phase 11: Challenges.
         let challenges = Challenges {
             w,
             y,
@@ -168,7 +161,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             beta,
         };
 
-        // Phase 14: Internal circuits.
+        // Phase 12: Internal circuits.
         let circuits = self.compute_internal_circuits(
             rng,
             &preamble,
@@ -189,11 +182,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             Proof {
                 preamble,
                 s_prime,
-                mesh_wy,
                 error_m,
                 error_n,
                 ab,
-                mesh_xy,
                 query,
                 f,
                 eval,
@@ -381,33 +372,25 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         })
     }
 
-    /// Given (w, y), we can compute m(w, X, y) and commit to it.
-    fn compute_mesh_wy<RNG: Rng>(
+    /// Compute error_m stage with mesh_wy bundled (Layer 1: N instances of M-sized reductions).
+    ///
+    /// Given (w, y), computes m(w, X, y), commits to it, then creates the error_m
+    /// stage with the mesh_wy commitment bundled into the nested layer.
+    fn compute_error_m<RNG: Rng>(
         &self,
         rng: &mut RNG,
         w: C::CircuitField,
         y: C::CircuitField,
-    ) -> MeshWyProof<C, R> {
-        let mesh_wy_rx = self.circuit_mesh.wy(w, y);
-        let mesh_wy_blind = C::CircuitField::random(&mut *rng);
-        let mesh_wy_commitment = mesh_wy_rx.commit(self.params.host_generators(), mesh_wy_blind);
-
-        MeshWyProof {
-            mesh_wy_rx,
-            mesh_wy_blind,
-            mesh_wy_commitment,
-        }
-    }
-
-    /// Compute error_m stage (Layer 1: N instances of M-sized reductions).
-    fn compute_error_m<RNG: Rng>(
-        &self,
-        rng: &mut RNG,
-        mesh_wy_commitment: C::HostCurve,
     ) -> Result<(
         ErrorMProof<C, R>,
         stages::native::error_m::Witness<C, NativeParameters>,
     )> {
+        // Compute mesh_wy components
+        let mesh_wy_rx = self.circuit_mesh.wy(w, y);
+        let mesh_wy_blind = C::CircuitField::random(&mut *rng);
+        let mesh_wy_commitment = mesh_wy_rx.commit(self.params.host_generators(), mesh_wy_blind);
+
+        // Native error_m commitment
         let error_m_witness = stages::native::error_m::Witness::<C, NativeParameters> {
             error_terms: FixedVec::from_fn(|_| FixedVec::from_fn(|_| C::CircuitField::todo())),
         };
@@ -417,7 +400,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let native_blind = C::CircuitField::random(&mut *rng);
         let native_commitment = native_rx.commit(self.params.host_generators(), native_blind);
 
-        // Nested error_m commitment (includes both native_commitment and mesh_wy_commitment)
+        // Nested error_m commitment (bundles mesh_wy_commitment + native_commitment)
         let nested_error_m_witness = stages::nested::error_m::Witness {
             native_error_m: native_commitment,
             mesh_wy: mesh_wy_commitment,
@@ -429,6 +412,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         Ok((
             ErrorMProof {
+                mesh_wy_rx,
+                mesh_wy_blind,
+                mesh_wy_commitment,
                 native_rx,
                 native_blind,
                 native_commitment,
@@ -631,34 +617,22 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         })
     }
 
-    /// Compute mesh_xy proof.
+    /// Compute query proof with mesh_xy bundled.
     ///
-    /// Computes commitment to mesh polynomial m(x, y) at the challenge points.
-    fn compute_mesh_xy<RNG: Rng>(
+    /// Computes m(x, y), commits to it, then creates native and nested query commitments
+    /// with the mesh_xy commitment bundled into the nested layer.
+    fn compute_query<RNG: Rng>(
         &self,
         rng: &mut RNG,
         x: C::CircuitField,
         y: C::CircuitField,
-    ) -> MeshXyProof<C, R> {
+    ) -> Result<QueryProof<C, R>> {
+        // Compute mesh_xy components
         let mesh_xy_rx = self.circuit_mesh.xy(x, y);
         let mesh_xy_blind = C::CircuitField::random(&mut *rng);
         let mesh_xy_commitment = mesh_xy_rx.commit(self.params.host_generators(), mesh_xy_blind);
 
-        MeshXyProof {
-            mesh_xy_rx,
-            mesh_xy_blind,
-            mesh_xy_commitment,
-        }
-    }
-
-    /// Compute query proof.
-    ///
-    /// Creates native and nested query commitments.
-    fn compute_query<RNG: Rng>(
-        &self,
-        rng: &mut RNG,
-        mesh_xy_commitment: C::HostCurve,
-    ) -> Result<QueryProof<C, R>> {
+        // Native query commitment
         let query_witness = internal_circuits::stages::native::query::Witness {
             queries: FixedVec::from_fn(|_| C::CircuitField::todo()),
         };
@@ -669,7 +643,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let native_blind = C::CircuitField::random(&mut *rng);
         let native_commitment = native_rx.commit(self.params.host_generators(), native_blind);
 
-        // Nested query commitment (includes both native_commitment and mesh_xy_commitment)
+        // Nested query commitment (bundles mesh_xy_commitment + native_commitment)
         let nested_query_witness = stages::nested::query::Witness {
             native_query: native_commitment,
             mesh_xy: mesh_xy_commitment,
@@ -679,6 +653,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let nested_commitment = nested_rx.commit(self.params.nested_generators(), nested_blind);
 
         Ok(QueryProof {
+            mesh_xy_rx,
+            mesh_xy_blind,
+            mesh_xy_commitment,
             native_rx,
             native_blind,
             native_commitment,
