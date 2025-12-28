@@ -89,56 +89,10 @@ impl<'dr, D: Driver<'dr>> Boolean<'dr, D> {
         &self.wire
     }
 
-    /// Compares two elements and returns a boolean indicating whether they are equal,
-    /// using the standard "inverse trick" for equality checking in arithmetic circuits.
-    ///
-    /// Given `diff = a - b`, we enforce the constraints:
-    ///
-    /// - diff * is_zero = 0
-    /// - diff * inv = 1 - is_zero
-    ///
-    /// Given `diff != 0`, the first constraint guarantees `is_zero = 0` as desired.
-    /// Given `diff == 0`, the first constraint leaves `is_zero` unconstrained, but
-    /// the second constraint reduces to `0 = 1 - is_zero`, which reduces to
-    /// `is_zero = 1`, as desired. `inv` always has a solution, meaning it is
-    /// complete. By construction, `is_zero` is boolean constrained for all
-    /// satisfying assignments of these two constraints.
+    /// Compares two elements and returns a boolean indicating whether they are equal.
     pub fn is_equal(dr: &mut D, a: &Element<'dr, D>, b: &Element<'dr, D>) -> Result<Self> {
         let diff = a.sub(dr, b);
-
-        let is_equal_witness = D::just(|| *diff.value().take() == D::F::ZERO);
-        let diff_inv = D::just(|| diff.value().take().invert().unwrap_or(D::F::ZERO));
-
-        let is_equal_fe = is_equal_witness.fe::<D::F>();
-        let diff_coeff = || Coeff::Arbitrary(*diff.value().take());
-
-        // Constraint 1: diff * is_eq = 0.
-        // The b term of this multiplication is the authoritative is_equal wire.
-        let (diff_wire, is_equal_wire, zero_product) = dr.mul(|| {
-            Ok((
-                diff_coeff(),
-                Coeff::Arbitrary(*is_equal_fe.snag()),
-                Coeff::Zero,
-            ))
-        })?;
-        dr.enforce_equal(&diff_wire, diff.wire())?;
-        dr.enforce_zero(|lc| lc.add(&zero_product))?;
-
-        // Constraint 2: diff * inv = 1 - is_eq.
-        let (diff_wire, _, one_minus_is_equal) = dr.mul(|| {
-            Ok((
-                diff_coeff(),
-                Coeff::Arbitrary(*diff_inv.snag()),
-                Coeff::Arbitrary(D::F::ONE - *is_equal_fe.snag()),
-            ))
-        })?;
-        dr.enforce_equal(&diff_wire, diff.wire())?;
-        dr.enforce_zero(|lc| lc.add(&D::ONE).sub(&one_minus_is_equal).sub(&is_equal_wire))?;
-
-        Ok(Boolean {
-            wire: is_equal_wire,
-            value: is_equal_witness,
-        })
+        is_zero(dr, &diff)
     }
 
     /// Compares an element against the constant ONE and returns a boolean gadget.
@@ -150,6 +104,54 @@ impl<'dr, D: Driver<'dr>> Boolean<'dr, D> {
     pub fn element(&self) -> Element<'dr, D> {
         Element::promote(self.wire.clone(), self.value().fe())
     }
+}
+
+/// Returns a boolean indicating whether the element is zero, using the standard
+/// "inverse trick" for zero checking in arithmetic circuits.
+///
+/// We enforce the constraints:
+///
+/// - x * is_zero = 0
+/// - x * inv = 1 - is_zero
+///
+/// Given `x != 0`, the first constraint guarantees `is_zero = 0` as desired.
+/// Given `x == 0`, the first constraint leaves `is_zero` unconstrained, but
+/// the second constraint reduces to `0 = 1 - is_zero`, which reduces to
+/// `is_zero = 1`, as desired. `inv` always has a solution, meaning it is
+/// complete. By construction, `is_zero` is boolean constrained for all
+/// satisfying assignments of these two constraints.
+pub(crate) fn is_zero<'dr, D: Driver<'dr>>(
+    dr: &mut D,
+    x: &Element<'dr, D>,
+) -> Result<Boolean<'dr, D>> {
+    let is_zero_witness = D::just(|| *x.value().take() == D::F::ZERO);
+    let x_inv = D::just(|| x.value().take().invert().unwrap_or(D::F::ZERO));
+
+    let is_zero_fe = is_zero_witness.fe::<D::F>();
+    let x_coeff = || Coeff::Arbitrary(*x.value().take());
+
+    // Constraint 1: x * is_zero = 0.
+    // The b term of this multiplication is the authoritative is_zero wire.
+    let (x_wire, is_zero_wire, zero_product) =
+        dr.mul(|| Ok((x_coeff(), Coeff::Arbitrary(*is_zero_fe.snag()), Coeff::Zero)))?;
+    dr.enforce_equal(&x_wire, x.wire())?;
+    dr.enforce_zero(|lc| lc.add(&zero_product))?;
+
+    // Constraint 2: x * inv = 1 - is_zero.
+    let (x_wire, _, one_minus_is_zero) = dr.mul(|| {
+        Ok((
+            x_coeff(),
+            Coeff::Arbitrary(*x_inv.snag()),
+            Coeff::Arbitrary(D::F::ONE - *is_zero_fe.snag()),
+        ))
+    })?;
+    dr.enforce_equal(&x_wire, x.wire())?;
+    dr.enforce_zero(|lc| lc.add(&D::ONE).sub(&one_minus_is_zero).sub(&is_zero_wire))?;
+
+    Ok(Boolean {
+        wire: is_zero_wire,
+        value: is_zero_witness,
+    })
 }
 
 impl<F: Field> Write<F> for Kind![F; @Boolean<'_, _>] {
