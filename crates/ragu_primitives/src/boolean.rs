@@ -95,6 +95,25 @@ impl<'dr, D: Driver<'dr>> Boolean<'dr, D> {
         Ok(a.add(dr, &cond_times_diff))
     }
 
+    /// Conditionally enforces that two elements are equal.
+    /// When this boolean is true, enforces `a == b`; when false, no constraint.
+    ///
+    /// This costs one multiplication constraint and three linear constraints.
+    pub fn conditional_enforce_equal(
+        &self,
+        dr: &mut D,
+        a: &Element<'dr, D>,
+        b: &Element<'dr, D>,
+    ) -> Result<()> {
+        // Enforce: condition → (a == b)
+        // Equivalent to: condition * (a - b) == 0
+        // - When condition = 1: a - b = 0
+        // - When condition = 0: 0 = 0 (trivially satisfied)
+        let diff = a.sub(dr, b);
+        let product = self.element().mul(dr, &diff)?;
+        product.enforce_zero(dr)
+    }
+
     /// Returns the witness value of this boolean.
     pub fn value(&self) -> DriverValue<D, bool> {
         self.value.clone()
@@ -275,6 +294,40 @@ fn test_conditional_select() -> Result<()> {
         let result = cond.conditional_select(dr, &a, &b)?;
         assert_eq!(*result.value().take(), F::from(1u64));
 
+        Ok(())
+    })?;
+
+    Ok(())
+}
+
+#[test]
+fn test_conditional_enforce_equal() -> Result<()> {
+    type F = ragu_pasta::Fp;
+    type Simulator = crate::Simulator<F>;
+
+    // When condition is true, a == b should be enforced (and satisfied)
+    let sim = Simulator::simulate((true, F::from(42u64), F::from(42u64)), |dr, witness| {
+        let (cond, a, b) = witness.cast();
+        let cond = Boolean::alloc(dr, cond)?;
+        let a = Element::alloc(dr, a)?;
+        let b = Element::alloc(dr, b)?;
+
+        dr.reset();
+        cond.conditional_enforce_equal(dr, &a, &b)?;
+        Ok(())
+    })?;
+
+    assert_eq!(sim.num_multiplications(), 1);
+    assert_eq!(sim.num_linear_constraints(), 3);
+
+    // When condition is false, constraint is trivially satisfied even if a != b
+    Simulator::simulate((false, F::from(1u64), F::from(2u64)), |dr, witness| {
+        let (cond, a, b) = witness.cast();
+        let cond = Boolean::alloc(dr, cond)?;
+        let a = Element::alloc(dr, a)?;
+        let b = Element::alloc(dr, b)?;
+
+        cond.conditional_enforce_equal(dr, &a, &b)?;
         Ok(())
     })?;
 

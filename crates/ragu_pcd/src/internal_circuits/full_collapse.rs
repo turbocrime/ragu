@@ -81,15 +81,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
             builder.add_stage::<native_error_n::Stage<C, R, HEADER_SIZE, FP>>()?;
         let dr = builder.finish();
 
-        // These two stages are enforced here because spare constraints are
-        // available, but we don't actually use them for anything.
-        let _preamble = preamble.enforced(dr, witness.view().map(|w| w.preamble_witness))?;
+        let preamble = preamble.enforced(dr, witness.view().map(|w| w.preamble_witness))?;
         let _error_m = error_m.enforced(dr, witness.view().map(|w| w.error_m_witness))?;
-
         let error_n = error_n.enforced(dr, witness.view().map(|w| w.error_n_witness))?;
 
         let unified_instance = &witness.view().map(|w| w.unified_instance);
         let mut unified_output = OutputBuilder::new();
+
+        let left_is_trivial = preamble.left.is_trivial(dr)?;
+        let right_is_trivial = preamble.right.is_trivial(dr)?;
+        let is_base = left_is_trivial.and(dr, &right_is_trivial)?;
 
         // Get mu_prime, nu_prime from unified instance
         let mu_prime = unified_output.mu_prime.get(dr, unified_instance)?;
@@ -100,8 +101,17 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         {
             // Layer 2: Single N-sized reduction using collapsed from error_n as ky_values
             let fold_c = fold_revdot::FoldC::new(dr, &mu_prime, &nu_prime)?;
-            let c = fold_c.compute_n::<FP>(dr, &error_n.error_terms, &error_n.collapsed)?;
-            unified_output.c.set(c);
+            let computed_c =
+                fold_c.compute_n::<FP>(dr, &error_n.error_terms, &error_n.collapsed)?;
+
+            // Get the witnessed C from the instance (fills the slot).
+            let witnessed_c = unified_output.c.get(dr, unified_instance)?;
+
+            // When NOT in base case, enforce witnessed_c == computed_c.
+            // In base case (both children trivial), prover may witness any c value.
+            is_base
+                .not(dr)
+                .conditional_enforce_equal(dr, &witnessed_c, &computed_c)?;
         }
 
         Ok((unified_output.finish(dr, unified_instance)?, D::just(|| ())))
