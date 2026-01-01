@@ -313,6 +313,10 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
 
     /// Folds an iterator of elements into a single element with successive
     /// powers of the provided scale factor.
+    // TODO: This should require the caller to provide the higher degree terms
+    // first, rather than taking a DoubleEndedIterator and reversing it
+    // internally. This is a less strict requirement for the API, but also helps
+    // force us to rewrite the protocols to use a consistent ordering later.
     pub fn fold<E: Borrow<Element<'dr, D>>>(
         dr: &mut D,
         elements: impl DoubleEndedIterator<Item = E>,

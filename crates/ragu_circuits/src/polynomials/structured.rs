@@ -101,6 +101,10 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
 
     /// Folds an iterator of polynomials into a single polynomial with
     /// successive powers of the provided scale factor.
+    // TODO: This should require the caller to provide the higher degree terms
+    // first, rather than taking a DoubleEndedIterator and reversing it
+    // internally. This is a less strict requirement for the API, but also helps
+    // force us to rewrite the protocols to use a consistent ordering later.
     pub fn fold<I, P>(polys: I, scale_factor: F) -> Self
     where
         I: DoubleEndedIterator<Item = P>,
