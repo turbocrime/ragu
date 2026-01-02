@@ -26,7 +26,10 @@ use crate::{
     components::fold_revdot::{self, NativeParameters},
     internal_circuits::{
         self, InternalCircuitIndex,
-        stages::{self, native::error_n::KyValues},
+        stages::{
+            self,
+            native::error_n::{ChildKyValues, KyValues},
+        },
         total_circuit_counts, unified,
     },
     proof,
@@ -734,12 +737,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
                 // Extract k(y) scalar values.
                 let ky = KyValues {
-                    left_application: *left_application_ky.value().take(),
-                    right_application: *right_application_ky.value().take(),
-                    left_unified: *left_unified_ky.value().take(),
-                    right_unified: *right_unified_ky.value().take(),
-                    left_unified_bridge: *left_unified_bridge_ky.value().take(),
-                    right_unified_bridge: *right_unified_bridge_ky.value().take(),
+                    left: ChildKyValues {
+                        application: *left_application_ky.value().take(),
+                        unified: *left_unified_ky.value().take(),
+                        unified_bridge: *left_unified_bridge_ky.value().take(),
+                    },
+                    right: ChildKyValues {
+                        application: *right_application_ky.value().take(),
+                        unified: *right_unified_ky.value().take(),
+                        unified_bridge: *right_unified_bridge_ky.value().take(),
+                    },
                 };
 
                 Ok((ky, collapsed))
