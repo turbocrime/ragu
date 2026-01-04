@@ -240,6 +240,31 @@ fn fold_products_impl<'dr, D: Driver<'dr>, S: Len>(
     Ok(outer_horner.finish(dr))
 }
 
+pub fn fold_two_layer<'dr, D: Driver<'dr>, P: Parameters>(
+    dr: &mut D,
+    sources: &[Element<'dr, D>],
+    layer1_scale: &Element<'dr, D>,
+    layer2_scale: &Element<'dr, D>,
+) -> Result<Element<'dr, D>> {
+    let m = P::M::len();
+    let mut results = alloc::vec::Vec::with_capacity(P::N::len());
+
+    let zero = Element::zero(dr);
+    for chunk in sources.chunks(m) {
+        results.push(Element::fold(
+            dr,
+            chunk.iter().chain(iter::repeat_n(&zero, m - chunk.len())),
+            layer1_scale,
+        )?);
+    }
+
+    while results.len() < P::N::len() {
+        results.push(zero.clone());
+    }
+
+    Element::fold(dr, results.iter(), layer2_scale)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
