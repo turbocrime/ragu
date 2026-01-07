@@ -99,10 +99,11 @@ impl<'dr, D: Driver<'dr>> XzQuery<'dr, D> {
 /// Pre-computed evaluations of mesh_xy at each internal circuit's omega^j.
 pub struct FixedMeshWitness<F> {
     pub preamble_stage: F,
-    pub error_m_stage: F,
     pub error_n_stage: F,
+    pub error_m_stage: F,
     pub query_stage: F,
     pub eval_stage: F,
+    pub error_m_final_staged: F,
     pub error_n_final_staged: F,
     pub eval_final_staged: F,
     pub hashes_1_circuit: F,
@@ -116,10 +117,10 @@ pub struct FixedMeshWitness<F> {
 pub struct ChildEvaluationsWitness<F> {
     /// Preamble stage rx polynomial evaluations.
     pub preamble: XzQueryWitness<F>,
-    /// Error M stage rx polynomial evaluations.
-    pub error_m: XzQueryWitness<F>,
     /// Error N stage rx polynomial evaluations.
     pub error_n: XzQueryWitness<F>,
+    /// Error M stage rx polynomial evaluations.
+    pub error_m: XzQueryWitness<F>,
     /// Query stage rx polynomial evaluations.
     pub query: XzQueryWitness<F>,
     /// Eval stage rx polynomial evaluations.
@@ -202,13 +203,15 @@ pub struct FixedMeshEvaluations<'dr, D: Driver<'dr>> {
     #[ragu(gadget)]
     pub preamble_stage: Element<'dr, D>,
     #[ragu(gadget)]
-    pub error_m_stage: Element<'dr, D>,
-    #[ragu(gadget)]
     pub error_n_stage: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub error_m_stage: Element<'dr, D>,
     #[ragu(gadget)]
     pub query_stage: Element<'dr, D>,
     #[ragu(gadget)]
     pub eval_stage: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub error_m_final_staged: Element<'dr, D>,
     #[ragu(gadget)]
     pub error_n_final_staged: Element<'dr, D>,
     #[ragu(gadget)]
@@ -230,10 +233,14 @@ impl<'dr, D: Driver<'dr>> FixedMeshEvaluations<'dr, D> {
     pub fn alloc(dr: &mut D, witness: DriverValue<D, &FixedMeshWitness<D::F>>) -> Result<Self> {
         Ok(FixedMeshEvaluations {
             preamble_stage: Element::alloc(dr, witness.view().map(|w| w.preamble_stage))?,
-            error_m_stage: Element::alloc(dr, witness.view().map(|w| w.error_m_stage))?,
             error_n_stage: Element::alloc(dr, witness.view().map(|w| w.error_n_stage))?,
+            error_m_stage: Element::alloc(dr, witness.view().map(|w| w.error_m_stage))?,
             query_stage: Element::alloc(dr, witness.view().map(|w| w.query_stage))?,
             eval_stage: Element::alloc(dr, witness.view().map(|w| w.eval_stage))?,
+            error_m_final_staged: Element::alloc(
+                dr,
+                witness.view().map(|w| w.error_m_final_staged),
+            )?,
             error_n_final_staged: Element::alloc(
                 dr,
                 witness.view().map(|w| w.error_n_final_staged),
@@ -267,6 +274,7 @@ impl<'dr, D: Driver<'dr>> FixedMeshEvaluations<'dr, D> {
             ErrorNStage => &self.error_n_stage,
             QueryStage => &self.query_stage,
             EvalStage => &self.eval_stage,
+            ErrorMFinalStaged => &self.error_m_final_staged,
             ErrorNFinalStaged => &self.error_n_final_staged,
             EvalFinalStaged => &self.eval_final_staged,
         }
@@ -279,12 +287,12 @@ pub struct ChildEvaluations<'dr, D: Driver<'dr>> {
     /// Preamble stage rx polynomial evaluations.
     #[ragu(gadget)]
     pub preamble: XzQuery<'dr, D>,
-    /// Error M stage rx polynomial evaluations.
-    #[ragu(gadget)]
-    pub error_m: XzQuery<'dr, D>,
     /// Error N stage rx polynomial evaluations.
     #[ragu(gadget)]
     pub error_n: XzQuery<'dr, D>,
+    /// Error M stage rx polynomial evaluations.
+    #[ragu(gadget)]
+    pub error_m: XzQuery<'dr, D>,
     /// Query stage rx polynomial evaluations.
     #[ragu(gadget)]
     pub query: XzQuery<'dr, D>,

@@ -53,8 +53,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             for proof in [left, right] {
                 acc_s(&mut poly, &proof.application.rx);
                 acc_s(&mut poly, &proof.preamble.stage_rx);
-                acc_s(&mut poly, &proof.error_m.stage_rx);
                 acc_s(&mut poly, &proof.error_n.stage_rx);
+                acc_s(&mut poly, &proof.error_m.stage_rx);
                 acc_s(&mut poly, &proof.ab.a_poly);
                 acc_s(&mut poly, &proof.ab.b_poly);
                 acc_s(&mut poly, &proof.query.stage_rx);

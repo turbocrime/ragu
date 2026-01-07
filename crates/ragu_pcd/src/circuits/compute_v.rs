@@ -88,7 +88,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> StagedCircuit<C::CircuitField,
         let (eval, builder) = builder.add_stage::<native_eval::Stage<C, R, HEADER_SIZE>>()?;
         let dr = builder.finish();
 
-        let preamble = preamble.unenforced(dr, witness.view().map(|w| w.preamble_witness))?;
+        let preamble = preamble.enforced(dr, witness.view().map(|w| w.preamble_witness))?;
 
         // TODO: these are unenforced for now, because query/eval stages aren't
         // supposed to contain anything (yet) besides Elements, which require no
@@ -195,10 +195,11 @@ struct ChallengeDenominators<'dr, D: Driver<'dr>> {
 /// Denominators for internal circuit omega^j evaluation points.
 struct InternalCircuitDenominators<'dr, D: Driver<'dr>> {
     preamble_stage: Element<'dr, D>,
-    error_m_stage: Element<'dr, D>,
     error_n_stage: Element<'dr, D>,
+    error_m_stage: Element<'dr, D>,
     query_stage: Element<'dr, D>,
     eval_stage: Element<'dr, D>,
+    error_m_final_staged: Element<'dr, D>,
     error_n_final_staged: Element<'dr, D>,
     eval_final_staged: Element<'dr, D>,
     hashes_1_circuit: Element<'dr, D>,
@@ -263,10 +264,11 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
             },
             internal: InternalCircuitDenominators {
                 preamble_stage:           internal_denom(dr, PreambleStage)?,
-                error_m_stage:            internal_denom(dr, ErrorMStage)?,
                 error_n_stage:            internal_denom(dr, ErrorNStage)?,
+                error_m_stage:            internal_denom(dr, ErrorMStage)?,
                 query_stage:              internal_denom(dr, QueryStage)?,
                 eval_stage:               internal_denom(dr, EvalStage)?,
+                error_m_final_staged:     internal_denom(dr, ErrorMFinalStaged)?,
                 error_n_final_staged:     internal_denom(dr, ErrorNFinalStaged)?,
                 eval_final_staged:        internal_denom(dr, EvalFinalStaged)?,
                 hashes_1_circuit:         internal_denom(dr, Hashes1Circuit)?,
@@ -494,10 +496,11 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle, const HEADER_SIZE: usize>(
     // m(\omega^j, x, y) evaluations for each internal index j
     .chain([
         (&query.fixed_mesh.preamble_stage,           &d.internal.preamble_stage),
-        (&query.fixed_mesh.error_m_stage,            &d.internal.error_m_stage),
         (&query.fixed_mesh.error_n_stage,            &d.internal.error_n_stage),
+        (&query.fixed_mesh.error_m_stage,            &d.internal.error_m_stage),
         (&query.fixed_mesh.query_stage,              &d.internal.query_stage),
         (&query.fixed_mesh.eval_stage,               &d.internal.eval_stage),
+        (&query.fixed_mesh.error_m_final_staged,     &d.internal.error_m_final_staged),
         (&query.fixed_mesh.error_n_final_staged,     &d.internal.error_n_final_staged),
         (&query.fixed_mesh.eval_final_staged,        &d.internal.eval_final_staged),
         (&query.fixed_mesh.hashes_1_circuit,         &d.internal.hashes_1_circuit),
@@ -528,8 +531,8 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle, const HEADER_SIZE: usize>(
         .into_iter()
         .flat_map(|(eval, query)| [
             (&eval.preamble,         &query.preamble),
-            (&eval.error_m,          &query.error_m),
             (&eval.error_n,          &query.error_n),
+            (&eval.error_m,          &query.error_m),
             (&eval.query,            &query.query),
             (&eval.eval,             &query.eval),
             (&eval.application,      &query.application),

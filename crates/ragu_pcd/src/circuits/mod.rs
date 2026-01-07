@@ -26,19 +26,20 @@ pub(crate) enum InternalCircuitIndex {
     QueryStage = 3,
     EvalStage = 4,
     // Final stage objects
-    ErrorNFinalStaged = 5,
-    EvalFinalStaged = 6,
+    ErrorMFinalStaged = 5,
+    ErrorNFinalStaged = 6,
+    EvalFinalStaged = 7,
     // Actual circuits
-    Hashes1Circuit = 7,
-    Hashes2Circuit = 8,
-    PartialCollapseCircuit = 9,
-    FullCollapseCircuit = 10,
-    ComputeVCircuit = 11,
+    Hashes1Circuit = 8,
+    Hashes2Circuit = 9,
+    PartialCollapseCircuit = 10,
+    FullCollapseCircuit = 11,
+    ComputeVCircuit = 12,
 }
 
 /// The number of internal circuits registered by [`register_all`],
 /// and the number of variants in [`InternalCircuitIndex`].
-pub(crate) const NUM_INTERNAL_CIRCUITS: usize = 12;
+pub(crate) const NUM_INTERNAL_CIRCUITS: usize = 13;
 
 /// Compute the total circuit count and log2 domain size from the number of
 /// application-defined steps.
@@ -103,7 +104,15 @@ pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
     // These are sometimes shared by multiple circuits. Each unique `Final`
     // stage is only registered once here.
     {
-        // preamble -> error_m -> error_n -> [CIRCUIT]
+        // preamble -> error_n -> error_m -> [CIRCUIT] (partial_collapse)
+        mesh = mesh.register_circuit_object(stages::native::error_m::Stage::<
+            C,
+            R,
+            HEADER_SIZE,
+            NativeParameters,
+        >::final_into_object()?)?;
+
+        // preamble -> error_n -> [CIRCUIT] (hashes_1, hashes_2, full_collapse)
         mesh = mesh.register_circuit_object(stages::native::error_n::Stage::<
             C,
             R,
@@ -111,7 +120,7 @@ pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             NativeParameters,
         >::final_into_object()?)?;
 
-        // preamble -> query -> eval -> [CIRCUIT]
+        // preamble -> query -> eval -> [CIRCUIT] (compute_v)
         mesh = mesh.register_circuit_object(
             stages::native::eval::Stage::<C, R, HEADER_SIZE>::final_into_object()?,
         )?;

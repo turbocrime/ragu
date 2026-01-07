@@ -32,8 +32,8 @@ pub trait Parameters: 'static + Send + Sync + Clone + Copy + Default {
 pub struct NativeParameters;
 
 impl Parameters for NativeParameters {
-    type N = ConstLen<18>;
-    type M = ConstLen<6>;
+    type N = ConstLen<19>;
+    type M = ConstLen<7>;
 }
 
 /// Represents the number of "error" terms produced during a folding operation

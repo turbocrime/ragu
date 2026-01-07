@@ -58,16 +58,16 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_rev
     pub preamble_witness: &'a native_preamble::Witness<'a, C, R, HEADER_SIZE>,
     /// The unified instance containing challenges.
     pub unified_instance: &'a unified::Instance<C>,
-    /// Witness for the error_m stage (layer 1 error terms).
-    pub error_m_witness: &'a native_error_m::Witness<C, FP>,
     /// Witness for the error_n stage (layer 2 error terms + collapsed values).
     pub error_n_witness: &'a native_error_n::Witness<C, FP>,
+    /// Witness for the error_m stage (layer 1 error terms).
+    pub error_m_witness: &'a native_error_m::Witness<C, FP>,
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     StagedCircuit<C::CircuitField, R> for Circuit<C, R, HEADER_SIZE, FP>
 {
-    type Final = native_error_n::Stage<C, R, HEADER_SIZE, FP>;
+    type Final = native_error_m::Stage<C, R, HEADER_SIZE, FP>;
 
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, R, HEADER_SIZE, FP>;
@@ -98,14 +98,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     {
         let (preamble, builder) =
             builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
-        let (error_m, builder) =
-            builder.add_stage::<native_error_m::Stage<C, R, HEADER_SIZE, FP>>()?;
         let (error_n, builder) =
             builder.add_stage::<native_error_n::Stage<C, R, HEADER_SIZE, FP>>()?;
+        let (error_m, builder) =
+            builder.add_stage::<native_error_m::Stage<C, R, HEADER_SIZE, FP>>()?;
         let dr = builder.finish();
         let preamble = preamble.unenforced(dr, witness.view().map(|w| w.preamble_witness))?;
-        let error_m = error_m.unenforced(dr, witness.view().map(|w| w.error_m_witness))?;
+
+        // TODO: these are unenforced for now, because error_n/error_m stages
+        // aren't supposed to contain anything (yet) besides Elements, which
+        // require no enforcement logic. Re-evaluate this in the future.
         let error_n = error_n.unenforced(dr, witness.view().map(|w| w.error_n_witness))?;
+        let error_m = error_m.unenforced(dr, witness.view().map(|w| w.error_m_witness))?;
 
         let unified_instance = &witness.view().map(|w| w.unified_instance);
         let mut unified_output = OutputBuilder::new();

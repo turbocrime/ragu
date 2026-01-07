@@ -22,8 +22,8 @@ pub(crate) use crate::circuits::InternalCircuitIndex::EvalStage as STAGING_ID;
 pub struct ChildEvaluationsWitness<F> {
     pub application: F,
     pub preamble: F,
-    pub error_m: F,
     pub error_n: F,
+    pub error_m: F,
     pub a_poly: F,
     pub b_poly: F,
     pub query: F,
@@ -43,8 +43,8 @@ impl<F: PrimeField> ChildEvaluationsWitness<F> {
         ChildEvaluationsWitness {
             application: proof.application.rx.eval(u),
             preamble: proof.preamble.stage_rx.eval(u),
-            error_m: proof.error_m.stage_rx.eval(u),
             error_n: proof.error_n.stage_rx.eval(u),
+            error_m: proof.error_m.stage_rx.eval(u),
             a_poly: proof.ab.a_poly.eval(u),
             b_poly: proof.ab.b_poly.eval(u),
             query: proof.query.stage_rx.eval(u),
@@ -91,9 +91,9 @@ pub struct ChildEvaluations<'dr, D: Driver<'dr>> {
     #[ragu(gadget)]
     pub preamble: Element<'dr, D>,
     #[ragu(gadget)]
-    pub error_m: Element<'dr, D>,
-    #[ragu(gadget)]
     pub error_n: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub error_m: Element<'dr, D>,
     #[ragu(gadget)]
     pub a_poly: Element<'dr, D>,
     #[ragu(gadget)]
@@ -127,8 +127,8 @@ impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
         Ok(ChildEvaluations {
             application: Element::alloc(dr, witness.view().map(|w| w.application))?,
             preamble: Element::alloc(dr, witness.view().map(|w| w.preamble))?,
-            error_m: Element::alloc(dr, witness.view().map(|w| w.error_m))?,
             error_n: Element::alloc(dr, witness.view().map(|w| w.error_n))?,
+            error_m: Element::alloc(dr, witness.view().map(|w| w.error_m))?,
             a_poly: Element::alloc(dr, witness.view().map(|w| w.a_poly))?,
             b_poly: Element::alloc(dr, witness.view().map(|w| w.b_poly))?,
             query: Element::alloc(dr, witness.view().map(|w| w.query))?,

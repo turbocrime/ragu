@@ -41,7 +41,6 @@
 //! [`error_n`][super::stages::native::error_n] stage, which inherits in the
 //! following chain:
 //! - [`preamble`][super::stages::native::preamble] (unenforced)
-//! - [`error_m`][super::stages::native::error_m] (skipped)
 //! - [`error_n`][super::stages::native::error_n] (unenforced)
 //!
 //! ## Public Inputs
@@ -91,9 +90,7 @@ use ragu_primitives::{
 use core::marker::PhantomData;
 
 use super::{
-    stages::native::{
-        error_m as native_error_m, error_n as native_error_n, preamble as native_preamble,
-    },
+    stages::native::{error_n as native_error_n, preamble as native_preamble},
     unified::{self, OutputBuilder},
 };
 use crate::components::{fold_revdot, root_of_unity, suffix::WithSuffix};
@@ -209,7 +206,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     {
         let (preamble, builder) =
             builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
-        let builder = builder.skip_stage::<native_error_m::Stage<C, R, HEADER_SIZE, FP>>()?;
         let (error_n, builder) =
             builder.add_stage::<native_error_n::Stage<C, R, HEADER_SIZE, FP>>()?;
         let dr = builder.finish();

@@ -39,8 +39,8 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) application: Application<C, R>,
     pub(crate) preamble: Preamble<C, R>,
     pub(crate) s_prime: SPrime<C, R>,
-    pub(crate) error_m: ErrorM<C, R>,
     pub(crate) error_n: ErrorN<C, R>,
+    pub(crate) error_m: ErrorM<C, R>,
     pub(crate) ab: AB<C, R>,
     pub(crate) query: Query<C, R>,
     pub(crate) f: F<C, R>,
@@ -103,10 +103,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                 nested_s_prime_blind: nested_blind,
                 nested_s_prime_commitment: nested_commitment,
             },
-            error_m: ErrorM {
-                mesh_wy_poly: zero_structured_host.clone(),
-                mesh_wy_blind: host_blind,
-                mesh_wy_commitment: host_commitment,
+            error_n: ErrorN {
                 stage_rx: zero_structured_host.clone(),
                 stage_blind: host_blind,
                 stage_commitment: host_commitment,
@@ -114,7 +111,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                 nested_blind,
                 nested_commitment,
             },
-            error_n: ErrorN {
+            error_m: ErrorM {
+                mesh_wy_poly: zero_structured_host.clone(),
+                mesh_wy_blind: host_blind,
+                mesh_wy_commitment: host_commitment,
                 stage_rx: zero_structured_host.clone(),
                 stage_blind: host_blind,
                 stage_commitment: host_commitment,

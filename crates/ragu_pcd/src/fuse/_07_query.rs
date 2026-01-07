@@ -72,6 +72,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 error_n_stage: mesh_at(ErrorNStage),
                 query_stage: mesh_at(QueryStage),
                 eval_stage: mesh_at(EvalStage),
+                error_m_final_staged: mesh_at(ErrorMFinalStaged),
                 error_n_final_staged: mesh_at(ErrorNFinalStaged),
                 eval_final_staged: mesh_at(EvalFinalStaged),
                 hashes_1_circuit: mesh_at(Hashes1Circuit),

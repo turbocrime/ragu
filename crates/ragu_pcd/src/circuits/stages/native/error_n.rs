@@ -111,7 +111,7 @@ pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Paramet
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     staging::Stage<C::CircuitField, R> for Stage<C, R, HEADER_SIZE, FP>
 {
-    type Parent = super::error_m::Stage<C, R, HEADER_SIZE, FP>;
+    type Parent = super::preamble::Stage<C, R, HEADER_SIZE>;
     type Witness<'source> = &'source Witness<C, FP>;
     type OutputKind = Kind![C::CircuitField; Output<'_, _, FP, C::CircuitPoseidon>];
 

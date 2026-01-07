@@ -159,16 +159,15 @@ where
         );
     }
 
-    // full_collapse: needs FullCollapse + PreambleStage + ErrorMStage + ErrorNStage
-    for (((fc, pre), em), en) in source
+    // full_collapse: needs FullCollapse + PreambleStage + ErrorNStage (no ErrorMStage)
+    for ((fc, pre), en) in source
         .rx(FullCollapse)
         .zip(source.rx(PreambleStage))
-        .zip(source.rx(ErrorMStage))
         .zip(source.rx(ErrorNStage))
     {
         processor.internal_circuit(
             circuits::full_collapse::CIRCUIT_ID,
-            [fc, pre, em, en].into_iter(),
+            [fc, pre, en].into_iter(),
         );
     }
 
@@ -184,13 +183,18 @@ where
 
     // Stages (aggregated: collect all proofs' rxs together)
 
-    // ErrorNFinalStaged: all hashes and collapse rxs
+    // ErrorMFinalStaged: only partial_collapse uses error_m as final stage
+    processor.stage(
+        InternalCircuitIndex::ErrorMFinalStaged,
+        source.rx(PartialCollapse),
+    )?;
+
+    // ErrorNFinalStaged: hashes_1, hashes_2, full_collapse use error_n as final stage
     processor.stage(
         InternalCircuitIndex::ErrorNFinalStaged,
         source
             .rx(Hashes1)
             .chain(source.rx(Hashes2))
-            .chain(source.rx(PartialCollapse))
             .chain(source.rx(FullCollapse)),
     )?;
 

@@ -9,7 +9,7 @@ pub(crate) type R = ragu_circuits::polynomials::R<13>;
 // When changing HEADER_SIZE, update the constraint counts by running:
 //   cargo test -p ragu_pcd --release print_internal_circuit -- --nocapture
 // Then copy-paste the output into the check_constraints! calls in the test below.
-pub(crate) const HEADER_SIZE: usize = 37;
+pub(crate) const HEADER_SIZE: usize = 65;
 
 // Number of dummy application circuits to register before testing internal
 // circuits. This ensures the tests work correctly even when application
@@ -17,8 +17,8 @@ pub(crate) const HEADER_SIZE: usize = 37;
 const NUM_APP_STEPS: usize = 6000;
 
 type Preamble = preamble::Stage<Pasta, R, HEADER_SIZE>;
-type ErrorM = error_m::Stage<Pasta, R, HEADER_SIZE, NativeParameters>;
 type ErrorN = error_n::Stage<Pasta, R, HEADER_SIZE, NativeParameters>;
+type ErrorM = error_m::Stage<Pasta, R, HEADER_SIZE, NativeParameters>;
 type Query = query::Stage<Pasta, R, HEADER_SIZE>;
 type Eval = eval::Stage<Pasta, R, HEADER_SIZE>;
 
@@ -60,11 +60,11 @@ fn test_internal_circuit_constraint_counts() {
         }};
     }
 
-    check_constraints!(Hashes1Circuit,         mul = 1933, lin = 2807);
-    check_constraints!(Hashes2Circuit,         mul = 2047, lin = 2952);
-    check_constraints!(PartialCollapseCircuit, mul = 1243, lin = 1354);
-    check_constraints!(FullCollapseCircuit,    mul = 1552, lin = 1972);
-    check_constraints!(ComputeVCircuit,        mul = 603,  lin = 830);
+    check_constraints!(Hashes1Circuit,         mul = 2045, lin = 3423);
+    check_constraints!(Hashes2Circuit,         mul = 1879, lin = 2952);
+    check_constraints!(PartialCollapseCircuit, mul = 1756, lin = 1919);
+    check_constraints!(FullCollapseCircuit,    mul = 811 , lin = 809);
+    check_constraints!(ComputeVCircuit,        mul = 956 , lin = 1384);
 }
 
 #[rustfmt::skip]
@@ -77,11 +77,11 @@ fn test_internal_stage_parameters() {
         }};
     }
 
-    check_stage!(Preamble, skip =   0, num = 141);
-    check_stage!(ErrorM,   skip = 141, num = 270);
-    check_stage!(ErrorN,   skip = 411, num = 168);
-    check_stage!(Query,    skip = 141, num =  34);
-    check_stage!(Eval,     skip = 175, num =  18);
+    check_stage!(Preamble, skip =   0, num = 225);
+    check_stage!(ErrorN,  skip = 225, num = 186);
+    check_stage!(ErrorM,  skip = 411, num = 399);
+    check_stage!(Query,   skip = 225, num =  34);
+    check_stage!(Eval,    skip = 259, num =  18);
 }
 
 /// Helper test to print current constraint counts in copy-pasteable format.
@@ -145,8 +145,8 @@ fn print_internal_stage_parameters() {
 
     println!("\n// Copy-paste the following into test_internal_stage_parameters:");
     print_stage!(Preamble);
-    print_stage!(ErrorM);
     print_stage!(ErrorN);
+    print_stage!(ErrorM);
     print_stage!(Query);
     print_stage!(Eval);
 }
