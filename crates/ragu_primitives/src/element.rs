@@ -245,6 +245,12 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
                 .ok_or_else(|| Error::InvalidWitness("division by zero".into()))
         })?;
 
+        self.invert_with(dr, inverse)
+    }
+
+    /// Enforce that this element times the provided `inverse` (unallocated value) equals one.
+    /// Returns the allocated `inverse` element.
+    pub fn invert_with(&self, dr: &mut D, inverse: DriverValue<D, D::F>) -> Result<Self> {
         let (a, b, c) = dr.mul(|| {
             Ok((
                 Coeff::Arbitrary(*self.value.snag()),
