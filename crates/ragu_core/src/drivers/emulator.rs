@@ -15,8 +15,8 @@
 //! Whereas in [`Wired`] mode, the emulator tracks wire assignments which can
 //! be extracted afterwards.
 //!
-//! While [`Mode`] implies wire availability, each mode is further parameterized
-//! by a [`MaybeKind`] to indicate witness availability.
+//! The [`Wireless`] mode is parameterized by a [`MaybeKind`] to indicate
+//! witness availability:
 //!
 //! * `Wireless<Empty, F>`: used mostly for wire counting and other static
 //!   structure analyses. Driver still executes natively, but with `Empty`
@@ -24,16 +24,17 @@
 //! * `Wireless<Always<()>, F>`: used for native witness execution/generation,
 //!   constructed via [`Emulator::execute`] or directly execute the logic with
 //!   [`Emulator::emulate_wireless`].
-//! * `Wired<Always<()>, F>`: used for native execution with wire extraction,
-//!   constructed via [`Emulator::extractor`] or directly execute the logic with
-//!   [`Emulator::emulate_wired`].
-//! * `Wired<Empty, F>`: unused, theoretically could be constructed via
-//!   `Emulator::wired` (marked private for now).
 //!
-//! Sometimes, withness availability depends on other drivers' behavior, such as
+//! The [`Wired`] mode always has witness availability (i.e., `Always<()>`):
+//!
+//! * `Wired<F>`: used for native execution with wire extraction. Constructed
+//!   via [`Emulator::extractor`] or directly execute the logic with
+//!   [`Emulator::emulate_wired`].
+//!
+//! Sometimes, witness availability depends on other drivers' behavior, such as
 //! when invoking an [`Emulator`] within generic circuit code itself. In such
-//! cases, `Emulator::wired` and [`Emulator::wireless`] can be used to create
-//! emulators parameterized by [`Mode::MaybeKind`].
+//! cases, [`Emulator::wireless`] can be used to create wireless emulators
+//! parameterized by [`MaybeKind`].
 //!
 //! ### Wire Extraction
 //!
@@ -50,20 +51,20 @@
 //! ## Usage
 //!
 //! The [`Emulator`] can be instantiated in [`Wired`] mode using
-//! `Emulator::wired`, and in [`Wireless`] mode using [`Emulator::wireless`].
+//! [`Emulator::extractor`], and in [`Wireless`] mode using
+//! [`Emulator::wireless`], [`Emulator::counter`], or [`Emulator::execute`].
 //!
-//! There are two shorthand methods for constructing an [`Emulator`]:
-//! * [`Emulator::extractor`] can be used to create a wired [`Emulator`] when a
-//!   witness is expected to exist ([`MaybeKind`] = [`Always`]).
-//! * [`Emulator::execute`] can similarly be used to create a wireless
-//!   [`Emulator`] when a witness is expected to exist. This is the common case
-//!   of executing circuit code natively.
+//! Common constructor methods:
+//! * [`Emulator::extractor`] creates a wired [`Emulator`] for extracting wire
+//!   assignments from a gadget.
+//! * [`Emulator::execute`] creates a wireless [`Emulator`] for native witness
+//!   execution/generation. This is the common case of executing circuit code
+//!   natively.
+//! * [`Emulator::counter`] creates a wireless [`Emulator`] for wire counting
+//!   and static analysis without witness data.
 //!
 //! In [`Wired`] mode, wire assignments can be extracted from a gadget using
-//! [`Emulator::wires`]; the returned wires are [`MaybeWired`] values that may
-//! or may not have known values depending on the parameterized [`MaybeKind`].
-//! In the case that a witness always exists, [`Emulator::always_wires`] can be
-//! used instead to fetch the values directly.
+//! [`Emulator::always_wires`], which returns a `Vec<F>` of field elements.
 
 use ff::Field;
 
@@ -74,7 +75,7 @@ use crate::{
     Result,
     drivers::{Coeff, DirectSum, Driver, DriverTypes, FromDriver, LinearExpression},
     gadgets::{Gadget, GadgetKind},
-    maybe::{Always, Empty, Maybe, MaybeKind},
+    maybe::{Always, Empty, MaybeKind},
     routines::{Prediction, Routine},
 };
 
@@ -98,82 +99,90 @@ pub trait Mode {
 }
 
 /// Mode for an [`Emulator`] that tracks wire assignments.
-pub struct Wired<M: MaybeKind, F: Field>(PhantomData<(M, F)>);
+///
+/// Wired mode always has witness availability (i.e., `MaybeKind = Always<()>`).
+pub struct Wired<F: Field>(PhantomData<F>);
 
-/// Container for a [`Field`] element representing a wire assignment that may or
-/// may not be known depending on the parameterized [`MaybeKind`].
-pub enum MaybeWired<M: MaybeKind, F: Field> {
+/// Container for a [`Field`] element representing a wire assignment.
+///
+/// This type is an internal implementation detail of wired mode. External code
+/// should not use this type directly; wire values are exposed through
+/// [`Emulator::always_wires`] which returns `Vec<F>`.
+pub enum WiredValue<F: Field> {
     /// The special wire representing the constant $1$.
     One,
 
     /// A wire with an assigned value.
-    Assigned(M::Rebind<F>),
+    Assigned(F),
 }
 
-impl<M: MaybeKind, F: Field> MaybeWired<M, F> {
+impl<F: Field> WiredValue<F> {
     /// Retrieves the underlying wire assignment value.
-    pub fn value(self) -> M::Rebind<F> {
+    ///
+    /// This method is part of the internal implementation. External code should
+    /// use [`Emulator::always_wires`] instead.
+    pub fn value(self) -> F {
         match self {
-            MaybeWired::One => M::maybe_just(|| F::ONE),
-            MaybeWired::Assigned(value) => value,
+            WiredValue::One => F::ONE,
+            WiredValue::Assigned(value) => value,
         }
     }
 
     /// Retrieves a reference to the underlying wire value.
     fn snag<'a>(&'a self, one: &'a F) -> &'a F {
         match self {
-            MaybeWired::One => one,
-            MaybeWired::Assigned(value) => value.snag(),
+            WiredValue::One => one,
+            WiredValue::Assigned(value) => value,
         }
     }
 }
 
-impl<M: MaybeKind, F: Field> Clone for MaybeWired<M, F> {
+impl<F: Field> Clone for WiredValue<F> {
     fn clone(&self) -> Self {
         match self {
-            MaybeWired::One => MaybeWired::One,
-            MaybeWired::Assigned(value) => MaybeWired::Assigned(value.clone()),
+            WiredValue::One => WiredValue::One,
+            WiredValue::Assigned(value) => WiredValue::Assigned(*value),
         }
     }
 }
 
-/// Implementation of [`LinearExpression`] for a [`DirectSum`] that may or may
-/// not have a known value depending on the parameterized [`MaybeKind`].
-pub struct MaybeDirectSum<M: MaybeKind, F: Field>(M::Rebind<DirectSum<F>>);
+/// Implementation of [`LinearExpression`] for wired mode's [`DirectSum`].
+///
+/// This type is an internal implementation detail of wired mode and should not
+/// be used directly by external code.
+pub struct WiredDirectSum<F: Field>(DirectSum<F>);
 
-impl<M: MaybeKind, F: Field> LinearExpression<MaybeWired<M, F>, F> for MaybeDirectSum<M, F> {
-    fn add_term(self, wire: &MaybeWired<M, F>, coeff: Coeff<F>) -> Self {
-        MaybeDirectSum(self.0.map(|sum| sum.add_term(wire.snag(&F::ONE), coeff)))
+impl<F: Field> LinearExpression<WiredValue<F>, F> for WiredDirectSum<F> {
+    fn add_term(self, wire: &WiredValue<F>, coeff: Coeff<F>) -> Self {
+        WiredDirectSum(self.0.add_term(wire.snag(&F::ONE), coeff))
     }
 
     fn gain(self, coeff: Coeff<F>) -> Self {
-        MaybeDirectSum(self.0.map(|sum| sum.gain(coeff)))
+        WiredDirectSum(self.0.gain(coeff))
     }
 
-    fn extend(self, with: impl IntoIterator<Item = (MaybeWired<M, F>, Coeff<F>)>) -> Self {
-        MaybeDirectSum(self.0.map(|sum| {
-            sum.extend(
-                with.into_iter()
-                    .map(|(wire, coeff)| (wire.value().take(), coeff)),
-            )
-        }))
+    fn extend(self, with: impl IntoIterator<Item = (WiredValue<F>, Coeff<F>)>) -> Self {
+        WiredDirectSum(
+            self.0
+                .extend(with.into_iter().map(|(wire, coeff)| (wire.value(), coeff))),
+        )
     }
 
-    fn add(self, wire: &MaybeWired<M, F>) -> Self {
-        MaybeDirectSum(self.0.map(|sum| sum.add(wire.snag(&F::ONE))))
+    fn add(self, wire: &WiredValue<F>) -> Self {
+        WiredDirectSum(self.0.add(wire.snag(&F::ONE)))
     }
 
-    fn sub(self, wire: &MaybeWired<M, F>) -> Self {
-        MaybeDirectSum(self.0.map(|sum| sum.sub(wire.snag(&F::ONE))))
+    fn sub(self, wire: &WiredValue<F>) -> Self {
+        WiredDirectSum(self.0.sub(wire.snag(&F::ONE)))
     }
 }
 
-impl<M: MaybeKind, F: Field> Mode for Wired<M, F> {
-    type MaybeKind = M;
+impl<F: Field> Mode for Wired<F> {
+    type MaybeKind = Always<()>;
     type F = F;
-    type Wire = MaybeWired<M, F>;
-    type LCadd = MaybeDirectSum<M, F>;
-    type LCenforce = MaybeDirectSum<M, F>;
+    type Wire = WiredValue<F>;
+    type LCadd = WiredDirectSum<F>;
+    type LCenforce = WiredDirectSum<F>;
 }
 
 /// Mode for an [`Emulator`] that does not track wire assignments.
@@ -199,32 +208,23 @@ impl<M: MaybeKind, F: Field> Mode for Wireless<M, F> {
 /// whether wire assignments are tracked or not ([`Wired`] vs. [`Wireless`]).
 pub struct Emulator<M: Mode>(PhantomData<M>);
 
-impl<M: MaybeKind, F: Field> Emulator<Wired<M, F>> {
-    /// Creates a new [`Emulator`] driver in [`Wired`] mode, parameterized on
-    /// the existence of a witness.
-    #[allow(dead_code)]
-    fn wired() -> Self {
-        Emulator(PhantomData)
-    }
-
+impl<F: Field> Emulator<Wired<F>> {
     /// Extract the wires from a gadget produced using a wired [`Emulator`].
     ///
-    /// Wire assignments are not directly returned by this method because wired
-    /// [`Emulator`]s are parameterized by a [`MaybeKind`]. Instead,
-    /// [`MaybeWired`] wires are returned. If a witness [`Always`] exists then
-    /// the caller should prefer to use [`Emulator::always_wires`].
-    pub fn wires<'dr, G: Gadget<'dr, Self>>(&self, gadget: &G) -> Result<Vec<MaybeWired<M, F>>> {
+    /// This is an internal method. External callers should use
+    /// [`Emulator::always_wires`] instead.
+    fn wires<'dr, G: Gadget<'dr, Self>>(&self, gadget: &G) -> Result<Vec<WiredValue<F>>> {
         /// A conversion utility for extracting wire values.
-        struct WireExtractor<M: MaybeKind, F: Field> {
-            wires: Vec<MaybeWired<M, F>>,
+        struct WireExtractor<F: Field> {
+            wires: Vec<WiredValue<F>>,
         }
 
-        impl<M: MaybeKind, F: Field> FromDriver<'_, '_, Emulator<Wired<M, F>>> for WireExtractor<M, F> {
+        impl<F: Field> FromDriver<'_, '_, Emulator<Wired<F>>> for WireExtractor<F> {
             type NewDriver = PhantomData<F>;
 
             fn convert_wire(
                 &mut self,
-                wire: &MaybeWired<M, F>,
+                wire: &WiredValue<F>,
             ) -> Result<<Self::NewDriver as Driver<'_>>::Wire> {
                 self.wires.push(wire.clone());
                 Ok(())
@@ -234,6 +234,31 @@ impl<M: MaybeKind, F: Field> Emulator<Wired<M, F>> {
         let mut collector = WireExtractor { wires: Vec::new() };
         <G::Kind as GadgetKind<F>>::map_gadget(gadget, &mut collector)?;
         Ok(collector.wires)
+    }
+
+    /// Extract the wires from a gadget produced using a wired [`Emulator`].
+    /// This method returns the actual wire assignments if successful.
+    pub fn always_wires<'dr, G: Gadget<'dr, Self>>(&self, gadget: &G) -> Result<Vec<F>> {
+        Ok(self.wires(gadget)?.into_iter().map(|w| w.value()).collect())
+    }
+
+    /// Creates a new [`Emulator`] driver in [`Wired`] mode for executing with
+    /// a known witness.
+    ///
+    /// This is useful for extracting wire assignments from a [`Gadget`] using
+    /// [`Emulator::always_wires`].
+    pub fn extractor() -> Self {
+        Emulator(PhantomData)
+    }
+
+    /// Helper utility for executing a closure with a freshly created wired
+    /// [`Emulator`] when a witness is expected to exist.
+    pub fn emulate_wired<R, W: Send>(
+        witness: W,
+        f: impl FnOnce(&mut Self, Always<W>) -> Result<R>,
+    ) -> Result<R> {
+        let mut dr = Self::extractor();
+        dr.with(witness, f)
     }
 }
 
@@ -267,38 +292,6 @@ impl<F: Field> Emulator<Wireless<Always<()>, F>> {
         f: impl FnOnce(&mut Self, Always<W>) -> Result<R>,
     ) -> Result<R> {
         let mut dr = Self::execute();
-        dr.with(witness, f)
-    }
-}
-
-impl<F: Field> Emulator<Wired<Always<()>, F>> {
-    /// Extract the wires from a gadget produced using a wired [`Emulator`] that
-    /// expects a witness to exist. This method returns the actual wire
-    /// assignments if it is successful.
-    pub fn always_wires<'dr, G: Gadget<'dr, Self>>(&self, gadget: &G) -> Result<Vec<F>> {
-        Ok(self
-            .wires(gadget)?
-            .into_iter()
-            .map(|w| w.value().take())
-            .collect())
-    }
-
-    /// Creates a new [`Emulator`] driver in [`Wired`] mode, specifically for
-    /// executing with a known witness.
-    ///
-    /// This is useful for extracting wire assignments from a [`Gadget`] using
-    /// [`Emulator::always_wires`].
-    pub fn extractor() -> Self {
-        Emulator(PhantomData)
-    }
-
-    /// Helper utility for executing a closure with a freshly created wired
-    /// [`Emulator`] when a witness is expected to exist.
-    pub fn emulate_wired<R, W: Send>(
-        witness: W,
-        f: impl FnOnce(&mut Self, Always<W>) -> Result<R>,
-    ) -> Result<R> {
-        let mut dr = Self::extractor();
         dr.with(witness, f)
     }
 }
@@ -355,17 +348,17 @@ impl<'dr, M: MaybeKind, F: Field> Driver<'dr> for Emulator<Wireless<M, F>> {
     }
 }
 
-impl<'dr, M: MaybeKind, F: Field> Driver<'dr> for Emulator<Wired<M, F>> {
+impl<'dr, F: Field> Driver<'dr> for Emulator<Wired<F>> {
     type F = F;
-    type Wire = MaybeWired<M, F>;
-    const ONE: Self::Wire = MaybeWired::One;
+    type Wire = WiredValue<F>;
+    const ONE: Self::Wire = WiredValue::One;
 
     fn alloc(&mut self, f: impl Fn() -> Result<Coeff<Self::F>>) -> Result<Self::Wire> {
-        f().map(|coeff| MaybeWired::Assigned(M::maybe_just(|| coeff.value())))
+        f().map(|coeff| WiredValue::Assigned(coeff.value()))
     }
 
     fn constant(&mut self, coeff: Coeff<Self::F>) -> Self::Wire {
-        MaybeWired::Assigned(M::maybe_just(|| coeff.value()))
+        WiredValue::Assigned(coeff.value())
     }
 
     fn mul(
@@ -378,15 +371,15 @@ impl<'dr, M: MaybeKind, F: Field> Driver<'dr> for Emulator<Wired<M, F>> {
         // constraints.
 
         Ok((
-            MaybeWired::Assigned(M::maybe_just(|| a.value())),
-            MaybeWired::Assigned(M::maybe_just(|| b.value())),
-            MaybeWired::Assigned(M::maybe_just(|| c.value())),
+            WiredValue::Assigned(a.value()),
+            WiredValue::Assigned(b.value()),
+            WiredValue::Assigned(c.value()),
         ))
     }
 
     fn add(&mut self, lc: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {
-        let lc = lc(MaybeDirectSum(M::maybe_just(DirectSum::default)));
-        MaybeWired::Assigned(lc.0.map(|sum| sum.value))
+        let lc = lc(WiredDirectSum(DirectSum::default()));
+        WiredValue::Assigned(lc.0.value)
     }
 
     fn enforce_zero(&mut self, _: impl Fn(Self::LCenforce) -> Self::LCenforce) -> Result<()> {

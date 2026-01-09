@@ -2,7 +2,7 @@ use ff::Field;
 use ragu_core::{
     Result,
     drivers::emulator::Emulator,
-    maybe::{Always, Maybe, MaybeKind},
+    maybe::{Always, MaybeKind},
 };
 use ragu_primitives::GadgetExt;
 
@@ -19,7 +19,7 @@ pub fn eval<F: Field, C: Circuit<F>>(circuit: &C, instance: C::Instance<'_>) -> 
 
     Ok(pubinputs
         .into_iter()
-        .map(|x| x.wire().clone().value().take())
+        .map(|x| x.wire().clone().value())
         .chain(Some(F::ONE))
         .rev()
         .collect())
