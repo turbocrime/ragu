@@ -1,8 +1,22 @@
-//! Unified instance/output interface
+//! Unified instance/output interface for internal verification circuits.
 //!
-//! Many internal circuits involved in the core protocol will share a common set
-//! of public inputs so that k(Y) does not need to be evaluated many times, and
-//! to make it easier to reconfigure the roles of individual circuits later.
+//! Internal circuits share a common set of public inputs defined by [`Output`].
+//! This avoids redundant evaluations of the public input polynomial $k(Y)$,
+//! which encodes the circuit's public inputs, and simplifies circuit
+//! reconfiguration.
+//!
+//! ## Substitution Attack Prevention
+//!
+//! Internal circuit outputs are wrapped in [`WithSuffix`] with a zero element.
+//! This ensures the linear term of $k(Y)$ is zero, distinguishing internal
+//! circuits from application circuits (which never have a zero linear term).
+//! This prevents substitution attacks where an application might try to use
+//! an internal circuit proof in place of an application circuit proof. Since
+//! internal circuits are fixed by the protocol while application circuits
+//! vary, this distinction is critical for soundness.
+//!
+//! [`hashes_1`]: super::hashes_1
+//! [`hashes_2`]: super::hashes_2
 
 use arithmetic::Cycle;
 use ragu_circuits::polynomials::Rank;
@@ -16,58 +30,133 @@ use ragu_primitives::{Element, Point, io::Write};
 
 use crate::{components::suffix::WithSuffix, proof::Proof};
 
+/// The gadget kind for internal circuit outputs.
+///
+/// Internal circuits output [`Output`] wrapped in [`WithSuffix`] to ensure
+/// the linear term of $k(Y)$ is zero.
 #[allow(type_alias_bounds)]
 pub type InternalOutputKind<C: Cycle> = Kind![C::CircuitField; WithSuffix<'_, _, Output<'_, _, C>>];
 
-/// The number of wires in an `Output` gadget.
+/// The number of wires in an [`Output`] gadget.
+///
+/// Used for allocation sizing and verified by tests.
 pub const NUM_WIRES: usize = 29;
 
+/// Shared public inputs for internal verification circuits.
+///
+/// This gadget contains the commitments, Fiat-Shamir challenges, and final
+/// values that internal circuits consume as public inputs. The nested curve
+/// (`C::NestedCurve`) is the other curve in the cycle, whose base field equals
+/// the circuit's scalar field.
+///
+/// # Field Organization
+///
+/// Fields are ordered to match the proof transcript:
+///
+/// - **Commitments**: Points on the nested curve from proof components
+/// - **Challenges**: Fiat-Shamir challenges computed by [`hashes_1`] and [`hashes_2`]
+/// - **Final values**: The revdot claim $c$ and expected evaluation $v$
+///
+/// [`hashes_1`]: super::hashes_1
+/// [`hashes_2`]: super::hashes_2
 #[derive(Gadget, Write)]
 pub struct Output<'dr, D: Driver<'dr>, C: Cycle> {
+    // Commitments from proof components (on the nested curve)
+    /// Commitment from the preamble proof component.
     #[ragu(gadget)]
     pub nested_preamble_commitment: Point<'dr, D, C::NestedCurve>,
+
+    // Challenge from hashes_1
+    /// Fiat-Shamir challenge $w$.
     #[ragu(gadget)]
     pub w: Element<'dr, D>,
+
+    /// Commitment from the s_prime proof component.
     #[ragu(gadget)]
     pub nested_s_prime_commitment: Point<'dr, D, C::NestedCurve>,
+
+    // Challenges from hashes_1
+    /// Fiat-Shamir challenge $y$.
     #[ragu(gadget)]
     pub y: Element<'dr, D>,
+    /// Fiat-Shamir challenge $z$.
     #[ragu(gadget)]
     pub z: Element<'dr, D>,
+
+    /// Commitment from the error_m proof component.
     #[ragu(gadget)]
     pub nested_error_m_commitment: Point<'dr, D, C::NestedCurve>,
+
+    // First folding layer challenges from hashes_2
+    /// First folding layer challenge $\mu$.
     #[ragu(gadget)]
     pub mu: Element<'dr, D>,
+    /// First folding layer challenge $\nu$.
     #[ragu(gadget)]
     pub nu: Element<'dr, D>,
+
+    /// Commitment from the error_n proof component.
     #[ragu(gadget)]
     pub nested_error_n_commitment: Point<'dr, D, C::NestedCurve>,
+
+    // Second folding layer challenges from hashes_2
+    /// Second folding layer challenge $\mu'$.
     #[ragu(gadget)]
     pub mu_prime: Element<'dr, D>,
+    /// Second folding layer challenge $\nu'$.
     #[ragu(gadget)]
     pub nu_prime: Element<'dr, D>,
+
+    // Final values
+    /// Final revdot claim value from the ab proof component.
     #[ragu(gadget)]
     pub c: Element<'dr, D>,
+
+    /// Commitment from the ab proof component.
     #[ragu(gadget)]
     pub nested_ab_commitment: Point<'dr, D, C::NestedCurve>,
+
+    // Polynomial commitment challenge from hashes_2
+    /// Polynomial commitment challenge $x$.
     #[ragu(gadget)]
     pub x: Element<'dr, D>,
+
+    /// Commitment from the query proof component.
     #[ragu(gadget)]
     pub nested_query_commitment: Point<'dr, D, C::NestedCurve>,
+
+    /// Query polynomial challenge $\alpha$.
     #[ragu(gadget)]
     pub alpha: Element<'dr, D>,
+
+    /// Commitment from the f proof component.
     #[ragu(gadget)]
     pub nested_f_commitment: Point<'dr, D, C::NestedCurve>,
+
+    /// Final polynomial challenge $u$.
     #[ragu(gadget)]
     pub u: Element<'dr, D>,
+
+    /// Commitment from the eval proof component.
     #[ragu(gadget)]
     pub nested_eval_commitment: Point<'dr, D, C::NestedCurve>,
+
+    /// Evaluation verification challenge $\beta$.
     #[ragu(gadget)]
     pub beta: Element<'dr, D>,
+
+    /// Expected evaluation at the challenge point for consistency verification.
     #[ragu(gadget)]
     pub v: Element<'dr, D>,
 }
 
+/// Native (non-gadget) representation of unified public inputs.
+///
+/// This struct holds the concrete field values corresponding to [`Output`]
+/// fields. It is constructed during proof generation in the fuse pipeline
+/// and passed to circuits as witness data for gadget allocation.
+///
+/// See [`Output`] for field descriptions.
 pub struct Instance<C: Cycle> {
     pub nested_preamble_commitment: C::NestedCurve,
     pub w: C::CircuitField,
@@ -92,7 +181,14 @@ pub struct Instance<C: Cycle> {
     pub v: C::CircuitField,
 }
 
-/// An entry in the shared public inputs for an internal circuit.
+/// A lazy-allocation slot for a single field in the unified output.
+///
+/// Slots enable circuits to either pre-compute values (via [`set`](Self::set))
+/// or allocate on-demand (via [`get`](Self::get)). This avoids redundant wire
+/// allocations when the same value is computed by multiple code paths.
+///
+/// Each slot stores an allocation function that knows how to extract and
+/// allocate its field from an [`Instance`].
 pub struct Slot<'a, 'dr, D: Driver<'dr>, T, C: Cycle> {
     value: Option<T>,
     alloc: fn(&mut D, &DriverValue<D, &'a Instance<C>>) -> Result<T>,
@@ -100,6 +196,7 @@ pub struct Slot<'a, 'dr, D: Driver<'dr>, T, C: Cycle> {
 }
 
 impl<'a, 'dr, D: Driver<'dr>, T: Clone, C: Cycle> Slot<'a, 'dr, D, T, C> {
+    /// Creates a new slot with the given allocation function.
     pub(super) fn new(alloc: fn(&mut D, &DriverValue<D, &'a Instance<C>>) -> Result<T>) -> Self {
         Slot {
             value: None,
@@ -108,6 +205,11 @@ impl<'a, 'dr, D: Driver<'dr>, T: Clone, C: Cycle> Slot<'a, 'dr, D, T, C> {
         }
     }
 
+    /// Allocates the value using the stored allocation function.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the slot has already been filled (via `get` or `set`).
     pub fn get(&mut self, dr: &mut D, instance: &DriverValue<D, &'a Instance<C>>) -> Result<T> {
         assert!(self.value.is_none(), "Slot::get: slot already filled");
         let value = (self.alloc)(dr, instance)?;
@@ -115,11 +217,22 @@ impl<'a, 'dr, D: Driver<'dr>, T: Clone, C: Cycle> Slot<'a, 'dr, D, T, C> {
         Ok(value)
     }
 
+    /// Directly provides a pre-computed value for this slot.
+    ///
+    /// Use this when the value has already been computed elsewhere and
+    /// should not be re-allocated.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the slot has already been filled (via `get` or `set`).
     pub fn set(&mut self, value: T) {
         assert!(self.value.is_none(), "Slot::set: slot already filled");
         self.value = Some(value);
     }
 
+    /// Consumes the slot and returns the stored value, allocating if needed.
+    ///
+    /// Used during finalization to build the [`Output`] gadget.
     fn take(self, dr: &mut D, instance: &DriverValue<D, &'a Instance<C>>) -> Result<T> {
         self.value
             .map(Result::Ok)
@@ -127,6 +240,20 @@ impl<'a, 'dr, D: Driver<'dr>, T: Clone, C: Cycle> Slot<'a, 'dr, D, T, C> {
     }
 }
 
+/// Builder for constructing an [`Output`] gadget with flexible allocation.
+///
+/// Each field is a [`Slot`] that can be filled either eagerly (via `set`) or
+/// lazily (via `get` or at finalization). This allows circuits to pre-compute
+/// some values during earlier stages while deferring others.
+///
+/// # Usage
+///
+/// 1. Create a builder with [`new`](Self::new)
+/// 2. Optionally pre-fill slots using `builder.field.set(value)`
+/// 3. Optionally allocate slots using `builder.field.get(dr, instance)`
+/// 4. Call [`finish`](Self::finish) to build the final output with suffix
+///
+/// Any slots not explicitly filled will be allocated during finalization.
 pub struct OutputBuilder<'a, 'dr, D: Driver<'dr>, C: Cycle> {
     pub nested_preamble_commitment: Slot<'a, 'dr, D, Point<'dr, D, C::NestedCurve>, C>,
     pub w: Slot<'a, 'dr, D, Element<'dr, D>, C>,
@@ -152,7 +279,11 @@ pub struct OutputBuilder<'a, 'dr, D: Driver<'dr>, C: Cycle> {
 }
 
 impl<'dr, D: Driver<'dr>, C: Cycle> Output<'dr, D, C> {
-    /// Allocate an Output from a proof reference.
+    /// Allocates an [`Output`] directly from a proof reference.
+    ///
+    /// This is a convenience method that extracts all fields from the proof
+    /// components and challenges. Useful for testing or when the full proof
+    /// structure is available.
     pub fn alloc_from_proof<R: Rank>(
         dr: &mut D,
         proof: DriverValue<D, &Proof<C, R>>,
@@ -217,6 +348,10 @@ impl<'dr, D: Driver<'dr>, C: Cycle> Output<'dr, D, C> {
 }
 
 impl<'a, 'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle> OutputBuilder<'a, 'dr, D, C> {
+    /// Creates a new builder with allocation functions for each field.
+    ///
+    /// All slots start empty and will allocate from the [`Instance`] when
+    /// finalized, unless explicitly filled beforehand.
     pub fn new() -> Self {
         macro_rules! point_slot {
             ($field:ident) => {
@@ -257,6 +392,13 @@ impl<'a, 'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle> OutputBuilder<'a, '
         }
     }
 
+    /// Finishes building and wraps the output in [`WithSuffix`].
+    ///
+    /// Appends a zero element as the suffix, ensuring the linear term of
+    /// $k(Y)$ is zero. This distinguishes internal circuits (fixed by the
+    /// protocol) from application circuits (which vary), preventing an
+    /// application from substituting an internal circuit proof for an
+    /// application circuit proof.
     pub fn finish(
         self,
         dr: &mut D,
@@ -266,10 +408,11 @@ impl<'a, 'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle> OutputBuilder<'a, '
         Ok(WithSuffix::new(self.finish_no_suffix(dr, instance)?, zero))
     }
 
-    /// Finish building the output without wrapping in WithSuffix.
+    /// Finishes building the output without wrapping in [`WithSuffix`].
     ///
-    /// This is useful for circuits that need to include additional data
-    /// in their output alongside the unified instance.
+    /// Use this when the circuit needs to include additional data in its
+    /// output alongside the unified instance, and will handle the suffix
+    /// wrapping separately.
     pub fn finish_no_suffix(
         self,
         dr: &mut D,
