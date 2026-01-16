@@ -19,7 +19,6 @@ mod element;
 mod endoscalar;
 mod foreign;
 pub mod io;
-mod lazy;
 mod point;
 pub mod poseidon;
 pub mod promotion;
@@ -35,7 +34,6 @@ use promotion::Demoted;
 pub use boolean::{Boolean, multipack};
 pub use element::{Element, multiadd};
 pub use endoscalar::Endoscalar;
-pub use lazy::Lazy;
 pub use point::Point;
 pub use simulator::Simulator;
 

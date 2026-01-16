@@ -81,7 +81,6 @@
 //! are instantiated with different drivers.
 
 mod foreign;
-mod sendable;
 
 use ff::Field;
 
@@ -89,8 +88,6 @@ use super::{
     Result,
     drivers::{Driver, FromDriver},
 };
-
-pub use sendable::Sendable;
 
 /// An abstract data type (parameterized by a [`Driver`] type) which
 /// encapsulates wires allocated by the driver along with any corresponding
