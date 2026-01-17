@@ -7,12 +7,11 @@
 //! the child proof commitments/blinds using the additive homomorphism of
 //! Pedersen commitments: `commit(Σ β^j * p_j, Σ β^j * r_j) = Σ β^j * C_j`.
 //!
-//! The commitment is computed via a single MSM over all accumulated terms.
+//! The commitment is computed via [`PointsWitness`] Horner evaluation.
 
 use alloc::vec::Vec;
 use arithmetic::Cycle;
 use core::ops::AddAssign;
-use ff::Field;
 use ragu_circuits::polynomials::{Rank, unstructured};
 use ragu_core::{
     Result,
@@ -30,14 +29,12 @@ use crate::{Application, Proof, proof};
 /// - 1 f.commitment
 const NUM_P_COMMITMENTS: usize = 37;
 
-/// Accumulates polynomials with their blinds and commitments for MSM computation.
+/// Accumulates polynomials with their blinds and commitments.
 struct Accumulator<'a, C: Cycle, R: Rank> {
     poly: &'a mut unstructured::Polynomial<C::CircuitField, R>,
     blind: &'a mut C::CircuitField,
-    msm_scalars: &'a mut Vec<C::CircuitField>,
-    msm_bases: &'a mut Vec<C::HostCurve>,
+    commitments: &'a mut Vec<C::HostCurve>,
     beta: C::CircuitField,
-    beta_power: C::CircuitField,
 }
 
 impl<C: Cycle, R: Rank> Accumulator<'_, C, R> {
@@ -48,9 +45,7 @@ impl<C: Cycle, R: Rank> Accumulator<'_, C, R> {
         self.poly.scale(self.beta);
         *self.poly += poly;
         *self.blind = self.beta * *self.blind + blind;
-        self.msm_scalars.push(self.beta_power);
-        self.msm_bases.push(commitment);
-        self.beta_power *= self.beta;
+        self.commitments.push(commitment);
     }
 }
 
@@ -73,10 +68,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let mut poly = f.poly.clone();
         let mut blind = f.blind;
 
-        // Collect MSM terms: (scalar, base) pairs for commitment computation.
-        // The commitment is Σ β^j * C_j, computed via a single MSM at the end.
-        let mut msm_scalars: Vec<C::CircuitField> = Vec::new();
-        let mut msm_bases: Vec<C::HostCurve> = Vec::new();
+        // Collect commitments for PointsWitness construction.
+        let mut commitments: Vec<C::HostCurve> = Vec::new();
 
         // The orderings in this code must match the corresponding struct
         // definition ordering of `native::stages::eval::Output`.
@@ -89,14 +82,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let beta_endo = extract_endoscalar(pre_beta_value);
         let effective_beta = compute_endoscalar(beta_endo);
 
-        let beta_power = {
+        {
             let mut acc: Accumulator<'_, C, R> = Accumulator {
                 poly: &mut poly,
                 blind: &mut blind,
-                msm_scalars: &mut msm_scalars,
-                msm_bases: &mut msm_bases,
+                commitments: &mut commitments,
                 beta: effective_beta,
-                beta_power: C::CircuitField::ONE,
             };
 
             for proof in [left, right] {
@@ -187,39 +178,25 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 query.mesh_xy_blind,
                 query.mesh_xy_commitment,
             );
+        }
 
-            acc.beta_power
-        };
-
-        // Add f's commitment with the final beta power.
-        msm_scalars.push(beta_power);
-        msm_bases.push(f.commitment);
-
-        let n = msm_scalars.len() - 1;
-
-        // Horner accumulation inserts scalars in reverse order (lowest beta power first),
-        // so we reverse to align with the corresponding commitment bases.
-        msm_scalars[..n].reverse();
-
-        // Compute commitment via MSM: Σ scalar_i * base_i
-        let commitment = arithmetic::mul(msm_scalars.iter(), msm_bases.iter());
-
-        // Check consistency with PointsWitness constructor
-        {
+        // Construct commitment via PointsWitness Horner evaluation.
+        // Points order: [f.commitment, commitments...] computes β^n·f + β^{n-1}·C₀ + ...
+        let commitment = {
             let mut points = Vec::with_capacity(NUM_P_COMMITMENTS);
             points.push(f.commitment);
-            points.extend_from_slice(&msm_bases[..n]);
+            points.extend_from_slice(&commitments);
 
             let witness = PointsWitness::<C::HostCurve, NUM_P_COMMITMENTS>::new(beta_endo, &points);
-            assert_eq!(*witness.interstitials.last().unwrap(), commitment.into());
-        }
+            *witness.interstitials.last().unwrap()
+        };
 
         let v = poly.eval(*u.value().take());
 
         Ok(proof::P {
             poly,
             blind,
-            commitment: commitment.into(),
+            commitment,
             v,
         })
     }
