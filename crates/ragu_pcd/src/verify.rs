@@ -70,7 +70,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // Build a and b polynomials for each revdot claim.
         let source = SingleProofSource { proof: &pcd.proof };
         let mut builder = ClaimBuilder::new(&self.native_mesh, self.num_application_steps, y, z);
-        claims::build_claims(&source, &mut builder)?;
+        claims::build(&source, &mut builder)?;
 
         // Check all revdot claims.
         let revdot_claims = {

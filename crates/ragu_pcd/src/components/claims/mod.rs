@@ -8,7 +8,7 @@
 //! The abstraction separates:
 //! - [`ClaimSource`]: Provides rx values from proof sources
 //! - [`ClaimProcessor`]: Processes rx values into accumulated outputs
-//! - [`build_claims`]: Orchestrates claim building in unified order
+//! - [`build`]: Orchestrates claim building in unified order
 
 use alloc::{borrow::Cow, vec::Vec};
 use core::iter::{once, repeat_n};
@@ -139,7 +139,7 @@ pub trait ClaimProcessor<Rx, AppCircuitId> {
 ///
 /// This ordering must match the ky_elements ordering in `partial_collapse.rs`
 /// and `fuse.rs` `compute_errors_n`.
-pub fn build_claims<S, P>(source: &S, processor: &mut P) -> Result<()>
+pub fn build<S, P>(source: &S, processor: &mut P) -> Result<()>
 where
     S: ClaimSource,
     P: ClaimProcessor<S::Rx, S::AppCircuitId>,
@@ -393,7 +393,7 @@ pub trait KySource {
 
 /// Build an iterator over k(y) values in claim order.
 ///
-/// Chains the k(y) sources in the order required by [`build_claims`],
+/// Chains the k(y) sources in the order required by [`build`],
 /// with `unified_ky` repeated [`NUM_UNIFIED_CIRCUITS`] times,
 /// followed by infinite zeros for stage claims.
 pub fn ky_values<S: KySource>(source: &S) -> impl Iterator<Item = S::Ky> {

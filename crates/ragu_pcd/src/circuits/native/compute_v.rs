@@ -371,10 +371,10 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
 /// Source providing polynomial evaluations from child proofs for revdot folding.
 ///
 /// Implements [`ClaimSource`] to provide evaluations in the canonical order
-/// required by [`build_claims`]. The ordering must match exactly
+/// required by [`build`]. The ordering must match exactly
 /// to ensure correct folding correspondence with the prover's computation.
 ///
-/// [`build_claims`]: claims::build_claims
+/// [`build`]: claims::build
 struct EvaluationSource<'a, 'dr, D: Driver<'dr>> {
     left: &'a ChildEvaluations<'dr, D>,
     right: &'a ChildEvaluations<'dr, D>,
@@ -546,13 +546,13 @@ fn compute_axbx<'dr, D: Driver<'dr>, P: Parameters>(
     mu_prime_nu_prime: &Element<'dr, D>,
 ) -> Result<(Element<'dr, D>, Element<'dr, D>)> {
     // Build ax/bx evaluation vectors using the unified claim building abstraction.
-    // This ensures the ordering matches claims::build_claims() exactly.
+    // This ensures the ordering matches claims::build() exactly.
     let source = EvaluationSource {
         left: &query.left,
         right: &query.right,
     };
     let mut processor = EvaluationProcessor::new(dr, z, txz, &query.fixed_mesh);
-    claims::build_claims(&source, &mut processor)?;
+    claims::build(&source, &mut processor)?;
 
     let (ax_sources, bx_sources) = processor.build();
     let ax = fold_two_layer::<_, P>(dr, &ax_sources, mu_inv, mu_prime_inv)?;
