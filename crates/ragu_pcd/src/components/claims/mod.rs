@@ -8,6 +8,7 @@ use ragu_circuits::{
 };
 
 pub mod native;
+pub mod nested;
 
 /// Trait for providing claim component values from sources.
 ///
