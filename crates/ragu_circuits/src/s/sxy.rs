@@ -249,6 +249,8 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<F, R> {
 /// Evaluates the wiring polynomial $s(X, Y)$ at fixed point $(x, y)$.
 ///
 /// See the [module documentation][`self`] for the Horner evaluation algorithm.
+/// See the [`sx::eval()` doc][`super::sx::eval`] for public input enforcement
+/// details.
 ///
 /// # Arguments
 ///

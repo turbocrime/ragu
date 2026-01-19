@@ -287,6 +287,22 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<F, R> {
 ///
 /// If $x = 0$, returns the zero polynomial since all monomials vanish.
 ///
+/// # Public Input Enforcement
+///
+/// Public inputs are enforced through a specialized use of linear constraints.
+/// Within the circuit implementation ([`Circuit::witness`]), calls to
+/// [`enforce_zero`] constrain linear combinations of wires to equal zero, as
+/// expected.
+///
+/// However, the public output gadget (returned by [`Circuit::instance`]) and
+/// the `ONE` wire are treated specially: their corresponding [`enforce_zero`]
+/// calls do not enforce that the wire equals zero. Instead, they create binding
+/// constraints that force these wires to match their corresponding values in the
+/// public input polynomial $k(Y)$.
+///
+/// [`Circuit::witness`]: crate::Circuit::witness
+/// [`Circuit::instance`]: crate::Circuit::instance
+/// [`enforce_zero`]: ragu_core::drivers::Driver::enforce_zero
 /// [`Mesh`]: crate::mesh::Mesh
 pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
     circuit: &C,

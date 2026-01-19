@@ -617,6 +617,9 @@ impl<'table, 'sy, F: Field, R: Rank> Driver<'table> for Evaluator<'table, 'sy, F
 /// deferred evaluation through virtual wires. See the [module
 /// documentation](self) for the algorithm overview.
 ///
+/// See the [`sx::eval()` doc][`super::sx::eval`] for public input enforcement
+/// details.
+///
 /// # Arguments
 ///
 /// - `circuit`: The circuit whose wiring polynomial to evaluate.
@@ -675,6 +678,7 @@ pub fn eval<F: Field, C: Circuit<F>, R: Rank>(
             let (io, _) = circuit.witness(&mut evaluator, Empty)?;
             io.write(&mut evaluator, &mut outputs)?;
 
+            // Bind circuit witness outputs to k(Y) coefficients k_j
             for output in outputs {
                 evaluator.enforce_zero(|lc| lc.add(output.wire()))?;
             }
