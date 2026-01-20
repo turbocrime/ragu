@@ -9,7 +9,7 @@ use ragu_core::{
     drivers::{Driver, DriverValue},
 };
 
-use crate::step::{Encoded, Index, Step, StepInput, StepOutput};
+use super::super::{Encoded, Index, Step};
 
 pub(crate) use crate::step::InternalStepIndex::Trivial as INTERNAL_ID;
 
@@ -35,9 +35,14 @@ impl<C: Cycle> Step<C> for Trivial {
         &self,
         dr: &mut D,
         _: DriverValue<D, Self::Witness<'source>>,
-        (left, right): StepInput<'source, Self, C, D>,
+        left: DriverValue<D, ()>,
+        right: DriverValue<D, ()>,
     ) -> Result<(
-        StepOutput<'dr, Self, C, D, HEADER_SIZE>,
+        (
+            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+        ),
         DriverValue<D, Self::Aux<'source>>,
     )> {
         let left = Encoded::new(dr, left)?;

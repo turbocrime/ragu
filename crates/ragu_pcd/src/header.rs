@@ -109,9 +109,3 @@ impl<F: Field> Header<F> for () {
         Ok(())
     }
 }
-
-/// Input type for header encode methods.
-pub type HeaderInput<'source, H, F, D> = DriverValue<D, <H as Header<F>>::Data<'source>>;
-
-/// Output type for header encode methods.
-pub type HeaderOutput<'dr, H, F, D> = <<H as Header<F>>::Output as GadgetKind<F>>::Rebind<'dr, D>;

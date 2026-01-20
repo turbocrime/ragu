@@ -4,14 +4,14 @@ use ragu_circuits::polynomials::R;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
-    gadgets::Kind,
+    gadgets::{GadgetKind, Kind},
     maybe::Maybe,
 };
 use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::{
     ApplicationBuilder,
-    header::{Header, HeaderInput, HeaderOutput, Suffix},
-    step::{Encoded, Index, Step, StepInput, StepOutput},
+    header::{Header, Suffix},
+    step::{Encoded, Index, Step},
 };
 use ragu_primitives::{Element, poseidon::Sponge};
 use rand::{SeedableRng, rngs::StdRng};
@@ -25,8 +25,8 @@ impl<F: Field> Header<F> for LeafNode {
 
     fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
         dr: &mut D,
-        witness: HeaderInput<'source, Self, F, D>,
-    ) -> Result<HeaderOutput<'dr, Self, F, D>> {
+        witness: DriverValue<D, Self::Data<'source>>,
+    ) -> Result<<Self::Output as GadgetKind<F>>::Rebind<'dr, D>> {
         Element::alloc(dr, witness)
     }
 }
@@ -40,8 +40,8 @@ impl<F: Field> Header<F> for InternalNode {
 
     fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
         dr: &mut D,
-        witness: HeaderInput<'source, Self, F, D>,
-    ) -> Result<HeaderOutput<'dr, Self, F, D>> {
+        witness: DriverValue<D, Self::Data<'source>>,
+    ) -> Result<<Self::Output as GadgetKind<F>>::Rebind<'dr, D>> {
         Element::alloc(dr, witness)
     }
 }
@@ -62,9 +62,14 @@ impl<C: Cycle> Step<C> for Hash2<'_, C> {
         &self,
         dr: &mut D,
         _: DriverValue<D, Self::Witness<'source>>,
-        (left, right): StepInput<'source, Self, C, D>,
+        left: DriverValue<D, C::CircuitField>,
+        right: DriverValue<D, C::CircuitField>,
     ) -> Result<(
-        StepOutput<'dr, Self, C, D, HEADER_SIZE>,
+        (
+            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+        ),
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
@@ -100,9 +105,14 @@ impl<C: Cycle> Step<C> for WitnessLeaf<'_, C> {
         &self,
         dr: &mut D,
         witness: DriverValue<D, Self::Witness<'source>>,
-        (_, _): StepInput<'source, Self, C, D>,
+        _left: DriverValue<D, ()>,
+        _right: DriverValue<D, ()>,
     ) -> Result<(
-        StepOutput<'dr, Self, C, D, HEADER_SIZE>,
+        (
+            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+        ),
         DriverValue<D, Self::Aux<'source>>,
     )>
     where

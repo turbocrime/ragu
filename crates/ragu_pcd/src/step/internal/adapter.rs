@@ -83,9 +83,9 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
     {
         let (left, right, witness) = witness.cast();
 
-        let ((left, right, output), aux) =
-            self.step
-                .witness::<_, HEADER_SIZE>(dr, witness, (left, right))?;
+        let ((left, right, output), aux) = self
+            .step
+            .witness::<_, HEADER_SIZE>(dr, witness, left, right)?;
 
         let mut elements = Vec::with_capacity(HEADER_SIZE * 3);
         left.write(dr, &mut elements)?;

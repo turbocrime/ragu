@@ -151,24 +151,16 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
         &self,
         dr: &mut D,
         witness: DriverValue<D, Self::Witness<'source>>,
-        input: StepInput<'source, Self, C, D>,
+        left: DriverValue<D, <Self::Left as Header<C::CircuitField>>::Data<'source>>,
+        right: DriverValue<D, <Self::Right as Header<C::CircuitField>>::Data<'source>>,
     ) -> Result<(
-        StepOutput<'dr, Self, C, D, HEADER_SIZE>,
+        (
+            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+        ),
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
         Self: 'dr;
 }
-
-/// Input tuple for step witness methods (excludes the driver parameter).
-pub type StepInput<'source, S, C, D> = (
-    DriverValue<D, <<S as Step<C>>::Left as Header<<C as Cycle>::CircuitField>>::Data<'source>>,
-    DriverValue<D, <<S as Step<C>>::Right as Header<<C as Cycle>::CircuitField>>::Data<'source>>,
-);
-
-/// Output type for step witness methods.
-pub type StepOutput<'dr, S, C, D, const HEADER_SIZE: usize> = (
-    Encoded<'dr, D, <S as Step<C>>::Left, HEADER_SIZE>,
-    Encoded<'dr, D, <S as Step<C>>::Right, HEADER_SIZE>,
-    Encoded<'dr, D, <S as Step<C>>::Output, HEADER_SIZE>,
-);
