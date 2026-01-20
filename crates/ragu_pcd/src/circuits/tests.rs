@@ -1,5 +1,6 @@
 use super::*;
 use crate::*;
+use ff::PrimeField;
 use native::{
     InternalCircuitIndex,
     stages::{error_m, error_n, eval, preamble, query},
@@ -152,4 +153,64 @@ fn print_internal_stage_parameters() {
     print_stage!(ErrorM);
     print_stage!(Query);
     print_stage!(Eval);
+}
+
+/// Test that the native mesh digest hasn't changed unexpectedly.
+///
+/// This test verifies that gadget refactorings don't accidentally change the
+/// underlying circuit polynomial. If a refactoring produces the same digest,
+/// then it's mathematically equivalent.
+#[test]
+fn test_native_mesh_digest() {
+    let pasta = Pasta::baked();
+
+    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
+        .register_dummy_circuits(NUM_APP_STEPS)
+        .unwrap()
+        .finalize(pasta)
+        .unwrap();
+
+    let digest = app.native_mesh.get_key();
+
+    let expected: [u8; 32] = [
+        0x93, 0xe5, 0xe3, 0xe9, 0x11, 0x96, 0x81, 0x22, 0xaa, 0xba, 0xe1, 0x1e, 0x26, 0x96, 0xcd,
+        0xf6, 0x44, 0xd5, 0x9e, 0xe2, 0x39, 0x25, 0x02, 0xdc, 0xdd, 0xa4, 0x8f, 0xad, 0xe2, 0xde,
+        0x77, 0x12,
+    ];
+
+    assert_eq!(
+        digest.to_repr().as_ref(),
+        &expected,
+        "Mesh digest changed unexpectedly!"
+    );
+}
+
+/// Test that the nested mesh digest hasn't changed unexpectedly.
+///
+/// This test verifies that gadget refactorings don't accidentally change the
+/// underlying circuit polynomial. If a refactoring produces the same digest,
+/// then it's mathematically equivalent.
+#[test]
+fn test_nested_mesh_digest() {
+    let pasta = Pasta::baked();
+
+    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
+        .register_dummy_circuits(NUM_APP_STEPS)
+        .unwrap()
+        .finalize(pasta)
+        .unwrap();
+
+    let digest = app.nested_mesh.get_key();
+
+    let expected: [u8; 32] = [
+        0x03, 0x34, 0x3d, 0x93, 0x69, 0xa3, 0x95, 0xb5, 0x59, 0x4c, 0xeb, 0x1c, 0x4d, 0x31, 0xa8,
+        0x41, 0x64, 0x1b, 0x89, 0x96, 0xa3, 0xa2, 0x21, 0x01, 0x0b, 0x38, 0x31, 0x14, 0xa6, 0xed,
+        0x8e, 0x0a,
+    ];
+
+    assert_eq!(
+        digest.to_repr().as_ref(),
+        &expected,
+        "Mesh digest changed unexpectedly!"
+    );
 }
