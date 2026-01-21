@@ -2,6 +2,7 @@
 
 [Introduction](introduction.md)
 [Proof-Carrying Data](concepts/pcd.md)
+[Rank-1 Constraint Systems](concepts/r1cs.md)
 
 ---
 
