@@ -682,6 +682,7 @@ dependencies = [
 name = "ragu_primitives"
 version = "0.0.0"
 dependencies = [
+ "criterion",
  "ff",
  "group",
  "ragu_arithmetic",
