@@ -233,7 +233,7 @@ mod tests {
 
     use crate::{
         CircuitExt, CircuitObject, metrics, polynomials::Rank, s::sy, staging::StageBuilder,
-        tests::SquareCircuit,
+        test_fixtures::MySimpleCircuit,
     };
 
     use super::{
@@ -423,7 +423,7 @@ mod tests {
         // We should verify the polynomial evaluations are consistent even when k = 0
         // (which would make the circuit unsatisfiable), but we gauard against this
         // during mesh finalization.
-        let circuit = SquareCircuit { times: 2 };
+        let circuit = MySimpleCircuit;
         let y = Fp::random(thread_rng());
         let k = Fp::ZERO;
 
@@ -439,11 +439,11 @@ mod tests {
 
     #[test]
     fn test_minimum_linear_constraints() {
-        let circuit = SquareCircuit { times: 2 };
+        let circuit = MySimpleCircuit;
         let y = Fp::random(thread_rng());
         let k = Fp::random(thread_rng());
 
-        let metrics = metrics::eval(&circuit).expect("metrics should succeed");
+        let metrics = metrics::eval::<Fp, _>(&circuit).expect("metrics should succeed");
         let mut sy = sy::eval::<_, _, R>(&circuit, y, k, metrics.num_linear_constraints)
             .expect("sy() evaluation should succeed");
 

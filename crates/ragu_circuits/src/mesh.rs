@@ -330,7 +330,7 @@ impl<F: PrimeField, R: Rank> Mesh<'_, F, R> {
 mod tests {
     use super::{CircuitIndex, MeshBuilder, OmegaKey};
     use crate::polynomials::R;
-    use crate::tests::SquareCircuit;
+    use crate::test_fixtures::MySimpleCircuit;
     use alloc::collections::BTreeSet;
     use alloc::collections::btree_map::BTreeMap;
     use arithmetic::{Cycle, Domain, bitreverse};
@@ -370,14 +370,14 @@ mod tests {
         let poseidon = Pasta::circuit_poseidon(Pasta::baked());
 
         let mesh = MeshBuilder::<Fp, TestRank>::new()
-            .register_circuit(SquareCircuit { times: 2 })?
-            .register_circuit(SquareCircuit { times: 5 })?
-            .register_circuit(SquareCircuit { times: 10 })?
-            .register_circuit(SquareCircuit { times: 11 })?
-            .register_circuit(SquareCircuit { times: 19 })?
-            .register_circuit(SquareCircuit { times: 19 })?
-            .register_circuit(SquareCircuit { times: 19 })?
-            .register_circuit(SquareCircuit { times: 19 })?
+            .register_circuit(MySimpleCircuit)?
+            .register_circuit(MySimpleCircuit)?
+            .register_circuit(MySimpleCircuit)?
+            .register_circuit(MySimpleCircuit)?
+            .register_circuit(MySimpleCircuit)?
+            .register_circuit(MySimpleCircuit)?
+            .register_circuit(MySimpleCircuit)?
+            .register_circuit(MySimpleCircuit)?
             .finalize(poseidon)?;
 
         let w = Fp::random(thread_rng());
@@ -449,7 +449,7 @@ mod tests {
 
         // Checks that a single circuit can be finalized without bit-shift overflows.
         let _mesh = MeshBuilder::<Fp, TestRank>::new()
-            .register_circuit(SquareCircuit { times: 1 })?
+            .register_circuit(MySimpleCircuit)?
             .finalize(poseidon)?;
 
         Ok(())
@@ -502,11 +502,11 @@ mod tests {
         let poseidon = Pasta::circuit_poseidon(Pasta::baked());
 
         type TestRank = crate::polynomials::R<8>;
-        for num_circuits in 0..21 {
+        for num_circuits in 0usize..21 {
             let mut builder = MeshBuilder::<Fp, TestRank>::new();
 
-            for i in 0..num_circuits {
-                builder = builder.register_circuit(SquareCircuit { times: i })?;
+            for _ in 0..num_circuits {
+                builder = builder.register_circuit(MySimpleCircuit)?;
             }
 
             let mesh = builder.finalize(poseidon)?;
@@ -532,10 +532,10 @@ mod tests {
         let poseidon = Pasta::circuit_poseidon(Pasta::baked());
 
         let mesh = MeshBuilder::<Fp, TestRank>::new()
-            .register_circuit(SquareCircuit { times: 2 })?
-            .register_circuit(SquareCircuit { times: 5 })?
-            .register_circuit(SquareCircuit { times: 10 })?
-            .register_circuit(SquareCircuit { times: 11 })?
+            .register_circuit(MySimpleCircuit)?
+            .register_circuit(MySimpleCircuit)?
+            .register_circuit(MySimpleCircuit)?
+            .register_circuit(MySimpleCircuit)?
             .finalize(poseidon)?;
 
         // All registered circuit indices should be in the domain
