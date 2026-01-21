@@ -25,9 +25,6 @@ keywords = []
 rustdoc-args = ["--html-in-header", "katex-header.html"]
 all-features = true
 
-[features]
-default = []
-
 [dependencies]
 arithmetic = { path = "../ragu_arithmetic", version = "0.0.0", package = "ragu_arithmetic" }
 ff = { workspace = true }
@@ -41,3 +38,8 @@ ragu_macros = { path = "../ragu_macros", version = "0.0.0" }
 rand = { workspace = true }
 group = { workspace = true }
 ragu_pasta = { path = "../ragu_pasta", version = "0.0.0", features = ["baked"] }
+criterion = { workspace = true }
+
+[[bench]]
+name = "primitives"
+harness = false
