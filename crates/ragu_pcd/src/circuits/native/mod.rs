@@ -27,7 +27,7 @@ pub(crate) enum InternalCircuitIndex {
     ErrorNStage = 2,
     QueryStage = 3,
     EvalStage = 4,
-    // Final stage objects
+    // Final stage masks
     ErrorMFinalStaged = 5,
     ErrorNFinalStaged = 6,
     EvalFinalStaged = 7,

@@ -27,7 +27,7 @@
 //!
 //! ## Staging
 //!
-//! This circuit is a staged circuit based on the
+//! This circuit is a multi-stage circuit based on the
 //! [`error_n`][super::stages::error_n] stage, which inherits in the
 //! following chain:
 //! - [`preamble`][super::stages::preamble] (skipped)
@@ -95,7 +95,7 @@ pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revd
 impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     Circuit<'params, C, R, HEADER_SIZE, FP>
 {
-    /// Creates a new staged circuit.
+    /// Creates a new multi-stage circuit.
     ///
     /// # Parameters
     ///

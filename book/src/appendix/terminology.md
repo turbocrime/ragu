@@ -10,5 +10,4 @@
 | Circuit using staged witnesses | **Multi-stage circuit** | `MultiStageCircuit` |
 | Combined witness across all stages | **Multi-stage witness** | implicit, concatenation of stage witness |
 | Combined $r(X) = a(X) + b(X) + \cdots + f(X)$ | **Multi-stage witness polynomial $r(X)$** | implicit, sum of all `Stage::rx()` |
-| Well-formedness check for combined witness | **Multi-stage wiring polynomial $s(X)$** | implicit, vec of stage mask whose revdot checks are batched |
 | Collection of circuits indexed by $\omega^i$; $m(W, X, Y)$ interpolating wiring polynomials | **Registry** | `Registry`, `RegistryBuilder` |

@@ -1,6 +1,6 @@
 //! MultiStage circuit implementation for endoscaling operations.
 //!
-//! This module provides the [`EndoscalingStep`] staged circuit, which computes
+//! This module provides the [`EndoscalingStep`] multi-stage circuit, which computes
 //! iterated endoscalar multiplications using Horner's rule. Each step performs
 //! up to 4 endoscalings, storing the result in an interstitial slot.
 //!
@@ -429,7 +429,7 @@ mod tests {
         // Verify final interstitial matches expected
         assert_eq!(points.interstitials[num_steps - 1], expected);
 
-        // Run each step through the staged circuit and verify correctness.
+        // Run each step through the multi-stage circuit and verify correctness.
         for step in 0..num_steps {
             let step_circuit = EndoscalingStep::<EpAffine, R, NUM_POINTS>::new(step);
 
@@ -499,7 +499,7 @@ mod tests {
         // Verify final interstitial matches expected
         assert_eq!(points.interstitials[num_steps - 1], expected);
 
-        // Run each step through the staged circuit.
+        // Run each step through the multi-stage circuit.
         for step in 0..num_steps {
             let step_circuit = EndoscalingStep::<EpAffine, R, NUM_POINTS>::new(step);
 

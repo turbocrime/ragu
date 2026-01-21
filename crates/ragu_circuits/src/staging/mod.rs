@@ -193,7 +193,7 @@ impl<F: Field, R: Rank> Stage<F, R> for () {
 /// Represents an actual circuit (much like a [`Circuit`]) with portions of its
 /// witness computed in stages.
 pub trait MultiStageCircuit<F: Field, R: Rank>: Sized + Send + Sync {
-    /// The final stage of this staged circuit.
+    /// The final stage of this multi-stage circuit.
     type Final: Stage<F, R>;
 
     /// The type of data that is needed to construct the expected output of this
