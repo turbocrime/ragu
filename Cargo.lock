@@ -609,6 +609,7 @@ dependencies = [
 name = "ragu_circuits"
 version = "0.0.0"
 dependencies = [
+ "criterion",
  "ff",
  "group",
  "proptest",
