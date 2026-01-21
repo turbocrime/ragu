@@ -13,7 +13,6 @@
     - [Simple Gadgets](guide/gadgets/simple.md)
     - [The GadgetKind Trait](guide/gadgets/gadgetkind.md)
     - [The Kind! Macro](guide/gadgets/kind.md)
-  - [Routines](guide/routines.md)
   - [Drivers](guide/drivers.md)
   - [Configuration](guide/configuration.md)
 - [Part II: Protocol Design]()
@@ -47,6 +46,7 @@
   - [Drivers](implementation/drivers/index.md)
     - [Emulator](implementation/drivers/emulator.md)
     - [Writing Custom Drivers](implementation/drivers/custom.md)
+  - [Routines](implementation/routines.md)
 
 ---
 
