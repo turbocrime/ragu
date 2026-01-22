@@ -93,7 +93,7 @@ fn bench_point_ops(c: &mut Criterion) {
     c.bench_function("primitives/point/alloc", |b| {
         b.iter_batched(
             || random_point(&mut rng),
-            |point| BenchEmulator::emulate_wireless(point, |dr, witness| Point::alloc(dr, witness)),
+            |point| BenchEmulator::emulate_wireless(point, Point::alloc),
             BatchSize::SmallInput,
         )
     });
@@ -148,7 +148,7 @@ fn bench_boolean_ops(c: &mut Criterion) {
     c.bench_function("primitives/boolean/alloc", |b| {
         b.iter_batched(
             || rng.r#gen::<bool>(),
-            |bit| BenchEmulator::emulate_wireless(bit, |dr, witness| Boolean::alloc(dr, witness)),
+            |bit| BenchEmulator::emulate_wireless(bit, Boolean::alloc),
             BatchSize::SmallInput,
         )
     });
