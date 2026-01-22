@@ -1,0 +1,82 @@
+name: Benchmarks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  pull-requests: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  changes:
+    name: detect changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            rust:
+              - '**/*.rs'
+              - '**/Cargo.toml'
+              - '**/Cargo.lock'
+              - 'rust-toolchain.toml'
+              - '.github/workflows/benchmark.yml'
+              - '.github/actions/**'
+
+  benchmark:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: ./.github/actions/rust-setup
+        with:
+          cache-suffix: bench
+
+      - name: Load baseline
+        uses: actions/cache/restore@v4
+        with:
+          path: ./benchmark-baseline
+          key: ${{ github.workflow }}-${{ github.ref }}-${{ github.sha }}
+          restore-keys: ${{ github.workflow }}-refs/heads/main-
+
+      - name: Run benchmarks
+        run: cargo bench --workspace --features test-fixtures -- --output-format bencher | tee benchmark-output.txt
+
+      - name: Compare against baseline
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: Ragu Benchmarks
+          tool: cargo
+          output-file-path: benchmark-output.txt
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          external-data-json-path: ./benchmark-baseline/data.json
+          alert-threshold: "120%"
+          comment-on-alert: true
+
+      - name: Save main baseline
+        if: github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: ./benchmark-baseline
+          key: ${{ github.workflow }}-${{ github.ref }}-${{ github.sha }}
