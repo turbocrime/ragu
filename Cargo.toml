@@ -23,6 +23,9 @@ all-features = true
 default = []
 test-fixtures = ["ragu_pcd/test-fixtures", "ragu_circuits/test-fixtures"]
 
+[lib]
+bench = false
+
 [dependencies]
 ragu_core = { path = "crates/ragu_core", version = "0.0.0" }
 ragu_circuits = { path = "crates/ragu_circuits", version = "0.0.0" }
