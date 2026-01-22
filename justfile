@@ -44,7 +44,7 @@ ci_local: _book_setup
   @echo "Running formatting check..."
   cargo fmt --all -- --check
   @echo "Running clippy..."
-  cargo clippy --all --locked --features test-fixtures -- -D warnings
+  cargo clippy --workspace --lib --tests --benches --locked --features test-fixtures -- -D warnings
   @echo "Running tests..."
   cargo test --release --all --locked --features test-fixtures
   @echo "Building benchmarks and examples..."
