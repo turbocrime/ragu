@@ -22,6 +22,9 @@ all-features = true
 [features]
 default = []
 
+[lib]
+bench = false
+
 [dependencies]
 ff = { workspace = true }
 pasta_curves = { workspace = true }
