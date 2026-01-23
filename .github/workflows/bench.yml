@@ -36,10 +36,10 @@ jobs:
               - '**/Cargo.toml'
               - '**/Cargo.lock'
               - 'rust-toolchain.toml'
-              - '.github/workflows/benchmark.yml'
+              - '.github/workflows/bench.yml'
               - '.github/actions/**'
 
-  benchmark:
+  criterion:
     needs: changes
     if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
@@ -63,7 +63,7 @@ jobs:
         run: mkdir -p ./benchmark-baseline
 
       - name: Run benchmarks
-        run: cargo bench --workspace --features test-fixtures -- --output-format bencher | tee benchmark-output.txt
+        run: cargo bench --workspace --features bench-criterion -- --output-format bencher | tee benchmark-output.txt
 
       - name: Report benchmark results
         uses: benchmark-action/github-action-benchmark@v1
@@ -81,3 +81,33 @@ jobs:
         with:
           path: ./benchmark-baseline
           key: ${{ github.workflow }}-${{ github.ref }}-${{ github.sha }}
+
+  iai:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: ./.github/actions/rust-setup
+        with:
+          cache-suffix: bench
+
+      - name: Cache apt packages
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt
+          key: ${{ runner.os }}-apt-valgrind
+
+      - name: Install Valgrind
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y valgrind
+
+      - name: Install iai-callgrind-runner
+        run: cargo install iai-callgrind-runner
+
+      - name: Run iai-callgrind benchmarks
+        run: cargo bench --workspace --features bench-iai

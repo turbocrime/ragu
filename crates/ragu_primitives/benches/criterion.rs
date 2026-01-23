@@ -1,35 +1,27 @@
-use arithmetic::{Cycle, Uendo};
+mod common;
+
+use common::{
+    BenchEmulator, mock_rng, setup_bool_256, setup_element_fold_8, setup_element_invert,
+    setup_element_is_zero, setup_element_mul, setup_element_multiadd_8, setup_extract,
+    setup_field_scale, setup_group_scale, setup_point_pair, setup_point_single, setup_sponge,
+};
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
-use ff::Field;
-use group::prime::PrimeCurveAffine;
-use ragu_core::drivers::emulator::{Emulator, Wireless};
-use ragu_core::maybe::{Always, Maybe};
-use ragu_pasta::{EpAffine, Fp, Fq, Pasta};
+use ragu_core::maybe::Maybe;
 use ragu_primitives::poseidon::Sponge;
 use ragu_primitives::{Boolean, Element, Endoscalar, Point, multiadd, multipack};
-use rand::Rng;
-use rand::rngs::mock::StepRng;
-
-type BenchEmulator = Emulator<Wireless<Always<()>, Fp>>;
-
-fn mock_rng() -> StepRng {
-    let seed_bytes: [u8; 8] = "12345666".as_bytes().try_into().unwrap();
-    StepRng::new(u64::from_le_bytes(seed_bytes), 0x1234_5666_1234_5666)
-}
+use std::hint::black_box;
 
 fn bench_element_ops(c: &mut Criterion) {
-    let mut rng = mock_rng();
-
     c.bench_function("primitives/element/mul", |b| {
         b.iter_batched(
-            || (Fp::random(&mut rng), Fp::random(&mut rng)),
-            |inputs| {
-                BenchEmulator::emulate_wireless(inputs, |dr, witness| {
+            || setup_element_mul(mock_rng()),
+            |(a, b)| {
+                black_box(BenchEmulator::emulate_wireless((a, b), |dr, witness| {
                     let (a, b) = witness.cast();
                     let a = Element::alloc(dr, a)?;
                     let b = Element::alloc(dr, b)?;
                     a.mul(dr, &b)
-                })
+                }));
             },
             BatchSize::SmallInput,
         )
@@ -37,12 +29,12 @@ fn bench_element_ops(c: &mut Criterion) {
 
     c.bench_function("primitives/element/invert", |b| {
         b.iter_batched(
-            || Fp::random(&mut rng),
+            || setup_element_invert(mock_rng()),
             |input| {
-                BenchEmulator::emulate_wireless(input, |dr, witness| {
+                black_box(BenchEmulator::emulate_wireless(input, |dr, witness| {
                     let a = Element::alloc(dr, witness)?;
                     a.invert(dr)
-                })
+                }));
             },
             BatchSize::SmallInput,
         )
@@ -50,20 +42,16 @@ fn bench_element_ops(c: &mut Criterion) {
 
     c.bench_function("primitives/element/fold_8", |b| {
         b.iter_batched(
-            || {
-                let values: [Fp; 8] = core::array::from_fn(|_| Fp::random(&mut rng));
-                let scale = Fp::random(&mut rng);
-                (values, scale)
-            },
-            |inputs| {
-                BenchEmulator::emulate_wireless(inputs, |dr, witness| {
+            || setup_element_fold_8(mock_rng()),
+            |(values, scale)| {
+                black_box(BenchEmulator::emulate_wireless((values, scale), |dr, witness| {
                     let (vals, scale) = witness.cast();
                     let elements: Vec<_> = (0..8)
                         .map(|i| Element::alloc(dr, vals.view().map(|v| v[i])))
                         .collect::<Result<_, _>>()?;
                     let scale = Element::alloc(dr, scale)?;
                     Element::fold(dr, &elements, &scale)
-                })
+                }));
             },
             BatchSize::SmallInput,
         )
@@ -71,12 +59,12 @@ fn bench_element_ops(c: &mut Criterion) {
 
     c.bench_function("primitives/element/is_zero", |b| {
         b.iter_batched(
-            || Fp::random(&mut rng),
+            || setup_element_is_zero(mock_rng()),
             |input| {
-                BenchEmulator::emulate_wireless(input, |dr, witness| {
+                black_box(BenchEmulator::emulate_wireless(input, |dr, witness| {
                     let a = Element::alloc(dr, witness)?;
                     a.is_zero(dr)
-                })
+                }));
             },
             BatchSize::SmallInput,
         )
@@ -84,13 +72,9 @@ fn bench_element_ops(c: &mut Criterion) {
 
     c.bench_function("primitives/element/multiadd_8", |b| {
         b.iter_batched(
-            || {
-                let values: [Fp; 8] = core::array::from_fn(|_| Fp::random(&mut rng));
-                let coeffs: [Fp; 8] = core::array::from_fn(|_| Fp::random(&mut rng));
-                (values, coeffs)
-            },
-            |inputs| {
-                BenchEmulator::emulate_wireless(inputs, |dr, witness| {
+            || setup_element_multiadd_8(mock_rng()),
+            |(values, coeffs)| {
+                black_box(BenchEmulator::emulate_wireless((values, coeffs), |dr, witness| {
                     let (vals, coeffs) = witness.cast();
                     let elements: Vec<_> = (0..8)
                         .map(|i| Element::alloc(dr, vals.view().map(|v| v[i])))
@@ -99,28 +83,22 @@ fn bench_element_ops(c: &mut Criterion) {
                         .map(|i| *coeffs.view().map(|c| c[i]).snag())
                         .collect();
                     multiadd(dr, &elements, &coeffs)
-                })
+                }));
             },
             BatchSize::SmallInput,
         )
     });
 }
 
-fn random_point(rng: &mut impl Rng) -> EpAffine {
-    (EpAffine::generator() * Fq::random(rng)).into()
-}
-
 fn bench_point_ops(c: &mut Criterion) {
-    let mut rng = mock_rng();
-
     c.bench_function("primitives/point/double", |b| {
         b.iter_batched(
-            || random_point(&mut rng),
+            || setup_point_single(mock_rng()),
             |point| {
-                BenchEmulator::emulate_wireless(point, |dr, witness| {
+                black_box(BenchEmulator::emulate_wireless(point, |dr, witness| {
                     let p = Point::alloc(dr, witness)?;
                     p.double(dr)
-                })
+                }));
             },
             BatchSize::SmallInput,
         )
@@ -128,14 +106,14 @@ fn bench_point_ops(c: &mut Criterion) {
 
     c.bench_function("primitives/point/add_incomplete", |b| {
         b.iter_batched(
-            || (random_point(&mut rng), random_point(&mut rng)),
+            || setup_point_pair(mock_rng()),
             |points| {
-                BenchEmulator::emulate_wireless(points, |dr, witness| {
+                black_box(BenchEmulator::emulate_wireless(points, |dr, witness| {
                     let (p, q) = witness.cast();
                     let p = Point::alloc(dr, p)?;
                     let q = Point::alloc(dr, q)?;
                     p.add_incomplete(dr, &q, None)
-                })
+                }));
             },
             BatchSize::SmallInput,
         )
@@ -143,14 +121,14 @@ fn bench_point_ops(c: &mut Criterion) {
 
     c.bench_function("primitives/point/double_and_add_incomplete", |b| {
         b.iter_batched(
-            || (random_point(&mut rng), random_point(&mut rng)),
+            || setup_point_pair(mock_rng()),
             |points| {
-                BenchEmulator::emulate_wireless(points, |dr, witness| {
+                black_box(BenchEmulator::emulate_wireless(points, |dr, witness| {
                     let (p, q) = witness.cast();
                     let p = Point::alloc(dr, p)?;
                     let q = Point::alloc(dr, q)?;
                     p.double_and_add_incomplete(dr, &q)
-                })
+                }));
             },
             BatchSize::SmallInput,
         )
@@ -158,12 +136,12 @@ fn bench_point_ops(c: &mut Criterion) {
 
     c.bench_function("primitives/point/endo", |b| {
         b.iter_batched(
-            || random_point(&mut rng),
+            || setup_point_single(mock_rng()),
             |point| {
-                BenchEmulator::emulate_wireless(point, |dr, witness| {
+                black_box(BenchEmulator::emulate_wireless(point, |dr, witness| {
                     let p = Point::alloc(dr, witness)?;
                     p.endo(dr)
-                })
+                }));
             },
             BatchSize::SmallInput,
         )
@@ -171,18 +149,16 @@ fn bench_point_ops(c: &mut Criterion) {
 }
 
 fn bench_boolean_ops(c: &mut Criterion) {
-    let mut rng = mock_rng();
-
     c.bench_function("primitives/boolean/multipack_256", |b| {
         b.iter_batched(
-            || core::array::from_fn::<bool, 256, _>(|_| rng.r#gen()),
+            || setup_bool_256(mock_rng()),
             |bits| {
-                BenchEmulator::emulate_wireless(bits, |dr, witness| {
+                black_box(BenchEmulator::emulate_wireless(bits, |dr, witness| {
                     let bools: Vec<_> = (0..256)
                         .map(|i| Boolean::alloc(dr, witness.view().map(|v| v[i])))
                         .collect::<Result<_, _>>()?;
                     multipack(dr, &bools)
-                })
+                }));
             },
             BatchSize::SmallInput,
         )
@@ -190,20 +166,16 @@ fn bench_boolean_ops(c: &mut Criterion) {
 }
 
 fn bench_sponge_ops(c: &mut Criterion) {
-    let pasta = Pasta::baked();
-    let poseidon = Pasta::circuit_poseidon(pasta);
-    let mut rng = mock_rng();
-
     c.bench_function("primitives/sponge/absorb_squeeze", |b| {
         b.iter_batched(
-            || Fp::random(&mut rng),
-            |input| {
-                BenchEmulator::emulate_wireless(input, |dr, witness| {
+            || setup_sponge(mock_rng()),
+            |(input, poseidon)| {
+                black_box(BenchEmulator::emulate_wireless(input, |dr, witness| {
                     let mut sponge = Sponge::new(dr, poseidon);
                     let elem = Element::alloc(dr, witness)?;
                     sponge.absorb(dr, &elem)?;
                     sponge.squeeze(dr)
-                })
+                }));
             },
             BatchSize::SmallInput,
         )
@@ -211,18 +183,16 @@ fn bench_sponge_ops(c: &mut Criterion) {
 }
 
 fn bench_endoscalar_ops(c: &mut Criterion) {
-    let mut rng = mock_rng();
-
     c.bench_function("primitives/endoscalar/group_scale", |b| {
         b.iter_batched(
-            || (random_point(&mut rng), rng.r#gen::<Uendo>()),
-            |inputs| {
-                BenchEmulator::emulate_wireless(inputs, |dr, witness| {
+            || setup_group_scale(mock_rng()),
+            |(point, scalar)| {
+                black_box(BenchEmulator::emulate_wireless((point, scalar), |dr, witness| {
                     let (p, scalar) = witness.cast();
                     let p = Point::alloc(dr, p)?;
                     let scalar = Endoscalar::alloc(dr, scalar)?;
                     scalar.group_scale(dr, &p)
-                })
+                }));
             },
             BatchSize::SmallInput,
         )
@@ -230,12 +200,12 @@ fn bench_endoscalar_ops(c: &mut Criterion) {
 
     c.bench_function("primitives/endoscalar/extract", |b| {
         b.iter_batched(
-            || Fp::random(&mut rng),
+            || setup_extract(mock_rng()),
             |input| {
-                BenchEmulator::emulate_wireless(input, |dr, witness| {
+                black_box(BenchEmulator::emulate_wireless(input, |dr, witness| {
                     let elem = Element::alloc(dr, witness)?;
                     Endoscalar::extract(dr, elem)
-                })
+                }));
             },
             BatchSize::SmallInput,
         )
@@ -243,22 +213,16 @@ fn bench_endoscalar_ops(c: &mut Criterion) {
 
     c.bench_function("primitives/endoscalar/field_scale", |b| {
         b.iter_batched(
-            || rng.r#gen::<Uendo>(),
+            || setup_field_scale(mock_rng()),
             |scalar| {
-                BenchEmulator::emulate_wireless(scalar, |dr, witness| {
+                black_box(BenchEmulator::emulate_wireless(scalar, |dr, witness| {
                     let scalar = Endoscalar::alloc(dr, witness)?;
                     scalar.field_scale(dr)
-                })
+                }));
             },
             BatchSize::SmallInput,
         )
     });
-}
-
-criterion_group! {
-    name = endoscalar_ops;
-    config = Criterion::default();
-    targets = bench_endoscalar_ops
 }
 
 criterion_group! {
@@ -283,6 +247,12 @@ criterion_group! {
     name = sponge_ops;
     config = Criterion::default();
     targets = bench_sponge_ops
+}
+
+criterion_group! {
+    name = endoscalar_ops;
+    config = Criterion::default();
+    targets = bench_endoscalar_ops
 }
 
 criterion_main!(

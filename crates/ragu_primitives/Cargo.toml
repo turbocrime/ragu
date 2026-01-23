@@ -25,6 +25,11 @@ keywords = []
 rustdoc-args = ["--html-in-header", "katex-header.html"]
 all-features = true
 
+[features]
+default = []
+bench-criterion = []
+bench-iai = []
+
 [lib]
 bench = false
 
@@ -42,7 +47,14 @@ rand = { workspace = true }
 group = { workspace = true }
 ragu_pasta = { path = "../ragu_pasta", version = "0.0.0", features = ["baked"] }
 criterion = { workspace = true }
+iai-callgrind = { workspace = true }
 
 [[bench]]
-name = "primitives"
+name = "criterion"
 harness = false
+required-features = ["bench-criterion"]
+
+[[bench]]
+name = "iai"
+harness = false
+required-features = ["bench-iai"]

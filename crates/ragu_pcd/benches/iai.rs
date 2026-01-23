@@ -1,0 +1,126 @@
+mod common;
+
+use arithmetic::Cycle;
+use common::{setup_fuse, setup_seed, setup_verify_leaf, setup_verify_node};
+use iai_callgrind::{library_benchmark, library_benchmark_group, main};
+use std::hint::black_box;
+use ragu_circuits::polynomials::R;
+use ragu_pasta::{Fp, Pasta, PastaParams};
+use ragu_pcd::test_fixtures::nontrivial;
+use ragu_pcd::{Application, Pcd};
+use rand::rngs::mock::StepRng;
+
+// ============================================================================
+// Application build
+// ============================================================================
+
+#[library_benchmark]
+#[bench::default(setup = Pasta::baked)]
+fn application_build(pasta: &PastaParams) {
+    black_box(nontrivial::build_app::<Pasta>(pasta));
+}
+
+// ============================================================================
+// Seed (creating leaf proofs)
+// ============================================================================
+
+#[library_benchmark]
+#[bench::default(setup = setup_seed)]
+fn seed(
+    (app, poseidon_params, mut rng): (
+        Application<'static, Pasta, R<13>, 4>,
+        &'static <Pasta as Cycle>::CircuitPoseidon,
+        StepRng,
+    ),
+) {
+    black_box(
+        app.seed(
+            &mut rng,
+            nontrivial::WitnessLeaf { poseidon_params },
+            Fp::from(42u64),
+        )
+        .unwrap(),
+    );
+}
+
+// ============================================================================
+// Fuse (combining proofs)
+// ============================================================================
+
+#[library_benchmark]
+#[bench::default(setup = setup_fuse)]
+fn fuse(
+    (app, leaf1, leaf2, poseidon_params, mut rng): (
+        Application<'static, Pasta, R<13>, 4>,
+        Pcd<'static, Pasta, R<13>, nontrivial::LeafNode>,
+        Pcd<'static, Pasta, R<13>, nontrivial::LeafNode>,
+        &'static <Pasta as Cycle>::CircuitPoseidon,
+        StepRng,
+    ),
+) {
+    let (proof, aux) = app
+        .fuse(
+            &mut rng,
+            nontrivial::Hash2 { poseidon_params },
+            (),
+            leaf1,
+            leaf2,
+        )
+        .unwrap();
+    black_box(proof.carry::<nontrivial::InternalNode>(aux));
+}
+
+// ============================================================================
+// Verify
+// ============================================================================
+
+#[library_benchmark]
+#[bench::default(setup = setup_verify_leaf)]
+fn verify_leaf(
+    (app, leaf, mut rng): (
+        Application<'static, Pasta, R<13>, 4>,
+        Pcd<'static, Pasta, R<13>, nontrivial::LeafNode>,
+        StepRng,
+    ),
+) {
+    assert!(black_box(app.verify(&leaf, &mut rng).unwrap()));
+}
+
+#[library_benchmark]
+#[bench::default(setup = setup_verify_node)]
+fn verify_node(
+    (app, node, mut rng): (
+        Application<'static, Pasta, R<13>, 4>,
+        Pcd<'static, Pasta, R<13>, nontrivial::InternalNode>,
+        StepRng,
+    ),
+) {
+    assert!(black_box(app.verify(&node, &mut rng).unwrap()));
+}
+
+// ============================================================================
+// Rerandomize
+// ============================================================================
+
+#[library_benchmark]
+#[bench::default(setup = setup_verify_node)]
+fn rerandomize(
+    (app, node, mut rng): (
+        Application<'static, Pasta, R<13>, 4>,
+        Pcd<'static, Pasta, R<13>, nontrivial::InternalNode>,
+        StepRng,
+    ),
+) {
+    black_box(app.rerandomize(node, &mut rng).unwrap());
+}
+
+// ============================================================================
+// Groups and main
+// ============================================================================
+
+library_benchmark_group!(
+    name = poseidon;
+    benchmarks = application_build, seed, fuse, verify_leaf, verify_node, rerandomize
+);
+
+main!(library_benchmark_groups = poseidon);
