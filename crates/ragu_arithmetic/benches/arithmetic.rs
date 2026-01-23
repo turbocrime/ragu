@@ -1,176 +1,136 @@
-use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
-use ff::Field;
-use pasta_curves::group::prime::PrimeCurveAffine;
+mod common;
+
+use common::{
+    mock_rng, setup_domain_ell, setup_dot, setup_eval, setup_factor, setup_fft, setup_geosum,
+    setup_msm, setup_roots,
+};
+use gungraun::{library_benchmark, library_benchmark_group, main};
 use pasta_curves::{EpAffine, Fp, Fq};
 use ragu_arithmetic::{Domain, dot, eval, factor, geosum, mul, poly_with_roots};
-use rand::rngs::mock::StepRng;
+use std::hint::black_box;
 
-fn mock_rng() -> StepRng {
-    let seed_bytes: [u8; 8] = "arithben".as_bytes().try_into().unwrap();
-    StepRng::new(u64::from_le_bytes(seed_bytes), 0xCAFE_BABE_DEAD_BEEF)
+// ============================================================================
+// MSM ops
+// Size values match common::MSM_SIZES
+// ============================================================================
+
+#[library_benchmark]
+#[bench::n64(args = (mock_rng(), 64), setup = setup_msm)]
+#[bench::n256(args = (mock_rng(), 256), setup = setup_msm)]
+#[bench::n1024(args = (mock_rng(), 1024), setup = setup_msm)]
+#[bench::n4096(args = (mock_rng(), 4096), setup = setup_msm)]
+fn msm_mul((coeffs, bases): (Vec<Fq>, Vec<EpAffine>)) {
+    black_box(mul(coeffs.iter(), bases.iter()));
 }
 
-fn bench_msm_ops(c: &mut Criterion) {
-    let mut rng = mock_rng();
-
-    for size in [64, 256, 1024, 4096] {
-        c.bench_function(&format!("arithmetic/msm/mul_{}", size), |b| {
-            b.iter_batched(
-                || {
-                    let coeffs: Vec<Fq> = (0..size).map(|_| Fq::random(&mut rng)).collect();
-                    let bases: Vec<EpAffine> = (0..size)
-                        .map(|_| (EpAffine::generator() * Fq::random(&mut rng)).into())
-                        .collect();
-                    (coeffs, bases)
-                },
-                |(coeffs, bases)| mul(coeffs.iter(), bases.iter()),
-                BatchSize::SmallInput,
-            )
-        });
-    }
-}
-
-fn bench_fft_ops(c: &mut Criterion) {
-    let mut rng = mock_rng();
-
-    for k in [10, 14, 18] {
-        let domain = Domain::<Fp>::new(k);
-        let n = domain.n();
-
-        c.bench_function(&format!("arithmetic/fft/fft_2_{}", k), |b| {
-            b.iter_batched(
-                || (0..n).map(|_| Fp::random(&mut rng)).collect::<Vec<_>>(),
-                |mut data| {
-                    domain.fft(&mut data);
-                    data
-                },
-                BatchSize::SmallInput,
-            )
-        });
-    }
-}
-
-fn bench_domain_ops(c: &mut Criterion) {
-    let mut rng = mock_rng();
-
-    // ell benchmarks - full domain evaluation
-    for k in [10, 14] {
-        let domain = Domain::<Fp>::new(k);
-        let n = domain.n();
-
-        c.bench_function(&format!("arithmetic/domain/ell_2_{}_full", k), |b| {
-            b.iter_batched(
-                || Fp::random(&mut rng),
-                |x| domain.ell(x, n),
-                BatchSize::SmallInput,
-            )
-        });
-    }
-}
-
-fn bench_poly_ops(c: &mut Criterion) {
-    let mut rng = mock_rng();
-
-    // poly_with_roots
-    for size in [16, 64, 256, 1024] {
-        c.bench_function(&format!("arithmetic/poly/poly_with_roots_{}", size), |b| {
-            b.iter_batched(
-                || (0..size).map(|_| Fp::random(&mut rng)).collect::<Vec<_>>(),
-                |roots| poly_with_roots(&roots),
-                BatchSize::SmallInput,
-            )
-        });
-    }
-
-    // eval (Horner's method)
-    for size in [256, 4096, 65536] {
-        c.bench_function(&format!("arithmetic/poly/eval_{}", size), |b| {
-            b.iter_batched(
-                || {
-                    let coeffs: Vec<Fp> = (0..size).map(|_| Fp::random(&mut rng)).collect();
-                    let x = Fp::random(&mut rng);
-                    (coeffs, x)
-                },
-                |(coeffs, x)| eval(&coeffs, x),
-                BatchSize::SmallInput,
-            )
-        });
-    }
-
-    // factor (polynomial division)
-    for size in [256, 4096] {
-        c.bench_function(&format!("arithmetic/poly/factor_{}", size), |b| {
-            b.iter_batched(
-                || {
-                    let coeffs: Vec<Fp> = (0..size).map(|_| Fp::random(&mut rng)).collect();
-                    let x = Fp::random(&mut rng);
-                    (coeffs, x)
-                },
-                |(coeffs, x)| factor(coeffs, x),
-                BatchSize::SmallInput,
-            )
-        });
-    }
-}
-
-fn bench_field_ops(c: &mut Criterion) {
-    let mut rng = mock_rng();
-
-    // dot product
-    for size in [256, 4096, 65536] {
-        c.bench_function(&format!("arithmetic/field/dot_{}", size), |b| {
-            b.iter_batched(
-                || {
-                    let a: Vec<Fp> = (0..size).map(|_| Fp::random(&mut rng)).collect();
-                    let b: Vec<Fp> = (0..size).map(|_| Fp::random(&mut rng)).collect();
-                    (a, b)
-                },
-                |(a, b)| dot(&a, &b),
-                BatchSize::SmallInput,
-            )
-        });
-    }
-
-    // geosum
-    for m in [256, 4096] {
-        c.bench_function(&format!("arithmetic/field/geosum_{}", m), |b| {
-            b.iter_batched(
-                || Fp::random(&mut rng),
-                |r| geosum(r, m),
-                BatchSize::SmallInput,
-            )
-        });
-    }
-}
-
-criterion_group! {
+library_benchmark_group!(
     name = msm_ops;
-    config = Criterion::default();
-    targets = bench_msm_ops
+    benchmarks = msm_mul
+);
+
+// ============================================================================
+// FFT ops
+// Size values match common::FFT_K_VALUES
+// ============================================================================
+
+#[library_benchmark]
+#[bench::k10(args = (mock_rng(), 10), setup = setup_fft)]
+#[bench::k14(args = (mock_rng(), 14), setup = setup_fft)]
+#[bench::k18(args = (mock_rng(), 18), setup = setup_fft)]
+fn fft((domain, mut data): (Domain<Fp>, Vec<Fp>)) {
+    domain.fft(&mut data);
+    black_box(data);
 }
 
-criterion_group! {
+library_benchmark_group!(
     name = fft_ops;
-    config = Criterion::default();
-    targets = bench_fft_ops
+    benchmarks = fft
+);
+
+// ============================================================================
+// Domain ops
+// Size values match common::DOMAIN_ELL_K_VALUES
+// ============================================================================
+
+#[library_benchmark]
+#[bench::k10(args = (mock_rng(), 10), setup = setup_domain_ell)]
+#[bench::k14(args = (mock_rng(), 14), setup = setup_domain_ell)]
+fn domain_ell((domain, x, n): (Domain<Fp>, Fp, usize)) {
+    black_box(domain.ell(x, n));
 }
 
-criterion_group! {
+library_benchmark_group!(
     name = domain_ops;
-    config = Criterion::default();
-    targets = bench_domain_ops
+    benchmarks = domain_ell
+);
+
+// ============================================================================
+// Poly ops
+// Size values match common::POLY_ROOTS_SIZES, POLY_EVAL_SIZES, FACTOR_SIZES
+// ============================================================================
+
+#[library_benchmark]
+#[bench::n16(args = (mock_rng(), 16), setup = setup_roots)]
+#[bench::n64(args = (mock_rng(), 64), setup = setup_roots)]
+#[bench::n256(args = (mock_rng(), 256), setup = setup_roots)]
+#[bench::n1024(args = (mock_rng(), 1024), setup = setup_roots)]
+fn poly_with_roots_bench(roots: Vec<Fp>) {
+    black_box(poly_with_roots(&roots));
 }
 
-criterion_group! {
+#[library_benchmark]
+#[bench::n256(args = (mock_rng(), 256), setup = setup_eval)]
+#[bench::n4096(args = (mock_rng(), 4096), setup = setup_eval)]
+#[bench::n65536(args = (mock_rng(), 65536), setup = setup_eval)]
+fn poly_eval((coeffs, x): (Vec<Fp>, Fp)) {
+    black_box(eval(&coeffs, x));
+}
+
+#[library_benchmark]
+#[bench::n256(args = (mock_rng(), 256), setup = setup_factor)]
+#[bench::n4096(args = (mock_rng(), 4096), setup = setup_factor)]
+fn poly_factor((coeffs, x): (Vec<Fp>, Fp)) {
+    black_box(factor(coeffs, x));
+}
+
+library_benchmark_group!(
     name = poly_ops;
-    config = Criterion::default();
-    targets = bench_poly_ops
+    benchmarks = poly_with_roots_bench, poly_eval, poly_factor
+);
+
+// ============================================================================
+// Field ops
+// Size values match common::DOT_SIZES, GEOSUM_SIZES
+// ============================================================================
+
+#[library_benchmark]
+#[bench::n256(args = (mock_rng(), 256), setup = setup_dot)]
+#[bench::n4096(args = (mock_rng(), 4096), setup = setup_dot)]
+#[bench::n65536(args = (mock_rng(), 65536), setup = setup_dot)]
+fn field_dot((a, b): (Vec<Fp>, Vec<Fp>)) {
+    black_box(dot(&a, &b));
 }
 
-criterion_group! {
+#[library_benchmark]
+#[bench::n256(args = (mock_rng(), 256), setup = setup_geosum)]
+#[bench::n4096(args = (mock_rng(), 4096), setup = setup_geosum)]
+fn field_geosum((r, n): (Fp, usize)) {
+    black_box(geosum(r, n));
+}
+
+library_benchmark_group!(
     name = field_ops;
-    config = Criterion::default();
-    targets = bench_field_ops
-}
+    benchmarks = field_dot, field_geosum
+);
 
-criterion_main!(msm_ops, fft_ops, domain_ops, poly_ops, field_ops);
+// ============================================================================
+// Main
+// ============================================================================
+
+main!(
+    library_benchmark_groups = msm_ops,
+    fft_ops,
+    domain_ops,
+    poly_ops,
+    field_ops
+);

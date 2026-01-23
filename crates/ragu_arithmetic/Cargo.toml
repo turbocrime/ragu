@@ -32,8 +32,8 @@ ragu_macros = { path = "../ragu_macros", version = "0.0.0" }
 rand = { workspace = true }
 
 [dev-dependencies]
-criterion = { workspace = true }
 proptest = { workspace = true }
+gungraun = { workspace = true }
 
 [[bench]]
 name = "arithmetic"

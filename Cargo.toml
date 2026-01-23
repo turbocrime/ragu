@@ -21,7 +21,6 @@ all-features = true
 
 [features]
 default = []
-test-fixtures = ["ragu_pcd/test-fixtures", "ragu_circuits/test-fixtures"]
 
 [lib]
 bench = false
@@ -62,4 +61,4 @@ pasta_curves = "0.5.1"
 rand = "0.8.5"
 lazy_static = "1.5.0"
 proptest = "1.7.0"
-criterion = "0.8.1"
+gungraun = "0.17.0"

@@ -17,7 +17,7 @@ mod proof;
 pub mod step;
 mod verify;
 
-#[cfg(any(test, feature = "test-fixtures"))]
+#[any(cfg(test), cfg(gungraun))]
 #[doc(hidden)]
 pub mod test_fixtures;
 

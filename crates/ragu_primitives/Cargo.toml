@@ -25,6 +25,9 @@ keywords = []
 rustdoc-args = ["--html-in-header", "katex-header.html"]
 all-features = true
 
+[features]
+default = []
+
 [lib]
 bench = false
 
@@ -41,7 +44,7 @@ ragu_macros = { path = "../ragu_macros", version = "0.0.0" }
 rand = { workspace = true }
 group = { workspace = true }
 ragu_pasta = { path = "../ragu_pasta", version = "0.0.0", features = ["baked"] }
-criterion = { workspace = true }
+gungraun = { workspace = true }
 
 [[bench]]
 name = "primitives"

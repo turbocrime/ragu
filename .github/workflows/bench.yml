@@ -36,10 +36,10 @@ jobs:
               - '**/Cargo.toml'
               - '**/Cargo.lock'
               - 'rust-toolchain.toml'
-              - '.github/workflows/benchmark.yml'
+              - '.github/workflows/bench.yml'
               - '.github/actions/**'
 
-  benchmark:
+  bench:
     needs: changes
     if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
@@ -52,32 +52,51 @@ jobs:
         with:
           cache-suffix: bench
 
+      - name: Cache apt packages
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt
+          key: ${{ runner.os }}-apt-valgrind
+
+      - name: Install Valgrind
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y valgrind
+
+      - name: Install gungraun-runner
+        run: cargo install gungraun-runner
+
       - name: Load baseline
         uses: actions/cache/restore@v4
         with:
-          path: ./benchmark-baseline
+          path: ./bench-baseline
           key: ${{ github.workflow }}-${{ github.ref }}-${{ github.sha }}-${{ github.run_id }}
           restore-keys: ${{ github.workflow }}-${{ github.base_ref }}-
 
       - name: Ensure baseline path exists
-        run: mkdir -p ./benchmark-baseline
+        run: mkdir -p ./bench-baseline
 
       - name: Run benchmarks
-        run: cargo bench --workspace --features test-fixtures -- --output-format bencher | tee benchmark-output.txt
+        run: |
+          RUSTFLAGS='--cfg gungraun' cargo bench --workspace -- --output-format=json | tee bench-raw.txt
+
+      - name: Transform to github-action-benchmark format
+        run: |
+          jq --from-file .github/scripts/transform-gungraun.jq --slurp < bench-raw.txt > bench-output.json
 
       - name: Report benchmark results
         uses: benchmark-action/github-action-benchmark@v1
         with:
           name: Ragu Benchmarks
-          tool: cargo
-          output-file-path: benchmark-output.txt
+          tool: customSmallerIsBetter
+          output-file-path: bench-output.json
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          external-data-json-path: ./benchmark-baseline/data.json
+          external-data-json-path: ./bench-baseline/data.json
           comment-always: true
 
       - name: Save baseline
         if: github.event_name == 'push'
         uses: actions/cache/save@v4
         with:
-          path: ./benchmark-baseline
+          path: ./bench-baseline
           key: ${{ github.workflow }}-${{ github.ref }}-${{ github.sha }}

@@ -1,163 +1,144 @@
+#![allow(clippy::type_complexity)]
+
+mod common;
+
 use arithmetic::Cycle;
-use criterion::{Criterion, criterion_group, criterion_main};
+use common::{
+    setup_application_build, setup_fuse, setup_seed, setup_verify_leaf, setup_verify_node,
+};
+use gungraun::{library_benchmark, library_benchmark_group, main};
+use ragu_circuits::polynomials::R;
 use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::test_fixtures::nontrivial;
+use ragu_pcd::{Application, Pcd};
 use rand::rngs::mock::StepRng;
+use std::hint::black_box;
 
-fn mock_rng() -> StepRng {
-    let seed_bytes: [u8; 8] = "innocent".as_bytes().try_into().unwrap();
-    StepRng::new(u64::from_le_bytes(seed_bytes), 0xF2EE_CAFE_BABE_2DA7)
+// ============================================================================
+// Application build
+// ============================================================================
+
+#[library_benchmark]
+#[bench::application_build(setup = setup_application_build)]
+fn application_build(
+    (pasta, poseidon_params): (
+        &'static <Pasta as Cycle>::Params,
+        &'static <Pasta as Cycle>::CircuitPoseidon,
+    ),
+) {
+    use ragu_pcd::ApplicationBuilder;
+    black_box(
+        ApplicationBuilder::<Pasta, R<13>, 4>::new()
+            .register(nontrivial::WitnessLeaf { poseidon_params })
+            .unwrap()
+            .register(nontrivial::Hash2 { poseidon_params })
+            .unwrap()
+            .finalize(pasta)
+            .unwrap(),
+    );
 }
 
-fn bench_application_build(c: &mut Criterion) {
-    let pasta = Pasta::baked();
+// ============================================================================
+// Seed (creating leaf proofs)
+// ============================================================================
 
-    c.bench_function("pcd/poseidon/application_build", |b| {
-        b.iter(|| nontrivial::build_app::<Pasta>(pasta))
-    });
-}
-
-fn bench_seed(c: &mut Criterion) {
-    let pasta = Pasta::baked();
-
-    c.bench_function("pcd/poseidon/seed", |b| {
-        let app = nontrivial::build_app::<Pasta>(pasta);
-        let mut rng = mock_rng();
-        b.iter(|| {
-            let leaf1 = app
-                .seed(
-                    &mut rng,
-                    nontrivial::WitnessLeaf {
-                        poseidon_params: Pasta::circuit_poseidon(pasta),
-                    },
-                    Fp::from(42u64),
-                )
-                .unwrap();
-
-            let leaf2 = app
-                .seed(
-                    &mut rng,
-                    nontrivial::WitnessLeaf {
-                        poseidon_params: Pasta::circuit_poseidon(pasta),
-                    },
-                    Fp::from(42u64),
-                )
-                .unwrap();
-
-            (leaf1, leaf2)
-        })
-    });
-}
-
-fn bench_fuse(c: &mut Criterion) {
-    let pasta = Pasta::baked();
-
-    c.bench_function("pcd/poseidon/fuse", |b| {
-        let app = nontrivial::build_app::<Pasta>(pasta);
-
-        let mut rng = mock_rng();
-
-        let (proof1, aux1) = app
-            .seed(
-                &mut rng,
-                nontrivial::WitnessLeaf {
-                    poseidon_params: Pasta::circuit_poseidon(pasta),
-                },
-                Fp::from(1u64),
-            )
-            .unwrap();
-        let leaf1 = proof1.carry(aux1);
-
-        let (proof2, aux2) = app
-            .seed(
-                &mut rng,
-                nontrivial::WitnessLeaf {
-                    poseidon_params: Pasta::circuit_poseidon(pasta),
-                },
-                Fp::from(2u64),
-            )
-            .unwrap();
-        let leaf2 = proof2.carry(aux2);
-
-        b.iter(|| {
-            let (proof, aux) = app
-                .fuse(
-                    &mut rng,
-                    nontrivial::Hash2 {
-                        poseidon_params: Pasta::circuit_poseidon(pasta),
-                    },
-                    (),
-                    leaf1.clone(),
-                    leaf2.clone(),
-                )
-                .unwrap();
-            proof.carry::<nontrivial::InternalNode>(aux);
-        })
-    });
-}
-
-fn bench_verify(c: &mut Criterion) {
-    let pasta = Pasta::baked();
-    let app = nontrivial::build_app::<Pasta>(pasta);
-
-    let mut rng = mock_rng();
-
-    let leaf1 = app
-        .seed(
+#[library_benchmark]
+#[bench::seed(setup = setup_seed)]
+fn seed(
+    (app, poseidon_params, mut rng): (
+        Application<'static, Pasta, R<13>, 4>,
+        &'static <Pasta as Cycle>::CircuitPoseidon,
+        StepRng,
+    ),
+) {
+    black_box(
+        app.seed(
             &mut rng,
-            nontrivial::WitnessLeaf {
-                poseidon_params: Pasta::circuit_poseidon(pasta),
-            },
-            Fp::from(1u64),
+            nontrivial::WitnessLeaf { poseidon_params },
+            Fp::from(42u64),
         )
-        .unwrap();
-    let leaf1 = leaf1.0.carry(leaf1.1);
+        .unwrap(),
+    );
+}
 
-    c.bench_function("pcd/poseidon/verify_leaf", |b| {
-        b.iter(|| assert!(app.verify(&leaf1, &mut rng).unwrap()))
-    });
+// ============================================================================
+// Fuse (combining proofs)
+// ============================================================================
 
-    let leaf2 = app
-        .seed(
-            &mut rng,
-            nontrivial::WitnessLeaf {
-                poseidon_params: Pasta::circuit_poseidon(pasta),
-            },
-            Fp::from(2u64),
-        )
-        .unwrap();
-    let leaf2 = leaf2.0.carry(leaf2.1);
-
-    let node1 = app
+#[library_benchmark]
+#[bench::fuse(setup = setup_fuse)]
+fn fuse(
+    (app, leaf1, leaf2, poseidon_params, mut rng): (
+        Application<'static, Pasta, R<13>, 4>,
+        Pcd<'static, Pasta, R<13>, nontrivial::LeafNode>,
+        Pcd<'static, Pasta, R<13>, nontrivial::LeafNode>,
+        &'static <Pasta as Cycle>::CircuitPoseidon,
+        StepRng,
+    ),
+) {
+    let (proof, aux) = app
         .fuse(
             &mut rng,
-            nontrivial::Hash2 {
-                poseidon_params: Pasta::circuit_poseidon(pasta),
-            },
+            nontrivial::Hash2 { poseidon_params },
             (),
-            leaf1.clone(),
-            leaf2.clone(),
+            leaf1,
+            leaf2,
         )
         .unwrap();
-    let node1 = node1.0.carry::<nontrivial::InternalNode>(node1.1);
-
-    c.bench_function("pcd/poseidon/verify_node1", |b| {
-        b.iter(|| assert!(app.verify(&node1, &mut rng).unwrap()))
-    });
-
-    c.bench_function("pcd/poseidon/rerandomize", |b| {
-        b.iter(|| app.rerandomize(node1.clone(), &mut rng).unwrap())
-    });
+    black_box(proof.carry::<nontrivial::InternalNode>(aux));
 }
 
-criterion_group! {
+// ============================================================================
+// Verify
+// ============================================================================
+
+#[library_benchmark]
+#[bench::verify_leaf(setup = setup_verify_leaf)]
+fn verify_leaf(
+    (app, leaf, mut rng): (
+        Application<'static, Pasta, R<13>, 4>,
+        Pcd<'static, Pasta, R<13>, nontrivial::LeafNode>,
+        StepRng,
+    ),
+) {
+    assert!(black_box(app.verify(&leaf, &mut rng).unwrap()));
+}
+
+#[library_benchmark]
+#[bench::verify_node(setup = setup_verify_node)]
+fn verify_node(
+    (app, node, mut rng): (
+        Application<'static, Pasta, R<13>, 4>,
+        Pcd<'static, Pasta, R<13>, nontrivial::InternalNode>,
+        StepRng,
+    ),
+) {
+    assert!(black_box(app.verify(&node, &mut rng).unwrap()));
+}
+
+// ============================================================================
+// Rerandomize
+// ============================================================================
+
+#[library_benchmark]
+#[bench::rerandomize(setup = setup_verify_node)]
+fn rerandomize(
+    (app, node, mut rng): (
+        Application<'static, Pasta, R<13>, 4>,
+        Pcd<'static, Pasta, R<13>, nontrivial::InternalNode>,
+        StepRng,
+    ),
+) {
+    black_box(app.rerandomize(node, &mut rng).unwrap());
+}
+
+// ============================================================================
+// Groups and main
+// ============================================================================
+
+library_benchmark_group!(
     name = poseidon;
-    config = Criterion::default();
-    targets =
-        bench_application_build,
-        bench_seed,
-        bench_fuse,
-        bench_verify,
-}
+    benchmarks = application_build, seed, fuse, verify_leaf, verify_node, rerandomize
+);
 
-criterion_main!(poseidon);
+main!(library_benchmark_groups = poseidon);

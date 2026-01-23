@@ -26,7 +26,7 @@ mod trivial;
 #[cfg(test)]
 mod tests;
 
-#[cfg(any(test, feature = "test-fixtures"))]
+#[cfg(any(test, gungraun))]
 #[doc(hidden)]
 pub mod test_fixtures;
 

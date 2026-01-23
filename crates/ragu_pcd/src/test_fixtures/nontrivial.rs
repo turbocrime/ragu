@@ -2,7 +2,6 @@
 
 use arithmetic::Cycle;
 use ff::Field;
-use ragu_circuits::polynomials::R;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
@@ -12,7 +11,6 @@ use ragu_core::{
 use ragu_primitives::{Element, poseidon::Sponge};
 
 use crate::{
-    Application, ApplicationBuilder,
     header::{Header, Suffix},
     step::{Encoded, Index, Step},
 };
@@ -135,18 +133,4 @@ impl<C: Cycle> Step<C> for WitnessLeaf<'_, C> {
             leaf_value,
         ))
     }
-}
-
-pub fn build_app<C: Cycle>(params: &C::Params) -> Application<'_, C, R<13>, 4> {
-    ApplicationBuilder::<C, R<13>, 4>::new()
-        .register(WitnessLeaf {
-            poseidon_params: C::circuit_poseidon(params),
-        })
-        .unwrap()
-        .register(Hash2 {
-            poseidon_params: C::circuit_poseidon(params),
-        })
-        .unwrap()
-        .finalize(params)
-        .unwrap()
 }

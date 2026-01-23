@@ -21,7 +21,9 @@ all-features = true
 
 [features]
 default = []
-test-fixtures = ["ragu_pasta"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(gungraun)'] }
 
 [lib]
 bench = false
@@ -31,14 +33,13 @@ arithmetic = { path = "../ragu_arithmetic", version = "0.0.0", package = "ragu_a
 ff = { workspace = true }
 group = { workspace = true }
 ragu_core = { path = "../ragu_core", version = "0.0.0" }
-ragu_pasta = { path = "../ragu_pasta", version = "0.0.0", features = ["baked"], optional = true }
+ragu_pasta = { path = "../ragu_pasta", version = "0.0.0", features = ["baked"] }
 ragu_primitives = { path = "../ragu_primitives", version = "0.0.0" }
 rand = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
-ragu_pasta = { path = "../ragu_pasta", version = "0.0.0", features = ["baked"] }
-criterion = { workspace = true }
+gungraun = { workspace = true }
 
 [[bench]]
 name = "circuits"

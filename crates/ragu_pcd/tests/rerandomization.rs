@@ -1,11 +1,13 @@
 use ragu_circuits::polynomials::R;
 use ragu_pasta::Pasta;
-use ragu_pcd::{ApplicationBuilder, test_fixtures::trivial};
+use ragu_pcd::ApplicationBuilder;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 
 #[test]
 fn rerandomization_flow() {
+    use ragu_pcd::test_fixtures::trivial;
+
     let pasta = Pasta::baked();
     let app = ApplicationBuilder::<Pasta, R<13>, 4>::new()
         .register(trivial::Step0)
