@@ -55,18 +55,51 @@ $$
 \Big)
 $$
 
-and notice that for all $z \in \F$ and for any choice of $\v{r}$ there exists a
-unique vector[^tvectorcomputation] $\v{t} \in \F^{4n}$ such that
+<details>
+<summary>Alternative view of the expansion</summary>
 
 $$
-\revdot{\v{r}}{\v{t}} = -\sum_{i = 0}^{n - 1} \v{c}_i
+\begin{align*}
+\revdot{\v{r}}{\v{r} \circ \v{z^{4n}}}=
+\bigg\langle
+  \begin{alignat*}{1}
+  \v{c} \|\rv{b} &\|\v{a} \|\v{0}, \\
+  \v{0} \|\rv{a}\circ\v{z}^{\bf n:2n} &\| \v{b}\circ\v{z}^{\bf 2n:3n} \|\rv{c}\circ\v{z}^{\bf 3n:4n}
+  \end{alignat*}
+\bigg\rangle
+&=\dot{\rv{b}}{\rv{a}\circ\v{z^{n:2n}}} + \dot{\v{a}}{\v{b}\circ\v{z^{2n:3n}}}\\
+&=\dot{\v{b}}{\v{a}\circ\rv{z}^{\bf n:2n}} + \dot{\v{a}}{\v{b}\circ\v{z^{2n:3n}}}\\
+&=(\rv{z}^{\bf n:2n} + \v{z}^{\bf 2n:3n})\cdot \dot{\v{a}}{\v{b}}
+\end{align*}
+$$
+
+</details>
+
+and notice that for all $z \in \F$ and for any choice of $\v{r}$ there exists a
+unique vector $\v{t} \in \F^{4n}$ such that
+
+$$
+\revdot{\v{r}}{\v{t}} = \sum_{i = 0}^{n - 1} \v{c}_i
 \Big( \textcolor{green}{ z^{2n - 1 - i} + z^{2n + i} } \Big)
 $$
+
+<details>
+<summary>Hints: what $\v{t}$ vector expands to</summary>
+ 
+Let $\v{t'} =(\rv{z}^{\bf n:2n} + \v{z}^{\bf 2n:3n}) = [z^{2n-1-i}+z^{2n+i}]_{i=0}^{n-1}$.
+    
+The first $3n$ entries are all zeros, the last $n$ entries is the reversal of $\v{t'}$
+ 
+$$
+\v{t}=(\v{0}\|\v{0}\|\v{0}\|\rv{t'})
+=(\v{0^{3n}}\| [z^{n+i} + z^{3n-1-i}]_{i=0}^{n-1})
+$$
+</details>
 
 and so by adding the two equalities, we get
 
 $$
-\revdot{\v{r}}{\v{r} \circ{\v{z^{4n}}} + \v{t}} = 
+\revdot{\v{r}}{\v{r} \circ{\v{z^{4n}}} - \v{t}} = 
 \sum\limits_{i = 0}^{n - 1} \Big(
   (\textcolor{blue}{\v{a}_i \v{b}_i - \v{c}_i})
   \big( \textcolor{green}{z^{2n - 1 - i} + z^{2n + i} } \big)
@@ -77,7 +110,7 @@ $$
 Therefore, if the expression
 
 $$
-\revdot{\v{r}}{\v{r} \circ{\v{z^{4n}}} + \v{t}} = 0
+\revdot{\v{r}}{\v{r} \circ{\v{z^{4n}}} - \v{t}} = 0
 $$
 
 holds for a random $z$, then $\textcolor{blue}{\v{a} \circ \v{b} = \v{c}}$ and
@@ -99,9 +132,23 @@ $$
 \sum_{j=0}^{4n - 1} y^j \v{k}_j
 $$
 
+or more succinctly:
+
+$$
+\sum_{j=0}^{4n - 1} y^j \cdot \Bigg(
+    \dot{\v{u}_j}{\v{a}} + \dot{\v{v}_j}{\v{b}} + \dot{\v{w}_j}{\v{c}} - \v{k}_j
+\Bigg) = 0
+$$
+
 holds, then with high probability the $4n$ linear constraints are all satisfied
-as well. After some trivial manipulation, it is possible to define a vector
-$\v{s}$ such that this is equivalent to
+as well. Define 
+
+$$
+\v{s}=(\v{0}\| \sum_{j=0}^{4n-1}y^j\cdot\rv{u}_j \| \sum_j y^j\cdot\v{v}_j \| \sum_j y^j\cdot \rv{w}_j)
+$$
+
+where each subvector is a random linear combination of the wiring constraints,
+we observe that:
 
 $$
 \revdot{\v{r}}{\v{s}} = \dot{\v{k}}{\v{y^{4n}}}
@@ -121,7 +168,3 @@ $$
 
 because $\v{r} \circ \v{z^{4n}} - \v{t}$ is made independent of $\v{s}$ by
 random $z$ except at $\v{r}_0$, where $\v{s}_0 = 0$.
-
-[^tvectorcomputation]: $\v{t} \in \F^{4n}$ is defined such that $\v{t}_i = 0$
-for all $i$ except that $\v{t}_{4n - 1 - i} = - (z^{2n - 1 - i} + z^{2n + i} )$
-for $i$ between $0$ and $n -1$ inclusive.
