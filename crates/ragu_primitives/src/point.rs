@@ -23,6 +23,16 @@ pub struct Point<'dr, D: Driver<'dr>, C: CurveAffine> {
 }
 
 impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
+    /// Creates a new `Point` from the given coordinates without checking
+    /// that the provided $x, y$ are on the curve.
+    fn new_unchecked(x: Element<'dr, D>, y: Element<'dr, D>) -> Self {
+        Point {
+            x,
+            y,
+            _marker: PhantomData,
+        }
+    }
+
     /// Allocate a point on the curve. This will return an error if the provided
     /// point is at infinity.
     pub fn alloc(dr: &mut D, p: DriverValue<D, C>) -> Result<Self> {
@@ -44,11 +54,7 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
                 .sub(y2.wire())
         })?;
 
-        Ok(Point {
-            x,
-            y,
-            _marker: PhantomData,
-        })
+        Ok(Point::new_unchecked(x, y))
     }
 
     /// Obtain a constant point in the circuit. Fails if the point is the
@@ -58,11 +64,7 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
             let x = Element::constant(dr, *coordinates.x());
             let y = Element::constant(dr, *coordinates.y());
 
-            Ok(Point {
-                x,
-                y,
-                _marker: PhantomData,
-            })
+            Ok(Point::new_unchecked(x, y))
         } else {
             Err(Error::InvalidWitness(
                 "point at infinity cannot be witnessed".into(),
@@ -82,11 +84,7 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
     /// Applies the endomorphism to this point.
     pub fn endo(&self, dr: &mut D) -> Result<Self> {
         let x = self.x.scale(dr, Coeff::Arbitrary(C::Base::ZETA));
-        Ok(Point {
-            x,
-            y: self.y.clone(),
-            _marker: PhantomData,
-        })
+        Ok(Point::new_unchecked(x, self.y.clone()))
     }
 
     /// Negates this point.
@@ -105,11 +103,7 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
             .x
             .scale(dr, Coeff::Arbitrary(D::F::ZETA - D::F::ONE))
             .mul(dr, &condition.element())?;
-        Ok(Point {
-            x: self.x.add(dr, &tmp),
-            y: self.y.clone(),
-            _marker: PhantomData,
-        })
+        Ok(Point::new_unchecked(self.x.add(dr, &tmp), self.y.clone()))
     }
 
     /// Apply the negation map iff the provided condition is true.
@@ -119,11 +113,7 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
             .y
             .scale(dr, Coeff::Arbitrary(-D::F::from(2)))
             .mul(dr, &condition.element())?;
-        Ok(Point {
-            x: self.x.clone(),
-            y: self.y.add(dr, &tmp),
-            _marker: PhantomData,
-        })
+        Ok(Point::new_unchecked(self.x.clone(), self.y.add(dr, &tmp)))
     }
 
     /// Doubles this point. Ragu does not support curves with points of order
@@ -145,11 +135,7 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: CurveAffine> Point<'dr, D, C> {
         let x_sub_x3 = self.x.sub(dr, &x3);
         let y3 = delta.mul(dr, &x_sub_x3)?.sub(dr, &self.y);
 
-        Ok(Point {
-            x: x3,
-            y: y3,
-            _marker: PhantomData,
-        })
+        Ok(Point::new_unchecked(x3, y3))
     }
 
     /// Adds two points with different x-coordinates.
