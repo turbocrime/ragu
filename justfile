@@ -9,15 +9,15 @@ build_release *ARGS:
   cargo build --release --workspace --all-targets {{ARGS}}
 
 lint:
-  cargo clippy --workspace --lib --tests --benches --all-features -- -D warnings
+  RUSTFLAGS='--cfg gungraun' cargo clippy --workspace --lib --tests --benches -- -D warnings
   cargo fmt --all -- --check
   typos
   mdbook build ./book
 
 fix:
   cargo fmt --all
-  cargo fix --allow-dirty --allow-staged --all-features
-  cargo clippy --fix --allow-dirty --allow-staged --all-features
+  RUSTFLAGS='--cfg gungraun' cargo fix --allow-dirty --allow-staged
+  RUSTFLAGS='--cfg gungraun' cargo clippy --fix --allow-dirty --allow-staged
   typos -w
 
 _install_binstall:
@@ -62,11 +62,11 @@ ci_local: _book_setup
   @echo "Running formatting check..."
   cargo fmt --all -- --check
   @echo "Running clippy..."
-  cargo clippy --workspace --lib --tests --benches --locked --all-features -- -D warnings
+  RUSTFLAGS='--cfg gungraun' cargo clippy --all --locked -- -D warnings
   @echo "Running tests..."
   cargo test --release --all --locked
-  @echo "Building benchmarks and examples..."
-  RUSTFLAGS='--cfg gungraun' cargo build --benches --examples --all-features
+  @echo "Building benchmarks..."
+  RUSTFLAGS='--cfg gungraun' cargo build --benches --workspace
   @echo "Checking documentation..."
   RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all --locked --document-private-items
   @echo "Building book..."

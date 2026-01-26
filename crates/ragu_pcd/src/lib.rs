@@ -17,9 +17,12 @@ mod proof;
 pub mod step;
 mod verify;
 
-#[any(cfg(test), cfg(gungraun))]
+#[cfg(any(test, gungraun))]
 #[doc(hidden)]
 pub mod test_fixtures;
+
+#[cfg(test)]
+mod tests;
 
 use arithmetic::Cycle;
 use ragu_circuits::{
