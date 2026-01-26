@@ -13,10 +13,6 @@ use ragu_primitives::poseidon::Sponge;
 use ragu_primitives::{Boolean, Element, Endoscalar, Point, multiadd, multipack};
 use std::hint::black_box;
 
-// ============================================================================
-// Element ops
-// ============================================================================
-
 #[library_benchmark]
 #[bench::mul(args = (mock_rng(),), setup = setup_element_mul)]
 fn element_mul((a, b): (Fp, Fp)) {
@@ -94,10 +90,6 @@ library_benchmark_group!(
     benchmarks = element_mul, element_invert, element_fold_8, element_is_zero, element_multiadd_8
 );
 
-// ============================================================================
-// Point ops
-// ============================================================================
-
 #[library_benchmark]
 #[bench::double(args = (mock_rng(),), setup = setup_point_single)]
 fn point_double(point: EpAffine) {
@@ -155,10 +147,6 @@ library_benchmark_group!(
     benchmarks = point_double, point_add_incomplete, point_double_and_add_incomplete, point_endo
 );
 
-// ============================================================================
-// Boolean ops
-// ============================================================================
-
 #[library_benchmark]
 #[bench::multipack_256(args = (mock_rng(),), setup = setup_bool_256)]
 fn boolean_multipack_256(bits: [bool; 256]) {
@@ -177,10 +165,6 @@ library_benchmark_group!(
     name = boolean_ops;
     benchmarks = boolean_multipack_256
 );
-
-// ============================================================================
-// Sponge ops
-// ============================================================================
 
 #[library_benchmark]
 #[bench::absorb_squeeze(args = (mock_rng(),), setup = setup_sponge)]
@@ -202,10 +186,6 @@ library_benchmark_group!(
     name = sponge_ops;
     benchmarks = sponge_absorb_squeeze
 );
-
-// ============================================================================
-// Endoscalar ops
-// ============================================================================
 
 #[library_benchmark]
 #[bench::group_scale(args = (mock_rng(),), setup = setup_group_scale)]
@@ -249,10 +229,6 @@ library_benchmark_group!(
     name = endoscalar_ops;
     benchmarks = endoscalar_group_scale, endoscalar_extract, endoscalar_field_scale
 );
-
-// ============================================================================
-// Main
-// ============================================================================
 
 main!(
     library_benchmark_groups = element_ops,

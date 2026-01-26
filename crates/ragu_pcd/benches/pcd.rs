@@ -14,10 +14,6 @@ use ragu_pcd::{Application, Pcd};
 use rand::rngs::mock::StepRng;
 use std::hint::black_box;
 
-// ============================================================================
-// Application build
-// ============================================================================
-
 #[library_benchmark]
 #[bench::application_build(setup = setup_application_build)]
 fn application_build(
@@ -38,10 +34,6 @@ fn application_build(
     );
 }
 
-// ============================================================================
-// Seed (creating leaf proofs)
-// ============================================================================
-
 #[library_benchmark]
 #[bench::seed(setup = setup_seed)]
 fn seed(
@@ -60,10 +52,6 @@ fn seed(
         .unwrap(),
     );
 }
-
-// ============================================================================
-// Fuse (combining proofs)
-// ============================================================================
 
 #[library_benchmark]
 #[bench::fuse(setup = setup_fuse)]
@@ -87,10 +75,6 @@ fn fuse(
         .unwrap();
     black_box(proof.carry::<nontrivial::InternalNode>(aux));
 }
-
-// ============================================================================
-// Verify
-// ============================================================================
 
 #[library_benchmark]
 #[bench::verify_leaf(setup = setup_verify_leaf)]
@@ -116,10 +100,6 @@ fn verify_node(
     assert!(black_box(app.verify(&node, &mut rng).unwrap()));
 }
 
-// ============================================================================
-// Rerandomize
-// ============================================================================
-
 #[library_benchmark]
 #[bench::rerandomize(setup = setup_verify_node)]
 fn rerandomize(
@@ -132,13 +112,9 @@ fn rerandomize(
     black_box(app.rerandomize(node, &mut rng).unwrap());
 }
 
-// ============================================================================
-// Groups and main
-// ============================================================================
-
 library_benchmark_group!(
-    name = poseidon;
+    name = pcd;
     benchmarks = application_build, seed, fuse, verify_leaf, verify_node, rerandomize
 );
 
-main!(library_benchmark_groups = poseidon);
+main!(library_benchmark_groups = pcd);

@@ -1,3 +1,5 @@
+name: Benchmarks
+
 on:
   push:
     branches: [main]
@@ -64,7 +66,9 @@ jobs:
           sudo apt-get install -y valgrind
 
       - name: Install gungraun-runner
-        run: cargo install gungraun-runner
+        uses: taiki-e/install-action@v2
+        with:
+          tool: gungraun-runner@0.17.0
 
       - name: Load baseline
         uses: actions/cache/restore@v4
@@ -78,11 +82,11 @@ jobs:
 
       - name: Run benchmarks
         run: |
-          RUSTFLAGS='--cfg gungraun' cargo bench --workspace -- --output-format=json | tee bench-raw.txt
+          RUSTFLAGS='--cfg gungraun' cargo bench --workspace -- --save-summary=json
 
       - name: Transform to github-action-benchmark format
         run: |
-          jq --from-file .github/scripts/transform-gungraun.jq --slurp < bench-raw.txt > bench-output.json
+          find target/gungraun -name 'summary.json' -exec cat {} + | jq --from-file .github/scripts/transform-gungraun.jq --slurp > bench-output.json
 
       - name: Report benchmark results
         uses: benchmark-action/github-action-benchmark@v1

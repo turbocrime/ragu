@@ -9,11 +9,6 @@ use pasta_curves::{EpAffine, Fp, Fq};
 use ragu_arithmetic::{Domain, dot, eval, factor, geosum, mul, poly_with_roots};
 use std::hint::black_box;
 
-// ============================================================================
-// MSM ops
-// Size values match common::MSM_SIZES
-// ============================================================================
-
 #[library_benchmark]
 #[bench::n64(args = (mock_rng(), 64), setup = setup_msm)]
 #[bench::n256(args = (mock_rng(), 256), setup = setup_msm)]
@@ -28,11 +23,6 @@ library_benchmark_group!(
     benchmarks = msm_mul
 );
 
-// ============================================================================
-// FFT ops
-// Size values match common::FFT_K_VALUES
-// ============================================================================
-
 #[library_benchmark]
 #[bench::k10(args = (mock_rng(), 10), setup = setup_fft)]
 #[bench::k14(args = (mock_rng(), 14), setup = setup_fft)]
@@ -42,39 +32,24 @@ fn fft((domain, mut data): (Domain<Fp>, Vec<Fp>)) {
     black_box(data);
 }
 
-library_benchmark_group!(
-    name = fft_ops;
-    benchmarks = fft
-);
-
-// ============================================================================
-// Domain ops
-// Size values match common::DOMAIN_ELL_K_VALUES
-// ============================================================================
-
 #[library_benchmark]
 #[bench::k10(args = (mock_rng(), 10), setup = setup_domain_ell)]
 #[bench::k14(args = (mock_rng(), 14), setup = setup_domain_ell)]
-fn domain_ell((domain, x, n): (Domain<Fp>, Fp, usize)) {
+fn ell((domain, x, n): (Domain<Fp>, Fp, usize)) {
     black_box(domain.ell(x, n));
 }
 
 library_benchmark_group!(
     name = domain_ops;
-    benchmarks = domain_ell
+    benchmarks = fft, ell
 );
-
-// ============================================================================
-// Poly ops
-// Size values match common::POLY_ROOTS_SIZES, POLY_EVAL_SIZES, FACTOR_SIZES
-// ============================================================================
 
 #[library_benchmark]
 #[bench::n16(args = (mock_rng(), 16), setup = setup_roots)]
 #[bench::n64(args = (mock_rng(), 64), setup = setup_roots)]
 #[bench::n256(args = (mock_rng(), 256), setup = setup_roots)]
 #[bench::n1024(args = (mock_rng(), 1024), setup = setup_roots)]
-fn poly_with_roots_bench(roots: Vec<Fp>) {
+fn with_roots(roots: Vec<Fp>) {
     black_box(poly_with_roots(&roots));
 }
 
@@ -95,13 +70,8 @@ fn poly_factor((coeffs, x): (Vec<Fp>, Fp)) {
 
 library_benchmark_group!(
     name = poly_ops;
-    benchmarks = poly_with_roots_bench, poly_eval, poly_factor
+    benchmarks = with_roots, poly_eval, poly_factor
 );
-
-// ============================================================================
-// Field ops
-// Size values match common::DOT_SIZES, GEOSUM_SIZES
-// ============================================================================
 
 #[library_benchmark]
 #[bench::n256(args = (mock_rng(), 256), setup = setup_dot)]
@@ -123,13 +93,8 @@ library_benchmark_group!(
     benchmarks = field_dot, field_geosum
 );
 
-// ============================================================================
-// Main
-// ============================================================================
-
 main!(
     library_benchmark_groups = msm_ops,
-    fft_ops,
     domain_ops,
     poly_ops,
     field_ops

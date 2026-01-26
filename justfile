@@ -47,10 +47,10 @@ bench *ARGS: _gungraun_setup
     RUSTFLAGS='--cfg gungraun' cargo bench --workspace {{ARGS}}
   else
     docker run --rm \
-      -v "$PWD:/workspace:ro" \
+      -v "{{justfile_directory()}}:/workspace:ro" \
       -v ragu-cargo:/.cargo \
       -v ragu-rustup:/.rustup \
-      -v ragu-target:/workspace/target \
+      -v "{{justfile_directory()}}/target:/workspace/target" \
       -w /workspace \
       --security-opt seccomp=unconfined \
       nixery.dev/{{_nixery_meta}}/gcc/just/rustup/valgrind \
