@@ -1,17 +1,93 @@
-mod common;
-
 use arithmetic::{Cycle, Uendo};
-use common::{
-    BenchEmulator, mock_rng, setup_bool_256, setup_element_fold_8, setup_element_invert,
-    setup_element_is_zero, setup_element_mul, setup_element_multiadd_8, setup_extract,
-    setup_field_scale, setup_group_scale, setup_point_pair, setup_point_single, setup_sponge,
-};
+use ff::Field;
+use group::prime::PrimeCurveAffine;
 use gungraun::{library_benchmark, library_benchmark_group, main};
-use ragu_core::maybe::Maybe;
-use ragu_pasta::{EpAffine, Fp};
+use ragu_core::drivers::emulator::{Emulator, Wireless};
+use ragu_core::maybe::{Always, Maybe};
+use ragu_pasta::{EpAffine, Fp, Fq, Pasta};
 use ragu_primitives::poseidon::Sponge;
 use ragu_primitives::{Boolean, Element, Endoscalar, Point, multiadd, multipack};
+use rand::Rng;
+use rand::rngs::mock::StepRng;
 use std::hint::black_box;
+
+fn mock_rng() -> StepRng {
+    StepRng::new(u64::from_le_bytes(*b"12345666"), 0x1234_5666_1234_5666)
+}
+
+fn random_fp(rng: &mut impl Rng) -> Fp {
+    Fp::random(rng)
+}
+
+fn random_point(rng: &mut impl Rng) -> EpAffine {
+    (EpAffine::generator() * Fq::random(rng)).into()
+}
+
+fn random_fp_array<const N: usize>(rng: &mut impl Rng) -> [Fp; N] {
+    core::array::from_fn(|_| Fp::random(&mut *rng))
+}
+
+fn random_bool_array<const N: usize>(rng: &mut impl Rng) -> [bool; N] {
+    core::array::from_fn(|_| rng.r#gen())
+}
+
+fn random_uendo(rng: &mut impl Rng) -> Uendo {
+    rng.r#gen()
+}
+
+type BenchEmulator = Emulator<Wireless<Always<()>, Fp>>;
+
+fn setup_element_mul(mut rng: StepRng) -> (Fp, Fp) {
+    (random_fp(&mut rng), random_fp(&mut rng))
+}
+
+fn setup_element_invert(mut rng: StepRng) -> Fp {
+    random_fp(&mut rng)
+}
+
+fn setup_element_fold_8(mut rng: StepRng) -> ([Fp; 8], Fp) {
+    (random_fp_array::<8>(&mut rng), random_fp(&mut rng))
+}
+
+fn setup_element_is_zero(mut rng: StepRng) -> Fp {
+    random_fp(&mut rng)
+}
+
+fn setup_element_multiadd_8(mut rng: StepRng) -> ([Fp; 8], [Fp; 8]) {
+    (
+        random_fp_array::<8>(&mut rng),
+        random_fp_array::<8>(&mut rng),
+    )
+}
+
+fn setup_point_single(mut rng: StepRng) -> EpAffine {
+    random_point(&mut rng)
+}
+
+fn setup_point_pair(mut rng: StepRng) -> (EpAffine, EpAffine) {
+    (random_point(&mut rng), random_point(&mut rng))
+}
+
+fn setup_bool_256(mut rng: StepRng) -> [bool; 256] {
+    random_bool_array::<256>(&mut rng)
+}
+
+fn setup_sponge(mut rng: StepRng) -> (Fp, &'static <Pasta as Cycle>::CircuitPoseidon) {
+    let pasta = Pasta::baked();
+    (random_fp(&mut rng), Pasta::circuit_poseidon(pasta))
+}
+
+fn setup_group_scale(mut rng: StepRng) -> (EpAffine, Uendo) {
+    (random_point(&mut rng), random_uendo(&mut rng))
+}
+
+fn setup_extract(mut rng: StepRng) -> Fp {
+    random_fp(&mut rng)
+}
+
+fn setup_field_scale(mut rng: StepRng) -> Uendo {
+    random_uendo(&mut rng)
+}
 
 #[library_benchmark]
 #[bench::mul(args = (mock_rng(),), setup = setup_element_mul)]

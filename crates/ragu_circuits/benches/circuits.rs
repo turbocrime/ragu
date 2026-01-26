@@ -1,20 +1,109 @@
-mod common;
-
 use std::hint::black_box;
 use std::sync::LazyLock;
 
 use arithmetic::Cycle;
-use common::{
-    mock_rng, setup_circuit_ky, setup_circuit_rx, setup_dilate, setup_eval, setup_fold,
-    setup_registry_wxy, setup_registry_xy, setup_revdot, setup_square_circuit_rx, setup_structured,
-    setup_unstructured,
-};
+use ff::Field;
 use gungraun::{library_benchmark, library_benchmark_group, main};
 use ragu_circuits::CircuitExt;
-use ragu_circuits::polynomials::{R, structured};
+use ragu_circuits::polynomials::{R, structured, unstructured};
 use ragu_circuits::registry::{Registry, RegistryBuilder};
 use ragu_circuits::test_fixtures::{MySimpleCircuit, SquareCircuit};
 use ragu_pasta::{Fp, Pasta};
+use rand::rngs::mock::StepRng;
+
+fn mock_rng() -> StepRng {
+    StepRng::new(u64::from_le_bytes(*b"didnothn"), 0xF2EE_CAFE_D00D_2DA7)
+}
+
+fn setup_structured(
+    mut rng: StepRng,
+) -> (
+    structured::Polynomial<Fp, R<13>>,
+    Fp,
+    &'static <Pasta as Cycle>::HostGenerators,
+) {
+    let generators = Pasta::host_generators(Pasta::baked());
+    (
+        structured::Polynomial::random(&mut rng),
+        Fp::random(&mut rng),
+        generators,
+    )
+}
+
+fn setup_unstructured(
+    mut rng: StepRng,
+) -> (
+    unstructured::Polynomial<Fp, R<13>>,
+    Fp,
+    &'static <Pasta as Cycle>::HostGenerators,
+) {
+    let generators = Pasta::host_generators(Pasta::baked());
+    (
+        unstructured::Polynomial::random(&mut rng),
+        Fp::random(&mut rng),
+        generators,
+    )
+}
+
+fn setup_revdot(
+    mut rng: StepRng,
+) -> (
+    structured::Polynomial<Fp, R<13>>,
+    structured::Polynomial<Fp, R<13>>,
+) {
+    (
+        structured::Polynomial::random(&mut rng),
+        structured::Polynomial::random(&mut rng),
+    )
+}
+
+fn setup_fold(mut rng: StepRng) -> (Vec<structured::Polynomial<Fp, R<13>>>, Fp) {
+    let polys: Vec<_> = (0..8)
+        .map(|_| structured::Polynomial::<Fp, R<13>>::random(&mut rng))
+        .collect();
+    (polys, Fp::random(&mut rng))
+}
+
+fn setup_eval(mut rng: StepRng) -> (structured::Polynomial<Fp, R<13>>, Fp) {
+    (
+        structured::Polynomial::random(&mut rng),
+        Fp::random(&mut rng),
+    )
+}
+
+fn setup_dilate(mut rng: StepRng) -> (structured::Polynomial<Fp, R<13>>, Fp) {
+    (
+        structured::Polynomial::random(&mut rng),
+        Fp::random(&mut rng),
+    )
+}
+
+fn setup_circuit_rx(mut rng: StepRng) -> ((Fp, Fp), Fp) {
+    (
+        (Fp::random(&mut rng), Fp::random(&mut rng)),
+        Fp::random(&mut rng),
+    )
+}
+
+fn setup_circuit_ky(mut rng: StepRng) -> (Fp, Fp) {
+    (Fp::random(&mut rng), Fp::random(&mut rng))
+}
+
+fn setup_square_circuit_rx(mut rng: StepRng) -> (Fp, Fp) {
+    (Fp::random(&mut rng), Fp::random(&mut rng))
+}
+
+fn setup_registry_xy(mut rng: StepRng) -> (Fp, Fp) {
+    (Fp::random(&mut rng), Fp::random(&mut rng))
+}
+
+fn setup_registry_wxy(mut rng: StepRng) -> (Fp, Fp, Fp) {
+    (
+        Fp::random(&mut rng),
+        Fp::random(&mut rng),
+        Fp::random(&mut rng),
+    )
+}
 
 static BENCH_REGISTRY: LazyLock<Registry<'static, Fp, R<5>>> = LazyLock::new(|| {
     let poseidon = Pasta::circuit_poseidon(Pasta::baked());
@@ -47,7 +136,7 @@ fn commit_structured(
 #[bench::unstructured(args = (mock_rng()), setup = setup_unstructured)]
 fn commit_unstructured(
     (poly, blind, generators): (
-        ragu_circuits::polynomials::unstructured::Polynomial<Fp, R<13>>,
+        unstructured::Polynomial<Fp, R<13>>,
         Fp,
         &'static <Pasta as Cycle>::HostGenerators,
     ),
@@ -172,9 +261,6 @@ fn finalize() {
             .unwrap(),
     );
 }
-
-// Registry evaluation benchmarks use the static BENCH_REGISTRY to measure
-// only the evaluation, not the registry construction.
 
 #[library_benchmark]
 #[bench::xy(args = (mock_rng()), setup = setup_registry_xy)]
