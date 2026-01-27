@@ -15,6 +15,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  RUSTFLAGS: "--cfg gungraun"
 
 jobs:
   changes:
@@ -81,9 +82,41 @@ jobs:
       - name: Ensure baseline path exists
         run: mkdir -p ./bench-baseline
 
-      - name: Run benchmarks
+      - name: Missing baseline. Checkout base branch
+        if: steps.load-baseline.outputs.cache-hit != 'true' && github.event_name == 'pull_request'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.base_ref }}
+          path: baseline-src
+
+      - name: Missing baseline. Run baseline benchmarks
+        if: steps.load-baseline.outputs.cache-hit != 'true' && github.event_name == 'pull_request'
+        working-directory: baseline-src
         run: |
-          RUSTFLAGS='--cfg gungraun' cargo bench --workspace -- --save-summary=json
+          if cargo bench --workspace -- --save-summary=json ; then
+            find target/gungraun -name 'summary.json' -exec cat {} + | jq --from-file ../.github/scripts/transform-gungraun.jq --slurp > bench-output.json
+          else
+            echo "Baseline benchmarks not available on base branch. Using placeholder."
+            echo '[{"name": "placeholder", "unit": "count", "value": 0}]' > bench-output.json
+          fi
+
+      - name: Missing baseline. Establish baseline benchmark results
+        if: steps.load-baseline.outputs.cache-hit != 'true' && github.event_name == 'pull_request'
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: Ragu Benchmarks
+          tool: customSmallerIsBetter
+          output-file-path: baseline-src/bench-output.json
+          external-data-json-path: ./bench-baseline/data.json
+          auto-push: false
+          comment-always: false
+          comment-on-alert: false
+          fail-on-alert: false
+          skip-fetch-gh-pages: true
+          summary-always: false
+
+      - name: Run benchmarks
+        run: cargo bench --workspace -- --save-summary=json
 
       - name: Transform to github-action-benchmark format
         run: |
