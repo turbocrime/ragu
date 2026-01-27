@@ -11,9 +11,18 @@ def extract_metric_value:
     end;
 
 # Extract current run's value from metrics
-# Prefers Right (new only), falls back to Both[1] (new in comparison)
+#
+# Gungraun uses EitherOrBoth to represent baseline comparisons:
+#   - Both: [old, new] when benchmark exists in both baseline and current run
+#   - Left: current run value when no baseline exists (new benchmark or first run)
+#   - Right: baseline-only? we don't want this value. seems to not appear in practice?
+#
+# Priority order for extracting the CURRENT run's value:
+#   1. Both[1] - comparison exists. take the new value
+#   2. Left    - no baseline exists. this is the current run's value
+#   3. Right   - never.
 def extract_current_value:
-    (.Right // .Both[1]) | extract_metric_value;
+    (.Both[1] // .Left) | extract_metric_value;
 
 # Map metric name to appropriate unit based on Callgrind EventKind descriptions
 def metric_unit:
