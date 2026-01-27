@@ -28,7 +28,7 @@ _book_setup: _install_binstall
   @cargo binstall -y typos-cli
 
 _gungraun_setup: _install_binstall
-  @[ $(uname -s) == 'Darwin' ] || cargo binstall --quiet --no-confirm gungraun-runner@0.17.0
+  @cargo binstall --quiet --no-confirm gungraun-runner@0.17.0
 
 # locally [build | serve | watch] Ragu book
 book COMMAND: _book_setup
@@ -41,21 +41,14 @@ test *ARGS:
 _nixery_meta := if arch() == 'x86_64' { "shell" } else { "arm64/shell" }
 
 # run benchmarks (auto-detects platform)
-bench *ARGS: _gungraun_setup
-  #!/bin/sh
-  if [ $(uname -s) != 'Darwin' ] ; then
+bench *ARGS:
+    @just bench-{{os()}} {{ARGS}}
+
+bench-macos *ARGS:
+    {{justfile_directory()}}/scripts/dockerized_bench.sh {{ARGS}}
+
+bench-linux *ARGS: _gungraun_setup
     RUSTFLAGS='--cfg gungraun' cargo bench --workspace {{ARGS}}
-  else
-    docker run --rm \
-      -v "{{justfile_directory()}}:/workspace:ro" \
-      -v ragu-cargo:/.cargo \
-      -v ragu-rustup:/.rustup \
-      -v "{{justfile_directory()}}/target:/workspace/target" \
-      -w /workspace \
-      --security-opt seccomp=unconfined \
-      nixery.dev/{{_nixery_meta}}/gcc/just/rustup/valgrind \
-      sh -c 'just bench {{ARGS}}'
-  fi
 
 # run CI checks locally (formatting, clippy, tests)
 ci_local: _book_setup
