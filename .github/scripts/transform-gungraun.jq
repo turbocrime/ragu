@@ -24,61 +24,20 @@ def extract_metric_value:
 def extract_current_value:
     (.Both[1] // .Left) | extract_metric_value;
 
-# Map metric name to appropriate unit based on Callgrind EventKind descriptions
+# Map metric name to unit (matches gungraun's default console output)
 def metric_unit:
-    # Core counts
     if . == "Ir" then "instructions"
-    elif . == "Dr" then "data reads"
-    elif . == "Dw" then "data writes"
-    # L1 instruction cache
-    elif . == "I1mr" then "I1 read misses"
-    # L1 data cache
-    elif . == "D1mr" then "D1 read misses"
-    elif . == "D1mw" then "D1 write misses"
-    # LL (last-level) instruction cache
-    elif . == "ILmr" then "LL instruction misses"
-    # LL data cache
-    elif . == "DLmr" then "LL data read misses"
-    elif . == "DLmw" then "LL data write misses"
-    # Dirty misses (write-back simulation)
-    elif . == "ILdmr" then "LL instruction dirty misses"
-    elif . == "DLdmr" then "LL data read dirty misses"
-    elif . == "DLdmw" then "LL data write dirty misses"
-    # Cache hits (derived)
     elif . == "L1hits" then "L1 hits"
     elif . == "LLhits" then "LL hits"
     elif . == "RamHits" then "RAM hits"
-    # Miss rates
-    elif . == "I1MissRate" then "I1 miss rate"
-    elif . == "D1MissRate" then "D1 miss rate"
-    elif . == "LLiMissRate" then "LL instruction miss rate"
-    elif . == "LLdMissRate" then "LL data miss rate"
-    elif . == "LLMissRate" then "LL miss rate"
-    # Hit rates
-    elif . == "L1HitRate" then "L1 hit rate"
-    elif . == "LLHitRate" then "LL hit rate"
-    elif . == "RamHitRate" then "RAM hit rate"
-    # Derived totals
     elif . == "TotalRW" then "total accesses"
     elif . == "EstimatedCycles" then "cycles"
-    # Branch simulation
-    elif . == "Bc" then "conditional branches"
-    elif . == "Bcm" then "conditional branch misses"
-    elif . == "Bi" then "indirect branches"
-    elif . == "Bim" then "indirect branch misses"
-    # System calls
-    elif . == "SysCount" then "syscalls"
-    elif . == "SysTime" then "syscall time (ns)"
-    elif . == "SysCpuTime" then "syscall CPU time (ns)"
-    # Global bus events
-    elif . == "Ge" then "global bus events"
-    # Locality counters
-    elif . == "AcCost1" then "L1 temporal locality cost"
-    elif . == "AcCost2" then "LL temporal locality cost"
-    elif . == "SpLoss1" then "L1 spatial locality loss"
-    elif . == "SpLoss2" then "LL spatial locality loss"
     else "count"
     end;
+
+# Filter to gungraun's default console output metrics
+def is_default_metric:
+    . == "Ir" or . == "L1hits" or . == "LLhits" or . == "RamHits" or . == "TotalRW" or . == "EstimatedCycles";
 
 # Main transformation: flatten benchmark results into github-action-benchmark format
 #
@@ -93,10 +52,10 @@ def metric_unit:
     (.module_path + "::" + .function_name + (if .id then (" " + .id) else "" end)) as $bench_name |
 
     # Extract Callgrind metrics from the first profile's total summary
-    # Each metric (Ir, Dr, EstimatedCycles, etc.) becomes a separate benchmark entry
     .profiles[0].summaries.total.summary.Callgrind | to_entries[] |
 
-    # Skip metrics without values (can happen with some Callgrind configurations)
+    # Filter to gungraun's default metrics and skip entries without values
+    select(.key | is_default_metric) |
     select(.value.metrics != null) |
 
     # Emit one entry per metric in github-action-benchmark format
