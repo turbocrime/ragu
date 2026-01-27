@@ -71,6 +71,7 @@ jobs:
           tool: gungraun-runner@0.17.0
 
       - name: Load baseline
+        id: load-baseline
         uses: actions/cache/restore@v4
         with:
           path: ./bench-baseline
@@ -96,7 +97,13 @@ jobs:
           output-file-path: bench-output.json
           github-token: ${{ secrets.GITHUB_TOKEN }}
           external-data-json-path: ./bench-baseline/data.json
+          auto-push: false
           comment-always: true
+          comment-on-alert: true
+          fail-on-alert: false
+          save-data-file: true
+          skip-fetch-gh-pages: true
+          summary-always: true
 
       - name: Save baseline
         if: github.event_name == 'push'
