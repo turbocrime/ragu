@@ -76,7 +76,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ./bench-baseline
-          key: ${{ github.workflow }}-${{ github.ref }}-${{ github.sha }}-${{ github.run_id }}
+          key: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.sha }}-${{ github.run_id }}
           restore-keys: ${{ github.workflow }}-${{ github.base_ref }}-
 
       - name: Ensure baseline path exists
@@ -143,4 +143,4 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ./bench-baseline
-          key: ${{ github.workflow }}-${{ github.ref }}-${{ github.sha }}
+          key: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.sha }}
