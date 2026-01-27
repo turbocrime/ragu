@@ -248,6 +248,7 @@ fn rerandomize(
         StepRng,
     ),
 ) {
+    black_box(1 + 1);
     black_box(app.rerandomize(node, &mut rng).unwrap());
 }
 

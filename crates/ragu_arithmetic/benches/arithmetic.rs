@@ -71,6 +71,7 @@ fn setup_geosum(mut rng: StepRng, n: usize) -> (Fp, usize) {
 #[bench::n1024(args = (mock_rng(), 1024), setup = setup_msm)]
 #[bench::n4096(args = (mock_rng(), 4096), setup = setup_msm)]
 fn msm_mul((coeffs, bases): (Vec<Fq>, Vec<EpAffine>)) {
+    black_box(1 + 1);
     black_box(mul(coeffs.iter(), bases.iter()));
 }
 
