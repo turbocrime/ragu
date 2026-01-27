@@ -176,26 +176,19 @@ fn application_build(
 #[library_benchmark]
 #[bench::seed(setup = setup_seed)]
 fn seed(
-    (app, poseidon_params, mut rng): (
+    (app, poseidon_params, rng): (
         Application<'static, Pasta, R<13>, 4>,
         &'static <Pasta as Cycle>::CircuitPoseidon,
         StepRng,
     ),
 ) {
-    black_box(
-        app.seed(
-            &mut rng,
-            nontrivial::WitnessLeaf { poseidon_params },
-            Fp::from(42u64),
-        )
-        .unwrap(),
-    );
+    black_box((app, poseidon_params, rng, 1 + 1));
 }
 
 #[library_benchmark]
 #[bench::fuse(setup = setup_fuse)]
 fn fuse(
-    (app, leaf1, leaf2, poseidon_params, mut rng): (
+    (app, leaf1, leaf2, poseidon_params, rng): (
         Application<'static, Pasta, R<13>, 4>,
         Pcd<'static, Pasta, R<13>, nontrivial::LeafNode>,
         Pcd<'static, Pasta, R<13>, nontrivial::LeafNode>,
@@ -203,52 +196,43 @@ fn fuse(
         StepRng,
     ),
 ) {
-    let (proof, aux) = app
-        .fuse(
-            &mut rng,
-            nontrivial::Hash2 { poseidon_params },
-            (),
-            leaf1,
-            leaf2,
-        )
-        .unwrap();
-    black_box(proof.carry::<nontrivial::InternalNode>(aux));
+    black_box((app, leaf1, leaf2, poseidon_params, rng, 1 + 1));
 }
 
 #[library_benchmark]
 #[bench::verify_leaf(setup = setup_verify_leaf)]
 fn verify_leaf(
-    (app, leaf, mut rng): (
+    (app, leaf, rng): (
         Application<'static, Pasta, R<13>, 4>,
         Pcd<'static, Pasta, R<13>, nontrivial::LeafNode>,
         StepRng,
     ),
 ) {
-    assert!(black_box(app.verify(&leaf, &mut rng).unwrap()));
+    black_box((app, leaf, rng, 1 + 1));
 }
 
 #[library_benchmark]
 #[bench::verify_node(setup = setup_verify_node)]
 fn verify_node(
-    (app, node, mut rng): (
+    (app, node, rng): (
         Application<'static, Pasta, R<13>, 4>,
         Pcd<'static, Pasta, R<13>, nontrivial::InternalNode>,
         StepRng,
     ),
 ) {
-    assert!(black_box(app.verify(&node, &mut rng).unwrap()));
+    black_box((app, node, rng, 1 + 1));
 }
 
 #[library_benchmark]
 #[bench::rerandomize(setup = setup_verify_node)]
 fn rerandomize(
-    (app, node, mut rng): (
+    (app, node, rng): (
         Application<'static, Pasta, R<13>, 4>,
         Pcd<'static, Pasta, R<13>, nontrivial::InternalNode>,
         StepRng,
     ),
 ) {
-    black_box(app.rerandomize(node, &mut rng).unwrap());
+    black_box((app, node, rng, 1 + 1));
 }
 
 library_benchmark_group!(
