@@ -182,7 +182,14 @@ fn seed(
         StepRng,
     ),
 ) {
-    black_box((app, poseidon_params, rng, 1 + 1));
+    black_box(
+        app.seed(
+            &mut rng,
+            nontrivial::WitnessLeaf { poseidon_params },
+            Fp::from(42u64),
+        )
+        .unwrap(),
+    );
 }
 
 #[library_benchmark]
@@ -196,7 +203,16 @@ fn fuse(
         StepRng,
     ),
 ) {
-    black_box((app, leaf1, leaf2, poseidon_params, rng, 1 + 1));
+    let (proof, aux) = app
+        .fuse(
+            &mut rng,
+            nontrivial::Hash2 { poseidon_params },
+            (),
+            leaf1,
+            leaf2,
+        )
+        .unwrap();
+    black_box(proof.carry::<nontrivial::InternalNode>(aux));
 }
 
 #[library_benchmark]
@@ -208,7 +224,7 @@ fn verify_leaf(
         StepRng,
     ),
 ) {
-    black_box((app, leaf, rng, 1 + 1));
+    assert!(black_box(app.verify(&leaf, &mut rng).unwrap()));
 }
 
 #[library_benchmark]
@@ -220,7 +236,7 @@ fn verify_node(
         StepRng,
     ),
 ) {
-    black_box((app, node, rng, 1 + 1));
+    assert!(black_box(app.verify(&node, &mut rng).unwrap()));
 }
 
 #[library_benchmark]
@@ -232,7 +248,7 @@ fn rerandomize(
         StepRng,
     ),
 ) {
-    black_box((app, node, rng, 1 + 1));
+    black_box(app.rerandomize(node, &mut rng).unwrap());
 }
 
 library_benchmark_group!(
