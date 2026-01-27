@@ -72,36 +72,46 @@ jobs:
           tool: gungraun-runner@0.17.0
 
       - name: Load baseline
-        id: load-baseline
+        if: github.event_name == 'pull_request'
         uses: actions/cache/restore@v4
         with:
           path: ./bench-baseline
-          key: ${{ github.workflow }}-${{ github.ref }}-${{ github.sha }}-${{ github.run_id }}
+          key: ${{ github.workflow }}-${{ github.base_ref }}-dummy
           restore-keys: ${{ github.workflow }}-${{ github.base_ref }}-
 
       - name: Ensure baseline path exists
         run: mkdir -p ./bench-baseline
 
+      - name: Check for baseline data
+        id: check-baseline
+        if: github.event_name == 'pull_request'
+        run: |
+          if [ -f ./bench-baseline/data.json ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Missing baseline. Checkout base branch
-        if: steps.load-baseline.outputs.cache-hit != 'true' && github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && !steps.check-baseline.outputs.exists
         uses: actions/checkout@v4
         with:
           ref: ${{ github.base_ref }}
           path: baseline-src
 
       - name: Missing baseline. Run baseline benchmarks
-        if: steps.load-baseline.outputs.cache-hit != 'true' && github.event_name == 'pull_request'
+        id: baseline-bench
+        if: github.event_name == 'pull_request' && !steps.check-baseline.outputs.exists
+        continue-on-error: true
+        working-directory: baseline-src
+        run: cargo bench --workspace -- --save-summary=json
+
+      - name: Missing baseline. Transform baseline results
+        if: steps.baseline-bench.outcome == 'success'
         working-directory: baseline-src
         run: |
-          if cargo bench --workspace -- --save-summary=json ; then
-            find target/gungraun -name 'summary.json' -exec cat {} + | jq --from-file ../.github/scripts/transform-gungraun.jq --slurp > bench-output.json
-          else
-            echo "Baseline benchmarks not available on base branch. Using placeholder."
-            echo '[{"name": "placeholder", "unit": "count", "value": 0}]' > bench-output.json
-          fi
+          find target/gungraun -name 'summary.json' -exec cat {} + | jq --from-file ../.github/scripts/transform-gungraun.jq --slurp > bench-output.json
 
       - name: Missing baseline. Establish baseline benchmark results
-        if: steps.load-baseline.outputs.cache-hit != 'true' && github.event_name == 'pull_request'
+        if: steps.baseline-bench.outcome == 'success'
         uses: benchmark-action/github-action-benchmark@v1
         with:
           name: Ragu Benchmarks
@@ -131,10 +141,10 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           external-data-json-path: ./bench-baseline/data.json
           auto-push: false
-          comment-always: true
-          comment-on-alert: true
+          comment-always: ${{ github.event_name == 'pull_request' }}
+          comment-on-alert: ${{ github.event_name == 'pull_request' }}
           fail-on-alert: false
-          save-data-file: true
+          save-data-file: ${{ github.event_name == 'push' }}
           skip-fetch-gh-pages: true
           summary-always: true
 
@@ -143,4 +153,4 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ./bench-baseline
-          key: ${{ github.workflow }}-${{ github.ref }}-${{ github.sha }}
+          key: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.sha }}
