@@ -53,15 +53,15 @@ pub fn setup_with_rng<T, Fns: SetupRng<S>, S>(other: T, fns: Fns) -> (T, S) {
     (other, fns.setup(&mut rng))
 }
 
-pub fn random_fp(rng: &mut SmallRng) -> Fp {
-    Fp::random(rng)
+pub fn f<F: Field>(rng: &mut SmallRng) -> F {
+    F::random(rng)
 }
 
-pub fn random_structured_poly(rng: &mut SmallRng) -> structured::Polynomial<Fp, R<13>> {
+pub fn rand_structured_poly(rng: &mut SmallRng) -> structured::Polynomial<Fp, R<13>> {
     structured::Polynomial::random(rng)
 }
 
-pub fn random_structured_poly_vec<const N: usize>(
+pub fn rand_structured_poly_vec<const N: usize>(
     rng: &mut SmallRng,
 ) -> Vec<structured::Polynomial<Fp, R<13>>> {
     (0..N)
@@ -69,7 +69,7 @@ pub fn random_structured_poly_vec<const N: usize>(
         .collect()
 }
 
-pub fn random_unstructured_poly(rng: &mut SmallRng) -> unstructured::Polynomial<Fp, R<13>> {
+pub fn rand_unstructured_poly(rng: &mut SmallRng) -> unstructured::Polynomial<Fp, R<13>> {
     unstructured::Polynomial::random(rng)
 }
 

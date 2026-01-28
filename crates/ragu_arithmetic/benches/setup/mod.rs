@@ -1,6 +1,7 @@
 use ff::Field;
 use pasta_curves::group::prime::PrimeCurveAffine;
 use pasta_curves::{EpAffine, Fp, Fq};
+use ragu_arithmetic::Domain;
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 
@@ -50,19 +51,29 @@ pub fn setup_with_rng<T, Fns: SetupRng<S>, S>(other: T, fns: Fns) -> (T, S) {
     (other, fns.setup(&mut rng))
 }
 
-pub fn random_fp(rng: &mut SmallRng) -> Fp {
-    Fp::random(rng)
+pub fn f<F: Field>(rng: &mut SmallRng) -> F {
+    F::random(rng)
 }
 
-pub fn random_fp_vec<const N: usize>(rng: &mut SmallRng) -> Vec<Fp> {
-    (0..N).map(|_| Fp::random(&mut *rng)).collect()
+pub fn vec_f<const N: usize, F: Field>(rng: &mut SmallRng) -> Vec<F> {
+    (0..N).map(|_| F::random(&mut *rng)).collect()
 }
 
-pub fn random_fq_vec<const N: usize>(rng: &mut SmallRng) -> Vec<Fq> {
-    (0..N).map(|_| Fq::random(&mut *rng)).collect()
-}
-
-pub fn random_points<const N: usize>(rng: &mut SmallRng) -> Vec<EpAffine> {
+pub fn vec_affine<const N: usize>(rng: &mut SmallRng) -> Vec<EpAffine> {
     let g = EpAffine::generator();
     (0..N).map(|_| (g * Fq::random(&mut *rng)).into()).collect()
+}
+
+pub fn setup_domain_fft(k: u32) -> (Domain<Fp>, Vec<Fp>) {
+    let mut rng = mock_rng();
+    let domain = Domain::new(k);
+    let data = (0..domain.n()).map(|_| Fp::random(&mut rng)).collect();
+    (domain, data)
+}
+
+pub fn setup_domain_ell(k: u32) -> (Domain<Fp>, Fp, usize) {
+    let mut rng = mock_rng();
+    let domain = Domain::new(k);
+    let n = domain.n();
+    (domain, Fp::random(&mut rng), n)
 }

@@ -1,152 +1,21 @@
 #![allow(clippy::type_complexity)]
 
+mod setup;
+
 use arithmetic::Cycle;
 use gungraun::{library_benchmark, library_benchmark_group, main};
 use ragu_circuits::polynomials::R;
 use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::test_fixtures::nontrivial;
 use ragu_pcd::{Application, ApplicationBuilder, Pcd};
-use rand::SeedableRng;
 use rand::rngs::SmallRng;
+use setup::{
+    setup_finalize, setup_fuse, setup_register, setup_seed, setup_verify_leaf, setup_verify_node,
+};
 use std::hint::black_box;
 
-fn mock_rng() -> SmallRng {
-    SmallRng::seed_from_u64(0xF2EE_CAFE_BABE_2DA7)
-}
-
-fn setup_register() -> (
-    nontrivial::WitnessLeaf<'static, Pasta>,
-    nontrivial::Hash2<'static, Pasta>,
-) {
-    let pasta = Pasta::baked();
-    let poseidon_params = Pasta::circuit_poseidon(pasta);
-    (
-        nontrivial::WitnessLeaf { poseidon_params },
-        nontrivial::Hash2 { poseidon_params },
-    )
-}
-
-fn setup_finalize() -> (
-    ragu_pcd::ApplicationBuilder<'static, Pasta, R<13>, 4>,
-    &'static <Pasta as Cycle>::Params,
-) {
-    let pasta = Pasta::baked();
-    let poseidon_params = Pasta::circuit_poseidon(pasta);
-    let app = ApplicationBuilder::<Pasta, R<13>, 4>::new()
-        .register(nontrivial::WitnessLeaf { poseidon_params })
-        .unwrap()
-        .register(nontrivial::Hash2 { poseidon_params })
-        .unwrap();
-    (app, pasta)
-}
-
-fn setup_seed() -> (
-    Application<'static, Pasta, R<13>, 4>,
-    &'static <Pasta as Cycle>::CircuitPoseidon,
-    SmallRng,
-) {
-    let pasta = Pasta::baked();
-    let poseidon_params = Pasta::circuit_poseidon(pasta);
-    let app = ApplicationBuilder::<Pasta, R<13>, 4>::new()
-        .register(nontrivial::WitnessLeaf { poseidon_params })
-        .unwrap()
-        .register(nontrivial::Hash2 { poseidon_params })
-        .unwrap()
-        .finalize(pasta)
-        .unwrap();
-    (app, poseidon_params, mock_rng())
-}
-
-fn setup_fuse() -> (
-    Application<'static, Pasta, R<13>, 4>,
-    Pcd<'static, Pasta, R<13>, nontrivial::LeafNode>,
-    Pcd<'static, Pasta, R<13>, nontrivial::LeafNode>,
-    &'static <Pasta as Cycle>::CircuitPoseidon,
-    SmallRng,
-) {
-    let (app, poseidon_params, mut rng) = setup_seed();
-
-    let (proof1, aux1) = app
-        .seed(
-            &mut rng,
-            nontrivial::WitnessLeaf { poseidon_params },
-            Fp::from(1u64),
-        )
-        .unwrap();
-    let leaf1 = proof1.carry::<nontrivial::LeafNode>(aux1);
-
-    let (proof2, aux2) = app
-        .seed(
-            &mut rng,
-            nontrivial::WitnessLeaf { poseidon_params },
-            Fp::from(2u64),
-        )
-        .unwrap();
-    let leaf2 = proof2.carry::<nontrivial::LeafNode>(aux2);
-
-    (app, leaf1, leaf2, poseidon_params, rng)
-}
-
-fn setup_verify_leaf() -> (
-    Application<'static, Pasta, R<13>, 4>,
-    Pcd<'static, Pasta, R<13>, nontrivial::LeafNode>,
-    SmallRng,
-) {
-    let (app, poseidon_params, mut rng) = setup_seed();
-
-    let (proof, aux) = app
-        .seed(
-            &mut rng,
-            nontrivial::WitnessLeaf { poseidon_params },
-            Fp::from(1u64),
-        )
-        .unwrap();
-    let leaf = proof.carry::<nontrivial::LeafNode>(aux);
-
-    (app, leaf, rng)
-}
-
-fn setup_verify_node() -> (
-    Application<'static, Pasta, R<13>, 4>,
-    Pcd<'static, Pasta, R<13>, nontrivial::InternalNode>,
-    SmallRng,
-) {
-    let (app, poseidon_params, mut rng) = setup_seed();
-
-    let (proof1, aux1) = app
-        .seed(
-            &mut rng,
-            nontrivial::WitnessLeaf { poseidon_params },
-            Fp::from(1u64),
-        )
-        .unwrap();
-    let leaf1 = proof1.carry::<nontrivial::LeafNode>(aux1);
-
-    let (proof2, aux2) = app
-        .seed(
-            &mut rng,
-            nontrivial::WitnessLeaf { poseidon_params },
-            Fp::from(2u64),
-        )
-        .unwrap();
-    let leaf2 = proof2.carry::<nontrivial::LeafNode>(aux2);
-
-    let (proof, aux) = app
-        .fuse(
-            &mut rng,
-            nontrivial::Hash2 { poseidon_params },
-            (),
-            leaf1,
-            leaf2,
-        )
-        .unwrap();
-    let node = proof.carry::<nontrivial::InternalNode>(aux);
-
-    (app, node, rng)
-}
-
-#[library_benchmark]
-#[bench::register(setup = setup_register)]
+#[library_benchmark(setup = setup_register)]
+#[bench::register()]
 fn register(
     (leaf, hash): (
         nontrivial::WitnessLeaf<'static, Pasta>,
@@ -162,11 +31,11 @@ fn register(
     );
 }
 
-#[library_benchmark]
-#[bench::finalize(setup = setup_finalize)]
+#[library_benchmark(setup = setup_finalize)]
+#[bench::finalize()]
 fn finalize(
     (app, pasta): (
-        ragu_pcd::ApplicationBuilder<'static, Pasta, R<13>, 4>,
+        ApplicationBuilder<'static, Pasta, R<13>, 4>,
         &'static <Pasta as Cycle>::Params,
     ),
 ) {
@@ -178,8 +47,8 @@ library_benchmark_group!(
     benchmarks = register, finalize
 );
 
-#[library_benchmark]
-#[bench::seed(setup = setup_seed)]
+#[library_benchmark(setup = setup_seed)]
+#[bench::seed()]
 fn seed(
     (app, poseidon_params, mut rng): (
         Application<'static, Pasta, R<13>, 4>,
@@ -195,8 +64,8 @@ fn seed(
     .unwrap();
 }
 
-#[library_benchmark]
-#[bench::fuse(setup = setup_fuse)]
+#[library_benchmark(setup = setup_fuse)]
+#[bench::fuse()]
 fn fuse(
     (app, leaf1, leaf2, poseidon_params, mut rng): (
         Application<'static, Pasta, R<13>, 4>,
@@ -221,8 +90,8 @@ library_benchmark_group!(
     benchmarks = seed, fuse
 );
 
-#[library_benchmark]
-#[bench::leaf(setup = setup_verify_leaf)]
+#[library_benchmark(setup = setup_verify_leaf)]
+#[bench::verify_leaf()]
 fn verify_leaf(
     (app, leaf, mut rng): (
         Application<'static, Pasta, R<13>, 4>,
@@ -233,8 +102,8 @@ fn verify_leaf(
     black_box(app.verify(&leaf, &mut rng)).unwrap();
 }
 
-#[library_benchmark]
-#[bench::node(setup = setup_verify_node)]
+#[library_benchmark(setup = setup_verify_node)]
+#[bench::verify_node()]
 fn verify_node(
     (app, node, mut rng): (
         Application<'static, Pasta, R<13>, 4>,
@@ -245,8 +114,8 @@ fn verify_node(
     black_box(app.verify(&node, &mut rng)).unwrap();
 }
 
-#[library_benchmark]
-#[bench::rerandomize(setup = setup_verify_node)]
+#[library_benchmark(setup = setup_verify_node)]
+#[bench::rerandomize()]
 fn rerandomize(
     (app, node, mut rng): (
         Application<'static, Pasta, R<13>, 4>,

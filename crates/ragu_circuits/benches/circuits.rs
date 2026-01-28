@@ -12,14 +12,14 @@ use ragu_circuits::test_fixtures::{MySimpleCircuit, SquareCircuit};
 use ragu_circuits::{Circuit, CircuitExt};
 use ragu_pasta::{Fp, Pasta};
 use setup::{
-    builder_squares, random_fp, random_structured_poly, random_structured_poly_vec,
-    random_unstructured_poly, registry_simple, setup_poseidon, setup_rng, setup_with_rng,
+    builder_squares, f, rand_structured_poly, rand_structured_poly_vec, rand_unstructured_poly,
+    registry_simple, setup_poseidon, setup_rng, setup_with_rng,
 };
 
 #[library_benchmark(setup = setup_with_rng)]
 #[bench::structured(
     Pasta::host_generators(Pasta::baked()),
-    (random_structured_poly, random_fp),
+    (rand_structured_poly, f),
 )]
 fn commit_structured(
     (generators, (poly, blind)): (
@@ -31,7 +31,7 @@ fn commit_structured(
 }
 
 #[library_benchmark(setup = setup_with_rng)]
-#[bench::unstructured(Pasta::host_generators(Pasta::baked()), (random_unstructured_poly, random_fp))]
+#[bench::unstructured(Pasta::host_generators(Pasta::baked()), (rand_unstructured_poly, f))]
 fn commit_unstructured(
     (generators, (poly, blind)): (
         &'static <Pasta as Cycle>::HostGenerators,
@@ -47,7 +47,7 @@ library_benchmark_group!(
 );
 
 #[library_benchmark(setup = setup_rng)]
-#[bench::revdot((random_structured_poly, random_structured_poly))]
+#[bench::revdot((rand_structured_poly, rand_structured_poly))]
 fn revdot(
     (poly1, poly2): (
         structured::Polynomial<Fp, R<13>>,
@@ -58,19 +58,19 @@ fn revdot(
 }
 
 #[library_benchmark(setup = setup_rng)]
-#[bench::fold((random_structured_poly_vec::<8>, random_fp))]
+#[bench::fold((rand_structured_poly_vec::<8>, f))]
 fn fold((polys, scale): (Vec<structured::Polynomial<Fp, R<13>>>, Fp)) {
     black_box(structured::Polynomial::fold(polys.iter(), scale));
 }
 
 #[library_benchmark(setup = setup_rng)]
-#[bench::eval((random_structured_poly, random_fp))]
+#[bench::eval((rand_structured_poly, f))]
 fn eval((poly, x): (structured::Polynomial<Fp, R<13>>, Fp)) {
     black_box(poly.eval(x));
 }
 
 #[library_benchmark(setup = setup_rng)]
-#[bench::dilate((random_structured_poly, random_fp))]
+#[bench::dilate((rand_structured_poly, f))]
 fn dilate((mut poly, z): (structured::Polynomial<Fp, R<13>>, Fp)) {
     poly.dilate(z);
     black_box(poly);
@@ -82,83 +82,82 @@ library_benchmark_group!(
 );
 
 #[library_benchmark(setup = setup_rng)]
-#[bench::ky((random_fp, random_fp))]
+#[bench::ky((f, f))]
 fn ky((a, b): (Fp, Fp)) {
     black_box(MySimpleCircuit.ky((a, b))).unwrap();
 }
 
 #[library_benchmark]
-#[bench::simple(MySimpleCircuit)]
-fn into_object_rank5(circuit: impl Circuit<Fp>) {
+#[bench::into_object_r5(MySimpleCircuit)]
+fn into_object_r5(circuit: impl Circuit<Fp>) {
     black_box(CircuitExt::<Fp>::into_object::<R<5>>(circuit)).unwrap();
 }
 
 #[library_benchmark]
-#[bench::square_2(SquareCircuit { times: 2 })]
-#[bench::square_10(SquareCircuit { times: 10 })]
-fn into_object_rank13(circuit: impl Circuit<Fp>) {
+#[benches::multiple( SquareCircuit { times: 2 }, SquareCircuit { times: 10 },)]
+fn into_object_r13(circuit: impl Circuit<Fp>) {
     black_box(CircuitExt::<Fp>::into_object::<R<13>>(circuit)).unwrap();
 }
 
 #[library_benchmark(setup = setup_rng)]
-#[bench::simple((random_fp, random_fp, random_fp))]
-fn rx_rank5((witness0, witness1, key): (Fp, Fp, Fp)) {
+#[bench::rx_r5((f, f, f))]
+fn rx_r5((witness0, witness1, key): (Fp, Fp, Fp)) {
     black_box(MySimpleCircuit.rx::<R<5>>((witness0, witness1), key)).unwrap();
 }
 
 #[library_benchmark(setup = setup_with_rng)]
-#[bench::square_2(SquareCircuit { times: 2 }, (random_fp, random_fp))]
-#[bench::square_10(SquareCircuit { times: 10 }, (random_fp, random_fp))]
-fn rx_rank13((circuit, (witness, key)): (SquareCircuit, (Fp, Fp))) {
+#[benches::multiple(
+        (SquareCircuit { times: 2 }, (f, f)),
+        (SquareCircuit { times: 10 }, (f, f)),
+    )]
+fn rx_r13((circuit, (witness, key)): (SquareCircuit, (Fp, Fp))) {
     black_box(circuit.rx::<R<13>>(witness, key)).unwrap();
 }
 
 library_benchmark_group!(
     name = circuit_synthesis;
-    benchmarks = into_object_rank5, into_object_rank13, ky, rx_rank5, rx_rank13,
+    benchmarks = into_object_r5, into_object_r13, ky, rx_r5, rx_r13,
 );
 
 #[library_benchmark]
-fn register_rank_25() {
+#[bench::register()]
+fn register() {
     black_box(builder_squares());
 }
 
 #[library_benchmark]
-#[bench::square_registry(setup_poseidon(), builder_squares())]
-fn finalize_rank_25(
-    poseidon: &<Pasta as Cycle>::CircuitPoseidon,
-    builder: RegistryBuilder<Fp, R<25>>,
-) {
+#[bench::finalize(setup_poseidon(), builder_squares())]
+fn finalize(poseidon: &<Pasta as Cycle>::CircuitPoseidon, builder: RegistryBuilder<Fp, R<25>>) {
     black_box(builder.finalize(poseidon)).unwrap();
 }
 
 #[library_benchmark(setup = setup_with_rng)]
-#[bench::xy(registry_simple(), (random_fp, random_fp))]
+#[bench::xy(registry_simple(), (f, f))]
 fn xy((registry, (x, y)): (Registry<'_, Fp, R<5>>, (Fp, Fp))) {
     black_box(registry.xy(x, y));
 }
 
 #[library_benchmark(setup = setup_with_rng)]
-#[bench::wy(registry_simple(), (random_fp, random_fp))]
+#[bench::wy(registry_simple(), (f, f))]
 fn wy((registry, (w, y)): (Registry<'_, Fp, R<5>>, (Fp, Fp))) {
     black_box(registry.wy(w, y));
 }
 
 #[library_benchmark(setup = setup_with_rng)]
-#[bench::wx(registry_simple(), (random_fp, random_fp))]
+#[bench::wx(registry_simple(), (f, f))]
 fn wx((registry, (w, x)): (Registry<'_, Fp, R<5>>, (Fp, Fp))) {
     black_box(registry.wx(w, x));
 }
 
 #[library_benchmark(setup = setup_with_rng)]
-#[bench::wxy(registry_simple(), (random_fp, random_fp, random_fp))]
+#[bench::wxy(registry_simple(), (f, f, f))]
 fn wxy((registry, (w, x, y)): (Registry<'_, Fp, R<5>>, (Fp, Fp, Fp))) {
     black_box(registry.wxy(w, x, y));
 }
 
 library_benchmark_group!(
     name = registry_ops;
-    benchmarks = register_rank_25, finalize_rank_25, xy, wy, wx, wxy
+    benchmarks = register, finalize, xy, wy, wx, wxy
 );
 
 main!(
