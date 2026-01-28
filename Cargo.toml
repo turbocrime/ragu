@@ -28,8 +28,6 @@ unstable-test-fixtures = [
   'ragu_primitives/unstable-test-fixtures',
 ]
 
-[lib]
-bench = false
 
 [dependencies]
 ragu_core = { path = "crates/ragu_core", version = "0.0.0" }
