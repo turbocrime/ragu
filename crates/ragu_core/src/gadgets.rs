@@ -333,7 +333,13 @@ pub use ragu_macros::gadget_kind as Kind;
 /// and equality constraints entirely, making `.enforced()` as efficient as
 /// `.unenforced()` for constraint-free stages while still correctly enforcing
 /// constraints for mixed stages.
+///
+/// Use `#[derive(Consistent)]` to auto-generate implementations that enforce
+/// consistency on all `#[ragu(gadget)]` fields.
 pub trait Consistent<'dr, D: Driver<'dr>>: Gadget<'dr, D> {
     /// Enforce internal consistency constraints on this gadget's wires.
     fn enforce_consistent(&self, dr: &mut D) -> Result<()>;
 }
+
+/// Derives [`Consistent`] by calling `enforce_consistent` on `#[ragu(gadget)]` fields.
+pub use ragu_macros::Consistent;
