@@ -15,6 +15,10 @@ use crate::{
     Circuit, CircuitExt, CircuitObject,
     polynomials::{R, Rank},
 };
+use ragu_core::maybe::Always;
+use ragu_core::routines::Prediction;
+use ragu_core::routines::Routine;
+use ragu_primitives::Simulator;
 
 /// Dummy circuit.
 pub struct SquareCircuit {
@@ -187,4 +191,48 @@ fn test_simple_circuit() {
     let b = b.unstructured();
 
     assert_eq!(expected, arithmetic::dot(a.iter(), b.iter().rev()),);
+}
+
+#[derive(Clone)]
+struct TestRoutine;
+
+impl Routine<Fp> for TestRoutine {
+    type Input = Kind![Fp; Element<'_, _>];
+    type Output = Kind![Fp; Element<'_, _>];
+    type Aux<'dr> = Fp;
+
+    fn execute<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        _input: <Self::Input as GadgetKind<Fp>>::Rebind<'dr, D>,
+        aux: DriverValue<D, Self::Aux<'dr>>,
+    ) -> Result<<Self::Output as GadgetKind<Fp>>::Rebind<'dr, D>> {
+        let precomputed_value = aux.take();
+        let element_from_aux = Element::alloc(dr, D::just(|| precomputed_value))?;
+        let other = Element::alloc(dr, D::just(|| Fp::from(5u64)))?;
+        let result = element_from_aux.add(dr, &other);
+        Ok(result)
+    }
+
+    fn predict<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        _dr: &mut D,
+        _input: &<Self::Input as GadgetKind<Fp>>::Rebind<'dr, D>,
+    ) -> Result<
+        Prediction<
+            <Self::Output as GadgetKind<Fp>>::Rebind<'dr, D>,
+            DriverValue<D, Self::Aux<'dr>>,
+        >,
+    > {
+        Ok(Prediction::Unknown(D::just(|| Fp::from(10u64))))
+    }
+}
+
+#[test]
+fn test_element() {
+    let mut simulator = Simulator::<Fp>::new();
+    let input = Element::alloc(&mut simulator, Always::<Fp>::just(|| Fp::from(5u64))).unwrap();
+    let result = simulator.routine(TestRoutine, input).unwrap();
+    assert_eq!(*result.value().take(), Fp::from(15u64));
+    assert_eq!(simulator.num_allocations(), 3);
 }
