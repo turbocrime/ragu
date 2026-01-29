@@ -76,7 +76,7 @@ jobs:
         run: mkdir -p ./bench-baseline
 
       - name: Run benchmarks
-        run: cargo bench --workspace --features unstable-test-fixtures -- --save-summary=json
+        run: cargo bench --workspace --all-features --locked -- --save-summary=json
 
       - name: Transform to github-action-benchmark format
         run: |

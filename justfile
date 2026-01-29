@@ -9,15 +9,15 @@ build_release *ARGS:
   cargo build --release --workspace --all-targets {{ARGS}}
 
 lint: _typos_setup _book_setup
-  cargo clippy --workspace --lib --tests --benches --features unstable-test-fixtures -- -D warnings
+  cargo clippy --workspace --lib --tests --benches --all-features -- -D warnings
   cargo fmt --all -- --check
   typos
   mdbook build ./book
 
 fix: _typos_setup 
   cargo fmt --all
-  cargo fix --allow-dirty --allow-staged --features unstable-test-fixtures
-  cargo clippy --fix --allow-dirty --allow-staged --features unstable-test-fixtures
+  cargo fix --allow-dirty --allow-staged --all-features
+  cargo clippy --fix --allow-dirty --allow-staged --all-features
   typos -w
 
 _install_binstall:
@@ -38,7 +38,7 @@ book COMMAND: _book_setup
 
 # run all tests
 test *ARGS:
-  cargo test --workspace {{ARGS}}
+  cargo test --workspace --all-features {{ARGS}}
 
 # run benchmarks (auto-detects platform)
 bench *ARGS:
@@ -63,18 +63,18 @@ bench-macos *ARGS:
     docker attach --no-stdin $container
 
 bench-linux *ARGS: _gungraun_setup
-    cargo bench --workspace --features unstable-test-fixtures {{ARGS}}
+    cargo bench --workspace --all-features {{ARGS}}
 
 # run CI checks locally (formatting, clippy, tests)
 ci_local: _book_setup
   @echo "Running formatting check..."
   cargo fmt --all -- --check
   @echo "Running clippy..."
-  cargo clippy --all --locked --features unstable-test-fixtures -- -D warnings
+  cargo clippy --workspace --lib --tests --benches --locked --all-features -- -D warnings
   @echo "Running tests..."
-  cargo test --release --all --locked
-  @echo "Building benchmarks..."
-  cargo build --benches --workspace --features unstable-test-fixtures
+  cargo test --release --all --locked --all-features
+  @echo "Building benchmarks and examples..."
+  cargo build --benches --examples --all-features
   @echo "Checking documentation..."
   RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all --locked --document-private-items
   @echo "Building book..."

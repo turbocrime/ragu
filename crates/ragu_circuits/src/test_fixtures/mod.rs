@@ -12,7 +12,6 @@ use ragu_core::{
     gadgets::{GadgetKind, Kind},
     maybe::Maybe,
 };
-use ragu_pasta::Fp;
 use ragu_primitives::Element;
 
 use crate::Circuit;
@@ -73,26 +72,26 @@ pub struct SquareCircuit {
     pub times: usize,
 }
 
-impl Circuit<Fp> for SquareCircuit {
-    type Instance<'instance> = Fp;
-    type Output = Kind![Fp; Element<'_, _>];
-    type Witness<'witness> = Fp;
+impl<F: Field> Circuit<F> for SquareCircuit {
+    type Instance<'instance> = F;
+    type Output = Kind![F; Element<'_, _>];
+    type Witness<'witness> = F;
     type Aux<'witness> = ();
 
-    fn instance<'dr, 'instance: 'dr, D: Driver<'dr, F = Fp>>(
+    fn instance<'dr, 'instance: 'dr, D: Driver<'dr, F = F>>(
         &self,
         dr: &mut D,
         instance: DriverValue<D, Self::Instance<'instance>>,
-    ) -> Result<<Self::Output as GadgetKind<Fp>>::Rebind<'dr, D>> {
+    ) -> Result<<Self::Output as GadgetKind<F>>::Rebind<'dr, D>> {
         Element::alloc(dr, instance)
     }
 
-    fn witness<'dr, 'witness: 'dr, D: Driver<'dr, F = Fp>>(
+    fn witness<'dr, 'witness: 'dr, D: Driver<'dr, F = F>>(
         &self,
         dr: &mut D,
         witness: DriverValue<D, Self::Witness<'witness>>,
     ) -> Result<(
-        <Self::Output as GadgetKind<Fp>>::Rebind<'dr, D>,
+        <Self::Output as GadgetKind<F>>::Rebind<'dr, D>,
         DriverValue<D, Self::Aux<'witness>>,
     )> {
         let mut a = Element::alloc(dr, witness)?;

@@ -1,6 +1,5 @@
-//! Test fixtures for ragu_pcd tests and benchmarks.
+//! Test fixtures for ragu_pcd benchmarks.
 //!
-//! This module provides reusable Header and Step implementations for testing.
+//! This module provides reusable Header and Step implementations for benchmarks.
 
 pub mod nontrivial;
-pub mod trivial;

@@ -21,9 +21,6 @@ mod verify;
 #[doc(hidden)]
 pub mod test_fixtures;
 
-#[cfg(test)]
-mod tests;
-
 use arithmetic::Cycle;
 use ragu_circuits::{
     polynomials::Rank,

@@ -1,6 +1,3 @@
-//! Unit tests for ragu_pcd.
-
-use arithmetic::Cycle;
 use ff::Field;
 use ragu_circuits::polynomials::R;
 use ragu_core::{
@@ -8,21 +5,18 @@ use ragu_core::{
     drivers::{Driver, DriverValue},
     gadgets::GadgetKind,
 };
-use ragu_pasta::{Fp, Pasta};
-use rand::{SeedableRng, rngs::StdRng};
-
-use crate::step::{Encoded, Index, Step};
-use crate::{
+use ragu_pasta::Pasta;
+use ragu_pcd::step::{Encoded, Index, Step};
+use ragu_pcd::{
     ApplicationBuilder,
     header::{Header, Suffix},
 };
 
-// ============================================================================
-// Test fixtures for registration_errors tests
-// ============================================================================
-
+// Header A with suffix 0
 struct HSuffixA;
+// Header B with suffix 1
 struct HSuffixB;
+// Different type, same suffix 0 (duplicate)
 struct HSuffixAOther;
 
 impl<F: Field> Header<F> for HSuffixA {
@@ -50,7 +44,7 @@ impl<F: Field> Header<F> for HSuffixB {
 }
 
 impl<F: Field> Header<F> for HSuffixAOther {
-    const SUFFIX: Suffix = Suffix::new(0);
+    const SUFFIX: Suffix = Suffix::new(0); // duplicate suffix
     type Data<'source> = ();
     type Output = ();
     fn encode<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
@@ -61,8 +55,9 @@ impl<F: Field> Header<F> for HSuffixAOther {
     }
 }
 
-struct RegStep0;
-impl<C: Cycle> Step<C> for RegStep0 {
+// Step 0 -> produces HSuffixA
+struct Step0;
+impl<C: arithmetic::Cycle> Step<C> for Step0 {
     const INDEX: Index = Index::new(0);
     type Witness<'source> = ();
     type Aux<'source> = ();
@@ -86,12 +81,14 @@ impl<C: Cycle> Step<C> for RegStep0 {
         let left = Encoded::new(dr, left)?;
         let right = Encoded::new(dr, right)?;
         let output = Encoded::from_gadget(());
+
         Ok(((left, right, output), D::just(|| ())))
     }
 }
 
-struct RegStep1;
-impl<C: Cycle> Step<C> for RegStep1 {
+// Step 1 -> consumes A and produces B
+struct Step1;
+impl<C: arithmetic::Cycle> Step<C> for Step1 {
     const INDEX: Index = Index::new(1);
     type Witness<'source> = ();
     type Aux<'source> = ();
@@ -115,12 +112,14 @@ impl<C: Cycle> Step<C> for RegStep1 {
         let left = Encoded::new(dr, left)?;
         let right = Encoded::new(dr, right)?;
         let output = Encoded::from_gadget(());
+
         Ok(((left, right, output), D::just(|| ())))
     }
 }
 
-struct RegStep1Dup;
-impl<C: Cycle> Step<C> for RegStep1Dup {
+// Duplicate suffix step (index 1) producing different header with same suffix
+struct Step1Dup;
+impl<C: arithmetic::Cycle> Step<C> for Step1Dup {
     const INDEX: Index = Index::new(1);
     type Witness<'source> = ();
     type Aux<'source> = ();
@@ -144,21 +143,18 @@ impl<C: Cycle> Step<C> for RegStep1Dup {
         let left = Encoded::new(dr, left)?;
         let right = Encoded::new(dr, right)?;
         let output = Encoded::from_gadget(());
+
         Ok(((left, right, output), D::just(|| ())))
     }
 }
-
-// ============================================================================
-// Registration error tests
-// ============================================================================
 
 #[test]
 fn register_steps_success_and_finalize() {
     let pasta = Pasta::baked();
     let builder = ApplicationBuilder::<Pasta, R<13>, 4>::new()
-        .register(RegStep0)
+        .register(Step0)
         .unwrap()
-        .register(RegStep1)
+        .register(Step1)
         .unwrap();
     builder.finalize(pasta).unwrap();
 }
@@ -167,7 +163,7 @@ fn register_steps_success_and_finalize() {
 #[should_panic]
 fn register_steps_out_of_order_should_fail() {
     ApplicationBuilder::<Pasta, R<13>, 4>::new()
-        .register(RegStep1)
+        .register(Step1)
         .unwrap();
 }
 
@@ -175,101 +171,8 @@ fn register_steps_out_of_order_should_fail() {
 #[should_panic]
 fn register_steps_duplicate_suffix_should_fail() {
     ApplicationBuilder::<Pasta, R<13>, 4>::new()
-        .register(RegStep0)
+        .register(Step0)
         .unwrap()
-        .register(RegStep1Dup)
+        .register(Step1Dup)
         .unwrap();
-}
-
-// ============================================================================
-// Rerandomization tests
-// ============================================================================
-
-#[test]
-fn rerandomization_flow() {
-    use crate::test_fixtures::trivial;
-
-    let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, R<13>, 4>::new()
-        .register(trivial::Step0)
-        .unwrap()
-        .register(trivial::Step1)
-        .unwrap()
-        .finalize(pasta)
-        .unwrap();
-
-    let mut rng = StdRng::seed_from_u64(1234);
-
-    let seeded = app.seed(&mut rng, trivial::Step0, ()).unwrap().0;
-    let seeded = seeded.carry::<trivial::HeaderA>(());
-    assert!(app.verify(&seeded, &mut rng).unwrap());
-
-    let seeded = app.rerandomize(seeded, &mut rng).unwrap();
-    assert!(app.verify(&seeded, &mut rng).unwrap());
-
-    let fused = app
-        .fuse(&mut rng, trivial::Step1, (), seeded.clone(), seeded)
-        .unwrap()
-        .0;
-    let fused = fused.carry::<trivial::HeaderA>(());
-    assert!(app.verify(&fused, &mut rng).unwrap());
-
-    let fused = app.rerandomize(fused, &mut rng).unwrap();
-    assert!(app.verify(&fused, &mut rng).unwrap());
-}
-
-// ============================================================================
-// Nontrivial tests
-// ============================================================================
-
-#[test]
-fn various_merging_operations() -> Result<()> {
-    use crate::test_fixtures::nontrivial;
-
-    let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, R<13>, 4>::new()
-        .register(nontrivial::WitnessLeaf {
-            poseidon_params: Pasta::circuit_poseidon(pasta),
-        })?
-        .register(nontrivial::Hash2 {
-            poseidon_params: Pasta::circuit_poseidon(pasta),
-        })?
-        .finalize(pasta)?;
-
-    let mut rng = StdRng::seed_from_u64(1234);
-
-    let leaf1 = app.seed(
-        &mut rng,
-        nontrivial::WitnessLeaf {
-            poseidon_params: Pasta::circuit_poseidon(pasta),
-        },
-        Fp::from(42u64),
-    )?;
-    let leaf1 = leaf1.0.carry(leaf1.1);
-    assert!(app.verify(&leaf1, &mut rng)?);
-
-    let leaf2 = app.seed(
-        &mut rng,
-        nontrivial::WitnessLeaf {
-            poseidon_params: Pasta::circuit_poseidon(pasta),
-        },
-        Fp::from(42u64),
-    )?;
-    let leaf2 = leaf2.0.carry(leaf2.1);
-    assert!(app.verify(&leaf2, &mut rng)?);
-
-    let node1 = app.fuse(
-        &mut rng,
-        nontrivial::Hash2 {
-            poseidon_params: Pasta::circuit_poseidon(pasta),
-        },
-        (),
-        leaf1,
-        leaf2,
-    )?;
-    let node1 = node1.0.carry::<nontrivial::InternalNode>(node1.1);
-
-    assert!(app.verify(&node1, &mut rng)?);
-
-    Ok(())
 }

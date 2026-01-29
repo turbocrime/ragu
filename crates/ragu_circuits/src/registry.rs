@@ -212,7 +212,7 @@ impl<F: Field> Default for Key<F> {
 
 impl<F: Field> Key<F> {
     /// Creates a new registry key from a field element, panic if zero.
-    pub(crate) fn new(val: F) -> Self {
+    pub fn new(val: F) -> Self {
         let inv = val.invert().expect("registry digest should never be zero");
         Self { val, inv }
     }

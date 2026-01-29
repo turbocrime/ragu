@@ -20,4 +20,4 @@ jobs:
       - name: Setup Rust
         uses: ./.github/actions/rust-setup
       - name: Run debug tests
-        run: cargo test --all --locked --verbose
+        run: cargo test --all --locked --all-features --verbose

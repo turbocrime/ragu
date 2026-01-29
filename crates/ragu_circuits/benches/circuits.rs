@@ -3,7 +3,6 @@
 mod setup;
 
 use std::hint::black_box;
-use std::sync::LazyLock;
 
 use arithmetic::Cycle;
 use gungraun::{library_benchmark, library_benchmark_group, main};
@@ -13,11 +12,9 @@ use ragu_circuits::test_fixtures::{MySimpleCircuit, SquareCircuit};
 use ragu_circuits::{Circuit, CircuitExt};
 use ragu_pasta::{Fp, Pasta};
 use setup::{
-    builder_squares, f, rand_structured_poly, rand_structured_poly_vec, rand_unstructured_poly,
-    registry_simple, setup_poseidon, setup_rng, setup_with_rng,
+    builder_squares, f, key, rand_structured_poly, rand_structured_poly_vec,
+    rand_unstructured_poly, registry_simple, setup_poseidon, setup_rng, setup_with_rng,
 };
-
-static BENCH_KEY: LazyLock<Key<Fp>> = LazyLock::new(Key::default);
 
 #[library_benchmark(setup = setup_with_rng)]
 #[bench::structured(
@@ -103,18 +100,18 @@ fn into_object_r13(circuit: impl Circuit<Fp>) {
 }
 
 #[library_benchmark(setup = setup_rng)]
-#[bench::rx_r5((f, f))]
-fn rx_r5((witness0, witness1): (Fp, Fp)) {
-    black_box(MySimpleCircuit.rx::<R<5>>((witness0, witness1), &BENCH_KEY)).unwrap();
+#[bench::rx_r5((f, f, key))]
+fn rx_r5((witness0, witness1, key): (Fp, Fp, Key<Fp>)) {
+    black_box(MySimpleCircuit.rx::<R<5>>((witness0, witness1), &key)).unwrap();
 }
 
 #[library_benchmark(setup = setup_with_rng)]
 #[benches::multiple(
-        (SquareCircuit { times: 2 }, (f,)),
-        (SquareCircuit { times: 10 }, (f,)),
+        (SquareCircuit { times: 2 }, (f, key)),
+        (SquareCircuit { times: 10 }, (f, key)),
     )]
-fn rx_r13((circuit, (witness,)): (SquareCircuit, (Fp,))) {
-    black_box(circuit.rx::<R<13>>(witness, &BENCH_KEY)).unwrap();
+fn rx_r13((circuit, (witness, key)): (SquareCircuit, (Fp, Key<Fp>))) {
+    black_box(circuit.rx::<R<13>>(witness, &key)).unwrap();
 }
 
 library_benchmark_group!(

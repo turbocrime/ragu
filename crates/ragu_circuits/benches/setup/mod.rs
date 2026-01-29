@@ -1,7 +1,7 @@
 use arithmetic::Cycle;
 use ff::Field;
 use ragu_circuits::polynomials::{R, structured, unstructured};
-use ragu_circuits::registry::{Registry, RegistryBuilder};
+use ragu_circuits::registry::{Key, Registry, RegistryBuilder};
 use ragu_circuits::test_fixtures::{MySimpleCircuit, SquareCircuit};
 use ragu_pasta::{Fp, Pasta};
 use rand::SeedableRng;
@@ -51,6 +51,10 @@ pub fn setup_with_rng<T, Fns: SetupRng<S>, S>(other: T, fns: Fns) -> (T, S) {
 
 pub fn f<F: Field>(rng: &mut StdRng) -> F {
     F::random(rng)
+}
+
+pub fn key<F: Field>(rng: &mut StdRng) -> Key<F> {
+    Key::new(F::random(rng))
 }
 
 pub fn rand_structured_poly(rng: &mut StdRng) -> structured::Polynomial<Fp, R<13>> {
