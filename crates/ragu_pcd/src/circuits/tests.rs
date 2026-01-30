@@ -40,8 +40,8 @@ fn test_internal_circuit_constraint_counts() {
 
     macro_rules! check_constraints {
         ($variant:ident, mul = $mul:expr, lin = $lin:expr) => {{
-            let idx =
-                NUM_APP_STEPS + step::NUM_INTERNAL_STEPS + InternalCircuitIndex::$variant as usize;
+            // Internal circuits now occupy fixed indices at the beginning of the registry
+            let idx = step::NUM_INTERNAL_STEPS + InternalCircuitIndex::$variant as usize;
             let circuit = &circuits[idx];
             let (actual_mul, actual_lin) = circuit.constraint_counts();
             assert_eq!(
@@ -117,7 +117,8 @@ fn print_internal_circuit_constraint_counts() {
 
     println!("\n// Copy-paste the following into test_internal_circuit_constraint_counts:");
     for (name, variant) in variants {
-        let idx = NUM_APP_STEPS + step::NUM_INTERNAL_STEPS + variant as usize;
+        // Internal circuits now occupy fixed indices at the beginning of the registry
+        let idx = step::NUM_INTERNAL_STEPS + variant as usize;
         let circuit = &circuits[idx];
         let (mul, lin) = circuit.constraint_counts();
         println!(
@@ -169,7 +170,7 @@ fn test_native_registry_digest() {
         .finalize(pasta)
         .unwrap();
 
-    let expected = fp!(0x1277dee2ad8fa4dddc022539e29ed544f6cd96261ee1baaa22819611e9e3e593);
+    let expected = fp!(0x09eb021e16d7e2e5fbd31c3db5728e606b4b9f078b7995fbea32be5e3fa2cebc);
 
     assert_eq!(
         app.native_registry.key().value(),

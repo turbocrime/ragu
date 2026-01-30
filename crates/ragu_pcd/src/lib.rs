@@ -29,8 +29,9 @@ use ragu_circuits::{
 use ragu_core::{Error, Result};
 use rand::Rng;
 
-use alloc::collections::BTreeMap;
+use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
 use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
+use ragu_circuits::{CircuitExt, CircuitObject};
 
 use header::Header;
 pub use proof::{Pcd, Proof};
@@ -38,7 +39,8 @@ use step::{Step, internal::adapter::Adapter};
 
 /// Builder for an [`Application`] for proof-carrying data.
 pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
-    native_registry: RegistryBuilder<'params, C::CircuitField, R>,
+    /// Application circuits to be registered after internal circuits
+    application_circuits: Vec<Box<dyn CircuitObject<C::CircuitField, R> + 'params>>,
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
     num_application_steps: usize,
     header_map: BTreeMap<header::Suffix, TypeId>,
@@ -59,7 +61,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
     /// Create an empty [`ApplicationBuilder`] for proof-carrying data.
     pub fn new() -> Self {
         ApplicationBuilder {
-            native_registry: RegistryBuilder::new(),
+            application_circuits: Vec::new(),
             nested_registry: RegistryBuilder::new(),
             num_application_steps: 0,
             header_map: BTreeMap::new(),
@@ -77,9 +79,8 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         self.prevent_duplicate_suffixes::<S::Left>()?;
         self.prevent_duplicate_suffixes::<S::Right>()?;
 
-        self.native_registry =
-            self.native_registry
-                .register_circuit(Adapter::<C, S, R, HEADER_SIZE>::new(step))?;
+        self.application_circuits
+            .push(Adapter::<C, S, R, HEADER_SIZE>::new(step).into_object()?);
         self.num_application_steps += 1;
 
         Ok(self)
@@ -94,7 +95,8 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
     #[cfg(test)]
     pub(crate) fn register_dummy_circuits(mut self, count: usize) -> Result<Self> {
         for _ in 0..count {
-            self.native_registry = self.native_registry.register_circuit(())?;
+            let circuit = ().into_object()?;
+            self.application_circuits.push(circuit);
             self.num_application_steps += 1;
         }
         Ok(self)
@@ -106,50 +108,51 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         mut self,
         params: &'params C::Params,
     ) -> Result<Application<'params, C, R, HEADER_SIZE>> {
-        // First, insert all of the internal steps.
-        {
-            self.native_registry =
-                self.native_registry
-                    .register_circuit(Adapter::<C, _, R, HEADER_SIZE>::new(
-                        step::internal::rerandomize::Rerandomize::<()>::new(),
-                    ))?;
+        // Build the native registry in the new order:
+        // 1. Internal steps (indices 0..2)
+        // 2. Internal circuits (indices 2..15)
+        // 3. Application circuits (indices 15+)
+        let mut native_registry = RegistryBuilder::new();
+        let (total_circuits, log2_circuits) =
+            circuits::native::total_circuit_counts(self.num_application_steps);
 
-            self.native_registry =
-                self.native_registry
-                    .register_circuit(Adapter::<C, _, R, HEADER_SIZE>::new(
-                        step::internal::trivial::Trivial::new(),
-                    ))?;
+        // First, register internal steps
+        native_registry =
+            native_registry.register_circuit(Adapter::<C, _, R, HEADER_SIZE>::new(
+                step::internal::rerandomize::Rerandomize::<()>::new(),
+            ))?;
+        native_registry = native_registry.register_circuit(
+            Adapter::<C, _, R, HEADER_SIZE>::new(step::internal::trivial::Trivial::new()),
+        )?;
+
+        // Then, register internal circuits used for recursion plumbing
+        native_registry = circuits::native::register_all::<C, R, HEADER_SIZE>(
+            native_registry,
+            params,
+            log2_circuits,
+        )?;
+
+        // Finally, register application circuits
+        for circuit in self.application_circuits {
+            native_registry = native_registry.register_circuit_object(circuit)?;
         }
 
-        // Then, insert all of the internal circuits used for recursion plumbing.
-        {
-            let (total_circuits, log2_circuits) =
-                circuits::native::total_circuit_counts(self.num_application_steps);
-
-            self.native_registry = circuits::native::register_all::<C, R, HEADER_SIZE>(
-                self.native_registry,
-                params,
-                log2_circuits,
-                self.num_application_steps,
-            )?;
-
-            assert_eq!(
-                self.native_registry.log2_circuits(),
-                log2_circuits,
-                "log2_circuits mismatch"
-            );
-            assert_eq!(
-                self.native_registry.num_circuits(),
-                total_circuits,
-                "final circuit count mismatch"
-            );
-        }
+        assert_eq!(
+            native_registry.log2_circuits(),
+            log2_circuits,
+            "log2_circuits mismatch"
+        );
+        assert_eq!(
+            native_registry.num_circuits(),
+            total_circuits,
+            "final circuit count mismatch"
+        );
 
         // Register nested internal circuits (no application steps, no headers).
         self.nested_registry = circuits::nested::register_all::<C, R>(self.nested_registry)?;
 
         Ok(Application {
-            native_registry: self.native_registry.finalize(C::circuit_poseidon(params))?,
+            native_registry: native_registry.finalize(C::circuit_poseidon(params))?,
             nested_registry: self.nested_registry.finalize(C::scalar_poseidon(params))?,
             params,
             num_application_steps: self.num_application_steps,

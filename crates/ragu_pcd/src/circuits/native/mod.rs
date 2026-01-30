@@ -45,15 +45,15 @@ pub(crate) const NUM_INTERNAL_CIRCUITS: usize = 13;
 
 /// Compute the total circuit count and log2 domain size from the number of
 /// application-defined steps.
-pub(crate) fn total_circuit_counts(num_application_steps: usize) -> (usize, u32) {
+pub(crate) const fn total_circuit_counts(num_application_steps: usize) -> (usize, u32) {
     let total_circuits = num_application_steps + step::NUM_INTERNAL_STEPS + NUM_INTERNAL_CIRCUITS;
     let log2_circuits = total_circuits.next_power_of_two().trailing_zeros();
     (total_circuits, log2_circuits)
 }
 
 impl InternalCircuitIndex {
-    pub(crate) fn circuit_index(self, num_application_steps: usize) -> CircuitIndex {
-        CircuitIndex::new(num_application_steps + step::NUM_INTERNAL_STEPS + self as usize)
+    pub(crate) const fn circuit_index(self) -> CircuitIndex {
+        CircuitIndex::from_u32(step::NUM_INTERNAL_STEPS as u32 + self as u32)
     }
 }
 
@@ -62,7 +62,6 @@ pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
     mut registry: RegistryBuilder<'params, C::CircuitField, R>,
     params: &'params C::Params,
     log2_circuits: u32,
-    num_application_steps: usize,
 ) -> Result<RegistryBuilder<'params, C::CircuitField, R>> {
     let initial_num_circuits = registry.num_circuits();
 
@@ -156,9 +155,7 @@ pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         >::new())?;
 
         // compute_v
-        registry = registry.register_circuit(compute_v::Circuit::<C, R, HEADER_SIZE>::new(
-            num_application_steps,
-        ))?;
+        registry = registry.register_circuit(compute_v::Circuit::<C, R, HEADER_SIZE>::new())?;
     }
 
     // Verify we registered the expected number of circuits.

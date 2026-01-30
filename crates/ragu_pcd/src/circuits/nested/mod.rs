@@ -39,19 +39,19 @@ pub(crate) enum InternalCircuitIndex {
     /// `PointsStage` final staged mask (index 2)
     PointsFinalStaged,
     /// `EndoscalingStep` circuit at given step (indices 3+)
-    EndoscalingStep(usize),
+    EndoscalingStep(u32),
 }
 
 impl InternalCircuitIndex {
     /// Convert to a [`CircuitIndex`] for registry lookup.
-    pub(crate) fn circuit_index(self) -> CircuitIndex {
+    pub(crate) const fn circuit_index(self) -> CircuitIndex {
         let idx = match self {
             Self::EndoscalarStage => 0,
             Self::PointsStage => 1,
             Self::PointsFinalStaged => 2,
             Self::EndoscalingStep(step) => 3 + step,
         };
-        CircuitIndex::new(idx)
+        CircuitIndex::from_u32(idx)
     }
 }
 

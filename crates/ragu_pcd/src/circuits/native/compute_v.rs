@@ -85,14 +85,12 @@ pub(crate) use super::InternalCircuitIndex::ComputeVCircuit as CIRCUIT_ID;
 /// [module-level documentation]: self
 /// [$v$]: unified::Output::v
 pub struct Circuit<C: Cycle, R, const HEADER_SIZE: usize> {
-    num_application_steps: usize,
     _marker: PhantomData<(C, R)>,
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Circuit<C, R, HEADER_SIZE> {
-    pub fn new(num_application_steps: usize) -> MultiStage<C::CircuitField, R, Self> {
+    pub fn new() -> MultiStage<C::CircuitField, R, Self> {
         MultiStage::new(Circuit {
-            num_application_steps,
             _marker: PhantomData,
         })
     }
@@ -213,16 +211,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
             let fu = {
                 let alpha = unified_output.alpha.get(dr, unified_instance)?;
                 let u = unified_output.u.get(dr, unified_instance)?;
-                let denominators = Denominators::new(
-                    dr,
-                    &u,
-                    &w,
-                    &x,
-                    &y,
-                    &z,
-                    &preamble,
-                    self.num_application_steps,
-                )?;
+                let denominators = Denominators::new(dr, &u, &w, &x, &y, &z, &preamble)?;
                 let mut horner = Horner::new(&alpha);
                 for (pu, v, denominator) in poly_queries(
                     &eval,
@@ -318,7 +307,6 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
         preamble: &native_preamble::Output<'dr, D, C, HEADER_SIZE>,
-        num_application_steps: usize,
     ) -> Result<Self>
     where
         D::F: ff::PrimeField,
@@ -327,7 +315,7 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
 
         let xz = x.mul(dr, z)?;
 
-        let mut inverter = Inverter::with_base(u.clone(), num_application_steps);
+        let mut inverter = Inverter::with_base(u.clone());
 
         let left_u = inverter.add(dr, &preamble.left.unified.u)?;
         let left_y = inverter.add(dr, &preamble.left.unified.y)?;
@@ -702,10 +690,6 @@ struct Inverter<'dr, D: Driver<'dr>> {
     /// base.
     base: Element<'dr, D>,
 
-    /// Number of application steps, used for computing internal circuit
-    /// indices.
-    num_application_steps: usize,
-
     /// Accumulated difference [`Element`]s: `(base - value)` for each added
     /// value.
     ///
@@ -721,10 +705,9 @@ impl<'dr, D: Driver<'dr, F: ff::PrimeField>> Inverter<'dr, D> {
     /// coordinate) from which all added values will be subtracted. This allows
     /// efficient batch inversion of differences $(u - x_i)$ using Montgomery's
     /// trick.
-    fn with_base(base: Element<'dr, D>, num_application_steps: usize) -> Self {
+    fn with_base(base: Element<'dr, D>) -> Self {
         Self {
             base,
-            num_application_steps,
             differences: Vec::new(),
         }
     }
@@ -759,13 +742,9 @@ impl<'dr, D: Driver<'dr, F: ff::PrimeField>> Inverter<'dr, D> {
     ///
     /// This is a convenience method for adding the FFT domain element
     /// corresponding to an internal circuit's index. The $\omega^j$ value is
-    /// computed from `circuit.circuit_index(num_application_steps).omega_j()`
-    /// using the stored `num_application_steps` field.
+    /// computed from `circuit.circuit_index().omega_j()` at compile time.
     fn add_circuit(&mut self, dr: &mut D, circuit: InternalCircuitIndex) -> Result<usize> {
-        self.add_constant(
-            dr,
-            circuit.circuit_index(self.num_application_steps).omega_j(),
-        )
+        self.add_constant(dr, circuit.circuit_index().omega_j())
     }
 
     /// Performs batch inversion on all accumulated differences.
