@@ -1,0 +1,70 @@
+name: Benchmarks Comment
+
+on:
+  workflow_run:
+    workflows: ["Benchmarks"]
+    types: [completed]
+
+permissions:
+  pull-requests: write
+  actions: read
+
+jobs:
+  comment:
+    name: Post benchmark alert
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    env:
+      THRESHOLD: 1.5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+
+      - name: Determine PR number
+        id: get_pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
+          PR_NUM=$(gh pr list --repo "${{ github.repository }}" --state open --json number,headRefOid --jq ".[] | select(.headRefOid==\"${HEAD_SHA}\") | .number")
+          if [ -n "$PR_NUM" ]; then
+            echo "number=${PR_NUM}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download benchmark results
+        if: steps.get_pr.outputs.number
+        uses: actions/download-artifact@v5
+        with:
+          name: gungraun-results
+          run-id: ${{ github.event.workflow_run.id }}
+          path: ./target/gungraun
+
+      - name: Identify regressions
+        if: steps.get_pr.outputs.number
+        id: regressions
+        run: |
+          find ./target/gungraun -name 'summary.json' -exec cat {} + | jq --slurp --argjson threshold ${{ env.THRESHOLD }} --from-file .github/scripts/extract-regressions.jq > ./regressions.json
+          echo "count=$(cat ./regressions.json | jq 'length')" >> $GITHUB_OUTPUT
+
+      - name: Generate regression alert
+        if: steps.regressions.outputs.count > 0
+        run: |
+          echo "# ⚠️ Performance Alert ⚠️" > ./alert.md
+          echo "" >> ./alert.md
+          echo "Possible performance regression exceeding threshold {{ env.THRESHOLD }}x detected." >> ./alert.md
+          echo "" >> ./alert.md
+          echo "| Benchmark | Current | Previous | Increase % |" >> ./alert.md
+          echo "|-|-|-|-|" >> ./alert.md
+          cat ./regressions.json | jq --raw-output --from-file ./.github/scripts/format-regressions.jq >> ./alert.md
+          echo "" >> ./alert.md
+          mv ./alert.md ./alert-{{ hashFiles('regressions.json') }}.md
+
+      - name: Post regression alert
+        if: steps.regressions.outputs.count > 0
+        uses: thollander/actions-comment-pull-request@v3
+        with:
+          pr-number: ${{ steps.get_pr.outputs.number }}
+          file-path: ./alert-{{ hashFiles('regressions.json') }}.md
+          comment-tag: benchmark-alert
+          mode: recreate
