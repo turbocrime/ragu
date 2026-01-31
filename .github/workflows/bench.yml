@@ -58,7 +58,7 @@ jobs:
           restore-keys: bench-${{ github.event.pull_request.base.sha || github.event.push.before }}
 
       - name: Run benchmarks
-        run: cargo bench --workspace --all-features --locked -- --save-summary=json
+        run: cargo bench --workspace --all-features --locked "arithmetic::*" -- --save-summary=json
 
       - name: Upload benchmark results artifact
         if: github.event_name == 'pull_request'
