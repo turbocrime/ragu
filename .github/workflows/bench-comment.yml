@@ -38,6 +38,7 @@ jobs:
         with:
           name: gungraun-results
           run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           path: ./target/gungraun
 
       - name: Identify regressions
@@ -52,19 +53,19 @@ jobs:
         run: |
           echo "# ⚠️ Performance Alert ⚠️" > ./alert.md
           echo "" >> ./alert.md
-          echo "Possible performance regression exceeding threshold {{ env.THRESHOLD }}x detected." >> ./alert.md
+          echo "Possible performance regression exceeding threshold ${{ env.THRESHOLD }}x detected." >> ./alert.md
           echo "" >> ./alert.md
           echo "| Benchmark | Current | Previous | Increase % |" >> ./alert.md
           echo "|-|-|-|-|" >> ./alert.md
           cat ./regressions.json | jq --raw-output --from-file ./.github/scripts/format-regressions.jq >> ./alert.md
           echo "" >> ./alert.md
-          mv ./alert.md ./alert-{{ hashFiles('regressions.json') }}.md
+          mv ./alert.md ./alert-${{ hashFiles('regressions.json') }}.md
 
       - name: Post regression alert
         if: steps.regressions.outputs.count > 0
         uses: thollander/actions-comment-pull-request@v3
         with:
           pr-number: ${{ steps.get_pr.outputs.number }}
-          file-path: ./alert-{{ hashFiles('regressions.json') }}.md
+          file-path: ./alert-${{ hashFiles('regressions.json') }}.md
           comment-tag: benchmark-alert
           mode: recreate
