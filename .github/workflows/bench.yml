@@ -50,12 +50,12 @@ jobs:
           apt-packages: valgrind
 
       - name: Load baseline
-        id: baseline
+        if: github.event_name == 'pull_request'
         uses: actions/cache/restore@v5
         with:
           path: target/gungraun
           key: bench-${{ github.sha }}
-          restore-keys: bench-${{ github.event.pull_request.base.sha || github.event.push.before }}
+          restore-keys: bench-${{ github.event.pull_request.base.sha }}
 
       - name: Run benchmarks
         run: cargo bench --workspace --all-features --locked "arithmetic::*" -- --save-summary=json
@@ -73,4 +73,4 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: target/gungraun
-          key: bench-${{ github.event.push.after }}
+          key: bench-${{ github.sha }}
