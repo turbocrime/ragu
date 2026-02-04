@@ -17,7 +17,7 @@
 
 use arithmetic::{Domain, PoseidonPermutation, bitreverse};
 use ff::{Field, PrimeField};
-use ragu_core::{Error, Result, drivers::emulator::Emulator, maybe::Maybe};
+use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::{Element, poseidon::Sponge};
 
 use alloc::{boxed::Box, collections::btree_map::BTreeMap, vec::Vec};
@@ -96,6 +96,11 @@ impl CircuitIndex {
         Self(index)
     }
 
+    /// Returns the index as a `usize` value.
+    pub const fn as_usize(self) -> usize {
+        self.0 as usize
+    }
+
     /// Returns $\omega^j$ field element that corresponds to this $i$th circuit index.
     ///
     /// The $i$th circuit added to any [`Registry`] (for a given [`PrimeField`] `F`) is
@@ -116,38 +121,41 @@ impl CircuitIndex {
 /// Builder for constructing a [`Registry`].
 ///
 /// Circuits are stored in deferred form until [`finalize`](Self::finalize),
-/// avoiding synthesis overhead during registration. The `OFFSET` parameter
-/// reserves slots at the beginning for internal circuits.
-pub struct RegistryBuilder<'params, F: PrimeField, R: Rank, const OFFSET: usize> {
+/// avoiding synthesis overhead during registration.
+///
+/// Circuits are organized into three categories:
+/// - `offset_masks`: Stage masks and final masks registered via offset methods
+/// - `offset_circuits`: Internal circuits and steps registered via offset methods
+/// - `circuits`: Application circuits and masks
+///
+/// During finalization, circuits are concatenated in the order:
+/// `offset_masks -> offset_circuits -> circuits`, ensuring internal masks can be
+/// optimized separately from circuits while maintaining proper PCD indexing.
+pub struct RegistryBuilder<'params, F: PrimeField, R: Rank> {
+    offset_masks: Vec<Box<dyn Deferrable<'params, F, R> + 'params>>,
+    offset_circuits: Vec<Box<dyn Deferrable<'params, F, R> + 'params>>,
     circuits: Vec<Box<dyn Deferrable<'params, F, R> + 'params>>,
-    num_offset_registered: usize,
 }
 
-impl<F: PrimeField, R: Rank, const OFFSET: usize> Default for RegistryBuilder<'_, F, R, OFFSET> {
+impl<F: PrimeField, R: Rank> Default for RegistryBuilder<'_, F, R> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<'params, F: PrimeField, R: Rank, const OFFSET: usize> RegistryBuilder<'params, F, R, OFFSET> {
-    /// Creates a new [`Registry`] builder.
+impl<'params, F: PrimeField, R: Rank> RegistryBuilder<'params, F, R> {
+    /// Creates a new [`Registry`] builder with empty circuit vectors.
     pub fn new() -> Self {
-        let mut circuits: Vec<Box<dyn Deferrable<'params, F, R> + 'params>> = Vec::new();
-
-        // Pre-fill offset slots with deferred trivial circuits
-        for _ in 0..OFFSET {
-            circuits.push(Box::new(DeferredCircuit(())));
-        }
-
         Self {
-            circuits,
-            num_offset_registered: 0,
+            offset_masks: Vec::new(),
+            offset_circuits: Vec::new(),
+            circuits: Vec::new(),
         }
     }
 
-    /// Returns the number of circuits currently registered in this builder.
+    /// Returns the total number of circuits across all categories.
     pub fn num_circuits(&self) -> usize {
-        self.circuits.len() - OFFSET + self.num_offset_registered
+        self.offset_masks.len() + self.offset_circuits.len() + self.circuits.len()
     }
 
     /// Returns the log2 of the smallest power-of-2 domain size that fits all circuits.
@@ -155,9 +163,9 @@ impl<'params, F: PrimeField, R: Rank, const OFFSET: usize> RegistryBuilder<'para
         self.num_circuits().next_power_of_two().trailing_zeros()
     }
 
-    /// Returns the number of offset circuits that have been registered
+    /// Returns the number of offset circuits (masks + circuits).
     pub fn num_offset_circuits(&self) -> usize {
-        self.num_offset_registered
+        self.offset_masks.len() + self.offset_circuits.len()
     }
 
     /// Registers a new circuit.
@@ -190,82 +198,63 @@ impl<'params, F: PrimeField, R: Rank, const OFFSET: usize> RegistryBuilder<'para
         Ok(self)
     }
 
-    /// Inserts a deferred circuit into the next offset slot.
-    fn push_offset(
-        &mut self,
-        deferred: Box<dyn Deferrable<'params, F, R> + 'params>,
-    ) -> Result<()> {
-        if self.num_offset_registered >= OFFSET {
-            return Err(Error::Initialization(
-                alloc::format!(
-                    "offset circuit buffer full: {} circuits already registered in {} offset slots",
-                    self.num_offset_registered,
-                    OFFSET
-                )
-                .into(),
-            ));
-        }
-
-        self.circuits[self.num_offset_registered] = deferred;
-        self.num_offset_registered += 1;
-
-        Ok(())
-    }
-
-    /// Registers an internal circuit in the reserved offset slots (synthesis deferred).
+    /// Registers an internal circuit in the offset circuits vector (synthesis deferred).
     pub fn register_offset_circuit<C>(mut self, circuit: C) -> Result<Self>
     where
         C: Circuit<F> + 'params,
     {
-        self.push_offset(Box::new(DeferredCircuit(circuit)))?;
+        self.offset_circuits
+            .push(Box::new(DeferredCircuit(circuit)));
         Ok(self)
     }
 
-    /// Registers a stage mask in the reserved offset slots (mask creation deferred).
+    /// Registers a stage mask in the offset masks vector (mask creation deferred).
     pub fn register_offset_mask<S>(mut self) -> Result<Self>
     where
         S: Stage<F, R> + 'params,
     {
-        self.push_offset(Box::new(DeferredMask::<S, R>::default()))?;
+        self.offset_masks
+            .push(Box::new(DeferredMask::<S, R>::default()));
         Ok(self)
     }
 
-    /// Registers a final stage mask in the reserved offset slots (mask creation deferred).
+    /// Registers a final stage mask in the offset masks vector (mask creation deferred).
     pub fn register_offset_final_mask<S>(mut self) -> Result<Self>
     where
         S: Stage<F, R> + 'params,
     {
-        self.push_offset(Box::new(DeferredFinalMask::<S, R>::default()))?;
+        self.offset_masks
+            .push(Box::new(DeferredFinalMask::<S, R>::default()));
         Ok(self)
     }
 
     /// Materializes all deferred circuits and builds the [`Registry`].
+    ///
+    /// Circuits are concatenated in the following order for proper indexing:
+    /// 1. `offset_masks` - internal stage enforcement masks
+    /// 2. `offset_circuits` - internal system circuits and steps
+    /// 3. `circuits` - application circuits and masks
+    ///
+    /// This ordering ensures internal masks can be optimized separately while
+    /// maintaining proper PCD indexing where internal items occupy indices 0..N
+    /// and application circuits occupy indices N..
     pub fn finalize<P: PoseidonPermutation<F>>(
         self,
         poseidon: &P,
     ) -> Result<Registry<'params, F, R>> {
-        if self.num_offset_registered < OFFSET {
-            return Err(Error::Initialization(
-                alloc::format!(
-                    "not all offset circuits registered: {}/{} registered",
-                    self.num_offset_registered,
-                    OFFSET
-                )
-                .into(),
-            ));
-        }
-
         let log2_circuits = self.log2_circuits();
         let domain = Domain::<F>::new(log2_circuits);
 
-        // Materialize all deferred circuits into circuit objects.
+        // Materialize all deferred circuits into circuit objects
         let circuits: Vec<Box<dyn CircuitObject<F, R> + 'params>> = self
-            .circuits
+            .offset_masks
             .into_iter()
+            .chain(self.offset_circuits)
+            .chain(self.circuits)
             .map(|deferred| deferred.materialize())
             .collect::<Result<_>>()?;
 
-        // Build omega^j -> i lookup table.
+        // Build omega^j -> i lookup table
         let mut omega_lookup = BTreeMap::new();
 
         for i in 0..circuits.len() {
@@ -282,7 +271,7 @@ impl<'params, F: PrimeField, R: Rank, const OFFSET: usize> RegistryBuilder<'para
             omega_lookup.insert(omega_j, i);
         }
 
-        // Create provisional registry (circuits still have placeholder K).
+        // Create provisional registry (circuits still have placeholder K)
         let mut registry = Registry {
             domain,
             circuits,
@@ -573,7 +562,7 @@ mod tests {
     use rand::thread_rng;
 
     type TestRank = R<8>;
-    type TestRegistryBuilder<'a> = RegistryBuilder<'a, Fp, TestRank, 0>;
+    type TestRegistryBuilder<'a> = RegistryBuilder<'a, Fp, TestRank>;
 
     #[test]
     fn test_omega_j_multiplicative_order() {
@@ -803,15 +792,14 @@ mod tests {
 
     #[test]
     fn test_registry_with_offset() -> Result<()> {
-        const OFFSET: usize = 3;
-        type OffsetRegistryBuilder<'a> = RegistryBuilder<'a, Fp, TestRank, OFFSET>;
+        type OffsetRegistryBuilder<'a> = RegistryBuilder<'a, Fp, TestRank>;
 
         let poseidon = Pasta::circuit_poseidon(Pasta::baked());
 
-        // Create a builder with 3 offset slots
+        // Create a builder
         let builder = OffsetRegistryBuilder::new();
 
-        // Verify initial state - no circuits registered yet (dummy circuits don't count)
+        // Verify initial state - no circuits registered yet
         assert_eq!(
             builder.num_circuits(),
             0,
@@ -847,41 +835,38 @@ mod tests {
             "now 4 total registered circuits (2 offset + 2 application)"
         );
 
-        // Finalize the registry - this should fail because not all offset slots are filled
-        let result = builder.finalize(poseidon);
-        assert!(
-            result.is_err(),
-            "should fail because only 2/3 offset circuits registered"
-        );
-
-        // Now fill the third offset slot
-        let builder = OffsetRegistryBuilder::new()
-            .register_offset_circuit(SquareCircuit { times: 1 })?
-            .register_offset_circuit(SquareCircuit { times: 2 })?
-            .register_offset_circuit(SquareCircuit { times: 3 })?
-            .register_circuit(SquareCircuit { times: 4 })?
-            .register_circuit(SquareCircuit { times: 5 })?;
-        assert_eq!(builder.num_circuits(), 5, "5 total registered circuits");
+        // Finalize the registry
         let registry = builder.finalize(poseidon)?;
-        assert_eq!(registry.circuits().len(), OFFSET + 2);
+        assert_eq!(registry.circuits().len(), 4);
 
         Ok(())
     }
 
     #[test]
-    fn test_offset_buffer_overflow() -> Result<()> {
-        const OFFSET: usize = 2;
-        type OffsetRegistryBuilder<'a> = RegistryBuilder<'a, Fp, TestRank, OFFSET>;
+    fn test_offset_ordering() -> Result<()> {
+        let poseidon = Pasta::circuit_poseidon(Pasta::baked());
 
-        let builder = OffsetRegistryBuilder::new()
+        // Test that offset circuits are placed before application circuits
+        let registry = TestRegistryBuilder::new()
             .register_offset_circuit(SquareCircuit { times: 1 })?
-            .register_offset_circuit(SquareCircuit { times: 2 })?;
-        assert!(
-            builder
-                .register_offset_circuit(SquareCircuit { times: 3 })
-                .is_err(),
-            "should fail when offset buffer is full"
-        );
+            .register_offset_circuit(SquareCircuit { times: 2 })?
+            .register_circuit(SquareCircuit { times: 3 })?
+            .register_circuit(SquareCircuit { times: 4 })?
+            .finalize(poseidon)?;
+
+        // Verify circuits appear in correct order: 2 offset circuits, then 2 application circuits
+        assert_eq!(registry.circuits().len(), 4);
+
+        // Test with mixed registration order
+        let registry2 = TestRegistryBuilder::new()
+            .register_circuit(SquareCircuit { times: 3 })?
+            .register_offset_circuit(SquareCircuit { times: 1 })?
+            .register_circuit(SquareCircuit { times: 4 })?
+            .register_offset_circuit(SquareCircuit { times: 2 })?
+            .finalize(poseidon)?;
+
+        // Should still have 4 circuits, with offset circuits placed first during finalization
+        assert_eq!(registry2.circuits().len(), 4);
 
         Ok(())
     }

@@ -4,14 +4,15 @@
 //! commitment accumulation was computed correctly via Horner's rule.
 
 use arithmetic::Cycle;
-use ragu_circuits::{polynomials::Rank, registry::CircuitIndex, staging::MultiStage};
+use ragu_circuits::{
+    polynomials::Rank,
+    registry::{CircuitIndex, RegistryBuilder},
+    staging::MultiStage,
+};
 use ragu_core::Result;
 use ragu_primitives::vec::Len;
 
-use crate::{
-    NestedRegistryBuilder,
-    components::endoscalar::{EndoscalarStage, EndoscalingStep, NumStepsLen, PointsStage},
-};
+use crate::components::endoscalar::{EndoscalarStage, EndoscalingStep, NumStepsLen, PointsStage};
 
 /// Number of curve points accumulated during `compute_p` for nested field
 /// endoscaling verification.
@@ -56,8 +57,8 @@ pub mod stages;
 
 /// Register internal nested circuits into the provided registry.
 pub(crate) fn register_all<'params, C: Cycle, R: Rank>(
-    mut registry: NestedRegistryBuilder<'params, C, R>,
-) -> Result<NestedRegistryBuilder<'params, C, R>> {
+    mut registry: RegistryBuilder<'params, C::ScalarField, R>,
+) -> Result<RegistryBuilder<'params, C::ScalarField, R>> {
     registry = registry.register_mask::<EndoscalarStage>()?;
 
     registry = registry.register_mask::<PointsStage<C::HostCurve, NUM_ENDOSCALING_POINTS>>()?;

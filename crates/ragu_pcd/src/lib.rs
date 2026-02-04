@@ -36,22 +36,10 @@ use header::Header;
 pub use proof::{Pcd, Proof};
 use step::{Step, internal::adapter::Adapter};
 
-/// Registry builder for native circuits with offset for internal circuits.
-pub(crate) type NativeRegistryBuilder<'params, C, R> = RegistryBuilder<
-    'params,
-    <C as Cycle>::CircuitField,
-    R,
-    { step::NUM_INTERNAL_STEPS + circuits::native::NUM_INTERNAL_CIRCUITS },
->;
-
-/// Registry builder for nested circuits with no offset.
-pub(crate) type NestedRegistryBuilder<'params, C, R> =
-    RegistryBuilder<'params, <C as Cycle>::ScalarField, R, 0>;
-
 /// Builder for an [`Application`] for proof-carrying data.
 pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
-    native_registry: NativeRegistryBuilder<'params, C, R>,
-    nested_registry: NestedRegistryBuilder<'params, C, R>,
+    native_registry: RegistryBuilder<'params, C::CircuitField, R>,
+    nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
     num_application_steps: usize,
     header_map: BTreeMap<header::Suffix, TypeId>,
     _marker: PhantomData<[(); HEADER_SIZE]>,
@@ -119,13 +107,21 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         params: &'params C::Params,
     ) -> Result<Application<'params, C, R, HEADER_SIZE>> {
         // Build the native registry:
-        // 1. Internal steps
+        // 1. Internal masks
         // 2. Internal circuits
-        // 3. Application circuits (already registered)
+        // 3. Internal steps
+        // 4. Application circuits (already registered)
         let (total_circuits, log2_circuits) =
             circuits::native::total_circuit_counts(self.num_application_steps);
 
-        // First, register internal steps
+        // First, register internal masks and circuits
+        self.native_registry = circuits::native::register_all::<C, R, HEADER_SIZE>(
+            self.native_registry,
+            params,
+            log2_circuits,
+        )?;
+
+        // Then, register internal steps
         self.native_registry =
             self.native_registry
                 .register_offset_circuit(Adapter::<C, _, R, HEADER_SIZE>::new(
@@ -136,13 +132,6 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
                 .register_offset_circuit(Adapter::<C, _, R, HEADER_SIZE>::new(
                     step::internal::trivial::Trivial::new(),
                 ))?;
-
-        // Then, register internal circuits
-        self.native_registry = circuits::native::register_all::<C, R, HEADER_SIZE>(
-            self.native_registry,
-            params,
-            log2_circuits,
-        )?;
 
         assert_eq!(
             self.native_registry.log2_circuits(),

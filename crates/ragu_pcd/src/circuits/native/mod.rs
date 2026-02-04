@@ -1,11 +1,14 @@
 //! Native curve circuits for recursive verification.
 
 use arithmetic::Cycle;
-use ragu_circuits::{polynomials::Rank, registry::CircuitIndex};
+use ragu_circuits::{
+    polynomials::Rank,
+    registry::{CircuitIndex, RegistryBuilder},
+};
 use ragu_core::Result;
 
 use super::NativeParameters;
-use crate::{NativeRegistryBuilder, step};
+use crate::step;
 
 pub mod stages;
 
@@ -51,7 +54,9 @@ pub(crate) const fn total_circuit_counts(num_application_steps: usize) -> (usize
 
 impl InternalCircuitIndex {
     pub(crate) const fn circuit_index(self) -> CircuitIndex {
-        CircuitIndex::from_u32(step::NUM_INTERNAL_STEPS as u32 + self as u32)
+        // Internal masks and circuits now come first (before internal steps),
+        // so no offset is needed.
+        CircuitIndex::from_u32(self as u32)
     }
 }
 
@@ -60,10 +65,10 @@ impl InternalCircuitIndex {
 /// All circuits registered here will be placed in the offset/prefix buffer,
 /// before any application circuits.
 pub(crate) fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
-    mut registry: NativeRegistryBuilder<'params, C, R>,
+    mut registry: RegistryBuilder<'params, C::CircuitField, R>,
     params: &'params C::Params,
     log2_circuits: u32,
-) -> Result<NativeRegistryBuilder<'params, C, R>> {
+) -> Result<RegistryBuilder<'params, C::CircuitField, R>> {
     let initial_offset_circuits = registry.num_offset_circuits();
 
     // Insert the stages.
