@@ -6,18 +6,6 @@ This section covers the internal implementation of Ragu's driver system. For a u
 
 Circuits are generic over the `Driver` trait. Each synthesis invocation is a deterministic pass over the circuit definition with a different backend "interpreter" that computes and extracts different information.
 
-### Comparison to halo2
-
-In halo2, circuits interact with a `Layouter` that assigns cells to fixed columns, and witness values are represented as `Value<F>` (essentially `Option<F>`) with runtime checks for availability. Constraints are scoped to regions within the layouter.
-
-Ragu takes a different approach:
-
-- **Opaque wire model**: Wire representations are driver-specific rather than fixed cell coordinates. Each driver may choose an optimal representation for its purpose—polynomial structures for synthesis, `()` for witness-only passes, simple IDs for counting.
-
-- **Compile-time witness elimination**: Some drivers may not actually need witness data. The `MaybeKind` associated type determines witness availability at compile time.
-
-- **Full monomorphization**: Concrete driver types enable complete inlining without trait object overhead.
-
 ## Lifetime Parameters `'dr` and `'source`
 
 Driver-generic code uses two lifetime parameters, `'dr` and `'source`.
