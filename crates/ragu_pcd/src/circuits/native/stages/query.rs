@@ -63,22 +63,23 @@ impl<'dr, D: Driver<'dr>> XzQuery<'dr, D> {
     }
 }
 
-/// Evaluation(s) of an rx polynomial at x and optionally xz.
-///
-/// For circuit claims, both x and xz evaluations are available. For raw a/b
-/// claims, only the x evaluation is available.
+/// Evaluation of an rx polynomial at x or xz.                                                                                                                                                                                                     
+///                                                                                                                                                                                                                                                
+/// For raw a/b claims, only one evaluation is used (xz for a, x for b).                                                                                                                                                                           
+/// For circuit/stage claims, we use the xz evaluation.  
 pub enum RxEval<'a, 'dr, D: Driver<'dr>> {
-    /// Only the x evaluation is available (used for raw a/b queries).
+    /// The x evaluation (used for raw b queries).
     X(&'a Element<'dr, D>),
-    /// Both x and xz evaluations are available.
-    Xz(&'a Element<'dr, D>, &'a Element<'dr, D>),
+    /// The xz evaluation (used for raw a queries and circuit/stage claims).
+    Xz(&'a Element<'dr, D>),
 }
 
 impl<'a, 'dr, D: Driver<'dr>> RxEval<'a, 'dr, D> {
     /// Returns the evaluation at x.
     pub fn x(&self) -> &'a Element<'dr, D> {
         match self {
-            Self::X(x) | Self::Xz(x, _) => x,
+            Self::X(x) => x,
+            Self::Xz(_) => panic!("x evaluation not available for xz-only RxEval"),
         }
     }
 
@@ -86,15 +87,15 @@ impl<'a, 'dr, D: Driver<'dr>> RxEval<'a, 'dr, D> {
     pub fn xz(&self) -> &'a Element<'dr, D> {
         match self {
             Self::X(_) => panic!("xz evaluation not available for x-only RxEval"),
-            Self::Xz(_, xz) => xz,
+            Self::Xz(xz) => xz,
         }
     }
 }
 
 impl<'dr, D: Driver<'dr>> XzQuery<'dr, D> {
-    /// Convert to an RxEval with both x and xz evaluations.
+    /// Convert to an RxEval with the xz evaluation.
     pub fn to_eval(&self) -> RxEval<'_, 'dr, D> {
-        RxEval::Xz(&self.at_x, &self.at_xz)
+        RxEval::Xz(&self.at_xz)
     }
 }
 
@@ -139,8 +140,8 @@ pub struct ChildEvaluationsWitness<F> {
     pub full_collapse: XzQueryWitness<F>,
     /// Compute V circuit rx polynomial evaluations.
     pub compute_v: XzQueryWitness<F>,
-    /// A polynomial evaluation at x.
-    pub a_poly_at_x: F,
+    /// A polynomial evaluation at xz.
+    pub a_poly_at_xz: F,
     /// B polynomial evaluation at x.
     pub b_poly_at_x: F,
     /// Child's registry_xy polynomial evaluated at current step's w.
@@ -177,7 +178,7 @@ impl<F: PrimeField> ChildEvaluationsWitness<F> {
                 proof.circuits.full_collapse_rx.eval(pt)
             }),
             compute_v: XzQueryWitness::eval(x, xz, |pt| proof.circuits.compute_v_rx.eval(pt)),
-            a_poly_at_x: proof.ab.a_poly.eval(x),
+            a_poly_at_xz: proof.ab.a_poly.eval(xz),
             b_poly_at_x: proof.ab.b_poly.eval(x),
             child_registry_xy_at_current_w: proof.query.registry_xy_poly.eval(w),
             current_registry_xy_at_child_circuit_id: registry_xy
@@ -319,9 +320,9 @@ pub struct ChildEvaluations<'dr, D: Driver<'dr>> {
     /// Compute V circuit rx polynomial evaluations.
     #[ragu(gadget)]
     pub compute_v: XzQuery<'dr, D>,
-    /// A polynomial evaluation at x.
+    /// A polynomial evaluation at xz.
     #[ragu(gadget)]
-    pub a_poly_at_x: Element<'dr, D>,
+    pub a_poly_at_xz: Element<'dr, D>,
     /// B polynomial evaluation at x.
     #[ragu(gadget)]
     pub b_poly_at_x: Element<'dr, D>,
@@ -354,7 +355,7 @@ impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
             partial_collapse: XzQuery::alloc(dr, witness.view().map(|w| &w.partial_collapse))?,
             full_collapse: XzQuery::alloc(dr, witness.view().map(|w| &w.full_collapse))?,
             compute_v: XzQuery::alloc(dr, witness.view().map(|w| &w.compute_v))?,
-            a_poly_at_x: Element::alloc(dr, witness.view().map(|w| w.a_poly_at_x))?,
+            a_poly_at_xz: Element::alloc(dr, witness.view().map(|w| w.a_poly_at_xz))?,
             b_poly_at_x: Element::alloc(dr, witness.view().map(|w| w.b_poly_at_x))?,
             child_registry_xy_at_current_w: Element::alloc(
                 dr,

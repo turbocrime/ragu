@@ -7,7 +7,7 @@
 //!
 //! ### Revdot folding
 //! - Retrieve layer 1 challenges [$\mu$], [$\nu$] and layer 2 challenges [$\mu'$], [$\nu'$]
-//! - Compute $a(x)$ and $b(x)$ via two-layer revdot folding of evaluation claims
+//! - Compute $a(xz)$ and $b(x)$ via two-layer revdot folding of evaluation claims
 //!
 //! ### $f(u)$ computation
 //! - Compute inverse denominators $(u - x_i)^{-1}$ for all evaluation points
@@ -178,7 +178,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
         // unified instance. This binds the prover's polynomial commitments to
         // the claimed evaluation.
         {
-            // Step 1: Compute a(x) and b(x) via two-layer revdot folding.
+            // Step 1: Compute a(xz) and b(x) via two-layer revdot folding.
             // These aggregate all evaluation claims into a single pair.
             let (computed_ax, computed_bx) = {
                 let mu = unified_output.mu.get(dr, unified_instance)?;
@@ -403,16 +403,16 @@ impl<'a, 'dr, D: Driver<'dr>> Source for EvaluationSource<'a, 'dr, D> {
     fn rx(&self, component: RxComponent) -> impl Iterator<Item = Self::Rx> {
         use RxComponent::*;
         let (left, right) = match component {
-            // Raw claims: only x evaluation is available
+            // Raw claims: a uses xz evaluation, b uses x evaluation
             AbA => (
-                RxEval::X(&self.left.a_poly_at_x),
-                RxEval::X(&self.right.a_poly_at_x),
+                RxEval::Xz(&self.left.a_poly_at_xz),
+                RxEval::Xz(&self.right.a_poly_at_xz),
             ),
             AbB => (
                 RxEval::X(&self.left.b_poly_at_x),
                 RxEval::X(&self.right.b_poly_at_x),
             ),
-            // Circuit claims: both x and xz evaluations available
+            // Circuit/stage claims: use xz evaluation
             Application => (
                 self.left.application.to_eval(),
                 self.right.application.to_eval(),
@@ -452,7 +452,7 @@ impl<'a, 'dr, D: Driver<'dr>> Source for EvaluationSource<'a, 'dr, D> {
 /// Processor that builds evaluation vectors for two-layer revdot folding.
 ///
 /// Collects evaluations into `ax` and `bx` vectors that will be folded to
-/// produce $a(x)$ and $b(x)$. Each claim type (raw, circuit, internal circuit,
+/// produce $a(xz)$ and $b(x)$. Each claim type (raw, circuit, internal circuit,
 /// stage) has different formulas for computing its contribution to the vectors.
 struct EvaluationProcessor<'a, 'dr, D: Driver<'dr>> {
     dr: &'a mut D,
@@ -489,13 +489,14 @@ impl<'a, 'dr, D: Driver<'dr>> Processor<RxEval<'a, 'dr, D>, &'a Element<'dr, D>>
     for EvaluationProcessor<'a, 'dr, D>
 {
     fn raw_claim(&mut self, a: RxEval<'a, 'dr, D>, b: RxEval<'a, 'dr, D>) {
-        self.ax.push(a.x().clone());
+        self.ax.push(a.xz().clone());
         self.bx.push(b.x().clone());
     }
 
     fn circuit(&mut self, sy: &'a Element<'dr, D>, rx: RxEval<'a, 'dr, D>) {
         // b(x) = rx(xz) + s_y + t(xz)
-        self.ax.push(rx.x().clone());
+        // a(xz) = rx(xz)
+        self.ax.push(rx.xz().clone());
         self.bx
             .push(rx.xz().add(self.dr, sy).add(self.dr, self.txz));
     }
@@ -511,11 +512,11 @@ impl<'a, 'dr, D: Driver<'dr>> Processor<RxEval<'a, 'dr, D>, &'a Element<'dr, D>>
         let mut b_sum = Element::zero(self.dr);
 
         for rx in rxs {
-            a_sum = a_sum.add(self.dr, rx.x());
+            a_sum = a_sum.add(self.dr, rx.xz());
             b_sum = b_sum.add(self.dr, rx.xz());
         }
 
-        // a(x) = sum of all rx(x)
+        // a(xz) = sum of all rx(xz)
         self.ax.push(a_sum);
         // b(x) = sum of all rx(xz) + s_y + t(xz)
         self.bx.push(b_sum.add(self.dr, sy).add(self.dr, self.txz));
@@ -528,16 +529,16 @@ impl<'a, 'dr, D: Driver<'dr>> Processor<RxEval<'a, 'dr, D>, &'a Element<'dr, D>>
     ) -> Result<()> {
         let sy = self.fixed_registry.circuit_registry(id);
 
-        // a(x) = fold of all rx(x) with z (Horner's rule)
+        // a(xz) = fold of all rx(xz) with z (Horner's rule)
         self.ax
-            .push(Element::fold(self.dr, rxs.map(|rx| rx.x()), self.z)?);
+            .push(Element::fold(self.dr, rxs.map(|rx| rx.xz()), self.z)?);
         // b(x) = s_y evaluated at circuit's omega^j
         self.bx.push(sy.clone());
         Ok(())
     }
 }
 
-/// Computes the expected value of $a(x), b(x)$ given the evaluations at $x$ of
+/// Computes the expected value of $a(xz), b(x)$ given the evaluations at $xz$ of
 /// every constituent polynomial at $x, xz$.
 ///
 /// This function is the authoritative source of the protocol's (recursive)
@@ -546,7 +547,7 @@ impl<'a, 'dr, D: Driver<'dr>> Processor<RxEval<'a, 'dr, D>, &'a Element<'dr, D>>
 /// of their folded revdot claim.
 ///
 /// The two-layer folding uses:
-/// - Layer 1: $\mu^{-1}$, $\mu'^{-1}$ for $a(x)$; $\mu\nu$, $\mu'\nu'$ for $b(x)$
+/// - Layer 1: $\mu^{-1}$, $\mu'^{-1}$ for $a(xz)$; $\mu\nu$, $\mu'\nu'$ for $b(x)$
 /// - Layer 2: Internal folding within each layer
 fn compute_axbx<'dr, D: Driver<'dr>, P: Parameters>(
     dr: &mut D,
@@ -587,8 +588,8 @@ fn compute_axbx<'dr, D: Driver<'dr>, P: Parameters>(
 /// 2. **Registry polynomial transitions** - $m(W,x,y) \to m(w,x,Y) \to m(w,X,y) \to s(W,x,y)$
 /// 3. **Internal circuit registry evaluations** - $m(\omega^j, x, y)$ for each internal index
 /// 4. **Application circuit registry evaluations** - $m(\text{circuit\_id}, x, y)$
-/// 5. **$a(x), b(x)$ polynomial queries** - Including verifier-computed values
-/// 6. **Stage/circuit evaluations** - At both $x$ and $xz$ points
+/// 5. **$a(xz), b(x)$ polynomial queries** - Including verifier-computed values
+/// 6. **Stage/circuit evaluations** - At $xz$ point only
 ///
 /// The queries must be ordered exactly as in the prover's computation of $f(X)$
 /// in [`compute_f`], since the ordering affects the weight
@@ -643,20 +644,19 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HE
         // m(circuit_id_i, x, y) evaluations for the ith child proof
         (&eval.registry_xy,            &query.left.current_registry_xy_at_child_circuit_id,  &d.left.circuit_id),
         (&eval.registry_xy,            &query.right.current_registry_xy_at_child_circuit_id, &d.right.circuit_id),
-        // a_i(x), b_i(x) polynomial queries at x for each child proof
-        (&eval.left.a_poly,        &query.left.a_poly_at_x,                          &d.challenges.x),
+        // a_i(xz), b_i(x) polynomial queries for each child proof
+        (&eval.left.a_poly,        &query.left.a_poly_at_xz,                         &d.challenges.xz),
         (&eval.left.b_poly,        &query.left.b_poly_at_x,                          &d.challenges.x),
-        (&eval.right.a_poly,       &query.right.a_poly_at_x,                         &d.challenges.x),
+        (&eval.right.a_poly,       &query.right.a_poly_at_xz,                        &d.challenges.xz),
         (&eval.right.b_poly,       &query.right.b_poly_at_x,                         &d.challenges.x),
-        // a(x), b(x) polynomial queries for the new accumulator; crucially, these evaluations
+        // a(xz), b(x) polynomial queries for the new accumulator; crucially, these evaluations
         // are computed by the verifier based on the other evaluations, NOT witnessed by the
         // prover.
-        (&eval.a_poly,             computed_ax,                                      &d.challenges.x),
+        (&eval.a_poly,             computed_ax,                                      &d.challenges.xz),
         (&eval.b_poly,             computed_bx,                                      &d.challenges.x),
     ])
-    // Stage and circuit evaluations for each child proof at both x and xz
-    // Note: both points are needed to perform circuit checks, which take
-    // the form << r, r \circ z + s_y + t_z >> = k_y.
+    // Stage and circuit evaluations for each child proof at xz only.
+    // The xz point suffices to bind rx polynomials via Schwartz-Zippel.
     .chain([(&eval.left, &query.left), (&eval.right, &query.right)]
         .into_iter()
         .flat_map(|(eval, query)| [
@@ -671,7 +671,7 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HE
             (&eval.partial_collapse, &query.partial_collapse),
             (&eval.full_collapse,    &query.full_collapse),
             (&eval.compute_v,        &query.compute_v),
-        ].into_iter().flat_map(|(e, q)| [(e, &q.at_x, &d.challenges.x), (e, &q.at_xz, &d.challenges.xz)])))
+        ].into_iter().map(|(e, q)| (e, &q.at_xz, &d.challenges.xz))))
 }
 
 /// Batch inverter for computing denominators.
