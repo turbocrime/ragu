@@ -523,18 +523,17 @@ impl<'a, 'dr, D: Driver<'dr>> Processor<RxEval<'a, 'dr, D>, &'a Element<'dr, D>>
     ) {
         let sy = self.fixed_registry.circuit_registry(id);
 
-        let mut a_sum = Element::zero(self.dr);
-        let mut b_sum = Element::zero(self.dr);
+        let mut sum = Element::zero(self.dr);
 
         for rx in rxs {
-            a_sum = a_sum.add(self.dr, rx.xz());
-            b_sum = b_sum.add(self.dr, rx.xz());
+            sum = sum.add(self.dr, rx.xz());
         }
 
-        // a(xz) = sum of all rx(xz)
-        self.ax.push(a_sum);
-        // b(x) = sum of all rx(xz) + s_y + t(xz)
-        self.bx.push(b_sum.add(self.dr, sy).add(self.dr, self.txz));
+        // a(xz) = rx(xz)
+        self.ax.push(sum.clone());
+
+        // b(x) = rx(xz) + s_y + t(xz)
+        self.bx.push(sum.add(self.dr, sy).add(self.dr, self.txz));
     }
 
     fn stage(
