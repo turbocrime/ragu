@@ -38,6 +38,7 @@ jobs:
 
       - name: Download benchmark results artifact
         if: steps.find_pr.outputs.pr_number
+        continue-on-error: true
         uses: actions/download-artifact@v5
         with:
           name: gungraun-results
@@ -49,6 +50,7 @@ jobs:
         if: steps.find_pr.outputs.pr_number
         id: regressions
         run: |
+          mkdir -p ./target/gungraun
           echo "regressions_json<<EOF" >> $GITHUB_OUTPUT
           find ./target/gungraun -name 'summary.json' -exec cat {} + \
             | jq --slurp --from-file .github/scripts/extract-regressions.jq \
