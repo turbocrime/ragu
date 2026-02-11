@@ -49,6 +49,7 @@ bench-macos *ARGS:
     #!/usr/bin/env sh
     [ -t 1 ] && tty_opt="--tty" # use tty if stdout is a tty
     container=$(docker run $tty_opt --detach --interactive --init --rm \
+        --memory=8g \
         -v "{{justfile_dir()}}":/workspace:ro \
         -v ragu-cargo:/.cargo \
         -v ragu-rustup:/.rustup \
