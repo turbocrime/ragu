@@ -1,0 +1,58 @@
+name: Flamegraph Comment
+
+on:
+  workflow_run:
+    workflows: ["Benchmarks"]
+    types: [completed]
+
+permissions:
+  pull-requests: write
+  actions: read
+
+jobs:
+  flamegraph-comment:
+    name: Post flamegraph artifact link
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+
+      - name: Determine PR number
+        id: find_pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR_NUMBER=$(gh pr list \
+              --repo ${{ github.repository }} \
+              --state open \
+              --json number,headRefName,headRefOid,headRepositoryOwner \
+            | jq --raw-output --from-file .github/scripts/find-pr.jq \
+              --arg pr_owner '${{ github.event.workflow_run.head_repository.owner.login }}' \
+              --arg pr_branch '${{ github.event.workflow_run.head_branch }}' \
+              --arg pr_sha '${{ github.event.workflow_run.head_sha }}')
+          echo "pr_number=${PR_NUMBER}" | tee $GITHUB_OUTPUT
+
+      - name: Check for flamegraph artifact
+        if: steps.find_pr.outputs.pr_number
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          artifact_id=$(gh api \
+            repos/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}/artifacts \
+            --jq '.artifacts[] | select(.name == "flamegraphs") | .id')
+          echo "artifact_id=${artifact_id}" | tee $GITHUB_OUTPUT
+
+      - name: Post flamegraph comment
+        if: steps.check.outputs.artifact_id
+        uses: thollander/actions-comment-pull-request@v3
+        with:
+          pr-number: ${{ steps.find_pr.outputs.pr_number }}
+          comment-tag: flamegraph
+          mode: recreate
+          message: |
+            ## Flamegraphs
+
+            Download flamegraph SVGs from the [benchmark artifacts](https://github.com/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}/artifacts/${{ steps.check.outputs.artifact_id }}).

@@ -14,6 +14,8 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  GUNGRAUN_REPO: https://github.com/turbocrime/gungraun
+  GUNGRAUN_REV: 20a17226e6d9657a00c57446f8467bbe01536722
 
 jobs:
   changes:
@@ -49,8 +51,18 @@ jobs:
         uses: ./.github/actions/rust-setup
         with:
           cache-suffix: bench
-          cargo-tools: gungraun-runner@0.17.0
           apt-packages: valgrind
+
+      - name: Cache gungraun-runner
+        id: cache-gungraun
+        uses: actions/cache@v5
+        with:
+          path: ~/.cargo/bin/gungraun-runner
+          key: gungraun-runner-${{ runner.os }}-${{ env.GUNGRAUN_REV }}
+
+      - name: Install gungraun-runner (patched fork)
+        if: steps.cache-gungraun.outputs.cache-hit != 'true'
+        run: cargo install --git ${{ env.GUNGRAUN_REPO }} --rev ${{ env.GUNGRAUN_REV }} gungraun-runner
 
       - name: Load baseline
         if: github.event_name == 'pull_request'
@@ -74,7 +86,16 @@ jobs:
         with:
           name: gungraun-results
           path: target/gungraun
-          retention-days: 1
+          retention-days: 7
+
+      - name: Upload flamegraph SVGs
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v5
+        with:
+          name: flamegraphs
+          path: target/gungraun/**/*.svg
+          retention-days: 7
+          if-no-files-found: ignore
 
       - name: Save baseline
         if: github.event_name == 'push'

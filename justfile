@@ -29,8 +29,8 @@ _book_setup: _install_binstall
 _typos_setup: _install_binstall
   @cargo binstall --quiet --no-confirm typos-cli
 
-_gungraun_setup: _install_binstall
-  @cargo binstall --quiet --no-confirm gungraun-runner@0.17.0
+_gungraun_setup:
+  @cargo install --git https://github.com/turbocrime/gungraun --rev 20a17226e6d9657a00c57446f8467bbe01536722 gungraun-runner
 
 # locally [build | serve | watch] Ragu book
 book COMMAND: _book_setup
