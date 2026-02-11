@@ -3,7 +3,10 @@
 mod setup;
 
 use arithmetic::Cycle;
-use gungraun::{library_benchmark, library_benchmark_group, main};
+use gungraun::{
+    Callgrind, FlamegraphConfig, LibraryBenchmarkConfig, library_benchmark,
+    library_benchmark_group, main,
+};
 use ragu_circuits::polynomials::R;
 use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::test_fixtures::nontrivial;
@@ -96,4 +99,11 @@ library_benchmark_group!(
     benchmarks = pcd_flamegraph
 );
 
-main!(library_benchmark_groups = app_setup, app_flamegraphs);
+main!(
+    config = LibraryBenchmarkConfig::default()
+        .tool(
+            Callgrind::default()
+                .flamegraph(FlamegraphConfig::default())
+        );
+    library_benchmark_groups = app_setup, app_flamegraphs
+);
