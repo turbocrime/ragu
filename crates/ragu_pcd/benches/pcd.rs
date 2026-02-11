@@ -48,87 +48,54 @@ library_benchmark_group!(
 );
 
 #[library_benchmark(setup = setup_seed)]
-#[bench::seed()]
-fn seed(
+#[bench::pcd_flamegraph()]
+fn pcd_flamegraph(
     (app, poseidon_params, mut rng): (
         Application<'static, Pasta, R<13>, 4>,
         &'static <Pasta as Cycle>::CircuitPoseidon,
         StdRng,
     ),
 ) {
-    black_box(app.seed(
-        &mut rng,
-        nontrivial::WitnessLeaf { poseidon_params },
-        Fp::from(42u64),
-    ))
-    .unwrap();
-}
+    black_box({
+        // seed two leaf proofs
+        let (proof1, aux1) = app
+            .seed(
+                &mut rng,
+                nontrivial::WitnessLeaf { poseidon_params },
+                Fp::from(1u64),
+            )
+            .unwrap();
+        let leaf1 = proof1.carry::<nontrivial::LeafNode>(aux1);
 
-#[library_benchmark(setup = setup_fuse)]
-#[bench::fuse()]
-fn fuse(
-    (app, leaf1, leaf2, poseidon_params, mut rng): (
-        Application<'static, Pasta, R<13>, 4>,
-        Pcd<'static, Pasta, R<13>, nontrivial::LeafNode>,
-        Pcd<'static, Pasta, R<13>, nontrivial::LeafNode>,
-        &'static <Pasta as Cycle>::CircuitPoseidon,
-        StdRng,
-    ),
-) {
-    black_box(app.fuse(
-        &mut rng,
-        nontrivial::Hash2 { poseidon_params },
-        (),
-        leaf1,
-        leaf2,
-    ))
-    .unwrap();
-}
+        let (proof2, aux2) = app
+            .seed(
+                &mut rng,
+                nontrivial::WitnessLeaf { poseidon_params },
+                Fp::from(2u64),
+            )
+            .unwrap();
+        let leaf2 = proof2.carry::<nontrivial::LeafNode>(aux2);
 
-library_benchmark_group!(
-    name = app_proof;
-    benchmarks = seed, fuse
-);
+        // fuse into an internal node
+        let (proof, aux) = app
+            .fuse(
+                &mut rng,
+                nontrivial::Hash2 { poseidon_params },
+                (),
+                leaf1,
+                leaf2,
+            )
+            .unwrap();
+        let node = proof.carry::<nontrivial::InternalNode>(aux);
 
-#[library_benchmark(setup = setup_verify_leaf)]
-#[bench::verify_leaf()]
-fn verify_leaf(
-    (app, leaf, mut rng): (
-        Application<'static, Pasta, R<13>, 4>,
-        Pcd<'static, Pasta, R<13>, nontrivial::LeafNode>,
-        StdRng,
-    ),
-) {
-    black_box(app.verify(&leaf, &mut rng)).unwrap();
-}
-
-#[library_benchmark(setup = setup_verify_node)]
-#[bench::verify_node()]
-fn verify_node(
-    (app, node, mut rng): (
-        Application<'static, Pasta, R<13>, 4>,
-        Pcd<'static, Pasta, R<13>, nontrivial::InternalNode>,
-        StdRng,
-    ),
-) {
-    black_box(app.verify(&node, &mut rng)).unwrap();
-}
-
-#[library_benchmark(setup = setup_verify_node)]
-#[bench::rerandomize()]
-fn rerandomize(
-    (app, node, mut rng): (
-        Application<'static, Pasta, R<13>, 4>,
-        Pcd<'static, Pasta, R<13>, nontrivial::InternalNode>,
-        StdRng,
-    ),
-) {
-    black_box(app.rerandomize(node, &mut rng)).unwrap();
+        // rerandomize the fused proof
+        app.rerandomize(node, &mut rng).unwrap()
+    });
 }
 
 library_benchmark_group!(
-    name = app_verify;
-    benchmarks = verify_leaf, verify_node, rerandomize
+    name = app_flamegraphs;
+    benchmarks = pcd_flamegraph
 );
 
-main!(library_benchmark_groups = app_setup, app_proof, app_verify);
+main!(library_benchmark_groups = app_setup, app_flamegraphs);

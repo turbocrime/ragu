@@ -48,7 +48,3 @@ gungraun = { workspace = true }
 [[bench]]
 name = "pcd"
 harness = false
-
-[[bench]]
-name = "pcd_flamegraph"
-harness = false
