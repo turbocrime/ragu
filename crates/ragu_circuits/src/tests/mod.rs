@@ -58,9 +58,11 @@ impl Circuit<Fp> for SquareCircuit {
 }
 
 fn consistency_checks<R: Rank>(circuit: &dyn CircuitObject<Fp, R>) {
-    let x = Fp::random(&mut rand::rng());
-    let y = Fp::random(&mut rand::rng());
-    let k = registry::Key::new(Fp::random(&mut rand::rng()));
+    use rand::SeedableRng;
+    let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
+    let x = Fp::random(&mut rng);
+    let y = Fp::random(&mut rng);
+    let k = registry::Key::new(Fp::random(&mut rng));
 
     let sxy_eval = circuit.sxy(x, y, &k);
     let s0y_eval = circuit.sxy(Fp::ZERO, y, &k);
@@ -157,8 +159,11 @@ fn test_simple_circuit() {
 
     consistency_checks(&*circuit);
 
-    let y = Fp::random(&mut rand::rng());
-    let z = Fp::random(&mut rand::rng());
+    use rand::SeedableRng;
+    let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
+
+    let y = Fp::random(&mut rng);
+    let z = Fp::random(&mut rng);
     let k = registry::Key::default();
 
     let a = assignment.clone();

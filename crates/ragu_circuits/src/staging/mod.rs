@@ -67,8 +67,8 @@
 //! let a = MyStage::rx(my_stage_witness)?;
 //!
 //! let mask = MyStage::mask()?;
-//! let y = Fp::random(&mut rand::rng());
-//! let registry_key = Fp::random(&mut rand::rng());
+//! let y = Fp::random(&mut rng);
+//! let registry_key = Fp::random(&mut rng);
 //! assert_eq!(a.revdot(&mask.sy(y, registry_key)), Fp::ZERO);
 //! ```
 //!
@@ -80,15 +80,15 @@
 //! let b = MyStage::rx(my_stage_witness)?;
 //!
 //! // Sample random challenge z after committing to `a` and `b`
-//! let z = Fp::random(&mut rand::rng());
+//! let z = Fp::random(&mut rng);
 //!
 //! let mut combined = a.clone();
 //! combined.scale(z);
 //! combined.add_assign(&b);
 //!
 //! let mask = MyStage::mask()?;
-//! let y = Fp::random(&mut rand::rng());
-//! let registry_key = Fp::random(&mut rand::rng());
+//! let y = Fp::random(&mut rng);
+//! let registry_key = Fp::random(&mut rng);
 //! assert_eq!(combined.revdot(&mask.sy(y, registry_key)), Fp::ZERO);
 //! ```
 //!

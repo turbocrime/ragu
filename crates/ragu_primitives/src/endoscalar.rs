@@ -314,8 +314,10 @@ mod tests {
 
     #[test]
     fn test_extract() -> Result<()> {
+        use rand::SeedableRng;
+        let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
         let p = EpAffine::generator();
-        let r = Fp::random(&mut rand::rng());
+        let r = Fp::random(&mut rng);
         let extracted = extract_endoscalar(r).value;
 
         Simulator::<Fp>::simulate((r, extracted, p), |dr, witness| {
@@ -339,8 +341,11 @@ mod tests {
 
     #[test]
     fn test_endoscaling() -> Result<()> {
+        use rand::SeedableRng;
+        let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
+
         let p = EpAffine::generator();
-        let r: Uendo = rand::rng().random();
+        let r: Uendo = rng.sample(rand::distributions::Standard);
         let expected = EndoscalarTest { value: r }.scale(&p);
 
         Simulator::simulate((p, r), |dr, witness| {
@@ -363,7 +368,9 @@ mod tests {
 
     #[test]
     fn test_endopacking() -> Result<()> {
-        let r: Uendo = rand::rng().random();
+        use rand::SeedableRng;
+        let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
+        let r: Uendo = rng.sample(rand::distributions::Standard);
         let expected: Fp = EndoscalarTest { value: r }.compute_scalar();
 
         Simulator::<Fp>::simulate(r, |dr, witness| {

@@ -530,6 +530,9 @@ mod tests {
 
     #[test]
     fn test_registry_circuit_consistency() -> Result<()> {
+        use rand::SeedableRng;
+        let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
+
         let registry = TestRegistryBuilder::new()
             .register_circuit(SquareCircuit { times: 2 })?
             .register_circuit(SquareCircuit { times: 5 })?
@@ -541,9 +544,9 @@ mod tests {
             .register_circuit(SquareCircuit { times: 19 })?
             .finalize()?;
 
-        let w = Fp::random(&mut rand::rng());
-        let x = Fp::random(&mut rand::rng());
-        let y = Fp::random(&mut rand::rng());
+        let w = Fp::random(&mut rng);
+        let x = Fp::random(&mut rng);
+        let y = Fp::random(&mut rng);
 
         let xy_poly = registry.xy(x, y);
         let wy_poly = registry.wy(w, y);
@@ -658,6 +661,9 @@ mod tests {
 
     #[test]
     fn test_non_power_of_two_registry_sizes() -> Result<()> {
+        use rand::SeedableRng;
+        let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
+
         for num_circuits in 0..21 {
             let mut builder = TestRegistryBuilder::new();
 
@@ -671,9 +677,9 @@ mod tests {
             let expected_domain_size = num_circuits.next_power_of_two();
             assert_eq!(registry.domain.n(), expected_domain_size);
 
-            let w = Fp::random(&mut rand::rng());
-            let x = Fp::random(&mut rand::rng());
-            let y = Fp::random(&mut rand::rng());
+            let w = Fp::random(&mut rng);
+            let x = Fp::random(&mut rng);
+            let y = Fp::random(&mut rng);
 
             let wxy = registry.wxy(w, x, y);
             let xy = registry.xy(x, y);

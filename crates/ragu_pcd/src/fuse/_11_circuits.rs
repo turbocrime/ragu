@@ -2,7 +2,7 @@ use ff::Field;
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{CircuitExt, polynomials::Rank};
 use ragu_core::Result;
-use rand::CryptoRng;
+use rand::Rng;
 
 use crate::{
     Application,
@@ -12,7 +12,7 @@ use crate::{
 };
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
-    pub(super) fn compute_internal_circuits<RNG: CryptoRng>(
+    pub(super) fn compute_internal_circuits<RNG: Rng>(
         &self,
         rng: &mut RNG,
         preamble: &proof::Preamble<C, R>,

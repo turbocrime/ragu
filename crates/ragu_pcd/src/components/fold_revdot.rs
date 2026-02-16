@@ -288,7 +288,8 @@ mod tests {
         type P = TestParams<3, 3>;
         type TestRank = R<4>;
         let n = <P as Parameters>::N::len();
-        let mut rng = rand::rng();
+        use rand::SeedableRng;
+        let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
 
         // Create N random polynomial pairs
         let lhs: Vec<structured::Polynomial<Fp, TestRank>> = (0..n)
@@ -355,7 +356,8 @@ mod tests {
         let n = <P as Parameters>::N::len();
 
         fn verify(count: usize, m: usize, n: usize) -> Result<()> {
-            let mut rng = rand::rng();
+            use rand::SeedableRng;
+            let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
 
             // Create `count` random polynomial pairs
             let lhs: Vec<structured::Polynomial<Fp, TestRank>> = (0..count)
@@ -428,12 +430,13 @@ mod tests {
     fn test_fold_products_constraints() -> Result<()> {
         fn measure<P: Parameters>() -> Result<usize> {
             let sim = Simulator::simulate((), |dr, _| {
-                let mu = Element::constant(dr, Fp::random(&mut rand::rng()));
-                let nu = Element::constant(dr, Fp::random(&mut rand::rng()));
+                use rand::SeedableRng;
+                let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
+                let mu = Element::constant(dr, Fp::random(&mut rng));
+                let nu = Element::constant(dr, Fp::random(&mut rng));
                 let error_terms =
-                    FixedVec::from_fn(|_| Element::constant(dr, Fp::random(&mut rand::rng())));
-                let ky_values =
-                    FixedVec::from_fn(|_| Element::constant(dr, Fp::random(&mut rand::rng())));
+                    FixedVec::from_fn(|_| Element::constant(dr, Fp::random(&mut rng)));
+                let ky_values = FixedVec::from_fn(|_| Element::constant(dr, Fp::random(&mut rng)));
 
                 let fold_products = FoldProducts::new(dr, &mu, &nu)?;
                 fold_products.fold_products_n::<P>(dr, &error_terms, &ky_values)?;
@@ -457,7 +460,8 @@ mod tests {
         /// Verify two-layer folding correctness with actual polynomials.
         fn verify<P: Parameters>() -> Result<()> {
             type TestRank = R<4>;
-            let mut rng = rand::rng();
+            use rand::SeedableRng;
+            let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
             let n = P::N::len();
             let m = P::M::len();
             let count = n * m;
@@ -581,7 +585,8 @@ mod tests {
         /// for both lhs and rhs polynomial sets with their respective scale factors.
         fn verify<P: Parameters>(count: usize) -> Result<()> {
             type TestRank = R<4>;
-            let mut rng = rand::rng();
+            use rand::SeedableRng;
+            let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
 
             // Create `count` random polynomial pairs (up to m*n)
             let lhs: Vec<structured::Polynomial<Fp, TestRank>> = (0..count)
@@ -704,7 +709,7 @@ mod tests {
     #[test]
     fn test_cost_formulas() -> Result<()> {
         fn verify<const M: usize, const N: usize>() -> Result<()> {
-            let rng = rand::rngs::StdRng::from_os_rng();
+            let rng = rand::rngs::StdRng::seed_from_u64(1234);
             let sim = Simulator::simulate(rng, |dr, mut rng| {
                 let mu = Element::alloc(dr, rng.view_mut().map(Fp::random))?;
                 let nu = Element::alloc(dr, rng.view_mut().map(Fp::random))?;
@@ -808,8 +813,9 @@ mod tests {
 
     #[test]
     fn test_error_term_ordering() {
+        use rand::SeedableRng;
         type TestRank = R<4>;
-        let mut rng = rand::rng();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
 
         // Create 3 distinct polynomial pairs
         let a: Vec<structured::Polynomial<Fp, TestRank>> = (0..3)
@@ -836,15 +842,17 @@ mod tests {
 
     #[test]
     fn test_fold_products_m_constraints() -> Result<()> {
+        use rand::SeedableRng;
         // Verify layer 1 constraint count formula: 2M^2 + 1 per group
         fn measure_m<const M: usize>() -> Result<usize> {
+            let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
             let sim = Simulator::simulate((), |dr, _| {
-                let mu = Element::constant(dr, Fp::random(&mut rand::rng()));
-                let nu = Element::constant(dr, Fp::random(&mut rand::rng()));
+                let mu = Element::constant(dr, Fp::random(&mut rng));
+                let nu = Element::constant(dr, Fp::random(&mut rng));
                 let error_terms: FixedVec<_, ErrorTermsLen<ConstLen<M>>> =
-                    FixedVec::from_fn(|_| Element::constant(dr, Fp::random(&mut rand::rng())));
+                    FixedVec::from_fn(|_| Element::constant(dr, Fp::random(&mut rng)));
                 let ky_values: FixedVec<_, ConstLen<M>> =
-                    FixedVec::from_fn(|_| Element::constant(dr, Fp::random(&mut rand::rng())));
+                    FixedVec::from_fn(|_| Element::constant(dr, Fp::random(&mut rng)));
 
                 let fold_products = FoldProducts::new(dr, &mu, &nu)?;
                 fold_products.fold_products_m::<TestParams<1, M>>(dr, &error_terms, &ky_values)?;
@@ -864,9 +872,10 @@ mod tests {
 
     #[test]
     fn test_native_parameters_correctness() -> Result<()> {
+        use rand::SeedableRng;
+        let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
         // Test with actual NativeParameters (M=6, N=18)
         type TestRank = R<4>;
-        let mut rng = rand::rng();
         let m = <NativeParameters as Parameters>::M::len();
         let _n = <NativeParameters as Parameters>::N::len();
 

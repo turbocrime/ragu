@@ -122,6 +122,8 @@ impl_rank_for_R! {2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,2
 #[test]
 fn test_tz() {
     use ragu_pasta::Fp;
+    use rand::SeedableRng;
+    let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
 
     type DemoR = R<7>;
 
@@ -130,7 +132,7 @@ fn test_tz() {
         poly.u.push(Fp::ONE);
         poly.v.push(Fp::ONE);
     }
-    let z = Fp::random(&mut rand::rng());
+    let z = Fp::random(&mut rng);
     poly.dilate(z);
     poly.negate();
 
@@ -150,9 +152,12 @@ fn test_tz() {
 #[test]
 fn test_txz_consistency() {
     use ragu_pasta::Fp;
+    use rand::SeedableRng;
+    let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
+
     type DemoR = R<10>;
-    let z = Fp::random(&mut rand::rng());
-    let x = Fp::random(&mut rand::rng());
+    let z = Fp::random(&mut rng);
+    let x = Fp::random(&mut rng);
     let txz = DemoR::txz(x, z);
     let tx0 = DemoR::txz(x, Fp::ZERO);
     let t0z: Fp = DemoR::txz(Fp::ZERO, z);

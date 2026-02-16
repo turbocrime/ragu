@@ -7,7 +7,7 @@ use ff::Field;
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{polynomials::Rank, staging::StageExt};
 use ragu_core::Result;
-use rand::CryptoRng;
+use rand::Rng;
 
 use crate::{
     Application, Proof,
@@ -16,7 +16,7 @@ use crate::{
 };
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
-    pub(super) fn compute_preamble<'a, RNG: CryptoRng>(
+    pub(super) fn compute_preamble<'a, RNG: Rng>(
         &self,
         rng: &mut RNG,
         left: &'a Proof<C, R>,

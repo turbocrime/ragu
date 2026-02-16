@@ -340,7 +340,6 @@ mod tests {
     };
     use ragu_pasta::{Ep, EpAffine, Fp, Fq};
     use ragu_primitives::{Endoscalar, vec::Len};
-    use rand::Rng;
 
     type R = polynomials::R<13>;
 
@@ -411,14 +410,17 @@ mod tests {
 
     #[test]
     fn test_endoscaling_steps() -> Result<()> {
+        use rand::{Rng, SeedableRng};
+        let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
+
         // Test with 13 total points (1 initial + 12 inputs = 3 steps of 4)
         const NUM_POINTS: usize = 13;
         let num_steps = NumStepsLen::<NUM_POINTS>::len();
 
         // Generate random endoscalar and base input points.
-        let endoscalar: Uendo = rand::rng().random();
+        let endoscalar: Uendo = rng.sample(rand::distributions::Standard);
         let base_inputs: [EpAffine; NUM_POINTS] = core::array::from_fn(|_| {
-            (Ep::generator() * <Ep as Group>::Scalar::random(&mut rand::rng())).to_affine()
+            (Ep::generator() * <Ep as Group>::Scalar::random(&mut rng)).to_affine()
         });
 
         // Compute expected final result via Horner over all base inputs.
@@ -453,7 +455,7 @@ mod tests {
 
             let staged_s = staged.clone().into_object()?;
             let ky = staged.ky(())?;
-            let y = Fp::random(&mut rand::rng());
+            let y = Fp::random(&mut rng);
 
             // Verify revdot identities for each stage.
             assert_eq!(endoscalar_rx.revdot(&endoscalar_mask.sy(y, &key)), Fp::ZERO);
@@ -475,6 +477,9 @@ mod tests {
 
     #[test]
     fn test_endoscaling_variable_length() -> Result<()> {
+        use rand::{Rng, SeedableRng};
+        let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
+
         // Test with 11 total points (1 initial + 10 inputs, not divisible by 4)
         // Step 0: initial + inputs[0..4], output interstitial[0]
         // Step 1: interstitial[0] + inputs[4..8], output interstitial[1]
@@ -489,9 +494,9 @@ mod tests {
         assert_eq!(InputsLen::<NUM_POINTS>::len(), 10);
 
         // Generate random endoscalar and base input points.
-        let endoscalar: Uendo = rand::rng().random();
+        let endoscalar: Uendo = rng.sample(rand::distributions::Standard);
         let base_inputs: [EpAffine; NUM_POINTS] = core::array::from_fn(|_| {
-            (Ep::generator() * <Ep as Group>::Scalar::random(&mut rand::rng())).to_affine()
+            (Ep::generator() * <Ep as Group>::Scalar::random(&mut rng)).to_affine()
         });
 
         // Compute expected final result via Horner over all base inputs.
@@ -520,7 +525,7 @@ mod tests {
 
             let staged_s = staged.clone().into_object()?;
             let ky = staged.ky(())?;
-            let y = Fp::random(&mut rand::rng());
+            let y = Fp::random(&mut rng);
 
             let endoscalar_rx = <EndoscalarStage as StageExt<Fp, R>>::rx(endoscalar)?;
             let points_rx = <PointsStage<EpAffine, NUM_POINTS> as StageExt<Fp, R>>::rx(&points)?;
@@ -630,9 +635,11 @@ mod tests {
     fn test_points_witness_new() {
         /// Verifies PointsWitness::new produces identical results to manual construction.
         fn check<const NUM_POINTS: usize>() {
-            let endoscalar: Uendo = rand::rng().random();
+            use rand::{Rng, SeedableRng};
+            let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
+            let endoscalar: Uendo = rng.sample(rand::distributions::Standard);
             let base_inputs: [EpAffine; NUM_POINTS] = core::array::from_fn(|_| {
-                (Ep::generator() * <Ep as Group>::Scalar::random(&mut rand::rng())).to_affine()
+                (Ep::generator() * <Ep as Group>::Scalar::random(&mut rng)).to_affine()
             });
 
             // Compute via PointsWitness::new

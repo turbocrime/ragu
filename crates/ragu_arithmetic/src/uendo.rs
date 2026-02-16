@@ -35,12 +35,10 @@ pub struct Uendo {
     limbs: [u64; LIMBS],
 }
 
-impl rand::distr::Distribution<Uendo> for rand::distr::StandardUniform {
+impl rand::distributions::Distribution<Uendo> for rand::distributions::Standard {
     fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> Uendo {
         let mut limbs = [0; LIMBS];
-        for limb in &mut limbs {
-            *limb = rng.random();
-        }
+        rng.fill(&mut limbs);
         Uendo { limbs }.normalized()
     }
 }

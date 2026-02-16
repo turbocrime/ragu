@@ -3,7 +3,7 @@
 
 use ff::Field;
 use ragu_arithmetic::CurveAffine;
-use rand::CryptoRng;
+use rand::{Rng, RngCore};
 
 use alloc::{vec, vec::Vec};
 use core::ops::{AddAssign, Deref, DerefMut};
@@ -48,7 +48,7 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
     }
 
     /// Creates a new polynomial with random coefficients.
-    pub fn random<RNG: CryptoRng>(rng: &mut RNG) -> Self {
+    pub fn random<RNG: Rng + RngCore>(rng: &mut RNG) -> Self {
         let mut coeffs = Vec::with_capacity(R::num_coeffs());
         for _ in 0..R::num_coeffs() {
             coeffs.push(F::random(&mut *rng));
@@ -162,24 +162,28 @@ impl<F: Field, R: Rank> AddAssign<&super::structured::Polynomial<F, R>> for Poly
 #[test]
 fn test_add_structured() {
     use ragu_pasta::Fp;
+    use rand::SeedableRng;
+    use rand::rngs::StdRng;
 
     type R = super::R<13>;
 
-    let p = super::structured::Polynomial::<Fp, R>::random(&mut rand::rng());
+    let mut rng = StdRng::seed_from_u64(1234);
+
+    let p = super::structured::Polynomial::<Fp, R>::random(&mut rng);
 
     let mut q = super::structured::Polynomial::<Fp, R>::new();
     for i in 0..R::n() {
         if i % 7 == 0 {
-            q.u.push(Fp::random(&mut rand::rng()));
+            q.u.push(Fp::random(&mut rng));
         }
         if i % 5 == 0 {
-            q.v.push(Fp::random(&mut rand::rng()));
+            q.v.push(Fp::random(&mut rng));
         }
         if i % 3 == 0 {
-            q.w.push(Fp::random(&mut rand::rng()));
+            q.w.push(Fp::random(&mut rng));
         }
         if i % 2 == 0 {
-            q.d.push(Fp::random(&mut rand::rng()));
+            q.d.push(Fp::random(&mut rng));
         }
     }
 

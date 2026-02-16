@@ -149,8 +149,11 @@ mod tests {
         // R<13> has log2_n = 11
         type TestRank = R<13>;
 
-        let x = Fp::random(&mut rand::rng());
-        let z = Fp::random(&mut rand::rng());
+        use rand::SeedableRng;
+        let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
+
+        let x = Fp::random(&mut rng);
+        let z = Fp::random(&mut rng);
         let evaluator = Evaluate::<TestRank>::new();
 
         Simulator::simulate((x, z), |dr, witness| {
