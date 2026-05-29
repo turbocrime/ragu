@@ -2,6 +2,8 @@
 //!
 //! This module provides reusable Header and Step implementations for benchmarks.
 
-pub mod multiset;
+pub mod multiset_pcd;
 pub mod nontrivial;
+pub mod poly_ops;
+pub mod poly_ops_pcd;
 pub mod poly_query;
