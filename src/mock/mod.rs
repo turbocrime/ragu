@@ -12,7 +12,7 @@ pub use ctx::StepCtx;
 pub use domain::Domain;
 pub use header::{Header, Suffix};
 pub use hooks::FrameworkHooks;
-pub use polynomial::Polynomial;
+pub use polynomial::{Polynomial, poly_with_roots};
 pub use proof::{Pcd, Proof};
 pub use ragu_arithmetic::{Cycle, FixedGenerators};
 pub use ragu_core::{Error, Result};

@@ -5,6 +5,8 @@ use ragu_arithmetic::{CryptoRngCore, Cycle};
 use ragu_circuits::polynomials::{ProductionRank, Rank, sparse};
 use ragu_pasta::{Eq, EqAffine, Fp, Pasta};
 
+pub use ragu_arithmetic::poly_with_roots;
+
 /// Mirrors [`ragu_circuits::polynomials::sparse::Polynomial`], concrete over the
 /// Pasta scalar field [`Fp`] and the [`ProductionRank`].
 #[derive(Clone, Debug, Default)]
