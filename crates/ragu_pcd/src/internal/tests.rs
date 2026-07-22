@@ -58,10 +58,10 @@ type Eval = eval::Stage<Pasta, R, HEADER_SIZE>;
 fn test_internal_circuit_constraint_counts() {
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
+    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new(pasta)
         .register_dummy_circuits(NUM_APP_STEPS)
         .unwrap()
-        .finalize(pasta)
+        .finalize()
         .unwrap();
 
     macro_rules! check_constraints {
@@ -121,10 +121,10 @@ fn print_internal_circuit_constraint_counts() {
 
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
+    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new(pasta)
         .register_dummy_circuits(NUM_APP_STEPS)
         .unwrap()
-        .finalize(pasta)
+        .finalize()
         .unwrap();
 
     let variants = [
@@ -191,10 +191,10 @@ fn print_internal_stage_parameters() {
 fn test_native_registry_digest() {
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
+    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new(pasta)
         .register_dummy_circuits(NUM_APP_STEPS)
         .unwrap()
-        .finalize(pasta)
+        .finalize()
         .unwrap();
 
     let expected = fp!(0x31e1786b198ad8953d0ec1699a2d1c7ed26d312a7c8c67099cb5a517259e54e3);
@@ -215,10 +215,10 @@ fn test_native_registry_digest() {
 fn test_nested_registry_digest() {
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
+    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new(pasta)
         .register_dummy_circuits(NUM_APP_STEPS)
         .unwrap()
-        .finalize(pasta)
+        .finalize()
         .unwrap();
 
     let expected = fq!(0x2f4bf855b80a694facbe9a2c26ee8d1dae9e15bb7b7eba54ca53f5c166e1d150);
@@ -241,10 +241,10 @@ fn print_registry_digests() {
 
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
+    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new(pasta)
         .register_dummy_circuits(NUM_APP_STEPS)
         .unwrap()
-        .finalize(pasta)
+        .finalize()
         .unwrap();
 
     let native_digest = app.native_registry.digest();

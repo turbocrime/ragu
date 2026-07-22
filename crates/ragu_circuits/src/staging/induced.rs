@@ -5,13 +5,13 @@
 //! [`MultiStageCircuit`](super::MultiStageCircuit)) pins a circuit's stage
 //! hierarchy in the type system: the `Parent` chain and the `values()` /
 //! `num_gates()` / `skip_gates()` associated functions determine the partial
-//! trace layout statically. 
+//! trace layout statically.
 //!
 //! However, some multistage circuit layouts cannot be known at compile time; notably, [`Step`](ragu_pcd::step::Step) circuits
 //! that use the [`derive_challenge`](ragu_pcd::framework_hooks::FrameworkHooks::derive_challenge) framework hook.
-//! [`InducedStages`](crate::staging::induced::InducedStages) mirror [`Stage`](super::Stage) chains, 
+//! [`InducedStages`](crate::staging::induced::InducedStages) mirror [`Stage`](super::Stage) chains,
 //! but their layouts can be determined at registry time, instead of Rust compile time.
-//! 
+//!
 //! * [`skip_gates`](InducedStages::skip_gates) / [`num_gates`](InducedStages::num_gates)
 //!   mirror [`Stage::skip_gates`](super::Stage::skip_gates) and
 //!   [`StageExt::num_gates`](super::StageExt::num_gates) — the fold over the

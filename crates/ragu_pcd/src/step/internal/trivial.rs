@@ -34,7 +34,7 @@ impl<C: Cycle> Step<C> for Trivial {
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
-        ctx: &mut StepCtx<'_, 'dr, D, C::NestedCurve>,
+        ctx: &mut StepCtx<'_, 'dr, D, C>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,

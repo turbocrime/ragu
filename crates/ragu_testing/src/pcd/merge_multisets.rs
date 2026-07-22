@@ -68,6 +68,80 @@ impl<C: Cycle, R: Rank> Header<C::CircuitField> for MultisetHeader<C, R> {
     }
 }
 
+/// Witness for [`WitnessMultiset`]: a polynomial and its framework commitment
+/// (from
+/// [`Application::commit_polynomial`](ragu_pcd::Application::commit_polynomial)).
+pub struct WitnessMultisetWitness<C: CurveAffine, R: Rank> {
+    pub commitment: C,
+    pub polynomial: sparse::Polynomial<C::Base, R>,
+}
+
+/// A seedable leaf step that introduces a [`Multiset`] into the PCD tree: the
+/// prover witnesses a polynomial and its framework commitment, which becomes
+/// the child multiset consumed by [`MergeMultisets`].
+pub struct WitnessMultiset<C, R>(PhantomData<(C, R)>);
+
+impl<C, R> WitnessMultiset<C, R> {
+    pub fn new() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<C, R> Default for WitnessMultiset<C, R> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<C: Cycle, R: Rank> Step<C> for WitnessMultiset<C, R> {
+    const INDEX: Index = Index::new(0);
+    type Witness<'source> = WitnessMultisetWitness<C::NestedCurve, R>;
+    type Aux<'source> = ();
+    type Left = ();
+    type Right = ();
+    type Output = MultisetHeader<C, R>;
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
+        &self,
+        ctx: &mut StepCtx<'_, 'dr, D, C>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        _left: DriverValue<D, ()>,
+        _right: DriverValue<D, ()>,
+    ) -> Result<(
+        (
+            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+        ),
+        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
+        let commitment = Point::alloc(ctx.dr, witness.as_ref().map(|w| w.commitment))?;
+        let polynomial = witness.map(|w| w.polynomial);
+
+        let output_data = commitment.value().and_then(|commitment| {
+            polynomial.map(|polynomial| MultisetData {
+                commitment,
+                polynomial,
+            })
+        });
+        let output_encoded = Encoded::from_gadget(commitment);
+
+        Ok((
+            (
+                Encoded::from_gadget(()),
+                Encoded::from_gadget(()),
+                output_encoded,
+            ),
+            output_data,
+            D::unit(),
+        ))
+    }
+}
+
 /// A step that merges the left and right child [`Multiset`]s into their product.
 pub struct MergeMultisets<C, R>(PhantomData<(C, R)>);
 
@@ -84,7 +158,7 @@ impl<C, R> Default for MergeMultisets<C, R> {
 }
 
 impl<C: Cycle, R: Rank> Step<C> for MergeMultisets<C, R> {
-    const INDEX: Index = Index::new(0);
+    const INDEX: Index = Index::new(1);
     /// The prover's commitment to the product polynomial.
     type Witness<'source> = C::NestedCurve;
     type Aux<'source> = ();
@@ -94,7 +168,7 @@ impl<C: Cycle, R: Rank> Step<C> for MergeMultisets<C, R> {
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
-        ctx: &mut StepCtx<'_, 'dr, D, C::NestedCurve>,
+        ctx: &mut StepCtx<'_, 'dr, D, C>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, MultisetData<C::NestedCurve, R>>,
         right: DriverValue<D, MultisetData<C::NestedCurve, R>>,
@@ -168,16 +242,19 @@ mod tests {
     fn registration_discovers_induced_stage_and_registers_masks() {
         let pasta = Pasta::baked();
 
-        let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
+        let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new(pasta)
+            .register(WitnessMultiset::<Pasta, R>::new())
+            .expect("leaf registration should succeed")
             .register(MergeMultisets::<Pasta, R>::new())
             .expect("registration should succeed")
-            .finalize(pasta)
+            .finalize()
             .expect("finalization should succeed");
 
         // `MergeMultisets` calls `derive_challenge` once with three `Point`s
-        // (6 wires), inducing one stage. The registry therefore holds the 13
-        // internal circuits, 2 internal steps, 1 application step, plus 2
-        // application masks (the stage mask and the final mask).
-        assert_eq!(app.native_registry().num_circuits(), 13 + 2 + 1 + 2);
+        // (6 wires), inducing one stage; `WitnessMultiset` induces none. The
+        // registry therefore holds the 13 internal circuits, 2 internal
+        // steps, 2 application steps, plus 2 application masks (the stage
+        // mask and the final mask).
+        assert_eq!(app.native_registry().num_circuits(), 13 + 2 + 2 + 2);
     }
 }

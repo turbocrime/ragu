@@ -21,8 +21,7 @@ use ragu_primitives::{
 use super::super::{Step, StepCtx};
 use crate::{
     Header,
-    framework_hooks::{FrameworkHookOutputs, FrameworkHooks},
-    internal::native::derived::DerivedChallengeOutput,
+    framework_hooks::{FrameworkHookOutputs, FrameworkHooks, PolyQueryClaim},
 };
 
 /// Represents triple a length determined at compile time.
@@ -48,11 +47,12 @@ impl<const N: usize> Len for TripleConstLen<N> {
 /// [`FrameworkHooks::derive_challenge`].)
 pub(crate) fn discover_induced_stages<C: Cycle, S: Step<C>, const HEADER_SIZE: usize>(
     step: &S,
+    poseidon: &C::CircuitPoseidon,
 ) -> Result<InducedStages> {
     let mut dr: Emulator<Wireless<Empty, C::CircuitField>> = Emulator::counter();
     let mut hooks = FrameworkHooks::<_, C::NestedCurve>::new();
     {
-        let mut ctx = StepCtx::new(&mut dr, &mut hooks);
+        let mut ctx = StepCtx::<'_, '_, _, C>::new(&mut dr, &mut hooks, poseidon);
         step.witness::<_, HEADER_SIZE>(&mut ctx, Empty, Empty, Empty)?;
     }
 
@@ -68,46 +68,48 @@ pub(crate) fn discover_induced_stages<C: Cycle, S: Step<C>, const HEADER_SIZE: u
 
 /// Auxiliary data produced by [`Adapter::witness`]: the two input headers, the
 /// output data carried by the resulting PCD, the inner step's own aux, and the
-/// polynomial-query claims raised by the step (surfaced for later fuse-time
-/// processing — see [`FrameworkHooks`]).
+/// polynomial-query claims raised by the step (checked and recorded by fuse —
+/// see [`FrameworkHooks`]).
 pub(crate) struct AdapterAux<'source, C: Cycle, S: Step<C>, const HEADER_SIZE: usize> {
     pub left_header: FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
     pub right_header: FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
     pub output_data: <S::Output as Header<C::CircuitField>>::Data,
     pub step_aux: S::Aux<'source>,
-    // TODO: surface these for fuse-time polynomial-query verification.
-    #[allow(dead_code)]
-    pub claims: Vec<(C::NestedCurve, C::CircuitField, C::CircuitField)>,
-    // Note: the stages induced by `derive_challenge` do not travel here as
-    // resolved values — `AdapterAux` is value-extracted via `D::try_just`, and
-    // the stages' deferred `(point, challenge)` handles are gadget wires bound
-    // to `'dr`, which value extraction cannot carry. Their geometry is
-    // deterministic ([`Adapter::induced_stages`]), and the binding constraints
-    // emitted during synthesis tie each reserved head-of-trace region to its
-    // gadget's wires, so fuse can carve each stage's slice out of the trace
-    // positionally. The handles themselves are retained on
-    // [`FrameworkHookOutputs::derived_challenges`] and assembled into the
-    // [`DerivedChallengeOutput`](crate::internal::native::derived) carrier while
-    // `'dr` is still live (see [`Adapter::witness`]). Committing those slices
-    // and resolving the deferred values is future fuse-side work.
+    /// The step's poly-query claims, each carrying the opened polynomial's
+    /// coefficients. Fuse enforces every claim natively and persists the
+    /// claim instances in the proof.
+    pub claims: Vec<PolyQueryClaim<C::CircuitField, C::NestedCurve>>,
+    // Note: the stages induced by `derive_challenge` do not travel here — the
+    // challenge is derived and constrained in-circuit, so nothing needs
+    // resolving downstream. The stage geometry is deterministic
+    // ([`Adapter::induced_stages`]) and is what the future succinct-challenge
+    // optimization will use to carve each stage's slice out of the trace
+    // positionally.
 }
 
-pub(crate) struct Adapter<C, S, R, const HEADER_SIZE: usize> {
+pub(crate) struct Adapter<'params, C: Cycle, S, R: Rank, const HEADER_SIZE: usize> {
     step: S,
     /// The induced stage layout discovered from the step's witness body at
     /// construction time; see [`discover_induced_stages`].
     induced: InducedStages,
+    /// The cycle's Poseidon parameters, threaded into the step body via
+    /// [`StepCtx`] (sound in-circuit challenge derivation needs them on every
+    /// driver, including the structure-only registration passes).
+    poseidon: &'params C::CircuitPoseidon,
     _marker: PhantomData<(C, R)>,
 }
 
-impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Adapter<C, S, R, HEADER_SIZE> {
+impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
+    Adapter<'params, C, S, R, HEADER_SIZE>
+{
     /// Wraps `step`, discovering its induced stage layout with a dry run of
     /// the witness body (see [`discover_induced_stages`]).
-    pub fn new(step: S) -> Result<Self> {
-        let induced = discover_induced_stages::<C, S, HEADER_SIZE>(&step)?;
+    pub fn new(step: S, poseidon: &'params C::CircuitPoseidon) -> Result<Self> {
+        let induced = discover_induced_stages::<C, S, HEADER_SIZE>(&step, poseidon)?;
         Ok(Adapter {
             step,
             induced,
+            poseidon,
             _marker: PhantomData,
         })
     }
@@ -120,7 +122,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Adapter<C, S, R, H
 }
 
 impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::CircuitField>
-    for Adapter<C, S, R, HEADER_SIZE>
+    for Adapter<'_, C, S, R, HEADER_SIZE>
 {
     type Instance<'source> = (
         FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
@@ -178,7 +180,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
 
         let mut hooks = FrameworkHooks::with_reserved(reserved);
         let ((left, right, output), output_data, step_aux) = {
-            let mut ctx = StepCtx::new(dr, &mut hooks);
+            let mut ctx = StepCtx::<'_, '_, _, C>::new(dr, &mut hooks, self.poseidon);
             self.step
                 .witness::<_, HEADER_SIZE>(&mut ctx, witness, left, right)?
         };
@@ -197,17 +199,6 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
                     .into(),
             ));
         }
-
-        // Assemble the verifier-visible carrier from the deferred handles the
-        // hook retained, while `'dr` is still live (the handles are gadget
-        // wires that cannot ride through the value-extracted `AdapterAux`). The
-        // carrier has no downstream consumer yet — resolving its values and the
-        // consuming recursion circuit are future fuse-side work — so it is
-        // dropped here; building it is the propagation path from the
-        // application witness into the structure.
-        let derived_output = DerivedChallengeOutput::from_stages(derived_challenges);
-        debug_assert_eq!(derived_output.len(), self.induced.len());
-        drop(derived_output);
 
         let mut elements = Vec::with_capacity(HEADER_SIZE * 3);
         left.write(dr, &mut elements)?;
@@ -286,7 +277,7 @@ mod tests {
 
         fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
             &self,
-            ctx: &mut StepCtx<'_, 'dr, D, <Pasta as ragu_arithmetic::Cycle>::NestedCurve>, // the type for user-supplied polynomial commitments
+            ctx: &mut StepCtx<'_, 'dr, D, Pasta>,
             _: DriverValue<D, ()>,
             left: DriverValue<D, Fp>,
             right: DriverValue<D, Fp>,
@@ -331,7 +322,7 @@ mod tests {
 
         fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
             &self,
-            ctx: &mut StepCtx<'_, 'dr, D, <Pasta as ragu_arithmetic::Cycle>::NestedCurve>,
+            ctx: &mut StepCtx<'_, 'dr, D, Pasta>,
             _: DriverValue<D, ()>,
             left: DriverValue<D, Fp>,
             right: DriverValue<D, Fp>,
@@ -350,8 +341,7 @@ mod tests {
 
             // Derive a challenge bound to both inputs: induces a stage of
             // width 2. The outputs are deferred; only the wires are used.
-            let (_point, challenge) =
-                ctx.derive_challenge((left_elem.clone(), right_elem.clone()))?;
+            let challenge = ctx.derive_challenge((left_elem.clone(), right_elem.clone()))?;
 
             // Output = left + right + challenge, so the deferred challenge
             // wire participates in downstream circuit structure.
@@ -383,8 +373,11 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep)
-            .expect("discovery should succeed");
+        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(
+            TestStep,
+            Pasta::circuit_poseidon(Pasta::baked()),
+        )
+        .expect("discovery should succeed");
         let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
 
         let output = adapter
@@ -401,8 +394,11 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep)
-            .expect("discovery should succeed");
+        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(
+            TestStep,
+            Pasta::circuit_poseidon(Pasta::baked()),
+        )
+        .expect("discovery should succeed");
         let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
 
         let aux = adapter
@@ -429,8 +425,11 @@ mod tests {
     /// A step without `derive_challenge` calls discovers an empty layout.
     #[test]
     fn discovery_finds_no_stages_for_plain_step() {
-        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep)
-            .expect("discovery should succeed");
+        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(
+            TestStep,
+            Pasta::circuit_poseidon(Pasta::baked()),
+        )
+        .expect("discovery should succeed");
         assert!(adapter.induced_stages().is_empty());
     }
 
@@ -438,8 +437,11 @@ mod tests {
     /// gadget's wire count.
     #[test]
     fn discovery_finds_induced_stage() {
-        let adapter = Adapter::<Pasta, ChallengeStep, TestR, HEADER_SIZE>::new(ChallengeStep)
-            .expect("discovery should succeed");
+        let adapter = Adapter::<Pasta, ChallengeStep, TestR, HEADER_SIZE>::new(
+            ChallengeStep,
+            Pasta::circuit_poseidon(Pasta::baked()),
+        )
+        .expect("discovery should succeed");
         let induced = adapter.induced_stages();
         assert_eq!(induced.len(), 1);
         // Two `Element`s -> width 2, one gate right after the SYSTEM gate.
@@ -459,8 +461,11 @@ mod tests {
         let mut dr: Emulator<Wireless<Empty, Fp>> = Emulator::counter();
         let dr = &mut dr;
 
-        let adapter = Adapter::<Pasta, ChallengeStep, TestR, HEADER_SIZE>::new(ChallengeStep)
-            .expect("discovery should succeed");
+        let adapter = Adapter::<Pasta, ChallengeStep, TestR, HEADER_SIZE>::new(
+            ChallengeStep,
+            Pasta::circuit_poseidon(Pasta::baked()),
+        )
+        .expect("discovery should succeed");
 
         let output = adapter
             .witness(dr, Empty)

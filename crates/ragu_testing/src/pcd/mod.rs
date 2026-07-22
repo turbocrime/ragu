@@ -6,3 +6,4 @@ pub mod merge_multisets;
 pub mod multiset;
 pub mod nontrivial;
 pub mod poly_query;
+pub mod sound_oracle;

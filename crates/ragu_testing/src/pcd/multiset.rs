@@ -16,7 +16,7 @@
 //!
 //! [`Step::witness`]: ragu_pcd::step::Step::witness
 
-use ragu_arithmetic::{CurveAffine, ff::PrimeField, poly_mul};
+use ragu_arithmetic::{CurveAffine, Cycle, ff::Field as _, ff::PrimeField, poly_mul};
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{
     Result,
@@ -82,22 +82,30 @@ where
     /// [`sparse::Polynomial::from_coeffs`] will panic if the result exceeds
     /// `R::num_coeffs()`. Choosing the right `R` is the caller's
     /// responsibility.
-    pub fn merge(
+    pub fn merge<Cy: Cycle<CircuitField = D::F, NestedCurve = C>>(
         self,
         other: Self,
-        ctx: &mut StepCtx<'_, 'dr, D, C>,
+        ctx: &mut StepCtx<'_, 'dr, D, Cy>,
         product_com_witness: DriverValue<D, C>,
     ) -> Result<Self>
     where
         D::F: PrimeField,
     {
         // 1. Compute the product polynomial via FFT (prover-only).
+        // `iter_coeffs` yields every coefficient up to the rank's capacity, so
+        // trailing zeros are trimmed before multiplying to keep the product's
+        // degree at deg(a) + deg(b).
+        let trimmed = |p: &sparse::Polynomial<D::F, R>| {
+            let mut coeffs: Vec<D::F> = p.iter_coeffs().collect();
+            while coeffs.last().is_some_and(|c| bool::from(c.is_zero())) {
+                coeffs.pop();
+            }
+            coeffs
+        };
         let product = self.polynomial.clone().and_then(|a| {
             other.polynomial.clone().map(|b| {
-                let a_coeffs: Vec<D::F> = a.iter_coeffs().collect();
-                let b_coeffs: Vec<D::F> = b.iter_coeffs().collect();
                 let mut out = Vec::new();
-                poly_mul(&a_coeffs, &b_coeffs, &mut out);
+                poly_mul(&trimmed(&a), &trimmed(&b), &mut out);
                 sparse::Polynomial::from_coeffs(out)
             })
         });
@@ -109,7 +117,7 @@ where
         //    bundled points and hashes that commitment to produce the
         //    challenge — the Multiset never touches a sponge. We only need the
         //    challenge here, so the returned binding commitment is discarded.
-        let (_, z) = ctx.derive_challenge([
+        let z = ctx.derive_challenge([
             self.commitment.clone(),
             other.commitment.clone(),
             product_com.clone(),
@@ -126,10 +134,25 @@ where
         let y_b = Element::alloc(ctx.dr, alloc, eval_at(other.polynomial.clone()))?;
         let y_prod = Element::alloc(ctx.dr, alloc, eval_at(product.clone()))?;
 
-        // 5. Surface three poly-query claims for fuse-time verification.
-        ctx.enforce_poly_query(self.commitment, z.clone(), y_a.clone())?;
-        ctx.enforce_poly_query(other.commitment, z.clone(), y_b.clone())?;
-        ctx.enforce_poly_query(product_com.clone(), z, y_prod.clone())?;
+        // 5. Surface three poly-query claims for fuse-time verification. Each
+        //    claim carries its polynomial's coefficients so the framework can
+        //    enforce the evaluation and the commitment binding.
+        let coeffs = |poly: &DriverValue<D, sparse::Polynomial<D::F, R>>| {
+            poly.as_ref().map(|p| p.iter_coeffs().collect::<Vec<_>>())
+        };
+        ctx.enforce_poly_query(
+            self.commitment,
+            z.clone(),
+            y_a.clone(),
+            coeffs(&self.polynomial),
+        )?;
+        ctx.enforce_poly_query(
+            other.commitment,
+            z.clone(),
+            y_b.clone(),
+            coeffs(&other.polynomial),
+        )?;
+        ctx.enforce_poly_query(product_com.clone(), z, y_prod.clone(), coeffs(&product))?;
 
         // 6. In-circuit Schwartz–Zippel check: y_prod == y_a · y_b at z.
         let computed = y_a.mul(ctx.dr, &y_b)?;

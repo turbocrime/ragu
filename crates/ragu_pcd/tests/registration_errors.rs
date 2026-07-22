@@ -70,7 +70,7 @@ impl<C: ragu_arithmetic::Cycle> Step<C> for Step0 {
     type Output = HSuffixA;
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
-        ctx: &mut StepCtx<'_, 'dr, D, C::NestedCurve>,
+        ctx: &mut StepCtx<'_, 'dr, D, C>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -103,7 +103,7 @@ impl<C: ragu_arithmetic::Cycle> Step<C> for Step1 {
     type Output = HSuffixB;
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
-        ctx: &mut StepCtx<'_, 'dr, D, C::NestedCurve>,
+        ctx: &mut StepCtx<'_, 'dr, D, C>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -136,7 +136,7 @@ impl<C: ragu_arithmetic::Cycle> Step<C> for Step1Dup {
     type Output = HSuffixAOther;
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
-        ctx: &mut StepCtx<'_, 'dr, D, C::NestedCurve>,
+        ctx: &mut StepCtx<'_, 'dr, D, C>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -161,18 +161,19 @@ impl<C: ragu_arithmetic::Cycle> Step<C> for Step1Dup {
 #[test]
 fn register_steps_success_and_finalize() {
     let pasta = Pasta::baked();
-    let builder = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let builder = ApplicationBuilder::<Pasta, ProductionRank, 4>::new(pasta)
         .register(Step0)
         .unwrap()
         .register(Step1)
         .unwrap();
-    builder.finalize(pasta).unwrap();
+    builder.finalize().unwrap();
 }
 
 #[test]
 #[should_panic]
 fn register_steps_out_of_order_should_fail() {
-    ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let pasta = Pasta::baked();
+    ApplicationBuilder::<Pasta, ProductionRank, 4>::new(pasta)
         .register(Step1)
         .unwrap();
 }
@@ -180,7 +181,8 @@ fn register_steps_out_of_order_should_fail() {
 #[test]
 #[should_panic]
 fn register_steps_duplicate_suffix_should_fail() {
-    ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let pasta = Pasta::baked();
+    ApplicationBuilder::<Pasta, ProductionRank, 4>::new(pasta)
         .register(Step0)
         .unwrap()
         .register(Step1Dup)

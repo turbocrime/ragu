@@ -14,16 +14,13 @@
 //! — the gadget contract fixes the wire count per type — so the carrier holds a
 //! `Vec` of fixed-size [`DerivedPair`] gadgets without being one.
 //!
-//! The carrier is built two ways, mirroring [`unified`]:
-//!
-//! * [`DerivedChallengeOutput::from_stages`] assembles it directly from the
-//!   handles the hook recorded in the application trace `r'(X)` — this is how
-//!   the witness values **propagate** into the carrier (analogous to
-//!   [`unified::Output::alloc_from_proof`](super::unified::Output::alloc_from_proof)).
-//! * [`DerivedChallengeBuilder`] allocates each pair from a native
-//!   [`DerivedChallengeInstance`] with [`Slot`]-tracked [`DerivedCoverage`]
-//!   (analogous to [`unified::OutputBuilder`](super::unified::OutputBuilder)).
-//!   The native values are resolved by fuse; that consumer is future work.
+//! The carrier is built by [`DerivedChallengeBuilder`], which allocates each
+//! pair from a native [`DerivedChallengeInstance`] with [`Slot`]-tracked
+//! [`DerivedCoverage`] (analogous to
+//! [`unified::OutputBuilder`](super::unified::OutputBuilder)). Its producer is
+//! the future succinct-challenge optimization: once `fuse()` commits each
+//! induced stage independently, the stage commitment and its hash become the
+//! `(point, challenge)` pair carried here.
 
 use alloc::vec::Vec;
 
@@ -37,7 +34,6 @@ use ragu_core::{
 use ragu_primitives::{Element, Point, allocator::Allocator, consistent::Consistent, io::Write};
 
 use super::unified::Slot;
-use crate::framework_hooks::InducedStage;
 
 /// One induced stage's verifier-visible outputs: a nested-curve commitment and
 /// the challenge hashed from it.
@@ -67,24 +63,8 @@ pub struct DerivedChallengeOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::
     pairs: Vec<DerivedPair<'dr, D, C>>,
 }
 
+#[allow(dead_code)]
 impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> DerivedChallengeOutput<'dr, D, C> {
-    /// Assembles the carrier from the handles recorded by the hook, in call
-    /// order. No allocation: the handles already *are* the gadget wires (the
-    /// deferred `point`/`challenge` allocated in
-    /// [`derive_challenge`](crate::framework_hooks::FrameworkHooks::derive_challenge)).
-    /// This is the propagation path from the application witness into the
-    /// carrier.
-    pub fn from_stages(stages: Vec<InducedStage<'dr, D, C>>) -> Self {
-        let pairs = stages
-            .into_iter()
-            .map(|stage| DerivedPair {
-                point: stage.point,
-                challenge: stage.challenge,
-            })
-            .collect();
-        Self { pairs }
-    }
-
     /// The number of induced `(point, challenge)` pairs.
     pub fn len(&self) -> usize {
         self.pairs.len()
@@ -287,44 +267,11 @@ mod tests {
 
     type C = <Pasta as ragu_arithmetic::Cycle>::NestedCurve;
     type Dr = Emulator<
-        ragu_core::drivers::emulator::Wireless<Empty, <Pasta as ragu_arithmetic::Cycle>::CircuitField>,
+        ragu_core::drivers::emulator::Wireless<
+            Empty,
+            <Pasta as ragu_arithmetic::Cycle>::CircuitField,
+        >,
     >;
-
-    /// Builds an `InducedStage` with wire-only deferred handles on a counting
-    /// driver (no values resolved, so the `todo!()` never fires).
-    fn induced_stage(dr: &mut Dr) -> InducedStage<'static, Dr, C> {
-        let allocator = &mut Standard::new();
-        let point = Point::alloc(dr, Empty).expect("alloc point");
-        let challenge = Element::alloc(dr, allocator, Empty).expect("alloc challenge");
-        InducedStage {
-            num_wires: 0,
-            wires: Vec::new(),
-            point,
-            challenge,
-        }
-    }
-
-    /// `from_stages` produces one carrier pair per induced stage, in order.
-    #[test]
-    fn from_stages_collects_one_pair_per_stage() {
-        let mut dr = Emulator::counter();
-        let stages = alloc::vec![induced_stage(&mut dr), induced_stage(&mut dr)];
-
-        let output = DerivedChallengeOutput::from_stages(stages);
-
-        assert_eq!(output.len(), 2);
-        assert_eq!(output.pairs().len(), 2);
-        assert!(!output.is_empty());
-    }
-
-    /// No induced stages -> an empty carrier.
-    #[test]
-    fn from_stages_empty_is_empty() {
-        let output: DerivedChallengeOutput<'_, Dr, C> =
-            DerivedChallengeOutput::from_stages(Vec::new());
-        assert_eq!(output.len(), 0);
-        assert!(output.is_empty());
-    }
 
     /// A builder whose every pair is `receive`d marks all slots covered, so
     /// `assert_complete` passes.
@@ -336,7 +283,9 @@ mod tests {
         let mut builder: DerivedChallengeBuilder<'_, Dr, Standard<()>, C> =
             DerivedChallengeBuilder::new(Empty, 2);
         for pair in &mut builder.pairs {
-            pair.point.receive(&mut dr, allocator).expect("receive point");
+            pair.point
+                .receive(&mut dr, allocator)
+                .expect("receive point");
             pair.challenge
                 .receive(&mut dr, allocator)
                 .expect("receive challenge");

@@ -59,7 +59,7 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, R, H> {
     }
 
     /// Returns a reference to the recursive proof.
-    pub(crate) fn proof(&self) -> &Proof<C, R> {
+    pub fn proof(&self) -> &Proof<C, R> {
         &self.proof
     }
 
@@ -226,6 +226,19 @@ pub struct Proof<C: Cycle, R: Rank> {
     // Children's stage rx polynomials (for copying circuit claims)
     pub(crate) child_left_stage_rx: ChildStageRx<C::ScalarField, R>,
     pub(crate) child_right_stage_rx: ChildStageRx<C::ScalarField, R>,
+
+    /// Per-step polynomial-query claim **instances** — the
+    /// $(\bar{C}_i, x_i, y_i)$ tuples the prover declared via
+    /// [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query)
+    /// at the fuse that produced this proof, and which fuse enforced natively.
+    /// Polynomial coefficients are witness-only and are not persisted here.
+    ///
+    /// These instances are public-input data; once the merge circuit gains
+    /// poly-query slots (`compute_v`'s `poly_queries` iterator and the nested
+    /// endoscaling chain), the next recursion step will consume them to
+    /// enforce the claims recursively instead of trusting the native check.
+    pub(crate) application_claims:
+        alloc::vec::Vec<(C::NestedCurve, C::CircuitField, C::CircuitField)>,
 }
 
 impl<C: Cycle, R: Rank> core::ops::Index<RxIndex> for Proof<C, R> {
@@ -314,6 +327,14 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 
     pub(crate) fn right_header(&self) -> &[C::CircuitField] {
         &self.right_header
+    }
+
+    /// Returns the per-step polynomial-query claim instances
+    /// $(\bar{C}_i, x_i, y_i)$ declared — and natively enforced — at the fuse
+    /// step that produced this proof, in claim order. Empty when the step
+    /// raised no claims.
+    pub fn application_claims(&self) -> &[(C::NestedCurve, C::CircuitField, C::CircuitField)] {
+        &self.application_claims
     }
 
     pub(crate) fn native_registry_xy_poly(&self) -> &sparse::Polynomial<C::CircuitField, R> {

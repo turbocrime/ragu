@@ -62,7 +62,7 @@ impl Step<Pasta> for StepWithData {
     type Output = HeaderWithData;
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        ctx: &mut StepCtx<'_, 'dr, D, <Pasta as Cycle>::NestedCurve>,
+        ctx: &mut StepCtx<'_, 'dr, D, Pasta>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -94,7 +94,7 @@ impl<C: Cycle> Step<C> for Step0 {
     type Output = HeaderA;
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
-        ctx: &mut StepCtx<'_, 'dr, D, C::NestedCurve>,
+        ctx: &mut StepCtx<'_, 'dr, D, C>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -125,7 +125,7 @@ impl<C: Cycle> Step<C> for Step1 {
     type Output = HeaderA;
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
-        ctx: &mut StepCtx<'_, 'dr, D, C::NestedCurve>,
+        ctx: &mut StepCtx<'_, 'dr, D, C>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -149,12 +149,12 @@ impl<C: Cycle> Step<C> for Step1 {
 #[test]
 fn rerandomization_flow() {
     let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new(pasta)
         .register(Step0)
         .unwrap()
         .register(Step1)
         .unwrap()
-        .finalize(pasta)
+        .finalize()
         .unwrap();
 
     let mut rng = StdRng::seed_from_u64(1234);
@@ -178,10 +178,10 @@ fn rerandomization_flow() {
 #[test]
 fn multiple_rerandomizations_all_verify() {
     let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new(pasta)
         .register(Step0)
         .unwrap()
-        .finalize(pasta)
+        .finalize()
         .unwrap();
 
     let mut rng = StdRng::seed_from_u64(9999);
@@ -204,10 +204,10 @@ fn multiple_rerandomizations_all_verify() {
 #[test]
 fn rerandomization_preserves_header_data() {
     let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new(pasta)
         .register(StepWithData)
         .unwrap()
-        .finalize(pasta)
+        .finalize()
         .unwrap();
 
     let mut rng = StdRng::seed_from_u64(4321);
@@ -237,12 +237,12 @@ fn rerandomization_preserves_header_data() {
 #[test]
 fn rerandomized_fused_proof_verifies() {
     let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new(pasta)
         .register(Step0)
         .unwrap()
         .register(Step1)
         .unwrap()
-        .finalize(pasta)
+        .finalize()
         .unwrap();
 
     let mut rng = StdRng::seed_from_u64(7777);

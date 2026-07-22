@@ -43,7 +43,7 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
-        ctx: &mut StepCtx<'_, 'dr, D, C::NestedCurve>,
+        ctx: &mut StepCtx<'_, 'dr, D, C>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, H::Data>,
         right: DriverValue<D, ()>,
@@ -129,10 +129,12 @@ fn test_rerandomize_consistency() {
     let circuit_single =
         super::adapter::Adapter::<Pasta, Rerandomize<Single>, R, HEADER_SIZE>::new(
             Rerandomize::new(),
+            Pasta::circuit_poseidon(Pasta::baked()),
         )
         .unwrap();
     let circuit_pair = super::adapter::Adapter::<Pasta, Rerandomize<Pair>, R, HEADER_SIZE>::new(
         Rerandomize::new(),
+        Pasta::circuit_poseidon(Pasta::baked()),
     )
     .unwrap();
 

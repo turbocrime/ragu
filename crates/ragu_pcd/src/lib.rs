@@ -30,6 +30,7 @@ mod fuse;
 pub mod fuzz_utils;
 pub mod header;
 mod internal;
+pub mod oracle;
 mod proof;
 pub mod step;
 mod verify;
@@ -53,6 +54,7 @@ pub(crate) const RAGU_TAG: &[u8] = b"FIXME";
 
 /// Builder for an [`Application`] for proof-carrying data.
 pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
+    params: &'params C::Params,
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
     num_application_steps: usize,
@@ -61,20 +63,14 @@ pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, const HEADER_SIZE: usi
     _marker: PhantomData<[(); HEADER_SIZE]>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Default
-    for ApplicationBuilder<'_, C, R, HEADER_SIZE>
-{
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
     ApplicationBuilder<'params, C, R, HEADER_SIZE>
 {
-    /// Create an empty [`ApplicationBuilder`] for proof-carrying data.
-    pub fn new() -> Self {
+    /// Create an empty [`ApplicationBuilder`] for proof-carrying data over
+    /// the cycle's runtime parameters.
+    pub fn new(params: &'params C::Params) -> Self {
         ApplicationBuilder {
+            params,
             native_registry: RegistryBuilder::new(),
             nested_registry: RegistryBuilder::new(),
             num_application_steps: 0,
@@ -102,7 +98,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
 
         // Constructing the adapter discovers the stage layout induced by the
         // step's `derive_challenge` calls (a dry run of the witness body).
-        let adapter = Adapter::<C, S, R, HEADER_SIZE>::new(step)?;
+        let adapter = Adapter::<C, S, R, HEADER_SIZE>::new(step, C::circuit_poseidon(self.params))?;
 
         // Register the well-formedness masks for the induced stages, mirroring
         // what the typed staging path does with `StageExt::{mask, final_mask}`:
@@ -152,10 +148,8 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
     ///
     /// Returns an error if internal circuit registration or registry
     /// finalization fails.
-    pub fn finalize(
-        mut self,
-        params: &'params C::Params,
-    ) -> Result<Application<'params, C, R, HEADER_SIZE>> {
+    pub fn finalize(mut self) -> Result<Application<'params, C, R, HEADER_SIZE>> {
+        let params = self.params;
         // Build the native registry:
         // 1. Application circuits (already registered)
         // 2. Internal circuits and masks
@@ -177,11 +171,13 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             self.native_registry
                 .register_internal_step(Adapter::<C, _, R, HEADER_SIZE>::new(
                     step::internal::rerandomize::Rerandomize::<()>::new(),
+                    C::circuit_poseidon(params),
                 )?)?;
         self.native_registry =
             self.native_registry
                 .register_internal_step(Adapter::<C, _, R, HEADER_SIZE>::new(
                     step::internal::trivial::Trivial::new(),
+                    C::circuit_poseidon(params),
                 )?)?;
 
         assert_eq!(
@@ -306,5 +302,31 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     /// Returns a reference to the native [`Registry`].
     pub fn native_registry(&self) -> &Registry<'_, C::CircuitField, R> {
         &self.native_registry
+    }
+
+    /// Commits to a `CircuitField` polynomial in the framework's poly-query
+    /// commitment scheme, returning a nested-curve point that can be
+    /// witnessed in-circuit (e.g. allocated as a
+    /// [`Point`](ragu_primitives::Point), exposed through a
+    /// [`Header`], or hashed).
+    ///
+    /// The commitment is an (unblinded) Pedersen commitment to the
+    /// coefficients on the host curve, carried onto the nested curve via the
+    /// framework's standard bridge encoding. It is the commitment that
+    /// [`StepCtx::enforce_poly_query`](step::StepCtx::enforce_poly_query)
+    /// claims are checked against at fuse time: a claim whose `com` does not
+    /// equal `commit_polynomial(...)` of its coefficients is rejected as an
+    /// invalid witness.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidWitness`] if the polynomial's commitment is
+    /// the identity (e.g. the zero polynomial), which cannot be witnessed
+    /// in-circuit.
+    pub fn commit_polynomial(
+        &self,
+        polynomial: &ragu_circuits::polynomials::sparse::Polynomial<C::CircuitField, R>,
+    ) -> Result<C::NestedCurve> {
+        internal::challenge::commit_polynomial::<C, R>(self.params, polynomial)
     }
 }

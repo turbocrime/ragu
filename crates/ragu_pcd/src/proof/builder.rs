@@ -302,6 +302,16 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     // Children's stage rx (for copying circuit claims)
     child_left_stage_rx: Option<super::ChildStageRx<C::ScalarField, R>>,
     child_right_stage_rx: Option<super::ChildStageRx<C::ScalarField, R>>,
+
+    /// Per-step polynomial-query claims raised by the user's
+    /// [`Step::witness`](crate::step::Step::witness) via
+    /// [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query),
+    /// already enforced natively by fuse. Defaults to an empty vec — steps
+    /// that don't open polynomials leave it untouched. The claim *instances*
+    /// (com, x, y) are persisted in the [`Proof`]; the coefficients are
+    /// witness-only.
+    application_claims:
+        Vec<crate::framework_hooks::PolyQueryClaim<C::CircuitField, C::NestedCurve>>,
 }
 
 impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
@@ -379,6 +389,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             bridge_eval_commitment: OnceCell::new(),
             child_left_stage_rx: None,
             child_right_stage_rx: None,
+            application_claims: Vec::new(),
         }
     }
 
@@ -624,6 +635,19 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         super::ChildStageRx<C::ScalarField, R>
     );
 
+    /// Sets the per-step polynomial-query claims for this fuse step. May only
+    /// be called once with a non-empty set.
+    pub(crate) fn set_application_claims(
+        &mut self,
+        claims: Vec<crate::framework_hooks::PolyQueryClaim<C::CircuitField, C::NestedCurve>>,
+    ) {
+        assert!(
+            self.application_claims.is_empty(),
+            "double-set: application_claims"
+        );
+        self.application_claims = claims;
+    }
+
     getter!(w, w, C::CircuitField);
     getter!(y, y, C::CircuitField);
     getter!(z, z, C::CircuitField);
@@ -777,6 +801,12 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
 
             child_left_stage_rx: take!(child_left_stage_rx),
             child_right_stage_rx: take!(child_right_stage_rx),
+
+            application_claims: self
+                .application_claims
+                .iter()
+                .map(|c| (c.com, c.x, c.y))
+                .collect(),
         })
     }
 }
