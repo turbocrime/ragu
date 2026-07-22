@@ -14,15 +14,33 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Boolean, Element, GadgetExt,
+    Boolean, Element, GadgetExt, Point,
     allocator::Allocator,
     consistent::Consistent,
     vec::{CollectFixed, ConstLen, FixedVec},
 };
 
-use crate::{Proof, header::Header, internal::native::unified, step::internal::padded};
+use crate::{
+    NUM_POLY_QUERY_SLOTS, Proof, header::Header, internal::native::unified, step::internal::padded,
+};
 
 type HeaderVec<'dr, D, const HEADER_SIZE: usize> = FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>>;
+
+/// A single poly-query claim instance witnessed from a child proof: the
+/// claimed nested-curve commitment point and the $(x, y)$ opening. The wire
+/// layout (com.x, com.y, x, y) matches the claim-slot region of the
+/// application circuit's instance, so writing these into the
+/// [`application_ky`](ProofInputs::application_ky) Horner binds them to the
+/// child's committed application rx.
+#[derive(Gadget, Consistent)]
+pub struct ClaimInstance<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
+    #[ragu(gadget)]
+    pub com: Point<'dr, D, C::NestedCurve>,
+    #[ragu(gadget)]
+    pub x: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub y: Element<'dr, D>,
+}
 
 /// Witness data for a single child proof in the preamble stage.
 pub struct ChildWitness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
@@ -85,6 +103,11 @@ pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const
     /// Output header of this child proof.
     #[ragu(gadget)]
     pub output_header: HeaderVec<'dr, D, HEADER_SIZE>,
+    /// The poly-query claim instances this child proof raised, in slot order
+    /// (always [`NUM_POLY_QUERY_SLOTS`] entries; unused slots hold the
+    /// canonical padding claim).
+    #[ragu(gadget)]
+    pub claims: FixedVec<ClaimInstance<'dr, D, C>, ConstLen<NUM_POLY_QUERY_SLOTS>>,
     #[ragu(gadget)]
     pub circuit_id: Element<'dr, D>,
     #[ragu(gadget)]
@@ -129,12 +152,21 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
 
     /// Compute k(y) for the application circuit instance.
     ///
-    /// Returns `application_ky` = k(y) for `(children.left, children.right, output_header)`.
+    /// Returns `application_ky` = k(y) for `(children.left, children.right,
+    /// output_header, claims)` — the claim slots follow the headers, matching
+    /// the instance layout the adapter writes
+    /// (`step::internal::adapter::InstanceLen`). This is what binds the
+    /// witnessed claim instances to the child's committed application rx.
     pub fn application_ky(&self, dr: &mut D, y: &Element<'dr, D>) -> Result<Element<'dr, D>> {
         let mut ky = Horner::new(y);
         self.children.left.write(dr, &mut ky)?;
         self.children.right.write(dr, &mut ky)?;
         self.output_header.write(dr, &mut ky)?;
+        for claim in self.claims.iter() {
+            claim.com.write(dr, &mut ky)?;
+            claim.x.write(dr, &mut ky)?;
+            claim.y.write(dr, &mut ky)?;
+        }
         ky.finish_ky(dr)
     }
 
@@ -185,6 +217,37 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                 right: alloc_header(dr, allocator, proof.as_ref().map(|p| p.right_header()))?,
             },
             output_header: alloc_header(dr, allocator, output_header.as_ref().map(|h| &h[..]))?,
+            claims: {
+                D::try_just(|| {
+                    if proof.as_ref().take().application_claims().len() != NUM_POLY_QUERY_SLOTS {
+                        return Err(Error::MalformedEncoding(
+                            "proof does not carry exactly NUM_POLY_QUERY_SLOTS claim instances"
+                                .into(),
+                        ));
+                    }
+                    Ok(())
+                })?;
+                (0..NUM_POLY_QUERY_SLOTS)
+                    .map(|i| {
+                        Ok(ClaimInstance {
+                            com: Point::alloc(
+                                dr,
+                                proof.as_ref().map(|p| p.application_claims()[i].0),
+                            )?,
+                            x: Element::alloc(
+                                dr,
+                                allocator,
+                                proof.as_ref().map(|p| p.application_claims()[i].1),
+                            )?,
+                            y: Element::alloc(
+                                dr,
+                                allocator,
+                                proof.as_ref().map(|p| p.application_claims()[i].2),
+                            )?,
+                        })
+                    })
+                    .try_collect_fixed()?
+            },
             circuit_id: Element::alloc(
                 dr,
                 allocator,
@@ -261,8 +324,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     type OutputKind = Kind![C::CircuitField; Output<'_, _, C, HEADER_SIZE>];
 
     fn values() -> usize {
-        // 2 proofs * (3 headers * HEADER_SIZE + 1 circuit_id + unified instance wires)
-        2 * (3 * HEADER_SIZE + 1 + unified::NUM_WIRES)
+        // 2 proofs * (3 headers * HEADER_SIZE + claim slots (4 wires each)
+        //             + 1 circuit_id + unified instance wires)
+        2 * (3 * HEADER_SIZE + 4 * NUM_POLY_QUERY_SLOTS + 1 + unified::NUM_WIRES)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

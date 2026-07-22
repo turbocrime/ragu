@@ -26,10 +26,15 @@ use ragu_core::{
     gadgets::{Bound, Gadget, Kind},
     maybe::Maybe,
 };
-use ragu_primitives::{Element, allocator::Allocator, io::Write};
+use ragu_primitives::{
+    Element,
+    allocator::Allocator,
+    io::Write,
+    vec::{CollectFixed, ConstLen, FixedVec},
+};
 
 use crate::{
-    Proof,
+    NUM_POLY_QUERY_SLOTS, Proof,
     internal::native::{RxComponent, RxValues},
 };
 
@@ -56,6 +61,12 @@ pub struct ChildEvaluationsWitness<F> {
     /// This polynomial is queried only to insert the claim about $p(X)$ from
     /// the child proof into the accumulator for the fuse step.
     pub p_poly: F,
+
+    /// The child proof's poly-query claim polynomials, each evaluated at $u$,
+    /// in slot order. These feed the parent's recursive enforcement of the
+    /// child's claims: the quotient $(p_i(u) - y_i)/(u - x_i)$ enters $f(u)$
+    /// and each $p_i(u)$ enters the $v$ Horner accumulation.
+    pub claims: [F; NUM_POLY_QUERY_SLOTS],
 }
 
 impl<F: PrimeField> ChildEvaluationsWitness<F> {
@@ -67,6 +78,7 @@ impl<F: PrimeField> ChildEvaluationsWitness<F> {
             b_poly: proof[RxComponent::AbB].eval(u),
             registry_xy_poly: proof.native_registry_xy_poly().eval(u),
             p_poly: proof.native_p_poly().eval(u),
+            claims: core::array::from_fn(|i| proof.claim_polys[i].eval(u)),
         }
     }
 }
@@ -137,6 +149,11 @@ pub struct ChildEvaluations<'dr, D: Driver<'dr>> {
     pub registry_xy_poly: Element<'dr, D>,
     #[ragu(gadget)]
     pub p_poly: Element<'dr, D>,
+    /// The child's claim polynomial evaluations at $u$, in slot order. Kept
+    /// last so the [`Write`] order (and hence the $v$ Horner weighting)
+    /// matches the `_10_p` accumulation order.
+    #[ragu(gadget)]
+    pub claims: FixedVec<Element<'dr, D>, ConstLen<NUM_POLY_QUERY_SLOTS>>,
 }
 
 impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
@@ -159,6 +176,9 @@ impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
                 witness.as_ref().map(|w| w.registry_xy_poly),
             )?,
             p_poly: Element::alloc(dr, allocator, witness.as_ref().map(|w| w.p_poly))?,
+            claims: (0..NUM_POLY_QUERY_SLOTS)
+                .map(|i| Element::alloc(dr, allocator, witness.as_ref().map(|w| w.claims[i])))
+                .try_collect_fixed()?,
         })
     }
 }
@@ -200,8 +220,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     type OutputKind = Kind![C::CircuitField; Output<'_, _>];
 
     fn values() -> usize {
-        // 2 * ChildEvaluations (15 each) + current step elements (6)
-        2 * 15 + 6
+        // 2 * ChildEvaluations (15 + claim slots each) + current step elements (6)
+        2 * (15 + NUM_POLY_QUERY_SLOTS) + 6
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

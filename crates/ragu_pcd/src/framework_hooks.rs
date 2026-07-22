@@ -10,16 +10,19 @@
 //!   `com` evaluates to `y` at point `x` — reach it via
 //!   [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query),
 //!   which delegates here. Each claim carries the opened polynomial's
-//!   coefficients so that fuse can check the claim (and eventually batch it
-//!   into the [PCS aggregation]). The framework enforces every recorded claim
-//!   natively at fuse time: an evaluation claim that does not hold, or a
-//!   commitment that does not bind the polynomial (see
-//!   [`Application::commit_polynomial`](crate::Application::commit_polynomial)),
-//!   aborts the fuse with [`Error::InvalidWitness`]. Folding the claims into
-//!   the proof system's own $(P, u, v)$ accumulator — so that the *merge
-//!   circuit* enforces them recursively rather than the native prover — is
-//!   tracked as future work; it requires matching poly-query slots in the
-//!   `compute_v` circuit and the nested endoscaling chain.
+//!   coefficients so the framework can fold it into the [PCS aggregation].
+//!   Every application circuit exposes exactly
+//!   [`NUM_POLY_QUERY_SLOTS`](crate::NUM_POLY_QUERY_SLOTS) claim slots as part
+//!   of its public instance (unused slots hold the canonical padding claim),
+//!   binding the claim wires — the commitment point and the $(x, y)$ opening —
+//!   to the circuit's $k(Y)$ polynomial. The claims a proof raises are then
+//!   *recursively enforced at the next fuse*: the parent folds the quotient
+//!   $(p(X) - y)/(X - x)$ into $f(X)$, beta-accumulates $p(X)$ into the PCS
+//!   $(P, u, v)$ accumulator, and the `compute_v` circuit re-derives the
+//!   matching terms from the instance-bound claim data. The fuse that raises a
+//!   claim additionally pre-checks it natively so an honest prover with a bad
+//!   witness fails early with [`Error::InvalidWitness`] instead of producing a
+//!   proof its parent cannot fuse.
 //!
 //! * [`derive_challenge`](FrameworkHooks::derive_challenge) — derives a
 //!   Fiat–Shamir challenge from any [`ChallengeInput`] as the **in-circuit
@@ -79,7 +82,6 @@ use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverValue},
     gadgets::Gadget,
-    maybe::Maybe,
 };
 use ragu_primitives::{Element, GadgetExt, Point, poseidon::Sponge};
 
@@ -101,6 +103,21 @@ pub struct PolyQueryClaim<F: Field, C: CurveAffine<Base = F>> {
     /// Coefficients of the polynomial $p(X)$ being opened, little-endian
     /// (`coefficients[i]` is the coefficient of $X^i$).
     pub coefficients: Vec<F>,
+}
+
+/// The in-circuit wires of a single poly-query claim, retained so the adapter
+/// can write them into the application circuit's public instance (binding them
+/// to the circuit's $k(Y)$), alongside the witness-only coefficient values the
+/// fuse needs for the PCS folding.
+pub struct ClaimWires<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
+    /// The claimed nested-curve commitment point, as witnessed by the step.
+    pub com: Point<'dr, D, C>,
+    /// The opening point.
+    pub x: Element<'dr, D>,
+    /// The claimed evaluation.
+    pub y: Element<'dr, D>,
+    /// The opened polynomial's coefficient values (witness-only; never wires).
+    pub coefficients: DriverValue<D, Vec<D::F>>,
 }
 
 /// An input to [`derive_challenge`](FrameworkHooks::derive_challenge): a
@@ -234,7 +251,7 @@ pub struct InducedStage<'dr, D: Driver<'dr>> {
 /// [`into_outputs`](Self::into_outputs) through its `Aux` for later fuse-time
 /// processing.
 pub struct FrameworkHooks<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
-    poly_query_claims: Vec<DriverValue<D, PolyQueryClaim<D::F, C>>>,
+    poly_query_claims: Vec<ClaimWires<'dr, D, C>>,
     /// Stages induced by [`FrameworkHooks::derive_challenge`] calls — one per
     /// call under the simple model. Tracked here so a future `fuse()`
     /// optimization can commit to each partial trace.
@@ -250,8 +267,9 @@ pub struct FrameworkHooks<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
 /// here, which forces every drain site to acknowledge it.
 pub struct FrameworkHookOutputs<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     /// Polynomial-commitment opening claims raised via
-    /// [`FrameworkHooks::enforce_polynomial_query`], with their polynomials.
-    pub poly_query_claims: DriverValue<D, Vec<PolyQueryClaim<D::F, C>>>,
+    /// [`FrameworkHooks::enforce_polynomial_query`], in call order — the
+    /// in-circuit wires plus the witness-only coefficient values.
+    pub poly_query_claims: Vec<ClaimWires<'dr, D, C>>,
     /// Stages induced by [`FrameworkHooks::derive_challenge`] calls, in call
     /// order. Each carries the input's wire slice plus the challenge handle.
     /// A future `fuse()` optimization consumes these to build the per-call
@@ -289,11 +307,17 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C>
     /// (little-endian), committed to by `com`, evaluates to `y` at the point
     /// `x`.
     ///
-    /// The claim is checked natively at fuse time: the framework re-evaluates
-    /// the polynomial at `x` and recomputes the binding commitment (see
+    /// The claim wires occupy one of the application circuit's
+    /// [`NUM_POLY_QUERY_SLOTS`](crate::NUM_POLY_QUERY_SLOTS) instance slots,
+    /// binding them to the circuit's $k(Y)$; the claim itself is recursively
+    /// enforced at the next fuse via the PCS accumulator. The fuse that raises
+    /// it additionally pre-checks it natively (see
     /// [`Application::commit_polynomial`](crate::Application::commit_polynomial));
-    /// a mismatch aborts the fuse with
-    /// [`Error::InvalidWitness`].
+    /// a dishonest witness aborts with [`Error::InvalidWitness`].
+    ///
+    /// The number of calls per step body is part of the circuit structure: it
+    /// must not depend on witness values and must not exceed
+    /// `NUM_POLY_QUERY_SLOTS` (checked by the adapter).
     pub fn enforce_polynomial_query(
         &mut self,
         _dr: &mut D,
@@ -302,15 +326,12 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C>
         y: Element<'dr, D>,
         coefficients: DriverValue<D, Vec<D::F>>,
     ) -> Result<()> {
-        let claim = D::try_just(|| {
-            Ok(PolyQueryClaim {
-                com: com.value().take(),
-                x: *x.value().take(),
-                y: *y.value().take(),
-                coefficients: coefficients.take(),
-            })
-        })?;
-        self.poly_query_claims.push(claim);
+        self.poly_query_claims.push(ClaimWires {
+            com,
+            x,
+            y,
+            coefficients,
+        });
         Ok(())
     }
 
@@ -395,19 +416,8 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C>
 
     /// Consumes the container and returns every hook's accumulated output.
     pub fn into_outputs(self) -> FrameworkHookOutputs<'dr, D, C> {
-        let poly_query_claims =
-            self.poly_query_claims
-                .into_iter()
-                .fold(D::just(Vec::new), |acc, claim| {
-                    acc.and_then(|mut v| {
-                        claim.map(|c| {
-                            v.push(c);
-                            v
-                        })
-                    })
-                });
         FrameworkHookOutputs {
-            poly_query_claims,
+            poly_query_claims: self.poly_query_claims,
             derived_challenges: self.derived_challenges,
         }
     }

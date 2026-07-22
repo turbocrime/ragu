@@ -13,23 +13,26 @@ use ragu_core::{
     maybe::{Empty, Maybe},
 };
 use ragu_primitives::{
-    Element,
+    Element, GadgetExt,
     allocator::{Allocator, Standard},
     vec::{CollectFixed, ConstLen, FixedVec, Len},
 };
 
 use super::super::{Step, StepCtx};
 use crate::{
-    Header,
-    framework_hooks::{FrameworkHookOutputs, FrameworkHooks, PolyQueryClaim},
+    Header, NUM_POLY_QUERY_SLOTS,
+    framework_hooks::{ClaimWires, FrameworkHookOutputs, FrameworkHooks, PolyQueryClaim},
+    internal::challenge::PaddingClaim,
 };
 
-/// Represents triple a length determined at compile time.
-pub struct TripleConstLen<const N: usize>;
+/// Length of an application circuit's public instance: the three headers plus
+/// the poly-query claim slots (commitment point coordinates and the $(x, y)$
+/// opening — four elements per slot).
+pub struct InstanceLen<const HEADER_SIZE: usize>;
 
-impl<const N: usize> Len for TripleConstLen<N> {
+impl<const HEADER_SIZE: usize> Len for InstanceLen<HEADER_SIZE> {
     fn len() -> usize {
-        N * 3
+        HEADER_SIZE * 3 + NUM_POLY_QUERY_SLOTS * 4
     }
 }
 
@@ -48,7 +51,7 @@ impl<const N: usize> Len for TripleConstLen<N> {
 pub(crate) fn discover_induced_stages<C: Cycle, S: Step<C>, const HEADER_SIZE: usize>(
     step: &S,
     poseidon: &C::CircuitPoseidon,
-) -> Result<InducedStages> {
+) -> Result<(InducedStages, usize)> {
     let mut dr: Emulator<Wireless<Empty, C::CircuitField>> = Emulator::counter();
     let mut hooks = FrameworkHooks::<_, C::NestedCurve>::new();
     {
@@ -56,13 +59,23 @@ pub(crate) fn discover_induced_stages<C: Cycle, S: Step<C>, const HEADER_SIZE: u
         step.witness::<_, HEADER_SIZE>(&mut ctx, Empty, Empty, Empty)?;
     }
 
-    Ok(InducedStages::new(
-        hooks
-            .into_outputs()
-            .derived_challenges
-            .iter()
-            .map(|stage| stage.num_wires)
-            .collect(),
+    let outputs = hooks.into_outputs();
+    let num_claims = outputs.poly_query_claims.len();
+    if num_claims > NUM_POLY_QUERY_SLOTS {
+        return Err(ragu_core::Error::Initialization(
+            "step raises more poly-query claims than NUM_POLY_QUERY_SLOTS".into(),
+        ));
+    }
+
+    Ok((
+        InducedStages::new(
+            outputs
+                .derived_challenges
+                .iter()
+                .map(|stage| stage.num_wires)
+                .collect(),
+        ),
+        num_claims,
     ))
 }
 
@@ -75,9 +88,12 @@ pub(crate) struct AdapterAux<'source, C: Cycle, S: Step<C>, const HEADER_SIZE: u
     pub right_header: FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
     pub output_data: <S::Output as Header<C::CircuitField>>::Data,
     pub step_aux: S::Aux<'source>,
-    /// The step's poly-query claims, each carrying the opened polynomial's
-    /// coefficients. Fuse enforces every claim natively and persists the
-    /// claim instances in the proof.
+    /// The step's poly-query claims, padded to exactly
+    /// [`NUM_POLY_QUERY_SLOTS`] entries with the canonical padding claim, in
+    /// slot order — matching the instance layout the circuit committed to.
+    /// Each carries the opened polynomial's coefficients; fuse pre-checks
+    /// every claim natively, persists the claim instances in the proof, and
+    /// the *next* fuse enforces them recursively via the PCS accumulator.
     pub claims: Vec<PolyQueryClaim<C::CircuitField, C::NestedCurve>>,
     // Note: the stages induced by `derive_challenge` do not travel here — the
     // challenge is derived and constrained in-circuit, so nothing needs
@@ -92,24 +108,34 @@ pub(crate) struct Adapter<'params, C: Cycle, S, R: Rank, const HEADER_SIZE: usiz
     /// The induced stage layout discovered from the step's witness body at
     /// construction time; see [`discover_induced_stages`].
     induced: InducedStages,
+    /// The number of poly-query claims the step body raises, discovered by the
+    /// same dry run. Part of the circuit structure: the real synthesis must
+    /// raise exactly this many (determinism guard in [`Adapter::witness`]).
+    num_claims: usize,
     /// The cycle's Poseidon parameters, threaded into the step body via
     /// [`StepCtx`] (sound in-circuit challenge derivation needs them on every
     /// driver, including the structure-only registration passes).
     poseidon: &'params C::CircuitPoseidon,
+    /// The canonical padding claim filling unused poly-query instance slots.
+    padding: PaddingClaim<C, R>,
     _marker: PhantomData<(C, R)>,
 }
 
 impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
     Adapter<'params, C, S, R, HEADER_SIZE>
 {
-    /// Wraps `step`, discovering its induced stage layout with a dry run of
-    /// the witness body (see [`discover_induced_stages`]).
-    pub fn new(step: S, poseidon: &'params C::CircuitPoseidon) -> Result<Self> {
-        let induced = discover_induced_stages::<C, S, HEADER_SIZE>(&step, poseidon)?;
+    /// Wraps `step`, discovering its induced stage layout and poly-query claim
+    /// count with a dry run of the witness body (see
+    /// [`discover_induced_stages`]).
+    pub fn new(step: S, params: &'params C::Params) -> Result<Self> {
+        let poseidon = C::circuit_poseidon(params);
+        let (induced, num_claims) = discover_induced_stages::<C, S, HEADER_SIZE>(&step, poseidon)?;
         Ok(Adapter {
             step,
             induced,
+            num_claims,
             poseidon,
+            padding: PaddingClaim::new(params)?,
             _marker: PhantomData,
         })
     }
@@ -134,7 +160,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
         <S::Right as Header<C::CircuitField>>::Data,
         S::Witness<'source>,
     );
-    type Output = Kind![C::CircuitField; FixedVec<Element<'_, _>, TripleConstLen<HEADER_SIZE>>];
+    type Output = Kind![C::CircuitField; FixedVec<Element<'_, _>, InstanceLen<HEADER_SIZE>>];
     type Aux<'source> = AdapterAux<'source, C, S, HEADER_SIZE>;
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -185,7 +211,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
                 .witness::<_, HEADER_SIZE>(&mut ctx, witness, left, right)?
         };
         let FrameworkHookOutputs {
-            poly_query_claims: claims,
+            poly_query_claims: mut claim_wires,
             derived_challenges,
         } = hooks.into_outputs();
 
@@ -200,10 +226,71 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
             ));
         }
 
-        let mut elements = Vec::with_capacity(HEADER_SIZE * 3);
+        // Determinism guard for poly-query claims: the claim count is part of
+        // the circuit structure (each claim's wires occupy an instance slot).
+        if claim_wires.len() != self.num_claims {
+            return Err(ragu_core::Error::InvalidWitness(
+                "enforce_poly_query call count diverged from the discovered claim count; \
+                 circuit structure must not depend on witness values"
+                    .into(),
+            ));
+        }
+
+        // Fill the remaining slots with the canonical padding claim, as
+        // in-circuit constants: every application circuit exposes exactly
+        // NUM_POLY_QUERY_SLOTS claim tuples in its instance.
+        while claim_wires.len() < NUM_POLY_QUERY_SLOTS {
+            let com = ragu_primitives::Point::constant(dr, self.padding.com)?;
+            let x = Element::constant(dr, self.padding.x);
+            let y = Element::constant(dr, self.padding.y);
+            let coefficients =
+                D::just(|| alloc::vec![<C::CircuitField as ragu_arithmetic::ff::Field>::ONE]);
+            claim_wires.push(ClaimWires {
+                com,
+                x,
+                y,
+                coefficients,
+            });
+        }
+
+        let mut elements = Vec::with_capacity(InstanceLen::<HEADER_SIZE>::len());
         left.write(dr, &mut elements)?;
         right.write(dr, &mut elements)?;
         output.write(dr, &mut elements)?;
+        // The claim slots follow the headers in the instance: per slot, the
+        // commitment point's two coordinates, then the opening point and the
+        // claimed evaluation. This layout must match
+        // `ProofInputs::application_ky`.
+        for claim in &claim_wires {
+            claim.com.write(dr, &mut elements)?;
+            claim.x.write(dr, &mut elements)?;
+            claim.y.write(dr, &mut elements)?;
+        }
+
+        // Extract the claim values (instances plus coefficients) for the fuse.
+        let mut claims_value = D::just(|| Vec::with_capacity(NUM_POLY_QUERY_SLOTS));
+        for claim_wire in claim_wires {
+            let ClaimWires {
+                com,
+                x,
+                y,
+                coefficients,
+            } = claim_wire;
+            let claim = D::try_just(|| {
+                Ok(PolyQueryClaim {
+                    com: com.value().take(),
+                    x: *x.value().take(),
+                    y: *y.value().take(),
+                    coefficients: coefficients.take(),
+                })
+            })?;
+            claims_value = claims_value.and_then(|mut v| {
+                claim.map(|c| {
+                    v.push(c);
+                    v
+                })
+            });
+        }
 
         let adapter_aux = D::try_just(|| {
             let left_header = elements[0..HEADER_SIZE]
@@ -221,7 +308,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
                 right_header,
                 output_data: output_data.take(),
                 step_aux: step_aux.take(),
-                claims: claims.take(),
+                claims: claims_value.take(),
             })
         })?;
 
@@ -362,10 +449,10 @@ mod tests {
     }
 
     #[test]
-    fn triple_const_len_returns_3n() {
-        assert_eq!(TripleConstLen::<1>::len(), 3);
-        assert_eq!(TripleConstLen::<4>::len(), 12);
-        assert_eq!(TripleConstLen::<10>::len(), 30);
+    fn instance_len_covers_headers_and_claim_slots() {
+        assert_eq!(InstanceLen::<1>::len(), 3 + NUM_POLY_QUERY_SLOTS * 4);
+        assert_eq!(InstanceLen::<4>::len(), 12 + NUM_POLY_QUERY_SLOTS * 4);
+        assert_eq!(InstanceLen::<10>::len(), 30 + NUM_POLY_QUERY_SLOTS * 4);
     }
 
     #[test]
@@ -373,11 +460,8 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(
-            TestStep,
-            Pasta::circuit_poseidon(Pasta::baked()),
-        )
-        .expect("discovery should succeed");
+        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, Pasta::baked())
+            .expect("discovery should succeed");
         let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
 
         let output = adapter
@@ -386,7 +470,7 @@ mod tests {
             .into_output();
 
         // Output should have 3 * HEADER_SIZE elements (left + right + output headers)
-        assert_eq!(output.len(), HEADER_SIZE * 3);
+        assert_eq!(output.len(), HEADER_SIZE * 3 + NUM_POLY_QUERY_SLOTS * 4);
     }
 
     #[test]
@@ -394,11 +478,8 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(
-            TestStep,
-            Pasta::circuit_poseidon(Pasta::baked()),
-        )
-        .expect("discovery should succeed");
+        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, Pasta::baked())
+            .expect("discovery should succeed");
         let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
 
         let aux = adapter
@@ -425,11 +506,8 @@ mod tests {
     /// A step without `derive_challenge` calls discovers an empty layout.
     #[test]
     fn discovery_finds_no_stages_for_plain_step() {
-        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(
-            TestStep,
-            Pasta::circuit_poseidon(Pasta::baked()),
-        )
-        .expect("discovery should succeed");
+        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, Pasta::baked())
+            .expect("discovery should succeed");
         assert!(adapter.induced_stages().is_empty());
     }
 
@@ -437,11 +515,9 @@ mod tests {
     /// gadget's wire count.
     #[test]
     fn discovery_finds_induced_stage() {
-        let adapter = Adapter::<Pasta, ChallengeStep, TestR, HEADER_SIZE>::new(
-            ChallengeStep,
-            Pasta::circuit_poseidon(Pasta::baked()),
-        )
-        .expect("discovery should succeed");
+        let adapter =
+            Adapter::<Pasta, ChallengeStep, TestR, HEADER_SIZE>::new(ChallengeStep, Pasta::baked())
+                .expect("discovery should succeed");
         let induced = adapter.induced_stages();
         assert_eq!(induced.len(), 1);
         // Two `Element`s -> width 2, one gate right after the SYSTEM gate.
@@ -461,17 +537,15 @@ mod tests {
         let mut dr: Emulator<Wireless<Empty, Fp>> = Emulator::counter();
         let dr = &mut dr;
 
-        let adapter = Adapter::<Pasta, ChallengeStep, TestR, HEADER_SIZE>::new(
-            ChallengeStep,
-            Pasta::circuit_poseidon(Pasta::baked()),
-        )
-        .expect("discovery should succeed");
+        let adapter =
+            Adapter::<Pasta, ChallengeStep, TestR, HEADER_SIZE>::new(ChallengeStep, Pasta::baked())
+                .expect("discovery should succeed");
 
         let output = adapter
             .witness(dr, Empty)
             .expect("structure-only synthesis should succeed")
             .into_output();
 
-        assert_eq!(output.len(), HEADER_SIZE * 3);
+        assert_eq!(output.len(), HEADER_SIZE * 3 + NUM_POLY_QUERY_SLOTS * 4);
     }
 }

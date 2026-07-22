@@ -40,7 +40,11 @@ where
 // When changing HEADER_SIZE, update the constraint counts by running:
 //   cargo test -p ragu_pcd --release print_internal_circuit -- --nocapture
 // Then copy-paste the output into the check_constraints! calls in the test below.
-pub const HEADER_SIZE: usize = 105;
+//
+// 105 no longer fits: the poly-query claim slots extend application_ky, and
+// outer_collapse (the largest internal circuit) was already within a few
+// gates of the rank bound at 105.
+pub const HEADER_SIZE: usize = 100;
 
 // Number of dummy application circuits to register before testing internal
 // circuits. This ensures the tests work correctly even when application
@@ -88,11 +92,11 @@ fn test_internal_circuit_constraint_counts() {
         }};
     }
 
-    check_constraints!(Hashes1Circuit,        mul = 1451, lin = 2068);
-    check_constraints!(Hashes2Circuit,        mul = 1999, lin = 2951);
-    check_constraints!(InnerCollapseCircuit,  mul = 1876, lin = 1918);
-    check_constraints!(OuterCollapseCircuit,  mul = 2043, lin = 3042);
-    check_constraints!(ComputeVCircuit,       mul = 1255, lin = 1773);
+    check_constraints!(Hashes1Circuit,        mul = 1452, lin = 2058);
+    check_constraints!(Hashes2Circuit,        mul = 2000, lin = 2951);
+    check_constraints!(InnerCollapseCircuit,  mul = 1877, lin = 1918);
+    check_constraints!(OuterCollapseCircuit,  mul = 2026, lin = 3006);
+    check_constraints!(ComputeVCircuit,       mul = 1316, lin = 1893);
 }
 
 #[rustfmt::skip]
@@ -105,11 +109,11 @@ fn test_internal_stage_parameters() {
         }};
     }
 
-    check_stage!(Preamble, skip =   1, num = 345);
-    check_stage!(OuterError,  skip = 346, num = 186);
-    check_stage!(InnerError,  skip = 532, num = 399);
-    check_stage!(Query,   skip = 346, num =  23);
-    check_stage!(Eval,    skip = 369, num =  18);
+    check_stage!(Preamble, skip =   1, num = 346);
+    check_stage!(OuterError,  skip = 347, num = 186);
+    check_stage!(InnerError,  skip = 533, num = 399);
+    check_stage!(Query,   skip = 347, num =  23);
+    check_stage!(Eval,    skip = 370, num =  22);
 }
 
 /// Helper test to print current constraint counts in copy-pasteable format.
@@ -197,7 +201,7 @@ fn test_native_registry_digest() {
         .finalize()
         .unwrap();
 
-    let expected = fp!(0x31e1786b198ad8953d0ec1699a2d1c7ed26d312a7c8c67099cb5a517259e54e3);
+    let expected = fp!(0x287f534ee552b1019d89e8d18d3d6cf5335a6d81cd49f1867015e96a2743dafa);
 
     assert_eq!(
         app.native_registry.digest(),
@@ -221,7 +225,7 @@ fn test_nested_registry_digest() {
         .finalize()
         .unwrap();
 
-    let expected = fq!(0x2f4bf855b80a694facbe9a2c26ee8d1dae9e15bb7b7eba54ca53f5c166e1d150);
+    let expected = fq!(0x36b2d2c71720d18405cf6baac9b0f2d9c15eea0b5e3b66ac4f66a7760bbf8804);
 
     assert_eq!(
         app.nested_registry.digest(),

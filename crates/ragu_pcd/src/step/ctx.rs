@@ -65,17 +65,28 @@ where
     /// `coefficients` (little-endian), committed to by `com` (a nested curve
     /// point — see
     /// [`Application::commit_polynomial`](crate::Application::commit_polynomial)),
-    /// evaluates to `y` at the point `x`. The framework collects these via the
-    /// adapter's `Aux` and enforces each of them natively at fuse time,
-    /// rejecting the witness if the evaluation or the commitment binding does
-    /// not hold.
+    /// evaluates to `y` at the point `x`.
     ///
     /// This is the *succinct* claim path: the polynomial stays out of the
-    /// circuit. Its enforcement is native (prover-side) until the claims are
-    /// folded into the proof system's $(P, u, v)$ accumulator; for claims that
-    /// must be sound today, evaluate in-circuit with
+    /// circuit, and enforcement is **recursive**. The claim wires occupy one
+    /// of the circuit's [`NUM_POLY_QUERY_SLOTS`](crate::NUM_POLY_QUERY_SLOTS)
+    /// instance slots, binding them to the circuit's $k(Y)$; when the
+    /// resulting proof is fused as a child, the parent folds the quotient
+    /// $(p(X) - y)/(X - x)$ into $f(X)$ and the polynomial (with its host
+    /// commitment) into the PCS $(P, u, v)$ accumulator, and its `compute_v`
+    /// circuit re-derives the matching terms from the instance-bound claim
+    /// data. A root proof's own claims — not yet folded by a parent — are
+    /// checked natively by [`Application::verify`](crate::Application::verify)
+    /// against the carried claim polynomials.
+    ///
+    /// The fuse raising the claim also pre-checks it natively, so an honest
+    /// prover with a dishonest witness fails early with `InvalidWitness`.
+    ///
+    /// A step body may call this at most `NUM_POLY_QUERY_SLOTS` times, and the
+    /// call count must not depend on witness values (it is circuit structure).
+    /// For claims over polynomials small enough to evaluate in-circuit,
     /// [`oracle::WitnessedPolynomial`](crate::oracle::WitnessedPolynomial)
-    /// instead.
+    /// remains available as the fully in-circuit alternative.
     pub fn enforce_poly_query(
         &mut self,
         com: Point<'dr, D, C::NestedCurve>,

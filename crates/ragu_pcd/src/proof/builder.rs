@@ -306,12 +306,18 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     /// Per-step polynomial-query claims raised by the user's
     /// [`Step::witness`](crate::step::Step::witness) via
     /// [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query),
-    /// already enforced natively by fuse. Defaults to an empty vec — steps
-    /// that don't open polynomials leave it untouched. The claim *instances*
-    /// (com, x, y) are persisted in the [`Proof`]; the coefficients are
-    /// witness-only.
+    /// padded by the adapter to exactly
+    /// [`NUM_POLY_QUERY_SLOTS`](crate::NUM_POLY_QUERY_SLOTS) entries and
+    /// pre-checked natively by fuse. The claim *instances* (com, x, y),
+    /// the claim polynomials, and the host commitments are persisted in the
+    /// [`Proof`] so the parent fuse can enforce the claims recursively.
     application_claims:
         Vec<crate::framework_hooks::PolyQueryClaim<C::CircuitField, C::NestedCurve>>,
+    /// The claim polynomials, in slot order (paired with
+    /// `application_claims`).
+    claim_polys: Vec<sparse::Polynomial<C::CircuitField, R>>,
+    /// The claims' host-curve commitments, in slot order.
+    claim_host_commitments: Vec<C::HostCurve>,
 }
 
 impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
@@ -390,6 +396,8 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             child_left_stage_rx: None,
             child_right_stage_rx: None,
             application_claims: Vec::new(),
+            claim_polys: Vec::new(),
+            claim_host_commitments: Vec::new(),
         }
     }
 
@@ -574,8 +582,22 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         bridge_eval_commitment,
         nested::RxIndex::BridgeEval,
         eval,
-        { native_eval: native_eval_commitment() }
+        {
+            native_eval: native_eval_commitment(),
+            claims: claim_host_commitments_array()
+        }
     );
+
+    /// The claim host commitments as a fixed-size array, for the eval bridge
+    /// stage witness. Requires `set_application_claims` to have been called.
+    fn claim_host_commitments_array(&self) -> [C::HostCurve; crate::NUM_POLY_QUERY_SLOTS] {
+        assert_eq!(
+            self.claim_host_commitments.len(),
+            crate::NUM_POLY_QUERY_SLOTS,
+            "claim_host_commitments not set before deriving the eval bridge"
+        );
+        core::array::from_fn(|i| self.claim_host_commitments[i])
+    }
 
     setter!(
         set_nested_endoscaling_step_rxs,
@@ -635,17 +657,25 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         super::ChildStageRx<C::ScalarField, R>
     );
 
-    /// Sets the per-step polynomial-query claims for this fuse step. May only
-    /// be called once with a non-empty set.
+    /// Sets the per-step polynomial-query claims for this fuse step (instance
+    /// tuples, claim polynomials, and host commitments, all in slot order).
+    /// May only be called once with a non-empty set.
     pub(crate) fn set_application_claims(
         &mut self,
         claims: Vec<crate::framework_hooks::PolyQueryClaim<C::CircuitField, C::NestedCurve>>,
+        claim_polys: Vec<sparse::Polynomial<C::CircuitField, R>>,
+        claim_host_commitments: Vec<C::HostCurve>,
     ) {
         assert!(
             self.application_claims.is_empty(),
             "double-set: application_claims"
         );
+        assert_eq!(claims.len(), crate::NUM_POLY_QUERY_SLOTS);
+        assert_eq!(claim_polys.len(), crate::NUM_POLY_QUERY_SLOTS);
+        assert_eq!(claim_host_commitments.len(), crate::NUM_POLY_QUERY_SLOTS);
         self.application_claims = claims;
+        self.claim_polys = claim_polys;
+        self.claim_host_commitments = claim_host_commitments;
     }
 
     getter!(w, w, C::CircuitField);
@@ -807,6 +837,8 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
                 .iter()
                 .map(|c| (c.com, c.x, c.y))
                 .collect(),
+            claim_polys: self.claim_polys,
+            claim_host_commitments: self.claim_host_commitments,
         })
     }
 }

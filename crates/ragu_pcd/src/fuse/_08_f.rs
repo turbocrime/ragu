@@ -164,6 +164,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             ));
         }
 
+        // Child poly-query claims: the quotient (p_i(X) - y_i)/(X - x_i) for
+        // each child proof's claim slot, in slot order. This recursively
+        // enforces the claims the children raised via `enforce_poly_query`.
+        // Must remain the trailing block, matching `poly_queries`.
+        for proof in [left, right] {
+            for (poly, claim) in proof.claim_polys.iter().zip(&proof.application_claims) {
+                iters.push(factor_iter(poly.iter_coeffs(), claim.1));
+            }
+        }
+
         let mut coeffs = Vec::with_capacity(R::num_coeffs());
         let (first, rest) = iters.split_first_mut().unwrap();
         for val in first.by_ref() {

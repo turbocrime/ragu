@@ -102,6 +102,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     proof.native_registry_xy_commitment(),
                 );
                 acc.acc(proof.native_p_poly(), proof.native_p_commitment());
+                // The child's poly-query claim polynomials, in slot order.
+                // Folding them here (with their host commitments entering the
+                // endoscaling points list) is what makes the claims' commitment
+                // binding recursive.
+                for (poly, com) in proof.claim_polys.iter().zip(&proof.claim_host_commitments) {
+                    acc.acc(poly, *com);
+                }
             }
 
             acc.acc(&s_prime.registry_wx0_poly, s_prime.registry_wx0_commitment);

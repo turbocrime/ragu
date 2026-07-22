@@ -101,8 +101,47 @@ pub(crate) fn commit_polynomial<C: Cycle, R: Rank>(
     params: &C::Params,
     polynomial: &sparse::Polynomial<C::CircuitField, R>,
 ) -> Result<C::NestedCurve> {
+    Ok(commit_polynomial_full::<C, R>(params, polynomial)?.1)
+}
+
+/// Like [`commit_polynomial`], but also returns the intermediate host-curve
+/// commitment, which the fuse pipeline needs for the PCS accumulation (the
+/// host point enters the endoscaling points list at the next fuse).
+pub(crate) fn commit_polynomial_full<C: Cycle, R: Rank>(
+    params: &C::Params,
+    polynomial: &sparse::Polynomial<C::CircuitField, R>,
+) -> Result<(C::HostCurve, C::NestedCurve)> {
     let host = polynomial.commit_to_affine::<C::HostCurve>(C::host_generators(params));
-    bridge_commitment::<C, R>(params, host)
+    Ok((host, bridge_commitment::<C, R>(params, host)?))
+}
+
+/// The canonical padding claim used to fill unused poly-query slots (see
+/// [`NUM_POLY_QUERY_SLOTS`](crate::NUM_POLY_QUERY_SLOTS)): the constant
+/// polynomial $1$, opened at $x = 0$ to $y = 1$, with its (never-identity)
+/// host commitment and nested bridge commitment.
+pub(crate) struct PaddingClaim<C: Cycle, R: Rank> {
+    pub poly: sparse::Polynomial<C::CircuitField, R>,
+    pub host: C::HostCurve,
+    pub com: C::NestedCurve,
+    pub x: C::CircuitField,
+    pub y: C::CircuitField,
+}
+
+impl<C: Cycle, R: Rank> PaddingClaim<C, R> {
+    pub fn new(params: &C::Params) -> Result<Self> {
+        use ragu_arithmetic::ff::Field;
+        let poly =
+            sparse::Polynomial::<C::CircuitField, R>::from_coeffs(vec![C::CircuitField::ONE]);
+        let host = poly.commit_to_affine::<C::HostCurve>(C::host_generators(params));
+        let com = bridge_commitment::<C, R>(params, host)?;
+        Ok(PaddingClaim {
+            poly,
+            host,
+            com,
+            x: C::CircuitField::ZERO,
+            y: C::CircuitField::ONE,
+        })
+    }
 }
 
 #[cfg(test)]

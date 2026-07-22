@@ -255,6 +255,9 @@ struct ChildDenominators<'dr, D: Driver<'dr>> {
     y: Element<'dr, D>,
     x: Element<'dr, D>,
     circuit_id: Element<'dr, D>,
+    /// Per-claim-slot denominators $(u - x_i)^{-1}$, where $x_i$ is the
+    /// child's claim opening point (bound via the preamble's claim instances).
+    claims: Vec<Element<'dr, D>>,
 }
 
 /// Denominators for current step challenge points.
@@ -311,6 +314,18 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
         let challenges_x = inverter.add(dr, x)?;
         let challenges_y = inverter.add(dr, y)?;
         let challenges_xz = inverter.add(dr, &xz)?;
+        let left_claims = preamble
+            .left
+            .claims
+            .iter()
+            .map(|claim| inverter.add(dr, &claim.x))
+            .collect::<Result<Vec<_>>>()?;
+        let right_claims = preamble
+            .right
+            .claims
+            .iter()
+            .map(|claim| inverter.add(dr, &claim.x))
+            .collect::<Result<Vec<_>>>()?;
 
         let circuit_indices =
             InternalCircuitValues::try_from_fn(|id| inverter.add_circuit(dr, id))?;
@@ -323,12 +338,14 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
                 y: inverted[left_y].clone(),
                 x: inverted[left_x].clone(),
                 circuit_id: inverted[left_circuit_id].clone(),
+                claims: left_claims.iter().map(|&i| inverted[i].clone()).collect(),
             },
             right: ChildDenominators {
                 u: inverted[right_u].clone(),
                 y: inverted[right_y].clone(),
                 x: inverted[right_x].clone(),
                 circuit_id: inverted[right_circuit_id].clone(),
+                claims: right_claims.iter().map(|&i| inverted[i].clone()).collect(),
             },
             challenges: ChallengeDenominators {
                 w: inverted[challenges_w].clone(),
@@ -555,6 +572,9 @@ fn compute_axbx<'dr, D: Driver<'dr>, P: Parameters>(
 ///    recomputation (undilated) and $B(x)$ ($Z$-dilated).
 /// 6. **Internal circuit registry evaluations** - $m(\omega^j, x, y)$ for each
 ///    internal index
+/// 7. **Child poly-query claims** — $p_i(u) = y_i$ at $x_i$ for each child's
+///    claim slot, with $(x_i, y_i)$ bound via the preamble's claim instances
+///    (and hence the child's application $k(Y)$)
 ///
 /// The queries must be ordered exactly as in the prover's computation of $f(X)$
 /// in [`compute_f`], since the ordering affects the weight (with respect to
@@ -614,6 +634,14 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HE
     .chain(InternalCircuitIndex::ALL.iter().map(|&id| {
         (&eval.registry_xy, query.fixed_registry.get(id), d.internal.get(id))
     }))
+    // Child poly-query claims: p_i(u), the claimed y_i (bound via the
+    // preamble's claim instances), and (u - x_i)^{-1}, per child per slot.
+    // Trailing block, matching `compute_f`.
+    .chain([(&eval.left, &preamble.left, &d.left), (&eval.right, &preamble.right, &d.right)]
+        .into_iter()
+        .flat_map(move |(child_eval, child_preamble, child_d)|
+            (0..crate::NUM_POLY_QUERY_SLOTS).map(move |i|
+                (&child_eval.claims[i], &child_preamble.claims[i].y, &child_d.claims[i]))))
 }
 
 /// Batch inverter for computing denominators.

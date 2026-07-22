@@ -68,6 +68,13 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, R, H> {
     pub(crate) fn into_parts(self) -> (Proof<C, R>, H::Data) {
         (self.proof, self.data)
     }
+
+    /// Mutable access to the underlying proof, for the corruption helpers in
+    /// [`fuzz_utils`](crate::fuzz_utils).
+    #[cfg(feature = "unstable-fuzzing")]
+    pub(crate) fn proof_mut(&mut self) -> &mut Proof<C, R> {
+        &mut self.proof
+    }
 }
 
 impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Clone for Pcd<C, R, H> {
@@ -230,15 +237,25 @@ pub struct Proof<C: Cycle, R: Rank> {
     /// Per-step polynomial-query claim **instances** — the
     /// $(\bar{C}_i, x_i, y_i)$ tuples the prover declared via
     /// [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query)
-    /// at the fuse that produced this proof, and which fuse enforced natively.
-    /// Polynomial coefficients are witness-only and are not persisted here.
-    ///
-    /// These instances are public-input data; once the merge circuit gains
-    /// poly-query slots (`compute_v`'s `poly_queries` iterator and the nested
-    /// endoscaling chain), the next recursion step will consume them to
-    /// enforce the claims recursively instead of trusting the native check.
+    /// at the fuse that produced this proof, padded to exactly
+    /// [`NUM_POLY_QUERY_SLOTS`](crate::NUM_POLY_QUERY_SLOTS) entries. They
+    /// are bound to the application circuit's $k(Y)$ instance and recursively
+    /// enforced when this proof is fused as a child: the parent folds each
+    /// claim into $f(X)$ and the PCS accumulator, and its `compute_v` circuit
+    /// re-derives the matching terms.
     pub(crate) application_claims:
         alloc::vec::Vec<(C::NestedCurve, C::CircuitField, C::CircuitField)>,
+
+    /// The claim polynomials, in slot order — carried for exactly one fuse
+    /// level so the parent can fold them into $f(X)$ and $p(X)$, and so the
+    /// top-level verifier can check a root proof's own (not-yet-folded)
+    /// claims natively.
+    pub(crate) claim_polys: alloc::vec::Vec<sparse::Polynomial<C::CircuitField, R>>,
+
+    /// The claims' host-curve commitments, in slot order — these are the
+    /// points the parent's endoscaling accumulation consumes; each bridges to
+    /// the corresponding `application_claims` nested point.
+    pub(crate) claim_host_commitments: alloc::vec::Vec<C::HostCurve>,
 }
 
 impl<C: Cycle, R: Rank> core::ops::Index<RxIndex> for Proof<C, R> {
@@ -330,9 +347,12 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     }
 
     /// Returns the per-step polynomial-query claim instances
-    /// $(\bar{C}_i, x_i, y_i)$ declared — and natively enforced — at the fuse
-    /// step that produced this proof, in claim order. Empty when the step
-    /// raised no claims.
+    /// $(\bar{C}_i, x_i, y_i)$ declared at the fuse step that produced this
+    /// proof, in slot order — always
+    /// [`NUM_POLY_QUERY_SLOTS`](crate::NUM_POLY_QUERY_SLOTS) entries, with
+    /// unused slots holding the canonical padding claim. The instances are
+    /// bound to the application circuit's $k(Y)$ and recursively enforced when
+    /// this proof is fused as a child.
     pub fn application_claims(&self) -> &[(C::NestedCurve, C::CircuitField, C::CircuitField)] {
         &self.application_claims
     }
@@ -556,6 +576,24 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
         builder.set_left_header(vec![C::CircuitField::ZERO; HEADER_SIZE]);
         builder.set_right_header(vec![C::CircuitField::ZERO; HEADER_SIZE]);
 
+        // Poly-query claim slots: a trivial proof raises no claims, so every
+        // slot holds the canonical padding claim (mirroring the adapter).
+        let padding = crate::internal::challenge::PaddingClaim::<C, R>::new(self.params)
+            .expect("trivial padding claim");
+        builder.set_application_claims(
+            (0..crate::NUM_POLY_QUERY_SLOTS)
+                .map(|_| crate::framework_hooks::PolyQueryClaim {
+                    com: padding.com,
+                    x: padding.x,
+                    y: padding.y,
+                    coefficients: vec![C::CircuitField::ONE],
+                })
+                .collect(),
+            vec![padding.poly.clone(); crate::NUM_POLY_QUERY_SLOTS],
+            vec![padding.host; crate::NUM_POLY_QUERY_SLOTS],
+        );
+        let padding_host_commitment = padding.host;
+
         // Native rx polynomials (all trivial ones)
         builder.set_native_application_rx(ones_host.clone());
         builder.set_native_preamble_rx(ones_host.clone());
@@ -643,6 +681,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                 points.push(host_commitment); // AbB
                 points.push(registry_xy_commitment); // RegistryXY
                 points.push(host_commitment); // P placeholder
+                for _ in 0..crate::NUM_POLY_QUERY_SLOTS {
+                    points.push(padding_host_commitment); // claim slots
+                }
             }
 
             // Current-step bridge inputs.
@@ -688,6 +729,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                 stashed_ab_b: host_commitment,
                 stashed_registry_xy: registry_xy_commitment,
                 stashed_p: p_commitment,
+                stashed_claims: [padding_host_commitment; crate::NUM_POLY_QUERY_SLOTS],
             };
             let rx = nested::stages::preamble::Stage::<C::HostCurve, R>::rx(
                 C::ScalarField::ONE,

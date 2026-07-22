@@ -52,6 +52,20 @@ use step::{Step, internal::adapter::Adapter};
 // FIXME: choose a permanent domain separation tag before release.
 pub(crate) const RAGU_TAG: &[u8] = b"FIXME";
 
+/// Number of polynomial-query claim slots every application circuit exposes in
+/// its public instance.
+///
+/// Each [`StepCtx::enforce_poly_query`](step::StepCtx::enforce_poly_query)
+/// call occupies one slot; a step body may call it at most this many times,
+/// and the call count must not depend on witness values (it is part of the
+/// circuit structure). Unused slots are filled with the canonical padding
+/// claim — the constant polynomial $1$ opened at $x = 0$ to $y = 1$ — so
+/// every application circuit has a uniform instance shape.
+///
+/// The slots are bound by the circuit's $k(Y)$ public-input polynomial and
+/// recursively enforced at the next fuse via the PCS $(P, u, v)$ accumulator.
+pub const NUM_POLY_QUERY_SLOTS: usize = 4;
+
 /// Builder for an [`Application`] for proof-carrying data.
 pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     params: &'params C::Params,
@@ -98,7 +112,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
 
         // Constructing the adapter discovers the stage layout induced by the
         // step's `derive_challenge` calls (a dry run of the witness body).
-        let adapter = Adapter::<C, S, R, HEADER_SIZE>::new(step, C::circuit_poseidon(self.params))?;
+        let adapter = Adapter::<C, S, R, HEADER_SIZE>::new(step, self.params)?;
 
         // Register the well-formedness masks for the induced stages, mirroring
         // what the typed staging path does with `StageExt::{mask, final_mask}`:
@@ -171,13 +185,13 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             self.native_registry
                 .register_internal_step(Adapter::<C, _, R, HEADER_SIZE>::new(
                     step::internal::rerandomize::Rerandomize::<()>::new(),
-                    C::circuit_poseidon(params),
+                    params,
                 )?)?;
         self.native_registry =
             self.native_registry
                 .register_internal_step(Adapter::<C, _, R, HEADER_SIZE>::new(
                     step::internal::trivial::Trivial::new(),
-                    C::circuit_poseidon(params),
+                    params,
                 )?)?;
 
         assert_eq!(

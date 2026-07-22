@@ -6,14 +6,15 @@
 //!
 //! Poly-query claims raised by the step (via
 //! [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query))
-//! are enforced natively here: each claim's evaluation is re-checked against
-//! its polynomial, and the claimed commitment is re-derived with
+//! are *pre-checked* natively here: each claim's evaluation is re-checked
+//! against its polynomial, and the claimed commitment is re-derived with
 //! [`Application::commit_polynomial`]. A claim that does not hold aborts the
-//! fuse with [`Error::InvalidWitness`] — the framework refuses to produce a
-//! proof for a dishonest witness. Folding the claims into the proof system's
-//! $(P, u, v)$ accumulator, so the *merge circuit* enforces them recursively,
-//! is deferred work that requires matching poly-query slots in `compute_v` and
-//! the nested endoscaling chain.
+//! fuse with [`Error::InvalidWitness`] — an honest prover with a dishonest
+//! witness fails early instead of producing a proof whose *parent* fuse (which
+//! recursively enforces the claims through the PCS accumulator and the
+//! `compute_v` circuit) would be unable to open. The claim instances, their
+//! polynomials, and their host commitments are recorded on the builder so the
+//! parent can fold them.
 
 use ragu_arithmetic::{CryptoRngCore, Cycle};
 use ragu_circuits::{CircuitExt, polynomials::Rank, polynomials::sparse};
@@ -46,10 +47,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     )> {
         let (left_proof, left_data) = left.into_parts();
         let (right_proof, right_data) = right.into_parts();
-        let (trace, aux) =
-            Adapter::<C, S, R, HEADER_SIZE>::new(step, C::circuit_poseidon(self.params))?
-                .trace((left_data, right_data, witness))?
-                .into_parts();
+        let (trace, aux) = Adapter::<C, S, R, HEADER_SIZE>::new(step, self.params)?
+            .trace((left_data, right_data, witness))?
+            .into_parts();
         let rx = self.native_registry.assemble(
             &trace,
             S::INDEX.circuit_index(self.num_application_steps)?,
@@ -64,9 +64,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             claims,
         } = aux;
 
-        // Enforce every poly-query claim natively before committing to the
+        // Pre-check every poly-query claim natively before committing to the
         // proof: the claimed evaluation must hold, and the claimed commitment
-        // must bind the claimed polynomial.
+        // must bind the claimed polynomial. (The parent fuse re-enforces both
+        // recursively; this catches dishonest witnesses early.) Along the way,
+        // collect the claim polynomials and host commitments the parent's PCS
+        // folding will consume.
+        debug_assert_eq!(claims.len(), crate::NUM_POLY_QUERY_SLOTS);
+        let mut claim_polys = alloc::vec::Vec::with_capacity(claims.len());
+        let mut claim_host_commitments = alloc::vec::Vec::with_capacity(claims.len());
         for claim in &claims {
             let poly =
                 sparse::Polynomial::<C::CircuitField, R>::from_coeffs(claim.coefficients.clone());
@@ -77,7 +83,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                         .into(),
                 ));
             }
-            let expected = challenge::commit_polynomial::<C, R>(self.params, &poly)?;
+            let (host, expected) = challenge::commit_polynomial_full::<C, R>(self.params, &poly)?;
             if expected != claim.com {
                 return Err(Error::InvalidWitness(
                     "poly-query claim rejected: the claimed commitment does not bind the claimed \
@@ -85,13 +91,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                         .into(),
                 ));
             }
+            claim_polys.push(poly);
+            claim_host_commitments.push(host);
         }
 
         builder.set_circuit_id(S::INDEX.circuit_index(self.num_application_steps)?);
         builder.set_left_header(left_header.into_inner());
         builder.set_right_header(right_header.into_inner());
         builder.set_native_application_rx(rx);
-        builder.set_application_claims(claims);
+        builder.set_application_claims(claims, claim_polys, claim_host_commitments);
 
         Ok((left_proof, right_proof, output_data, step_aux))
     }

@@ -53,7 +53,12 @@ fn oracle_end_to_end() -> Result<()> {
         },
     )?;
     assert!(app.verify(&leaf1, &mut rng)?);
-    assert_eq!(leaf1.proof().application_claims().len(), 1);
+    // All claim slots are present (unused slots hold the padding claim);
+    // the step's real claim occupies slot 0.
+    assert_eq!(
+        leaf1.proof().application_claims().len(),
+        ragu_pcd::NUM_POLY_QUERY_SLOTS
+    );
     let (claim_com, _z, claim_y) = leaf1.proof().application_claims()[0];
     assert_eq!(claim_com, com1);
     assert_eq!(claim_y, p1.eval(leaf1.proof().application_claims()[0].1));
@@ -87,7 +92,10 @@ fn oracle_end_to_end() -> Result<()> {
         leaf2,
     )?;
     assert!(app.verify(&node, &mut rng)?);
-    assert_eq!(node.proof().application_claims().len(), 1);
+    assert_eq!(
+        node.proof().application_claims().len(),
+        ragu_pcd::NUM_POLY_QUERY_SLOTS
+    );
 
     Ok(())
 }
@@ -202,7 +210,10 @@ fn multiset_merge_end_to_end() -> Result<()> {
 
     let (merged, ()) = app.fuse(&mut rng, MergeMultisets::new(), product_com, left, right)?;
     assert!(app.verify(&merged, &mut rng)?);
-    assert_eq!(merged.proof().application_claims().len(), 3);
+    assert_eq!(
+        merged.proof().application_claims().len(),
+        ragu_pcd::NUM_POLY_QUERY_SLOTS
+    );
     assert_eq!(merged.data().commitment, product_com);
 
     // A dishonest product commitment (not binding the product polynomial) is

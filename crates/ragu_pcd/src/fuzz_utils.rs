@@ -30,6 +30,12 @@ pub enum Corruption<F> {
     LeftHeaderLen(usize),
     /// Resize `right_header` to the given length.
     RightHeaderLen(usize),
+    /// Perturb the claimed evaluation `y` of the poly-query claim in the
+    /// given slot, breaking the claim's evaluation binding. The root verifier
+    /// rejects the proof directly; a parent fuse's circuits reject it
+    /// recursively (the instance-bound claim no longer matches the
+    /// application circuit's k(Y), and `compute_v`'s claim quotient breaks).
+    ClaimY(usize, F),
 }
 
 impl<C: Cycle, R: Rank> Proof<C, R> {
@@ -61,7 +67,17 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             Corruption::RightHeaderLen(len) => {
                 self.right_header.resize(len, C::CircuitField::ZERO);
             }
+            Corruption::ClaimY(slot, v) => {
+                self.application_claims[slot].2 += v;
+            }
         }
+    }
+}
+
+impl<C: Cycle, R: Rank, H: crate::Header<C::CircuitField>> crate::Pcd<C, R, H> {
+    /// Apply a [`Corruption`] to the underlying proof.
+    pub fn corrupt(&mut self, corruption: Corruption<C::CircuitField>) {
+        self.proof_mut().corrupt(corruption);
     }
 }
 

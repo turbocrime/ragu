@@ -138,6 +138,9 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
             walker.enforce_equal(dr, &child.stashed_ab_b)?;
             walker.enforce_equal(dr, &child.stashed_registry_xy)?;
             walker.enforce_equal(dr, &child.stashed_p)?;
+            for stashed_claim in child.stashed_claims.iter() {
+                walker.enforce_equal(dr, stashed_claim)?;
+            }
         }
 
         walker.enforce_equal(dr, &s_prime.registry_wx0)?;

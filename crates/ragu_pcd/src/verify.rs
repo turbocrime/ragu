@@ -119,11 +119,40 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             poly_eval == expected
         };
 
+        // Check the proof's own poly-query claims. Claims are enforced
+        // recursively one fuse level up (the parent folds them into f and the
+        // PCS accumulator), so the root proof's own claims have not been
+        // folded yet; the verifier checks them natively with the carried
+        // claim polynomials: the claimed evaluation, the host commitment
+        // binding, and the bridge to the instance-bound nested commitment.
+        let poly_query_claims = {
+            let claims = pcd.proof().application_claims();
+            let polys = &pcd.proof().claim_polys;
+            let host_coms = &pcd.proof().claim_host_commitments;
+            claims.len() == crate::NUM_POLY_QUERY_SLOTS
+                && polys.len() == crate::NUM_POLY_QUERY_SLOTS
+                && host_coms.len() == crate::NUM_POLY_QUERY_SLOTS
+                && claims.iter().zip(polys.iter()).zip(host_coms.iter()).all(
+                    |((&(com, x, y), poly), host)| {
+                        poly.eval(x) == y
+                            && poly
+                                .commit_to_affine::<C::HostCurve>(C::host_generators(self.params))
+                                == *host
+                            && crate::internal::challenge::bridge_commitment::<C, R>(
+                                self.params,
+                                *host,
+                            )
+                            .map(|bridge| bridge == com)
+                            .unwrap_or(false)
+                    },
+                )
+        };
+
         // TODO: Add checks for registry_wx0_poly, registry_wx1_poly, and registry_wy_poly.
         // - registry_wx0/wx1: need child proof x challenges (x₀, x₁) which "disappear" in preamble
         // - registry_wy: interstitial value that will be elided later
 
-        Ok(native_revdot_claims && nested_revdot_claims && registry_xy_claim)
+        Ok(native_revdot_claims && nested_revdot_claims && registry_xy_claim && poly_query_claims)
     }
 }
 

@@ -125,6 +125,12 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
             .enforce_equal(dr, &query.registry_xy)?;
         child.stashed_eval.enforce_equal(dr, &eval.native_eval)?;
 
+        // Poly-query claims: the stashed claim host commitments must match
+        // the child's own record of them in its eval bridge stage.
+        for (stashed_claim, child_claim) in child.stashed_claims.iter().zip(eval.claims.iter()) {
+            stashed_claim.enforce_equal(dr, child_claim)?;
+        }
+
         // P: the child's accumulated p commitment is the last interstitial
         // of the child's PointsStage.
         let last_interstitial = points
