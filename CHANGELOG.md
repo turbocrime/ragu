@@ -12,9 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Polynomial-query oracle for PCD steps (continues #701/#714/#783):
   - `StepCtx::derive_challenge` — sound Fiat–Shamir challenges: the in-circuit
     Poseidon sponge hash of any `ChallengeInput` (elements, points, and
-    compositions), with real values available at witness time. Each call still
-    records an induced-stage layout for the future succinct-commitment
-    optimization.
+    compositions), with real values available at witness time. The call
+    layout (count and input widths) is discovered by a registration-time dry
+    run and guarded at synthesis, since it is part of the circuit structure.
+    (The unfinished "induced stage" scaffolding inherited from #783 — an
+    unused alternative path that would have re-derived challenges from
+    per-call stage commitments — was dropped: it registered inert mask
+    circuits and reserved unconstrained trace gates without contributing
+    any enforcement.)
   - `ragu_pcd::oracle::WitnessedPolynomial` — sound in-circuit polynomial
     oracle: witness coefficients in-circuit, evaluate via Horner, and bind
     across PCD nodes with a Poseidon hash commitment exposed through headers.

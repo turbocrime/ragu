@@ -1,8 +1,8 @@
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use ragu_arithmetic::{Coeff, Cycle};
-use ragu_circuits::{Circuit, WithAux, polynomials::Rank, staging::InducedStages};
+use ragu_arithmetic::Cycle;
+use ragu_circuits::{Circuit, WithAux, polynomials::Rank};
 use ragu_core::{
     Result,
     drivers::{
@@ -14,7 +14,6 @@ use ragu_core::{
 };
 use ragu_primitives::{
     Element, GadgetExt,
-    allocator::{Allocator, Standard},
     vec::{CollectFixed, ConstLen, FixedVec, Len},
 };
 
@@ -36,22 +35,20 @@ impl<const HEADER_SIZE: usize> Len for InstanceLen<HEADER_SIZE> {
     }
 }
 
-/// Discovers the induced stage layout of `step` by dry-running its witness
-/// body once, with an [`Empty`] witness on a counting emulator and the hooks
-/// in discovery mode.
+/// Discovers the hook-call layout of `step` — the input width of each
+/// [`derive_challenge`](StepCtx::derive_challenge) call, in call order, and
+/// the poly-query claim count — by dry-running its witness body once, with an
+/// [`Empty`] witness on a counting emulator and the hooks in discovery mode.
 ///
-/// Each [`derive_challenge`](StepCtx::derive_challenge) call records its
-/// gadget's wire width; the widths in call order *are* the layout. This is
-/// sound because circuit structure must be witness-independent: the same body
-/// runs with `Empty` witnesses for wiring extraction and metrics, so the call
-/// sequence cannot differ between this dry run and real synthesis. (A body
-/// that violates that requirement is caught at synthesis time by the
-/// determinism guard in
-/// [`FrameworkHooks::derive_challenge`].)
-pub(crate) fn discover_induced_stages<C: Cycle, S: Step<C>, const HEADER_SIZE: usize>(
+/// This is sound because circuit structure must be witness-independent: the
+/// same body runs with `Empty` witnesses for wiring extraction and metrics,
+/// so the call sequence cannot differ between this dry run and real
+/// synthesis. (A body that violates that requirement is caught at synthesis
+/// time by the determinism guard in [`FrameworkHooks::derive_challenge`].)
+pub(crate) fn discover_hook_layout<C: Cycle, S: Step<C>, const HEADER_SIZE: usize>(
     step: &S,
     poseidon: &C::CircuitPoseidon,
-) -> Result<(InducedStages, usize)> {
+) -> Result<(Vec<usize>, usize)> {
     let mut dr: Emulator<Wireless<Empty, C::CircuitField>> = Emulator::counter();
     let mut hooks = FrameworkHooks::<_, C::NestedCurve>::new();
     {
@@ -67,16 +64,7 @@ pub(crate) fn discover_induced_stages<C: Cycle, S: Step<C>, const HEADER_SIZE: u
         ));
     }
 
-    Ok((
-        InducedStages::new(
-            outputs
-                .derived_challenges
-                .iter()
-                .map(|stage| stage.num_wires)
-                .collect(),
-        ),
-        num_claims,
-    ))
+    Ok((outputs.challenge_widths, num_claims))
 }
 
 /// Auxiliary data produced by [`Adapter::witness`]: the two input headers, the
@@ -95,19 +83,17 @@ pub(crate) struct AdapterAux<'source, C: Cycle, S: Step<C>, const HEADER_SIZE: u
     /// every claim natively, persists the claim instances in the proof, and
     /// the *next* fuse enforces them recursively via the PCS accumulator.
     pub claims: Vec<PolyQueryClaim<C::CircuitField, C::NestedCurve>>,
-    // Note: the stages induced by `derive_challenge` do not travel here — the
-    // challenge is derived and constrained in-circuit, so nothing needs
-    // resolving downstream. The stage geometry is deterministic
-    // ([`Adapter::induced_stages`]) and is what the future succinct-challenge
-    // optimization will use to carve each stage's slice out of the trace
-    // positionally.
+    // Note: `derive_challenge` calls leave nothing here — the challenge is
+    // derived and constrained in-circuit (a Poseidon sponge over the input
+    // wires), so nothing needs resolving downstream.
 }
 
 pub(crate) struct Adapter<'params, C: Cycle, S, R: Rank, const HEADER_SIZE: usize> {
     step: S,
-    /// The induced stage layout discovered from the step's witness body at
-    /// construction time; see [`discover_induced_stages`].
-    induced: InducedStages,
+    /// The `derive_challenge` call layout (input width per call, in call
+    /// order) discovered from the step's witness body at construction time;
+    /// see [`discover_hook_layout`].
+    challenge_widths: Vec<usize>,
     /// The number of poly-query claims the step body raises, discovered by the
     /// same dry run. Part of the circuit structure: the real synthesis must
     /// raise exactly this many (determinism guard in [`Adapter::witness`]).
@@ -124,15 +110,16 @@ pub(crate) struct Adapter<'params, C: Cycle, S, R: Rank, const HEADER_SIZE: usiz
 impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
     Adapter<'params, C, S, R, HEADER_SIZE>
 {
-    /// Wraps `step`, discovering its induced stage layout and poly-query claim
-    /// count with a dry run of the witness body (see
-    /// [`discover_induced_stages`]).
+    /// Wraps `step`, discovering its `derive_challenge` call layout and
+    /// poly-query claim count with a dry run of the witness body (see
+    /// [`discover_hook_layout`]).
     pub fn new(step: S, params: &'params C::Params) -> Result<Self> {
         let poseidon = C::circuit_poseidon(params);
-        let (induced, num_claims) = discover_induced_stages::<C, S, HEADER_SIZE>(&step, poseidon)?;
+        let (challenge_widths, num_claims) =
+            discover_hook_layout::<C, S, HEADER_SIZE>(&step, poseidon)?;
         Ok(Adapter {
             step,
-            induced,
+            challenge_widths,
             num_claims,
             poseidon,
             padding: PaddingClaim::new(params)?,
@@ -140,10 +127,11 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
         })
     }
 
-    /// The stage layout induced by the step's
-    /// [`derive_challenge`](StepCtx::derive_challenge) calls.
-    pub fn induced_stages(&self) -> &InducedStages {
-        &self.induced
+    /// The input width of each of the step's
+    /// [`derive_challenge`](StepCtx::derive_challenge) calls, in call order.
+    #[cfg(test)]
+    pub fn challenge_widths(&self) -> &[usize] {
+        &self.challenge_widths
     }
 }
 
@@ -181,30 +169,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
     {
         let (left, right, witness) = witness.cast();
 
-        // Reserve the induced stage regions at the head of the trace (gates
-        // 1.. — the SYSTEM gate is allocated by orchestration) so their
-        // geometry depends only on the discovered widths, mirroring
-        // `StageBuilder::configure_stage`. The final trace is zero here; each
-        // stage polynomial carries the actual values.
-        let mut reserved = Vec::with_capacity(self.induced.len());
-        {
-            let allocator = &mut Standard::new();
-            for stage in 0..self.induced.len() {
-                let width = self.induced.width(stage);
-                let mut wires = Vec::with_capacity(width);
-                for _ in 0..width {
-                    wires.push(allocator.alloc(dr, || Ok(Coeff::Zero))?);
-                }
-                // Pad to a whole number of gates so consecutive stages tile
-                // disjoint gate ranges.
-                for _ in width..(2 * self.induced.num_gates(stage)) {
-                    allocator.alloc(dr, || Ok(Coeff::Zero))?;
-                }
-                reserved.push(wires);
-            }
-        }
-
-        let mut hooks = FrameworkHooks::with_reserved(reserved);
+        let mut hooks = FrameworkHooks::with_expected(self.challenge_widths.clone());
         let ((left, right, output), output_data, step_aux) = {
             let mut ctx = StepCtx::<'_, '_, _, C>::new(dr, &mut hooks, self.poseidon);
             self.step
@@ -212,15 +177,15 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
         };
         let FrameworkHookOutputs {
             poly_query_claims: mut claim_wires,
-            derived_challenges,
+            challenge_widths,
         } = hooks.into_outputs();
 
         // Determinism guard, complementing the per-call checks inside
-        // `derive_challenge`: every reserved region must have been consumed,
-        // or a stage polynomial would commit to a slice nothing was bound to.
-        if derived_challenges.len() != self.induced.len() {
+        // `derive_challenge`: every discovered call must have happened, or the
+        // synthesized circuit would differ from the registered structure.
+        if challenge_widths.len() != self.challenge_widths.len() {
             return Err(ragu_core::Error::InvalidWitness(
-                "derive_challenge called fewer times than the discovered stage layout; \
+                "derive_challenge called fewer times than the discovered call layout; \
                  circuit structure must not depend on witness values"
                     .into(),
             ));
@@ -505,33 +470,27 @@ mod tests {
 
     /// A step without `derive_challenge` calls discovers an empty layout.
     #[test]
-    fn discovery_finds_no_stages_for_plain_step() {
+    fn discovery_finds_no_calls_for_plain_step() {
         let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, Pasta::baked())
             .expect("discovery should succeed");
-        assert!(adapter.induced_stages().is_empty());
+        assert!(adapter.challenge_widths().is_empty());
     }
 
-    /// Each `derive_challenge` call induces one stage whose width is the
-    /// gadget's wire count.
+    /// Each `derive_challenge` call records the input's element width.
     #[test]
-    fn discovery_finds_induced_stage() {
+    fn discovery_finds_challenge_call() {
         let adapter =
             Adapter::<Pasta, ChallengeStep, TestR, HEADER_SIZE>::new(ChallengeStep, Pasta::baked())
                 .expect("discovery should succeed");
-        let induced = adapter.induced_stages();
-        assert_eq!(induced.len(), 1);
-        // Two `Element`s -> width 2, one gate right after the SYSTEM gate.
-        assert_eq!(induced.width(0), 2);
-        assert_eq!(induced.skip_gates(0), 1);
-        assert_eq!(induced.num_gates(0), 1);
-        assert_eq!(induced.final_skip_gates(), 2);
+        // Two `Element`s -> one call of width 2.
+        assert_eq!(adapter.challenge_widths(), &[2]);
     }
 
-    /// The full adapter synthesis (reservation + binding + deferred output
-    /// allocation) completes on a structure-only driver for a step that
-    /// derives a challenge.
+    /// The full adapter synthesis (in-circuit challenge derivation + deferred
+    /// output allocation) completes on a structure-only driver for a step
+    /// that derives a challenge.
     #[test]
-    fn adapter_witness_synthesizes_induced_stage_structure() {
+    fn adapter_witness_synthesizes_challenge_structure() {
         // A counting driver: no witness values, so the deferred output value
         // closures never run.
         let mut dr: Emulator<Wireless<Empty, Fp>> = Emulator::counter();

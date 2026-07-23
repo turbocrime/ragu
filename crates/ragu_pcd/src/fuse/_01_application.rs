@@ -66,10 +66,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         // Pre-check every poly-query claim natively before committing to the
         // proof: the claimed evaluation must hold, and the claimed commitment
-        // must bind the claimed polynomial. (The parent fuse re-enforces both
-        // recursively; this catches dishonest witnesses early.) Along the way,
-        // collect the claim polynomials and host commitments the parent's PCS
-        // folding will consume.
+        // must bind the claimed polynomial. This check carries no soundness
+        // weight — it runs on the prover, and a malicious prover who skips it
+        // gains nothing, because the parent fuse enforces the same claims
+        // through the PCS accumulator and `compute_v`, and the verifier
+        // checks a root proof's claims itself. It exists so an honest prover
+        // with a dishonest witness fails here, with a useful error, instead
+        // of at verification. Along the way, collect the claim polynomials
+        // and host commitments the parent's PCS folding will consume.
         debug_assert_eq!(claims.len(), crate::NUM_POLY_QUERY_SLOTS);
         let mut claim_polys = alloc::vec::Vec::with_capacity(claims.len());
         let mut claim_host_commitments = alloc::vec::Vec::with_capacity(claims.len());

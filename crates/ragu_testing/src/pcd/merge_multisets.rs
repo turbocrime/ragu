@@ -234,12 +234,11 @@ mod tests {
     const HEADER_SIZE: usize = 4;
 
     /// Registering a step that derives a challenge exercises the full
-    /// registration-time staging path: the dry run discovers the induced
-    /// stage layout, the corresponding well-formedness masks are registered,
-    /// and the step circuit synthesizes (reservation + binding + deferred
-    /// output allocation) through keygen.
+    /// registration path: the dry run discovers the hook-call layout and the
+    /// step circuit (with its in-circuit Poseidon challenge derivation)
+    /// synthesizes through keygen.
     #[test]
-    fn registration_discovers_induced_stage_and_registers_masks() {
+    fn registration_handles_challenge_deriving_step() {
         let pasta = Pasta::baked();
 
         let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new(pasta)
@@ -250,11 +249,9 @@ mod tests {
             .finalize()
             .expect("finalization should succeed");
 
-        // `MergeMultisets` calls `derive_challenge` once with three `Point`s
-        // (6 wires), inducing one stage; `WitnessMultiset` induces none. The
-        // registry therefore holds the 13 internal circuits, 2 internal
-        // steps, 2 application steps, plus 2 application masks (the stage
-        // mask and the final mask).
-        assert_eq!(app.native_registry().num_circuits(), 13 + 2 + 2 + 2);
+        // The registry holds the 13 internal circuits, 2 internal steps, and
+        // 2 application steps. `derive_challenge` adds no circuits of its
+        // own: the challenge is enforced inside the calling step's circuit.
+        assert_eq!(app.native_registry().num_circuits(), 13 + 2 + 2);
     }
 }

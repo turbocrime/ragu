@@ -81,6 +81,8 @@ where
     ///
     /// The fuse raising the claim also pre-checks it natively, so an honest
     /// prover with a dishonest witness fails early with `InvalidWitness`.
+    /// That pre-check carries no soundness weight (it runs on the prover);
+    /// enforcement never relies on prover behavior.
     ///
     /// A step body may call this at most `NUM_POLY_QUERY_SLOTS` times, and the
     /// call count must not depend on witness values (it is circuit structure).

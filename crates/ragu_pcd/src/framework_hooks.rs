@@ -29,34 +29,22 @@
 //!   Poseidon sponge hash** of the input's elements. The squeezed challenge
 //!   wire is constrained to equal that hash, so the derivation is *sound*:
 //!   within the proof system's guarantees, a prover cannot pick the challenge
-//!   independently of the input. Each call also *induces a stage*: the input's
-//!   wires are recorded as a partial-trace layout so that a future `fuse()`
-//!   optimization can commit to each stage independently and derive the
-//!   challenge from the *succinct* commitment (hashed in a fixed internal
-//!   circuit, à la `internal/native/circuits/hashes_1.rs`) instead of paying
-//!   for the sponge in the application circuit. The simple model is one stage
-//!   per call; batching consecutive calls into a single stage is part of the
-//!   same future optimization. See [`InducedStage`].
+//!   independently of the input.
 //!
-//! ## Induced stage layout
+//! ## Structure discovery
 //!
-//! The stages induced by `derive_challenge` are not known at Rust compile
-//! time — they depend on how many calls the step body makes and how wide each
-//! input is. They *are* known at registration time, because circuit structure
-//! is witness-independent: the adapter dry-runs the step body once (with an
-//! [`Empty`](ragu_core::maybe::Empty) witness, on a counting emulator) and
-//! records each call's input width, producing an
-//! [`InducedStages`](ragu_circuits::staging::InducedStages) layout. The
-//! adapter then reserves one region per stage at the head of the trace before
-//! running the body for real, and passes the reserved regions to this
-//! container via [`with_reserved`](FrameworkHooks::with_reserved). Each
-//! `derive_challenge` call binds its input into the next reserved region with
-//! one equality constraint per wire — that copy is what makes the stage
-//! commitment (and hence the challenge) binding.
-//!
-//! A container created with [`new`](FrameworkHooks::new) has no reservations
-//! and performs no binding: that is **discovery mode**, used only for the
-//! registration-time dry run that produces the layout in the first place.
+//! How many times a step body calls each hook — and how wide each
+//! `derive_challenge` input is — is part of the circuit's structure, so it
+//! must be witness-independent. The adapter dry-runs the step body once at
+//! registration time (with an [`Empty`](ragu_core::maybe::Empty) witness, on a
+//! counting emulator) with a container created by [`new`](FrameworkHooks::new)
+//! (**discovery mode**), recording each `derive_challenge` call's input width
+//! and the poly-query claim count. Real synthesis goes through
+//! [`with_expected`](FrameworkHooks::with_expected), which replays the
+//! discovered widths as a per-call determinism guard: a body whose call
+//! sequence diverges from the dry run fails with
+//! [`Error::InvalidWitness`] instead of silently synthesizing a different
+//! circuit.
 //!
 //! ## Challenge soundness
 //!
@@ -81,7 +69,6 @@ use ragu_arithmetic::{CurveAffine, ff::Field};
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverValue},
-    gadgets::Gadget,
 };
 use ragu_primitives::{Element, GadgetExt, Point, poseidon::Sponge};
 
@@ -217,49 +204,23 @@ impl_challenge_input_tuple!(A, B);
 impl_challenge_input_tuple!(A, B, C2);
 impl_challenge_input_tuple!(A, B, C2, D2);
 
-/// A single stage induced by a [`FrameworkHooks::derive_challenge`] call.
-///
-/// Under the simple model there is exactly one stage per call: the wires of the
-/// input handed to `derive_challenge` become this stage's partial-trace
-/// polynomial, which a future `fuse()` optimization will commit to
-/// independently so the challenge can be re-derived from a *succinct*
-/// commitment instead of re-hashing the input. Today the challenge is the
-/// in-circuit Poseidon hash of the input itself (sound, not yet succinct),
-/// and the recorded stage layout is what keeps the trace shape
-/// forward-compatible with that optimization.
-pub struct InducedStage<'dr, D: Driver<'dr>> {
-    /// Width of this stage's trace slice (the input's wire count) — the same
-    /// quantity the registration-time discovery pass records in the
-    /// [`InducedStages`](ragu_circuits::staging::InducedStages) layout, and
-    /// the quantity the per-call determinism guard checks against it.
-    pub num_wires: usize,
-    /// The input's actual wire handles, in canonical traversal order, captured
-    /// via [`ChallengeInput::append_elements`]. Always
-    /// `wires.len() == num_wires`.
-    pub wires: Vec<D::Wire>,
-    /// The challenge handed back to the step body — the in-circuit Poseidon
-    /// sponge hash of the input's elements.
-    pub challenge: Element<'dr, D>,
-}
-
 /// Container for framework-side state threaded through a
 /// [`Step::witness`](crate::step::Step::witness) invocation.
 ///
-/// Holds the polynomial-commitment opening-claim sink and the stages induced by
+/// Holds the polynomial-commitment opening-claim sink and the record of
 /// [`derive_challenge`](Self::derive_challenge) calls. The framework's adapter
 /// constructs this, passes it to the step, then surfaces
 /// [`into_outputs`](Self::into_outputs) through its `Aux` for later fuse-time
 /// processing.
 pub struct FrameworkHooks<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     poly_query_claims: Vec<ClaimWires<'dr, D, C>>,
-    /// Stages induced by [`FrameworkHooks::derive_challenge`] calls — one per
-    /// call under the simple model. Tracked here so a future `fuse()`
-    /// optimization can commit to each partial trace.
-    derived_challenges: Vec<InducedStage<'dr, D>>,
-    /// The reserved stage regions, one per induced stage in the layout
-    /// discovered at registration time, in stage order. `None` in discovery
-    /// mode (see the [module documentation](self)).
-    reserved: Option<Vec<Vec<D::Wire>>>,
+    /// Input width (element count) of each
+    /// [`derive_challenge`](Self::derive_challenge) call, in call order.
+    challenge_widths: Vec<usize>,
+    /// The widths discovered by the registration-time dry run, replayed as a
+    /// per-call determinism guard. `None` in discovery mode (see the
+    /// [module documentation](self)).
+    expected_widths: Option<Vec<usize>>,
 }
 
 /// Aggregate of every hook's accumulated output, returned by
@@ -270,36 +231,36 @@ pub struct FrameworkHookOutputs<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>
     /// [`FrameworkHooks::enforce_polynomial_query`], in call order — the
     /// in-circuit wires plus the witness-only coefficient values.
     pub poly_query_claims: Vec<ClaimWires<'dr, D, C>>,
-    /// Stages induced by [`FrameworkHooks::derive_challenge`] calls, in call
-    /// order. Each carries the input's wire slice plus the challenge handle.
-    /// A future `fuse()` optimization consumes these to build the per-call
-    /// partial traces.
-    pub derived_challenges: Vec<InducedStage<'dr, D>>,
+    /// Input width (element count) of each
+    /// [`FrameworkHooks::derive_challenge`] call, in call order. The
+    /// registration-time dry run reads this to discover the call layout; the
+    /// adapter compares its length against that layout after real synthesis.
+    pub challenge_widths: Vec<usize>,
 }
 
 impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C> {
-    /// Creates a new, empty hook container in **discovery mode**: no stage
-    /// regions are reserved and [`derive_challenge`](Self::derive_challenge)
-    /// only records input widths without binding them. Used by the
-    /// registration-time dry run that discovers the induced stage layout; real
-    /// synthesis goes through [`with_reserved`](Self::with_reserved).
+    /// Creates a new, empty hook container in **discovery mode**: no expected
+    /// call layout, so [`derive_challenge`](Self::derive_challenge) records
+    /// input widths without checking them. Used by the registration-time dry
+    /// run that discovers the call layout; real synthesis goes through
+    /// [`with_expected`](Self::with_expected).
     pub fn new() -> Self {
         Self {
             poly_query_claims: Vec::new(),
-            derived_challenges: Vec::new(),
-            reserved: None,
+            challenge_widths: Vec::new(),
+            expected_widths: None,
         }
     }
 
-    /// Creates a hook container with the reserved stage regions for the
-    /// induced stage layout discovered at registration time, one region per
-    /// stage in stage order. Each [`derive_challenge`](Self::derive_challenge)
-    /// call consumes the next region, binding the input's wires to it.
-    pub fn with_reserved(reserved: Vec<Vec<D::Wire>>) -> Self {
+    /// Creates a hook container with the `derive_challenge` call layout
+    /// discovered at registration time — one input width per call, in call
+    /// order. Each [`derive_challenge`](Self::derive_challenge) call is
+    /// checked against the next entry.
+    pub fn with_expected(expected_widths: Vec<usize>) -> Self {
         Self {
             poly_query_claims: Vec::new(),
-            derived_challenges: Vec::new(),
-            reserved: Some(reserved),
+            challenge_widths: Vec::new(),
+            expected_widths: Some(expected_widths),
         }
     }
 
@@ -343,20 +304,14 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C>
     /// value immediately, so the step body can evaluate polynomials at it
     /// right away.
     ///
-    /// Each call also induces one stage (simple model: one stage per call):
-    /// the input's wires are recorded as a partial-trace layout so that a
-    /// future `fuse()` optimization can commit to them independently and
-    /// re-derive the challenge from the *succinct* commitment instead of
-    /// re-hashing the input in-circuit; see [`InducedStage`] and the
-    /// [module documentation](self).
-    ///
     /// # Errors
     ///
     /// Returns [`Error::InvalidWitness`] if the call sequence diverges from
-    /// the layout discovered at registration time — more calls than discovered
-    /// stages, or an input whose width differs from the discovered width. An
-    /// honest step body cannot trip this: circuit structure must not depend on
-    /// witness values, so the dry run and the real run make identical calls.
+    /// the layout discovered at registration time — more calls than
+    /// discovered, or an input whose width differs from the discovered width.
+    /// An honest step body cannot trip this: circuit structure must not depend
+    /// on witness values, so the dry run and the real run make identical
+    /// calls.
     pub fn derive_challenge<G, P>(
         &mut self,
         dr: &mut D,
@@ -367,29 +322,23 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C>
         G: ChallengeInput<'dr, D>,
         P: ragu_arithmetic::PoseidonPermutation<D::F>,
     {
-        // Capture the input's elements and wire handles now — the stage's
-        // partial trace carries exactly these values.
         let mut elements = Vec::new();
         input.append_elements(dr, &mut elements)?;
-        let mut wires = Vec::new();
-        for element in &elements {
-            wires.extend(element.collect_wires()?);
-        }
 
-        // Check the call against its reserved stage region. Skipped in
-        // discovery mode, which only records widths.
-        if let Some(reserved) = &self.reserved {
-            let stage = self.derived_challenges.len();
-            let region = reserved.get(stage).ok_or_else(|| {
+        // Determinism guard: check the call against the discovered layout.
+        // Skipped in discovery mode, which only records widths.
+        if let Some(expected) = &self.expected_widths {
+            let call = self.challenge_widths.len();
+            let width = expected.get(call).ok_or_else(|| {
                 Error::InvalidWitness(
-                    "derive_challenge called more times than the discovered stage layout; \
+                    "derive_challenge called more times than the discovered call layout; \
                      circuit structure must not depend on witness values"
                         .into(),
                 )
             })?;
-            if region.len() != wires.len() {
+            if *width != elements.len() {
                 return Err(Error::InvalidWitness(
-                    "derive_challenge input width diverged from the discovered stage layout; \
+                    "derive_challenge input width diverged from the discovered call layout; \
                      circuit structure must not depend on witness values"
                         .into(),
                 ));
@@ -404,12 +353,7 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C>
         }
         let challenge = sponge.squeeze(dr)?;
 
-        // Record the induced stage for the future succinct-commitment path.
-        self.derived_challenges.push(InducedStage {
-            num_wires: wires.len(),
-            wires,
-            challenge: challenge.clone(),
-        });
+        self.challenge_widths.push(elements.len());
 
         Ok(challenge)
     }
@@ -418,7 +362,7 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C>
     pub fn into_outputs(self) -> FrameworkHookOutputs<'dr, D, C> {
         FrameworkHookOutputs {
             poly_query_claims: self.poly_query_claims,
-            derived_challenges: self.derived_challenges,
+            challenge_widths: self.challenge_widths,
         }
     }
 }
@@ -443,10 +387,10 @@ mod tests {
 
     type NestedCurve = <Pasta as Cycle>::NestedCurve;
 
-    /// A `derive_challenge` call records one induced stage per call with the
-    /// input's wire count, on a structure-only driver.
+    /// A `derive_challenge` call records the input's element width, in call
+    /// order, on a structure-only driver.
     #[test]
-    fn derive_challenge_records_stage_layout() {
+    fn derive_challenge_records_call_layout() {
         let pasta = Pasta::baked();
         let mut dr = Emulator::counter();
         let allocator = &mut Standard::new();
@@ -454,14 +398,13 @@ mod tests {
 
         let a = Element::alloc(&mut dr, allocator, Empty).expect("alloc a");
         let b = Element::alloc(&mut dr, allocator, Empty).expect("alloc b");
-        // Two-element input -> one induced stage of width 2.
+        // Two-element input -> one recorded call of width 2.
         let _challenge = hooks
             .derive_challenge(&mut dr, Pasta::circuit_poseidon(pasta), (a, b))
             .expect("derive_challenge");
 
         let outputs = hooks.into_outputs();
-        assert_eq!(outputs.derived_challenges.len(), 1);
-        assert_eq!(outputs.derived_challenges[0].num_wires, 2);
+        assert_eq!(outputs.challenge_widths, alloc::vec![2]);
     }
 
     /// On a value-carrying driver the challenge resolves immediately, is
