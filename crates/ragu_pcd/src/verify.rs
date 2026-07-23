@@ -55,6 +55,17 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             return Ok(false);
         }
 
+        // Validate the poly-query claim vectors up front. Without this, a
+        // length mismatch would surface from the `alloc_for_verify` pipeline
+        // below as `Err(MalformedEncoding)` rather than the `Ok(false)` this
+        // method promises for a malformed proof (mirroring the header check).
+        if pcd.proof().application_claims().len() != crate::NUM_POLY_QUERY_SLOTS
+            || pcd.proof().claim_polys.len() != crate::NUM_POLY_QUERY_SLOTS
+            || pcd.proof().claim_host_commitments.len() != crate::NUM_POLY_QUERY_SLOTS
+        {
+            return Ok(false);
+        }
+
         // Compute unified k(y), unified_bridge k(y), and application k(y).
         let (unified_ky, unified_bridge_ky, application_ky) =
             Emulator::emulate_wireless((pcd.proof(), pcd.data().clone(), y), |dr, witness| {

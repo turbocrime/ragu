@@ -74,10 +74,20 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // with a dishonest witness fails here, with a useful error, instead
         // of at verification. Along the way, collect the claim polynomials
         // and host commitments the parent's PCS folding will consume.
-        debug_assert_eq!(claims.len(), crate::NUM_POLY_QUERY_SLOTS);
+        assert_eq!(claims.len(), crate::NUM_POLY_QUERY_SLOTS);
         let mut claim_polys = alloc::vec::Vec::with_capacity(claims.len());
         let mut claim_host_commitments = alloc::vec::Vec::with_capacity(claims.len());
         for claim in &claims {
+            // Reject an over-capacity coefficient vector gracefully; otherwise
+            // `sparse::Polynomial::from_coeffs` would panic on it. Mirrors the
+            // guard in `oracle::WitnessedPolynomial::alloc`.
+            if claim.coefficients.len() > R::num_coeffs() {
+                return Err(Error::InvalidWitness(
+                    "poly-query claim rejected: coefficient count exceeds the polynomial rank \
+                     capacity"
+                        .into(),
+                ));
+            }
             let poly =
                 sparse::Polynomial::<C::CircuitField, R>::from_coeffs(claim.coefficients.clone());
             if poly.eval(claim.x) != claim.y {

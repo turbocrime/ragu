@@ -27,9 +27,12 @@
 //! one multiply-add per coefficient for each evaluation). For polynomials too
 //! large for that price, the *succinct* path —
 //! [`StepCtx::enforce_poly_query`], where the polynomial stays outside the
-//! circuit and only the claim `(com, x, y)` is recorded — is natively
-//! enforced at fuse time today and will become recursively sound once the
-//! claims are folded into the proof system's $(P, u, v)$ accumulator.
+//! circuit and only the claim `(com, x, y)` is recorded — is pre-checked
+//! natively at the fuse that raises it, then enforced recursively at the next
+//! fuse by folding into the proof system's $(P, u, v)$ accumulator, at parity
+//! with the framework's own $f$/$p$/bridge components. (The accumulator's
+//! final root opening by the verifier is a pre-existing framework-wide
+//! follow-up tracked on `main`, not specific to poly-query claims.)
 //!
 //! ## Capacity
 //!
