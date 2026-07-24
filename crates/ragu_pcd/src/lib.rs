@@ -68,7 +68,6 @@ pub const NUM_POLY_QUERY_SLOTS: usize = 4;
 
 /// Builder for an [`Application`] for proof-carrying data.
 pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
-    params: &'params C::Params,
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
     num_application_steps: usize,
@@ -76,14 +75,22 @@ pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, const HEADER_SIZE: usi
     _marker: PhantomData<[(); HEADER_SIZE]>,
 }
 
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Default
+    for ApplicationBuilder<'_, C, R, HEADER_SIZE>
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
     ApplicationBuilder<'params, C, R, HEADER_SIZE>
 {
-    /// Create an empty [`ApplicationBuilder`] for proof-carrying data over
-    /// the cycle's runtime parameters.
-    pub fn new(params: &'params C::Params) -> Self {
+    /// Create an empty [`ApplicationBuilder`] for proof-carrying data. The
+    /// cycle's runtime parameters are not needed until
+    /// [`finalize`](Self::finalize).
+    pub fn new() -> Self {
         ApplicationBuilder {
-            params,
             native_registry: RegistryBuilder::new(),
             nested_registry: RegistryBuilder::new(),
             num_application_steps: 0,
@@ -110,8 +117,11 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
 
         // Constructing the adapter discovers the step's hook-call layout —
         // its `derive_challenge` call widths and poly-query claim count — via
-        // a dry run of the witness body.
-        let adapter = Adapter::<C, S, R, HEADER_SIZE>::new(step, self.params)?;
+        // a dry run of the witness body. This is param-free: discovery uses the
+        // baked Poseidon constants and the padding claim is witnessed (not baked
+        // into the circuit) at proving time, so an application circuit's
+        // identity does not depend on the runtime generators.
+        let adapter = Adapter::<C, S, R, HEADER_SIZE>::new(step)?;
 
         self.native_registry = self.native_registry.register_circuit(adapter)?;
         self.num_application_steps += 1;
@@ -141,8 +151,10 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
     ///
     /// Returns an error if internal circuit registration or registry
     /// finalization fails.
-    pub fn finalize(mut self) -> Result<Application<'params, C, R, HEADER_SIZE>> {
-        let params = self.params;
+    pub fn finalize(
+        mut self,
+        params: &'params C::Params,
+    ) -> Result<Application<'params, C, R, HEADER_SIZE>> {
         // Build the native registry:
         // 1. Application circuits (already registered)
         // 2. Internal circuits and masks
@@ -162,13 +174,11 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             self.native_registry
                 .register_internal_step(Adapter::<C, _, R, HEADER_SIZE>::new(
                     step::internal::rerandomize::Rerandomize::<()>::new(),
-                    params,
                 )?)?;
         self.native_registry =
             self.native_registry
                 .register_internal_step(Adapter::<C, _, R, HEADER_SIZE>::new(
                     step::internal::trivial::Trivial::new(),
-                    params,
                 )?)?;
 
         assert_eq!(

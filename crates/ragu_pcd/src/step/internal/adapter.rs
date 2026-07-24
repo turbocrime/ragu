@@ -14,6 +14,7 @@ use ragu_core::{
 };
 use ragu_primitives::{
     Element, GadgetExt,
+    allocator::Standard,
     vec::{CollectFixed, ConstLen, FixedVec, Len},
 };
 
@@ -88,7 +89,7 @@ pub(crate) struct AdapterAux<'source, C: Cycle, S: Step<C>, const HEADER_SIZE: u
     // wires), so nothing needs resolving downstream.
 }
 
-pub(crate) struct Adapter<'params, C: Cycle, S, R: Rank, const HEADER_SIZE: usize> {
+pub(crate) struct Adapter<C: Cycle, S, R: Rank, const HEADER_SIZE: usize> {
     step: S,
     /// The `derive_challenge` call layout (input width per call, in call
     /// order) discovered from the step's witness body at construction time;
@@ -98,23 +99,29 @@ pub(crate) struct Adapter<'params, C: Cycle, S, R: Rank, const HEADER_SIZE: usiz
     /// same dry run. Part of the circuit structure: the real synthesis must
     /// raise exactly this many (determinism guard in [`Adapter::witness`]).
     num_claims: usize,
-    /// The cycle's Poseidon parameters, threaded into the step body via
-    /// [`StepCtx`] (sound in-circuit challenge derivation needs them on every
-    /// driver, including the structure-only registration passes).
-    poseidon: &'params C::CircuitPoseidon,
-    /// The canonical padding claim filling unused poly-query instance slots.
-    padding: PaddingClaim<C, R>,
+    /// The cycle's baked Poseidon constants, threaded into the step body via
+    /// [`StepCtx`] for in-circuit challenge derivation. These are compile-time
+    /// constants (`&'static`), so no runtime params are needed to obtain them.
+    poseidon: &'static C::CircuitPoseidon,
+    /// The canonical padding claim used to fill unused poly-query slots.
+    /// `None` on adapters built for registration/keygen (structure-only, where
+    /// the value is never taken); `Some` on the proving adapter. The padding is
+    /// *witnessed* into each unused slot rather than baked as a circuit
+    /// constant, so an application circuit's identity does not depend on the
+    /// runtime generators.
+    padding: Option<PaddingClaim<C, R>>,
     _marker: PhantomData<(C, R)>,
 }
 
-impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
-    Adapter<'params, C, S, R, HEADER_SIZE>
-{
-    /// Wraps `step`, discovering its `derive_challenge` call layout and
-    /// poly-query claim count with a dry run of the witness body (see
-    /// [`discover_hook_layout`]).
-    pub fn new(step: S, params: &'params C::Params) -> Result<Self> {
-        let poseidon = C::circuit_poseidon(params);
+impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Adapter<C, S, R, HEADER_SIZE> {
+    /// Wraps `step` for registration/keygen, discovering its `derive_challenge`
+    /// call layout and poly-query claim count with a dry run of the witness
+    /// body (see [`discover_hook_layout`]). Param-free: discovery uses the baked
+    /// Poseidon constants, and the padding claim is left unset (`None`) because
+    /// keygen is structure-only and never takes its value. Use
+    /// [`proving`](Self::proving) to build the adapter that actually proves.
+    pub fn new(step: S) -> Result<Self> {
+        let poseidon = C::circuit_poseidon_baked();
         let (challenge_widths, num_claims) =
             discover_hook_layout::<C, S, HEADER_SIZE>(&step, poseidon)?;
         Ok(Adapter {
@@ -122,8 +129,19 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
             challenge_widths,
             num_claims,
             poseidon,
-            padding: PaddingClaim::new(params)?,
+            padding: None,
             _marker: PhantomData,
+        })
+    }
+
+    /// Wraps `step` for proving. Identical circuit structure to
+    /// [`new`](Self::new), but additionally computes the canonical padding
+    /// claim from `params` so the unused poly-query slots can be witnessed at
+    /// proving time.
+    pub fn proving(step: S, params: &C::Params) -> Result<Self> {
+        Ok(Adapter {
+            padding: Some(PaddingClaim::new(params)?),
+            ..Self::new(step)?
         })
     }
 
@@ -134,18 +152,56 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
         &self.challenge_widths
     }
 
-    /// Fills unused poly-query slots with the canonical padding claim (as
-    /// in-circuit constants) so every application circuit exposes exactly
-    /// [`NUM_POLY_QUERY_SLOTS`] claim tuples in its instance.
+    /// Fills unused poly-query slots with the canonical padding claim so every
+    /// application circuit exposes exactly [`NUM_POLY_QUERY_SLOTS`] claim tuples
+    /// in its instance.
+    ///
+    /// The padding is *witnessed* (like a real claim), not baked as an
+    /// in-circuit constant, so an application circuit's structure never depends
+    /// on the runtime generators. The value materializes only on value-carrying
+    /// (proving) drivers, where `self.padding` is `Some`; structure-only
+    /// (keygen) drivers never evaluate these closures (`Empty::try_just`
+    /// discards them), so `None` is fine there.
     fn pad_claim_wires<'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
         dr: &mut D,
         claim_wires: &mut Vec<ClaimWires<'dr, D, C::NestedCurve>>,
     ) -> Result<()> {
+        let padding_com = self.padding.as_ref().map(|p| p.com);
+        let padding_x = self.padding.as_ref().map(|p| p.x);
+        let padding_y = self.padding.as_ref().map(|p| p.y);
+        let allocator = &mut Standard::new();
         while claim_wires.len() < NUM_POLY_QUERY_SLOTS {
-            let com = ragu_primitives::Point::constant(dr, self.padding.com)?;
-            let x = Element::constant(dr, self.padding.x);
-            let y = Element::constant(dr, self.padding.y);
+            let com = ragu_primitives::Point::alloc(
+                dr,
+                D::try_just(move || {
+                    padding_com.ok_or_else(|| {
+                        ragu_core::Error::InvalidWitness(
+                            "padding claim commitment unavailable; a proving adapter must be \
+                             built with `Adapter::proving`"
+                                .into(),
+                        )
+                    })
+                })?,
+            )?;
+            let x = Element::alloc(
+                dr,
+                allocator,
+                D::try_just(move || {
+                    padding_x.ok_or_else(|| {
+                        ragu_core::Error::InvalidWitness("padding claim point unavailable".into())
+                    })
+                })?,
+            )?;
+            let y = Element::alloc(
+                dr,
+                allocator,
+                D::try_just(move || {
+                    padding_y.ok_or_else(|| {
+                        ragu_core::Error::InvalidWitness("padding claim value unavailable".into())
+                    })
+                })?,
+            )?;
             let coefficients =
                 D::just(|| alloc::vec![<C::CircuitField as ragu_arithmetic::ff::Field>::ONE]);
             claim_wires.push(ClaimWires {
@@ -191,7 +247,7 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
 }
 
 impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::CircuitField>
-    for Adapter<'_, C, S, R, HEADER_SIZE>
+    for Adapter<C, S, R, HEADER_SIZE>
 {
     type Instance<'source> = (
         FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
@@ -443,8 +499,9 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, Pasta::baked())
-            .expect("discovery should succeed");
+        let adapter =
+            Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::proving(TestStep, Pasta::baked())
+                .expect("adapter construction should succeed");
         let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
 
         let output = adapter
@@ -461,8 +518,9 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, Pasta::baked())
-            .expect("discovery should succeed");
+        let adapter =
+            Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::proving(TestStep, Pasta::baked())
+                .expect("adapter construction should succeed");
         let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
 
         let aux = adapter
@@ -489,7 +547,7 @@ mod tests {
     /// A step without `derive_challenge` calls discovers an empty layout.
     #[test]
     fn discovery_finds_no_calls_for_plain_step() {
-        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, Pasta::baked())
+        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep)
             .expect("discovery should succeed");
         assert!(adapter.challenge_widths().is_empty());
     }
@@ -497,9 +555,8 @@ mod tests {
     /// Each `derive_challenge` call records the input's element width.
     #[test]
     fn discovery_finds_challenge_call() {
-        let adapter =
-            Adapter::<Pasta, ChallengeStep, TestR, HEADER_SIZE>::new(ChallengeStep, Pasta::baked())
-                .expect("discovery should succeed");
+        let adapter = Adapter::<Pasta, ChallengeStep, TestR, HEADER_SIZE>::new(ChallengeStep)
+            .expect("discovery should succeed");
         // Two `Element`s -> one call of width 2.
         assert_eq!(adapter.challenge_widths(), &[2]);
     }
@@ -514,9 +571,8 @@ mod tests {
         let mut dr: Emulator<Wireless<Empty, Fp>> = Emulator::counter();
         let dr = &mut dr;
 
-        let adapter =
-            Adapter::<Pasta, ChallengeStep, TestR, HEADER_SIZE>::new(ChallengeStep, Pasta::baked())
-                .expect("discovery should succeed");
+        let adapter = Adapter::<Pasta, ChallengeStep, TestR, HEADER_SIZE>::new(ChallengeStep)
+            .expect("discovery should succeed");
 
         let output = adapter
             .witness(dr, Empty)

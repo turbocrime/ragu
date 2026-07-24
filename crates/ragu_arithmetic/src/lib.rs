@@ -195,13 +195,31 @@ pub trait Cycle: Copy + Clone + Default + Send + Sync + 'static {
     /// Returns the fixed generators for the [`HostCurve`](Cycle::HostCurve).
     fn host_generators(params: &Self::Params) -> &Self::HostGenerators;
 
-    /// Returns the Poseidon parameter constants for the
-    /// [`CircuitField`](Cycle::CircuitField).
-    fn circuit_poseidon(params: &Self::Params) -> &Self::CircuitPoseidon;
+    /// Returns the [`CircuitField`](Cycle::CircuitField) Poseidon constants
+    /// without runtime parameters. The constants are baked at compile time, so
+    /// no [`Params`](Cycle::Params) are needed — structure-only paths (e.g.
+    /// registration-time circuit discovery) rely on this.
+    fn circuit_poseidon_baked() -> &'static Self::CircuitPoseidon;
+
+    /// Returns the [`ScalarField`](Cycle::ScalarField) Poseidon constants
+    /// without runtime parameters; see
+    /// [`circuit_poseidon_baked`](Cycle::circuit_poseidon_baked).
+    fn scalar_poseidon_baked() -> &'static Self::ScalarPoseidon;
 
     /// Returns the Poseidon parameter constants for the
-    /// [`ScalarField`](Cycle::ScalarField).
-    fn scalar_poseidon(params: &Self::Params) -> &Self::ScalarPoseidon;
+    /// [`CircuitField`](Cycle::CircuitField). The constants are baked, so
+    /// `params` is unused; defaults to
+    /// [`circuit_poseidon_baked`](Cycle::circuit_poseidon_baked).
+    fn circuit_poseidon(_params: &Self::Params) -> &Self::CircuitPoseidon {
+        Self::circuit_poseidon_baked()
+    }
+
+    /// Returns the Poseidon parameter constants for the
+    /// [`ScalarField`](Cycle::ScalarField). Defaults to
+    /// [`scalar_poseidon_baked`](Cycle::scalar_poseidon_baked).
+    fn scalar_poseidon(_params: &Self::Params) -> &Self::ScalarPoseidon {
+        Self::scalar_poseidon_baked()
+    }
 
     /// Generate the runtime parameters for this cycle.
     fn generate() -> Self::Params;

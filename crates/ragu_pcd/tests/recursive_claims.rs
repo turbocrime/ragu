@@ -30,12 +30,12 @@ fn poly(coeffs: &[u64]) -> sparse::Polynomial<Fp, R> {
 
 fn open_app() -> Result<ragu_pcd::Application<'static, Pasta, R, HEADER_SIZE>> {
     let pasta = Pasta::baked();
-    ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new(pasta)
+    ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
         .register(CommitAndOpen::<Pasta, R>::new(Pasta::circuit_poseidon(
             pasta,
         )))?
         .register(OpenAndHash::<Pasta, R>::new(Pasta::circuit_poseidon(pasta)))?
-        .finalize()
+        .finalize(pasta)
 }
 
 /// Corrupting a proof's claim instance (as a malicious prover who skips the

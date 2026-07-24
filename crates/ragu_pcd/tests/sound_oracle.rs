@@ -19,10 +19,10 @@ fn coeffs(values: &[u64]) -> Vec<Fp> {
 }
 
 fn sound_app() -> Result<ragu_pcd::Application<'static, Pasta, R, HEADER_SIZE>> {
-    ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new(Pasta::baked())
+    ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
         .register(SoundOpen::<Pasta>::new())?
         .register(SoundMerge::<Pasta>::new())?
-        .finalize()
+        .finalize(Pasta::baked())
 }
 
 /// The full sound oracle loop: witness a polynomial in-circuit, derive a

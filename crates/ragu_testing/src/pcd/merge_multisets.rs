@@ -241,12 +241,12 @@ mod tests {
     fn registration_handles_challenge_deriving_step() {
         let pasta = Pasta::baked();
 
-        let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new(pasta)
+        let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
             .register(WitnessMultiset::<Pasta, R>::new())
             .expect("leaf registration should succeed")
             .register(MergeMultisets::<Pasta, R>::new())
             .expect("registration should succeed")
-            .finalize()
+            .finalize(pasta)
             .expect("finalization should succeed");
 
         // The registry holds the 13 internal circuits, 2 internal steps, and

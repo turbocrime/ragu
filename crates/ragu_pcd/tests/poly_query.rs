@@ -22,12 +22,12 @@ fn poly(coeffs: &[u64]) -> sparse::Polynomial<Fp, R> {
 
 fn open_app() -> Result<ragu_pcd::Application<'static, Pasta, R, HEADER_SIZE>> {
     let pasta = Pasta::baked();
-    ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new(pasta)
+    ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
         .register(CommitAndOpen::<Pasta, R>::new(Pasta::circuit_poseidon(
             pasta,
         )))?
         .register(OpenAndHash::<Pasta, R>::new(Pasta::circuit_poseidon(pasta)))?
-        .finalize()
+        .finalize(pasta)
 }
 
 /// The full oracle loop, honest witness: a leaf witnesses a polynomial and its
@@ -160,10 +160,10 @@ fn mismatched_commitment_is_rejected() -> Result<()> {
 #[test]
 fn multiset_merge_end_to_end() -> Result<()> {
     let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new(pasta)
+    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
         .register(WitnessMultiset::<Pasta, R>::new())?
         .register(MergeMultisets::<Pasta, R>::new())?
-        .finalize()?;
+        .finalize(pasta)?;
     let mut rng = StdRng::seed_from_u64(5678);
 
     let a = poly(&[1, 2, 3]);

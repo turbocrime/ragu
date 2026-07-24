@@ -9,14 +9,14 @@ use rand::{SeedableRng, rngs::StdRng};
 #[test]
 fn various_merging_operations() -> Result<()> {
     let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new(pasta)
+    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
         .register(WitnessLeaf {
             poseidon_params: Pasta::circuit_poseidon(pasta),
         })?
         .register(Hash2 {
             poseidon_params: Pasta::circuit_poseidon(pasta),
         })?
-        .finalize()?;
+        .finalize(pasta)?;
 
     let mut rng = StdRng::seed_from_u64(1234);
 

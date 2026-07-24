@@ -259,8 +259,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     /// enforced when this proof is fused as a child: the parent folds each
     /// claim into $f(X)$ and the PCS accumulator, and its `compute_v` circuit
     /// re-derives the matching terms.
-    pub(crate) application_claims:
-        alloc::vec::Vec<ClaimOpening<C::NestedCurve, C::CircuitField>>,
+    pub(crate) application_claims: alloc::vec::Vec<ClaimOpening<C::NestedCurve, C::CircuitField>>,
 
     /// The claim polynomials, in slot order — carried for exactly one fuse
     /// level so the parent can fold them into $f(X)$ and $p(X)$, and so the

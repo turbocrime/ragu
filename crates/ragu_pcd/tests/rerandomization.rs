@@ -149,12 +149,12 @@ impl<C: Cycle> Step<C> for Step1 {
 #[test]
 fn rerandomization_flow() {
     let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new(pasta)
+    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
         .register(Step0)
         .unwrap()
         .register(Step1)
         .unwrap()
-        .finalize()
+        .finalize(pasta)
         .unwrap();
 
     let mut rng = StdRng::seed_from_u64(1234);
@@ -178,10 +178,10 @@ fn rerandomization_flow() {
 #[test]
 fn multiple_rerandomizations_all_verify() {
     let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new(pasta)
+    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
         .register(Step0)
         .unwrap()
-        .finalize()
+        .finalize(pasta)
         .unwrap();
 
     let mut rng = StdRng::seed_from_u64(9999);
@@ -204,10 +204,10 @@ fn multiple_rerandomizations_all_verify() {
 #[test]
 fn rerandomization_preserves_header_data() {
     let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new(pasta)
+    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
         .register(StepWithData)
         .unwrap()
-        .finalize()
+        .finalize(pasta)
         .unwrap();
 
     let mut rng = StdRng::seed_from_u64(4321);
@@ -237,12 +237,12 @@ fn rerandomization_preserves_header_data() {
 #[test]
 fn rerandomized_fused_proof_verifies() {
     let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new(pasta)
+    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
         .register(Step0)
         .unwrap()
         .register(Step1)
         .unwrap()
-        .finalize()
+        .finalize(pasta)
         .unwrap();
 
     let mut rng = StdRng::seed_from_u64(7777);

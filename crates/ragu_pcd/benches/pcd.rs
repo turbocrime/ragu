@@ -23,9 +23,8 @@ fn register(
         nontrivial::Hash2<'static, Pasta>,
     ),
 ) {
-    let pasta = Pasta::baked();
     black_box(
-        ApplicationBuilder::<Pasta, ProductionRank, 4>::new(pasta)
+        ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
             .register(leaf)
             .unwrap()
             .register(hash)
@@ -36,12 +35,12 @@ fn register(
 #[library_benchmark(setup = setup_finalize)]
 #[bench::finalize()]
 fn finalize(
-    (app, _pasta): (
+    (app, pasta): (
         ApplicationBuilder<'static, Pasta, ProductionRank, 4>,
         &'static <Pasta as Cycle>::Params,
     ),
 ) {
-    black_box(app.finalize()).unwrap();
+    black_box(app.finalize(pasta)).unwrap();
 }
 
 library_benchmark_group!(
