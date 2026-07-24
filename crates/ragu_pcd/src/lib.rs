@@ -77,6 +77,59 @@ pub(crate) const RAGU_TAG: &[u8] = b"FIXME";
 /// of any particular claim producer.
 pub const NUM_POLY_QUERY_SLOTS: usize = 4;
 
+/// Maximum element width of a single
+/// [`StepCtx::derive_challenge`](step::StepCtx::derive_challenge) input.
+///
+/// The width of a challenge input is a **compile-time** property of its type
+/// ([`ChallengeInput::ELEMENTS`](framework_hooks::ChallengeInput::ELEMENTS)),
+/// and exceeding this bound is a compile error, not a runtime one. (It is a
+/// post-monomorphization error, so it surfaces on `cargo build`/`cargo test`
+/// rather than `cargo check`.) Circuit
+/// structure must not depend on witness values, and a challenge input whose
+/// width is only known at runtime — a `Vec`, a slice, a polynomial with a
+/// runtime capacity — cannot offer that guarantee. Compress such data into a
+/// single binding element first (for example
+/// [`WitnessedPolynomial::hash_commitment`](oracle::WitnessedPolynomial::hash_commitment))
+/// and derive the challenge from that.
+///
+/// The value is set by the Poseidon rate. The challenge is a sponge hash of the
+/// input, absorbs merely buffer, and the permutation is triggered by the squeeze
+/// (or by an absorb overflowing the `RATE = 4` buffer) — so every input of four
+/// elements or fewer, an [`Element`](ragu_primitives::Element), a
+/// [`Point`](ragu_primitives::Point), or a pair of either, costs exactly one
+/// permutation, and the fifth element costs a second. Measured in application
+/// gates: 288 for one through four elements, 576 from five.
+///
+/// Raising this constant therefore makes no existing derivation more expensive
+/// — it only admits wider inputs, at one further permutation per additional
+/// four elements.
+///
+/// It is also the width the future per-challenge stage will commit (see
+/// `POLY_QUERY_SOUNDNESS.md`): a fixed width is what lets that stage be one
+/// const-generic type chained [`NUM_CHALLENGE_SLOTS`] times, with narrower
+/// inputs zero-padded into the stage for free.
+pub const CHALLENGE_WIDTH: usize = 4;
+
+/// Number of Fiat–Shamir challenge slots a step body may use.
+///
+/// Each [`StepCtx::derive_challenge`](step::StepCtx::derive_challenge) call
+/// occupies one slot; a step body may call it at most this many times, and the
+/// call count must not depend on witness values (it is part of the circuit
+/// structure, checked by the adapter's determinism guard).
+///
+/// The value matches [`NUM_POLY_QUERY_SLOTS`] because one challenge per opened
+/// polynomial is the natural ceiling: a step derives a challenge to *use* it,
+/// and the succinct way to use one is to open a committed polynomial there.
+///
+/// Cost agrees. The derivation is synthesized in the *application* circuit, on
+/// the step's own driver, so it spends the step's gate budget: one call costs
+/// **288 gates** (576 constraints) — one Poseidon permutation, and the same at
+/// any width up to [`CHALLENGE_WIDTH`] — against a budget of roughly 2048. Four
+/// calls is already over half of it. Note that this is why unused slots are
+/// *not* padded, unlike the poly-query slots: an unused claim slot is four
+/// wires, but an unused challenge slot would be a whole permutation.
+pub const NUM_CHALLENGE_SLOTS: usize = 4;
+
 /// Builder for an [`Application`] for proof-carrying data.
 pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,

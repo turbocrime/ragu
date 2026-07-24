@@ -64,8 +64,7 @@ pub(crate) fn claim_bridge_commitment<C: Cycle, R: Rank>(
     alpha: C::ScalarField,
     host: C::HostCurve,
 ) -> Result<C::NestedCurve> {
-    Ok(claim_bridge_rx::<C, R>(slot, alpha, host)?
-        .commit_to_affine(C::nested_generators(params)))
+    Ok(claim_bridge_rx::<C, R>(slot, alpha, host)?.commit_to_affine(C::nested_generators(params)))
 }
 
 /// The canonical padding claim used to fill unused poly-query slots (see

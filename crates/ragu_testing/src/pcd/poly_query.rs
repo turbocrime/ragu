@@ -96,7 +96,7 @@ pub struct CommitAndOpenWitness<C: Cycle, R: Rank> {
 /// A seedable leaf step exercising the full poly-query oracle loop:
 ///
 /// 1. **witness a polynomial** (prover-only data) and its framework
-///    commitment (allocated in-circuit as a [`Point`]),
+///    commitment (allocated in-circuit as a [`Point`](ragu_primitives::Point)),
 /// 2. **derive a challenge** `z` bound to the commitment via
 ///    [`StepCtx::derive_challenge`],
 /// 3. **evaluate** the polynomial at `z`,

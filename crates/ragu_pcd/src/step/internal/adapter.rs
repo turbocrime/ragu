@@ -36,20 +36,26 @@ impl<const HEADER_SIZE: usize> Len for InstanceLen<HEADER_SIZE> {
     }
 }
 
-/// Discovers the hook-call layout of `step` — the input width of each
-/// [`derive_challenge`](StepCtx::derive_challenge) call, in call order, and
-/// the poly-query claim count — by dry-running its witness body once, with an
+/// Discovers the hook-call counts of `step` — how many
+/// [`derive_challenge`](StepCtx::derive_challenge) calls it makes and how many
+/// poly-query claims it raises — by dry-running its witness body once, with an
 /// [`Empty`] witness on a counting emulator and the hooks in discovery mode.
+///
+/// Only counts, never widths: a challenge input's width is a compile-time
+/// constant of its type ([`ChallengeInput::ELEMENTS`]), and a claim's wires are
+/// a fixed shape.
 ///
 /// This is sound because circuit structure must be witness-independent: the
 /// same body runs with `Empty` witnesses for wiring extraction and metrics,
 /// so the call sequence cannot differ between this dry run and real
 /// synthesis. (A body that violates that requirement is caught at synthesis
 /// time by the determinism guard in [`FrameworkHooks::derive_challenge`].)
+///
+/// [`ChallengeInput::ELEMENTS`]: crate::framework_hooks::ChallengeInput::ELEMENTS
 pub(crate) fn discover_hook_layout<C: Cycle, S: Step<C>, const HEADER_SIZE: usize>(
     step: &S,
     poseidon: &C::CircuitPoseidon,
-) -> Result<(Vec<usize>, usize)> {
+) -> Result<(usize, usize)> {
     let mut dr: Emulator<Wireless<Empty, C::CircuitField>> = Emulator::counter();
     let mut hooks = FrameworkHooks::<_, C::NestedCurve>::new();
     {
@@ -65,7 +71,7 @@ pub(crate) fn discover_hook_layout<C: Cycle, S: Step<C>, const HEADER_SIZE: usiz
         ));
     }
 
-    Ok((outputs.challenge_widths, num_claims))
+    Ok((outputs.challenge_calls, num_claims))
 }
 
 /// Auxiliary data produced by [`Adapter::witness`]: the two input headers, the
@@ -91,10 +97,11 @@ pub(crate) struct AdapterAux<'source, C: Cycle, S: Step<C>, const HEADER_SIZE: u
 
 pub(crate) struct Adapter<'params, C: Cycle, S, R: Rank, const HEADER_SIZE: usize> {
     step: S,
-    /// The `derive_challenge` call layout (input width per call, in call
-    /// order) discovered from the step's witness body at construction time;
-    /// see [`discover_hook_layout`].
-    challenge_widths: Vec<usize>,
+    /// The number of `derive_challenge` calls the step body makes, discovered
+    /// from its witness body at construction time; see
+    /// [`discover_hook_layout`]. Part of the circuit structure: each call
+    /// synthesizes a sponge over a compile-time-fixed number of wires.
+    challenge_calls: usize,
     /// The number of poly-query claims the step body raises, discovered by the
     /// same dry run. Part of the circuit structure: the real synthesis must
     /// raise exactly this many (determinism guard in [`Adapter::witness`]).
@@ -121,18 +128,18 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
     Adapter<'params, C, S, R, HEADER_SIZE>
 {
     /// Wraps `step` for registration/keygen, discovering its `derive_challenge`
-    /// call layout and poly-query claim count with a dry run of the witness
+    /// call count and poly-query claim count with a dry run of the witness
     /// body (see [`discover_hook_layout`]). Param-free: discovery uses the baked
     /// Poseidon constants, and the padding claim is left unset (`None`) because
     /// keygen is structure-only and never takes its value. Use
     /// [`proving`](Self::proving) to build the adapter that actually proves.
     pub fn new(step: S) -> Result<Self> {
         let poseidon = C::circuit_poseidon_baked();
-        let (challenge_widths, num_claims) =
+        let (challenge_calls, num_claims) =
             discover_hook_layout::<C, S, HEADER_SIZE>(&step, poseidon)?;
         Ok(Adapter {
             step,
-            challenge_widths,
+            challenge_calls,
             num_claims,
             poseidon,
             padding: None,
@@ -157,11 +164,11 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
         })
     }
 
-    /// The input width of each of the step's
-    /// [`derive_challenge`](StepCtx::derive_challenge) calls, in call order.
+    /// The number of [`derive_challenge`](StepCtx::derive_challenge) calls the
+    /// step body makes.
     #[cfg(test)]
-    pub fn challenge_widths(&self) -> &[usize] {
-        &self.challenge_widths
+    pub fn challenge_calls(&self) -> usize {
+        self.challenge_calls
     }
 
     /// Fills unused poly-query slots with the canonical padding claim so every
@@ -305,7 +312,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
     {
         let (left, right, witness) = witness.cast();
 
-        let mut hooks = FrameworkHooks::with_expected(self.challenge_widths.clone());
+        let mut hooks = FrameworkHooks::with_expected(self.challenge_calls);
         let ((left, right, output), output_data, step_aux) = {
             let mut ctx = match self.claim_bridge {
                 Some((params, bridge_alpha)) => StepCtx::<'_, '_, _, C>::proving(
@@ -322,15 +329,15 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
         };
         let FrameworkHookOutputs {
             poly_query_claims: mut claim_wires,
-            challenge_widths,
+            challenge_calls,
         } = hooks.into_outputs();
 
         // Determinism guard, complementing the per-call checks inside
         // `derive_challenge`: every discovered call must have happened, or the
         // synthesized circuit would differ from the registered structure.
-        if challenge_widths.len() != self.challenge_widths.len() {
+        if challenge_calls != self.challenge_calls {
             return Err(ragu_core::Error::InvalidWitness(
-                "derive_challenge called fewer times than the discovered call layout; \
+                "derive_challenge called fewer times than the discovered call count; \
                  circuit structure must not depend on witness values"
                     .into(),
             ));
@@ -392,7 +399,6 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
 #[cfg(test)]
 mod tests {
     use ragu_arithmetic::ff::Field;
-    use ragu_circuits::polynomials::TestRank;
     use ragu_core::{
         drivers::emulator::Emulator,
         gadgets::{Bound, Kind},
@@ -537,9 +543,12 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        let adapter =
-            Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::proving(TestStep, Pasta::baked(), <Pasta as Cycle>::ScalarField::ONE)
-                .expect("adapter construction should succeed");
+        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::proving(
+            TestStep,
+            Pasta::baked(),
+            <Pasta as Cycle>::ScalarField::ONE,
+        )
+        .expect("adapter construction should succeed");
         let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
 
         let output = adapter
@@ -556,9 +565,12 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        let adapter =
-            Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::proving(TestStep, Pasta::baked(), <Pasta as Cycle>::ScalarField::ONE)
-                .expect("adapter construction should succeed");
+        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::proving(
+            TestStep,
+            Pasta::baked(),
+            <Pasta as Cycle>::ScalarField::ONE,
+        )
+        .expect("adapter construction should succeed");
         let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
 
         let aux = adapter
@@ -582,21 +594,81 @@ mod tests {
         assert_eq!(output_data, Fp::from(30u64));
     }
 
-    /// A step without `derive_challenge` calls discovers an empty layout.
+    /// A step without `derive_challenge` calls discovers no calls.
     #[test]
     fn discovery_finds_no_calls_for_plain_step() {
         let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep)
             .expect("discovery should succeed");
-        assert!(adapter.challenge_widths().is_empty());
+        assert_eq!(adapter.challenge_calls(), 0);
     }
 
-    /// Each `derive_challenge` call records the input's element width.
+    /// The dry run counts each `derive_challenge` call.
     #[test]
     fn discovery_finds_challenge_call() {
         let adapter = Adapter::<Pasta, ChallengeStep, TestR, HEADER_SIZE>::new(ChallengeStep)
             .expect("discovery should succeed");
-        // Two `Element`s -> one call of width 2.
-        assert_eq!(adapter.challenge_widths(), &[2]);
+        assert_eq!(adapter.challenge_calls(), 1);
+    }
+
+    /// A step body that derives more challenges than there are slots is
+    /// rejected at registration, when the dry run trips the cap.
+    #[test]
+    fn discovery_rejects_more_challenges_than_slots() {
+        struct TooManyChallenges;
+
+        impl Step<Pasta> for TooManyChallenges {
+            const INDEX: Index = Index::new(0);
+            type Witness<'source> = ();
+            type Aux<'source> = ();
+            type Left = TestHeader;
+            type Right = TestHeader;
+            type Output = TestHeader;
+
+            fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
+                &self,
+                ctx: &mut StepCtx<'_, 'dr, D, Pasta>,
+                _: DriverValue<D, ()>,
+                left: DriverValue<D, Fp>,
+                right: DriverValue<D, Fp>,
+            ) -> Result<(
+                (
+                    Encoded<'dr, D, Self::Left, HS>,
+                    Encoded<'dr, D, Self::Right, HS>,
+                    Encoded<'dr, D, Self::Output, HS>,
+                ),
+                DriverValue<D, Fp>,
+                DriverValue<D, ()>,
+            )> {
+                let allocator = &mut Standard::new();
+                let left_elem = Element::alloc(ctx.dr, allocator, left)?;
+                let right_elem = Element::alloc(ctx.dr, allocator, right)?;
+
+                let mut output = left_elem.clone();
+                for _ in 0..crate::NUM_CHALLENGE_SLOTS + 1 {
+                    let challenge = ctx.derive_challenge(output.clone())?;
+                    output = output.add(ctx.dr, &challenge);
+                }
+
+                let output_val = output.value().map(|v| *v);
+                Ok((
+                    (
+                        Encoded::from_gadget(left_elem),
+                        Encoded::from_gadget(right_elem),
+                        Encoded::from_gadget(output),
+                    ),
+                    output_val,
+                    D::unit(),
+                ))
+            }
+        }
+
+        let error = Adapter::<Pasta, TooManyChallenges, TestR, HEADER_SIZE>::new(TooManyChallenges)
+            .err()
+            .expect("the challenge slot cap should reject this step");
+        assert!(
+            alloc::format!("{error}").contains("challenge slots"),
+            "unexpected error: {error}"
+        );
     }
 
     /// The full adapter synthesis (in-circuit challenge derivation + deferred

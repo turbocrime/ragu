@@ -15,10 +15,13 @@
 //!   *same* polynomial is provably threaded between PCD nodes: a child
 //!   re-witnesses the coefficients and equates the recomputed hash with the
 //!   header's element.
-//! * A [`WitnessedPolynomial`] is a [`ChallengeInput`], so a Fiat–Shamir
-//!   challenge from [`StepCtx::derive_challenge`] can be bound directly to the
-//!   full coefficient vector (or to its hash commitment, for a cheaper
-//!   sponge).
+//! * That hash commitment is also how a `WitnessedPolynomial` reaches
+//!   [`StepCtx::derive_challenge`]: a challenge input's width must be a
+//!   compile-time constant (see [`CHALLENGE_WIDTH`](crate::CHALLENGE_WIDTH)),
+//!   and a polynomial's capacity is a runtime value, so bind the challenge to
+//!   the one-element commitment rather than to the coefficient vector. It
+//!   binds the same data — the hash is collision-resistant over exactly those
+//!   coefficients — at one absorbed element instead of `capacity` of them.
 //!
 //! Together with [`StepCtx::derive_challenge`], this covers the full oracle
 //! loop soundly today: witness a polynomial, derive a challenge, evaluate at
@@ -56,8 +59,6 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{Element, GadgetExt, allocator::Standard, poseidon::Sponge};
-
-use crate::framework_hooks::ChallengeInput;
 
 /// A polynomial witnessed in-circuit: one [`Element`] per coefficient
 /// (little-endian, zero-padded to the declared capacity). See the
@@ -138,13 +139,6 @@ impl<'dr, D: Driver<'dr>> WitnessedPolynomial<'dr, D> {
             sponge.absorb(dr, coefficient)?;
         }
         sponge.squeeze(dr)
-    }
-}
-
-impl<'dr, D: Driver<'dr>> ChallengeInput<'dr, D> for WitnessedPolynomial<'dr, D> {
-    fn append_elements(&self, _dr: &mut D, out: &mut Vec<Element<'dr, D>>) -> Result<()> {
-        out.extend(self.coefficients.iter().cloned());
-        Ok(())
     }
 }
 

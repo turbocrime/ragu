@@ -29,22 +29,29 @@
 //!   Poseidon sponge hash** of the input's elements. The squeezed challenge
 //!   wire is constrained to equal that hash, so the derivation is *sound*:
 //!   within the proof system's guarantees, a prover cannot pick the challenge
-//!   independently of the input.
+//!   independently of the input. Every application circuit gets at most
+//!   [`NUM_CHALLENGE_SLOTS`](crate::NUM_CHALLENGE_SLOTS) of these, each of at
+//!   most [`CHALLENGE_WIDTH`](crate::CHALLENGE_WIDTH) elements.
 //!
 //! ## Structure discovery
 //!
-//! How many times a step body calls each hook — and how wide each
-//! `derive_challenge` input is — is part of the circuit's structure, so it
-//! must be witness-independent. The adapter dry-runs the step body once at
-//! registration time (with an [`Empty`](ragu_core::maybe::Empty) witness, on a
-//! counting emulator) with a container created by [`new`](FrameworkHooks::new)
-//! (**discovery mode**), recording each `derive_challenge` call's input width
-//! and the poly-query claim count. Real synthesis goes through
-//! [`with_expected`](FrameworkHooks::with_expected), which replays the
-//! discovered widths as a per-call determinism guard: a body whose call
-//! sequence diverges from the dry run fails with
-//! [`Error::InvalidWitness`] instead of silently synthesizing a different
-//! circuit.
+//! How many times a step body calls each hook is part of the circuit's
+//! structure, so it must be witness-independent. The adapter dry-runs the step
+//! body once at registration time (with an [`Empty`](ragu_core::maybe::Empty)
+//! witness, on a counting emulator) with a container created by
+//! [`new`](FrameworkHooks::new) (**discovery mode**), recording the
+//! `derive_challenge` call count and the poly-query claim count. Real synthesis
+//! goes through [`with_expected`](FrameworkHooks::with_expected), which replays
+//! the discovered count as a per-call determinism guard: a body whose call
+//! sequence diverges from the dry run fails with [`Error::InvalidWitness`]
+//! instead of silently synthesizing a different circuit.
+//!
+//! The *width* of each challenge input is not discovered at all — it is
+//! [`ChallengeInput::ELEMENTS`], a compile-time constant of the input's type,
+//! bounded by `CHALLENGE_WIDTH` with a compile-time assertion. That is why no
+//! `ChallengeInput` impl exists for slices or `Vec`s: a runtime length cannot
+//! be circuit structure. Data of runtime length must be hashed down to one
+//! binding [`Element`] first.
 //!
 //! ## Challenge soundness
 //!
@@ -113,14 +120,31 @@ pub struct ClaimWires<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
 /// computed *in-circuit*, so it is sound: the squeezed challenge wire is
 /// constrained to be the hash of the input's wires.
 ///
-/// Implemented for [`Element`], [`Point`], and homogeneous/heterogeneous
-/// compositions of these (tuples, arrays, slices, and `Vec`s).
+/// Implemented for [`Element`], [`Point`], and fixed-width compositions of
+/// these (tuples, arrays, and references). Deliberately **not** implemented for
+/// slices, `Vec`s, or anything else whose length is a runtime value — see
+/// [`ELEMENTS`](Self::ELEMENTS).
 pub trait ChallengeInput<'dr, D: Driver<'dr>> {
-    /// Appends this input's elements, in canonical order.
+    /// The number of elements [`append_elements`](Self::append_elements)
+    /// produces.
+    ///
+    /// A compile-time constant, because the challenge derivation is circuit
+    /// structure: it fixes how many wires the sponge absorbs and therefore how
+    /// many permutations the circuit synthesizes. A runtime-length input would
+    /// make the circuit's shape depend on its witness, which the framework
+    /// forbids. This is what makes
+    /// [`CHALLENGE_WIDTH`](crate::CHALLENGE_WIDTH) a compile-time bound rather
+    /// than a runtime check.
+    const ELEMENTS: usize;
+
+    /// Appends this input's elements, in canonical order. Must append exactly
+    /// [`ELEMENTS`](Self::ELEMENTS) of them; `derive_challenge` checks this.
     fn append_elements(&self, dr: &mut D, out: &mut Vec<Element<'dr, D>>) -> Result<()>;
 }
 
 impl<'dr, D: Driver<'dr>> ChallengeInput<'dr, D> for Element<'dr, D> {
+    const ELEMENTS: usize = 1;
+
     fn append_elements(&self, _dr: &mut D, out: &mut Vec<Element<'dr, D>>) -> Result<()> {
         out.push(self.clone());
         Ok(())
@@ -139,6 +163,8 @@ impl<'dr, D: Driver<'dr>> ragu_primitives::io::Buffer<'dr, D> for ElementCollect
 }
 
 impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> ChallengeInput<'dr, D> for Point<'dr, D, C> {
+    const ELEMENTS: usize = 2;
+
     fn append_elements(&self, dr: &mut D, out: &mut Vec<Element<'dr, D>>) -> Result<()> {
         // Serialize the point's (x, y) coordinate elements via its `Write`
         // impl.
@@ -150,6 +176,8 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> ChallengeInput<'dr, D> fo
 }
 
 impl<'dr, D: Driver<'dr>, T: ChallengeInput<'dr, D>> ChallengeInput<'dr, D> for &T {
+    const ELEMENTS: usize = T::ELEMENTS;
+
     fn append_elements(&self, dr: &mut D, out: &mut Vec<Element<'dr, D>>) -> Result<()> {
         (*self).append_elements(dr, out)
     }
@@ -158,6 +186,8 @@ impl<'dr, D: Driver<'dr>, T: ChallengeInput<'dr, D>> ChallengeInput<'dr, D> for 
 impl<'dr, D: Driver<'dr>, T: ChallengeInput<'dr, D>, const N: usize> ChallengeInput<'dr, D>
     for [T; N]
 {
+    const ELEMENTS: usize = T::ELEMENTS * N;
+
     fn append_elements(&self, dr: &mut D, out: &mut Vec<Element<'dr, D>>) -> Result<()> {
         for item in self {
             item.append_elements(dr, out)?;
@@ -166,29 +196,17 @@ impl<'dr, D: Driver<'dr>, T: ChallengeInput<'dr, D>, const N: usize> ChallengeIn
     }
 }
 
-impl<'dr, D: Driver<'dr>, T: ChallengeInput<'dr, D>> ChallengeInput<'dr, D> for &[T] {
-    fn append_elements(&self, dr: &mut D, out: &mut Vec<Element<'dr, D>>) -> Result<()> {
-        for item in *self {
-            item.append_elements(dr, out)?;
-        }
-        Ok(())
-    }
-}
-
-impl<'dr, D: Driver<'dr>, T: ChallengeInput<'dr, D>> ChallengeInput<'dr, D> for Vec<T> {
-    fn append_elements(&self, dr: &mut D, out: &mut Vec<Element<'dr, D>>) -> Result<()> {
-        for item in self {
-            item.append_elements(dr, out)?;
-        }
-        Ok(())
-    }
-}
+// No impls for `&[T]` or `Vec<T>`: their lengths are runtime values, so they
+// cannot supply a compile-time `ELEMENTS`. Hash such data down to a single
+// binding `Element` and derive the challenge from that.
 
 macro_rules! impl_challenge_input_tuple {
     ($($name:ident),+) => {
         impl<'dr, D: Driver<'dr>, $($name: ChallengeInput<'dr, D>),+> ChallengeInput<'dr, D>
             for ($($name,)+)
         {
+            const ELEMENTS: usize = 0 $(+ $name::ELEMENTS)+;
+
             fn append_elements(&self, dr: &mut D, out: &mut Vec<Element<'dr, D>>) -> Result<()> {
                 #[allow(non_snake_case)]
                 let ($($name,)+) = self;
@@ -219,13 +237,15 @@ pub struct FrameworkHooks<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     /// Assigns each claim its slot, which fixes the bridge stage — and
     /// therefore the generator positions — its `com` commits to.
     witnessed_claims: usize,
-    /// Input width (element count) of each
-    /// [`derive_challenge`](Self::derive_challenge) call, in call order.
-    challenge_widths: Vec<usize>,
-    /// The widths discovered by the registration-time dry run, replayed as a
-    /// per-call determinism guard. `None` in discovery mode (see the
+    /// Number of [`derive_challenge`](Self::derive_challenge) calls so far.
+    /// Each occupies one of the
+    /// [`NUM_CHALLENGE_SLOTS`](crate::NUM_CHALLENGE_SLOTS) slots; the widths
+    /// need no recording, being compile-time constants of the input types.
+    challenge_calls: usize,
+    /// The call count discovered by the registration-time dry run, replayed as
+    /// a per-call determinism guard. `None` in discovery mode (see the
     /// [module documentation](self)).
-    expected_widths: Option<Vec<usize>>,
+    expected_calls: Option<usize>,
 }
 
 /// Aggregate of every hook's accumulated output, returned by
@@ -236,11 +256,10 @@ pub struct FrameworkHookOutputs<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>
     /// [`FrameworkHooks::enforce_polynomial_query`], in call order — the
     /// in-circuit wires plus the witness-only coefficient values.
     pub poly_query_claims: Vec<ClaimWires<'dr, D, C>>,
-    /// Input width (element count) of each
-    /// [`FrameworkHooks::derive_challenge`] call, in call order. The
-    /// registration-time dry run reads this to discover the call layout; the
-    /// adapter compares its length against that layout after real synthesis.
-    pub challenge_widths: Vec<usize>,
+    /// Number of [`FrameworkHooks::derive_challenge`] calls. The
+    /// registration-time dry run reads this to discover the call count; the
+    /// adapter compares it against that count after real synthesis.
+    pub challenge_calls: usize,
 }
 
 impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C> {
@@ -253,21 +272,22 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C>
         Self {
             poly_query_claims: Vec::new(),
             witnessed_claims: 0,
-            challenge_widths: Vec::new(),
-            expected_widths: None,
+            challenge_calls: 0,
+            expected_calls: None,
         }
     }
 
-    /// Creates a hook container with the `derive_challenge` call layout
-    /// discovered at registration time — one input width per call, in call
-    /// order. Each [`derive_challenge`](Self::derive_challenge) call is
-    /// checked against the next entry.
-    pub fn with_expected(expected_widths: Vec<usize>) -> Self {
+    /// Creates a hook container with the `derive_challenge` call count
+    /// discovered at registration time. Each
+    /// [`derive_challenge`](Self::derive_challenge) call is checked against it,
+    /// so a body that makes more calls than the dry run did fails at the
+    /// offending call.
+    pub fn with_expected(expected_calls: usize) -> Self {
         Self {
             poly_query_claims: Vec::new(),
             witnessed_claims: 0,
-            challenge_widths: Vec::new(),
-            expected_widths: Some(expected_widths),
+            challenge_calls: 0,
+            expected_calls: Some(expected_calls),
         }
     }
 
@@ -285,6 +305,27 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C>
         Ok(slot)
     }
 
+    /// Takes the next challenge slot, enforcing both the framework cap and the
+    /// discovered call count.
+    fn take_challenge_slot(&mut self) -> Result<()> {
+        if self.challenge_calls >= crate::NUM_CHALLENGE_SLOTS {
+            return Err(Error::InvalidWitness(
+                "step derived more challenges than there are challenge slots".into(),
+            ));
+        }
+        if let Some(expected) = self.expected_calls
+            && self.challenge_calls >= expected
+        {
+            return Err(Error::InvalidWitness(
+                "derive_challenge called more times than the discovered call count; \
+                 circuit structure must not depend on witness values"
+                    .into(),
+            ));
+        }
+        self.challenge_calls += 1;
+        Ok(())
+    }
+
     /// Records a claim that the polynomial with the given `coefficients`
     /// (little-endian), committed to by `com`, evaluates to `y` at the point
     /// `x`.
@@ -300,14 +341,34 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C>
     /// The number of calls per step body is part of the circuit structure: it
     /// must not depend on witness values and must not exceed
     /// `NUM_POLY_QUERY_SLOTS` (checked by the adapter).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidWitness`] if `slot` — the slot assigned when the
+    /// polynomial was witnessed, which fixed the bridge stage `com` commits to
+    /// — is not the instance slot this claim is about to occupy. The two are
+    /// assigned by separate counters, so a body that witnesses `A` then `B` but
+    /// enforces `B` then `A` would otherwise write each claim's `com` into the
+    /// other's slot. Pair each
+    /// [`witness_polynomial`](crate::step::StepCtx::witness_polynomial) with its
+    /// [`enforce_poly_query`](crate::step::StepCtx::enforce_poly_query) in the
+    /// same order.
     pub fn enforce_polynomial_query(
         &mut self,
         _dr: &mut D,
+        slot: usize,
         com: Point<'dr, D, C>,
         x: Element<'dr, D>,
         y: Element<'dr, D>,
         coefficients: DriverValue<D, Vec<D::F>>,
     ) -> Result<()> {
+        if slot != self.poly_query_claims.len() {
+            return Err(Error::InvalidWitness(
+                "poly-query claims must be enforced in the order their polynomials were \
+                 witnessed"
+                    .into(),
+            ));
+        }
         self.poly_query_claims.push(ClaimWires {
             com,
             x,
@@ -325,14 +386,18 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C>
     /// value immediately, so the step body can evaluate polynomials at it
     /// right away.
     ///
+    /// The input's width is fixed by its type
+    /// ([`ChallengeInput::ELEMENTS`]) and must not exceed
+    /// [`CHALLENGE_WIDTH`](crate::CHALLENGE_WIDTH) — a wider input fails to
+    /// *compile*, so no honest prover can be surprised by it at proving time.
+    ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidWitness`] if the call sequence diverges from
-    /// the layout discovered at registration time — more calls than
-    /// discovered, or an input whose width differs from the discovered width.
-    /// An honest step body cannot trip this: circuit structure must not depend
-    /// on witness values, so the dry run and the real run make identical
-    /// calls.
+    /// Returns [`Error::InvalidWitness`] if the body makes more calls than the
+    /// [`NUM_CHALLENGE_SLOTS`](crate::NUM_CHALLENGE_SLOTS) cap allows, or more
+    /// than the registration-time dry run made. An honest step body cannot
+    /// trip either: circuit structure must not depend on witness values, so
+    /// the dry run and the real run make identical calls.
     pub fn derive_challenge<G, P>(
         &mut self,
         dr: &mut D,
@@ -343,27 +408,28 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C>
         G: ChallengeInput<'dr, D>,
         P: ragu_arithmetic::PoseidonPermutation<D::F>,
     {
-        let mut elements = Vec::new();
+        const {
+            assert!(
+                G::ELEMENTS <= crate::CHALLENGE_WIDTH,
+                "challenge input is wider than CHALLENGE_WIDTH; hash it down to a single \
+                 binding element first",
+            );
+        }
+
+        self.take_challenge_slot()?;
+
+        let mut elements = Vec::with_capacity(G::ELEMENTS);
         input.append_elements(dr, &mut elements)?;
 
-        // Determinism guard: check the call against the discovered layout.
-        // Skipped in discovery mode, which only records widths.
-        if let Some(expected) = &self.expected_widths {
-            let call = self.challenge_widths.len();
-            let width = expected.get(call).ok_or_else(|| {
-                Error::InvalidWitness(
-                    "derive_challenge called more times than the discovered call layout; \
-                     circuit structure must not depend on witness values"
-                        .into(),
-                )
-            })?;
-            if *width != elements.len() {
-                return Err(Error::InvalidWitness(
-                    "derive_challenge input width diverged from the discovered call layout; \
-                     circuit structure must not depend on witness values"
-                        .into(),
-                ));
-            }
+        // A `ChallengeInput` whose `append_elements` disagrees with its
+        // `ELEMENTS` would make the synthesized circuit's shape depend on
+        // something the compile-time width does not describe.
+        if elements.len() != G::ELEMENTS {
+            return Err(Error::InvalidWitness(
+                "challenge input serialized a different number of elements than its declared \
+                 width"
+                    .into(),
+            ));
         }
 
         // Sound Fiat–Shamir: hash the input in-circuit. The constraint system
@@ -372,18 +438,14 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C>
         for element in &elements {
             sponge.absorb(dr, element)?;
         }
-        let challenge = sponge.squeeze(dr)?;
-
-        self.challenge_widths.push(elements.len());
-
-        Ok(challenge)
+        sponge.squeeze(dr)
     }
 
     /// Consumes the container and returns every hook's accumulated output.
     pub fn into_outputs(self) -> FrameworkHookOutputs<'dr, D, C> {
         FrameworkHookOutputs {
             poly_query_claims: self.poly_query_claims,
-            challenge_widths: self.challenge_widths,
+            challenge_calls: self.challenge_calls,
         }
     }
 }
@@ -425,7 +487,73 @@ mod tests {
             .expect("derive_challenge");
 
         let outputs = hooks.into_outputs();
-        assert_eq!(outputs.challenge_widths, alloc::vec![2]);
+        assert_eq!(outputs.challenge_calls, 1);
+    }
+
+    /// The framework caps a step body at `NUM_CHALLENGE_SLOTS` challenges.
+    #[test]
+    fn derive_challenge_is_capped_at_the_slot_count() {
+        let pasta = Pasta::baked();
+        let mut dr = Emulator::counter();
+        let allocator = &mut Standard::new();
+        let mut hooks = FrameworkHooks::<_, NestedCurve>::new();
+
+        let a = Element::alloc(&mut dr, allocator, Empty).expect("alloc a");
+        for _ in 0..crate::NUM_CHALLENGE_SLOTS {
+            hooks
+                .derive_challenge(&mut dr, Pasta::circuit_poseidon(pasta), a.clone())
+                .expect("a call within the cap should succeed");
+        }
+
+        let error = hooks
+            .derive_challenge(&mut dr, Pasta::circuit_poseidon(pasta), a)
+            .err()
+            .expect("the call past the cap should fail");
+        assert!(
+            alloc::format!("{error}").contains("challenge slots"),
+            "unexpected error: {error}"
+        );
+    }
+
+    /// A body that derives more challenges than the registration-time dry run
+    /// did is rejected, rather than silently synthesizing a larger circuit.
+    #[test]
+    fn derive_challenge_rejects_more_calls_than_discovered() {
+        let pasta = Pasta::baked();
+        let mut dr = Emulator::counter();
+        let allocator = &mut Standard::new();
+        let mut hooks = FrameworkHooks::<_, NestedCurve>::with_expected(1);
+
+        let a = Element::alloc(&mut dr, allocator, Empty).expect("alloc a");
+        hooks
+            .derive_challenge(&mut dr, Pasta::circuit_poseidon(pasta), a.clone())
+            .expect("the discovered call should succeed");
+
+        let error = hooks
+            .derive_challenge(&mut dr, Pasta::circuit_poseidon(pasta), a)
+            .err()
+            .expect("an undiscovered call should fail");
+        assert!(
+            alloc::format!("{error}").contains("discovered call count"),
+            "unexpected error: {error}"
+        );
+    }
+
+    /// The width of a challenge input is a compile-time property of its type.
+    #[test]
+    fn challenge_input_widths_are_compile_time() {
+        type D<'dr> = Emulator<ragu_core::drivers::emulator::Wireless<Empty, Fp>>;
+        type Nested<'dr> = Point<'dr, D<'dr>, NestedCurve>;
+
+        const fn width<'dr, G: ChallengeInput<'dr, D<'dr>>>() -> usize {
+            G::ELEMENTS
+        }
+
+        assert_eq!(width::<Element<'_, D<'_>>>(), 1);
+        assert_eq!(width::<Nested<'_>>(), 2);
+        assert_eq!(width::<(Element<'_, D<'_>>, Nested<'_>)>(), 3);
+        assert_eq!(width::<[Nested<'_>; 2]>(), 4);
+        assert!(width::<[Nested<'_>; 2]>() <= crate::CHALLENGE_WIDTH);
     }
 
     /// On a value-carrying driver the challenge resolves immediately, is

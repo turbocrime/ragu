@@ -101,7 +101,6 @@ impl<C: Cycle, R: Rank> PolyCommitment<C, R> {
 pub struct PolyQueryHandle<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> {
     com: Point<'dr, D, C::NestedCurve>,
     polynomial: DriverValue<D, sparse::Polynomial<D::F, R>>,
-    host: DriverValue<D, C::HostCurve>,
     slot: usize,
 }
 
@@ -110,26 +109,20 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> PolyQueryHandl
     pub(crate) fn new(
         com: Point<'dr, D, C::NestedCurve>,
         polynomial: DriverValue<D, sparse::Polynomial<D::F, R>>,
-        host: DriverValue<D, C::HostCurve>,
         slot: usize,
     ) -> Self {
         Self {
             com,
             polynomial,
-            host,
             slot,
         }
     }
 
-    /// The claim slot this handle was assigned when it was witnessed.
+    /// The claim slot this handle was assigned when it was witnessed. Fixes
+    /// which bridge stage — and therefore which generators — `com` commits to,
+    /// so the claim must occupy this instance slot too.
     pub(crate) fn slot(&self) -> usize {
         self.slot
-    }
-
-    /// The polynomial's host-curve commitment — the point the parent folds,
-    /// and the one this handle's `com` bridges.
-    pub(crate) fn host(&self) -> DriverValue<D, C::HostCurve> {
-        self.host.clone()
     }
 
     /// The in-circuit commitment point, for use in challenges, hashing, etc.

@@ -151,7 +151,8 @@ fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
     // The handle's host commitment is P's, but its polynomial is P'. The
     // framework derives `com` from the host, so the step's challenge is bound
     // to P while the parent folds P'.
-    let host_of_p = p.commit_to_affine::<<Pasta as Cycle>::HostCurve>(Pasta::host_generators(pasta));
+    let host_of_p =
+        p.commit_to_affine::<<Pasta as Cycle>::HostCurve>(Pasta::host_generators(pasta));
     let desynced = PolyCommitment::<Pasta, R>::desync_for_testing(p_prime.clone(), host_of_p);
 
     let (cheat, ()) = app.seed(

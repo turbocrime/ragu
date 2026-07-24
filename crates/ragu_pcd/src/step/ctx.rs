@@ -104,9 +104,8 @@ where
         commitment: DriverValue<D, PolyCommitment<C, R>>,
     ) -> Result<PolyQueryHandle<'dr, D, C, R>> {
         let slot = self.hooks.next_claim_slot()?;
-        let host = commitment.as_ref().map(|c| c.host());
+        let host_for_com = commitment.as_ref().map(|c| c.host());
         let claim_bridge = self.claim_bridge;
-        let host_for_com = host.clone();
         let com_value = D::try_just(move || {
             let (params, bridge_alpha) = claim_bridge.ok_or_else(|| {
                 ragu_core::Error::Initialization(
@@ -123,7 +122,7 @@ where
         })?;
         let com = Point::alloc(self.dr, com_value)?;
         let polynomial = commitment.map(PolyCommitment::into_polynomial);
-        Ok(PolyQueryHandle::new(com, polynomial, host, slot))
+        Ok(PolyQueryHandle::new(com, polynomial, slot))
     }
 
     /// Records a poly-query claim: the polynomial behind `commitment` evaluates
@@ -149,6 +148,11 @@ where
     /// prover with a dishonest witness fails early with `InvalidWitness`.
     /// That pre-check carries no soundness weight (it runs on the prover);
     /// enforcement never relies on prover behavior.
+    ///
+    /// Claims must be raised in the order their polynomials were witnessed —
+    /// the handle's slot fixes which bridge stage its `com` commits to, and
+    /// that must be the instance slot the claim occupies. Interleaving them out
+    /// of order fails with `InvalidWitness`.
     ///
     /// # Soundness status
     ///
@@ -176,6 +180,7 @@ where
     ) -> Result<()> {
         self.hooks.enforce_polynomial_query(
             self.dr,
+            commitment.slot(),
             commitment.com(),
             x,
             y,
