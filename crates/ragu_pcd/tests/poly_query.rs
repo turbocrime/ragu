@@ -7,9 +7,8 @@ use ragu_circuits::polynomials::{ProductionRank, sparse};
 use ragu_core::{Error, Result};
 use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::ApplicationBuilder;
-use ragu_testing::pcd::{
-    merge_multisets::{MergeMultisets, WitnessMultiset, WitnessMultisetWitness},
-    poly_query::{CommitAndOpen, CommitAndOpenWitness, OpenAndHash, OpenAndHashWitness},
+use ragu_testing::pcd::poly_query::{
+    CommitAndOpen, CommitAndOpenWitness, OpenAndHash, OpenAndHashWitness,
 };
 use rand::{SeedableRng, rngs::StdRng};
 
@@ -47,8 +46,7 @@ fn oracle_end_to_end() -> Result<()> {
         &mut rng,
         CommitAndOpen::new(Pasta::circuit_poseidon(pasta)),
         CommitAndOpenWitness {
-            com: com1,
-            polynomial: p1.clone(),
+            commitment: com1.clone(),
             claimed_y: None,
         },
     )?;
@@ -60,7 +58,7 @@ fn oracle_end_to_end() -> Result<()> {
         ragu_pcd::NUM_POLY_QUERY_SLOTS
     );
     let claim0 = leaf1.proof().application_claims()[0];
-    assert_eq!(claim0.com, com1);
+    assert_eq!(claim0.com, com1.commitment());
     assert_eq!(claim0.y, p1.eval(claim0.x));
 
     let p2 = poly(&[2, 7, 1, 8, 2, 8]);
@@ -69,8 +67,7 @@ fn oracle_end_to_end() -> Result<()> {
         &mut rng,
         CommitAndOpen::new(Pasta::circuit_poseidon(pasta)),
         CommitAndOpenWitness {
-            com: com2,
-            polynomial: p2.clone(),
+            commitment: com2,
             claimed_y: None,
         },
     )?;
@@ -83,10 +80,9 @@ fn oracle_end_to_end() -> Result<()> {
         &mut rng,
         OpenAndHash::new(Pasta::circuit_poseidon(pasta)),
         OpenAndHashWitness {
-            com: com1,
+            commitment: com1,
             x,
             y,
-            polynomial: p1.clone(),
         },
         leaf1,
         leaf2,
@@ -114,8 +110,7 @@ fn dishonest_evaluation_is_rejected() -> Result<()> {
         &mut rng,
         CommitAndOpen::new(Pasta::circuit_poseidon(pasta)),
         CommitAndOpenWitness {
-            com,
-            polynomial: p,
+            commitment: com,
             claimed_y: Some(Fp::from(42u64)),
         },
     );
@@ -126,120 +121,14 @@ fn dishonest_evaluation_is_rejected() -> Result<()> {
     Ok(())
 }
 
-/// A commitment that does not bind the claimed polynomial is rejected at fuse
-/// time with `InvalidWitness`.
-#[test]
-fn mismatched_commitment_is_rejected() -> Result<()> {
-    let pasta = Pasta::baked();
-    let app = open_app()?;
-    let mut rng = StdRng::seed_from_u64(1234);
+// The old `mismatched_commitment_is_rejected` test constructed a witness whose
+// commitment bound one polynomial and whose coefficients were another. The
+// `PolyCommitment` handle from `commit_polynomial` now bundles the two, so an
+// honest caller can no longer express that mismatch through the API. The
+// interior malicious-prover version of this case is covered by the poly-query
+// binding (S1) test on the enforcement path.
 
-    let p = poly(&[3, 1, 4, 1, 5]);
-    let other = poly(&[2, 7, 1, 8]);
-    let wrong_com = app.commit_polynomial(&other)?;
-    let result = app.seed(
-        &mut rng,
-        CommitAndOpen::new(Pasta::circuit_poseidon(pasta)),
-        CommitAndOpenWitness {
-            com: wrong_com,
-            polynomial: p,
-            claimed_y: None,
-        },
-    );
-    assert!(
-        matches!(result, Err(Error::InvalidWitness(_))),
-        "expected InvalidWitness",
-    );
-    Ok(())
-}
-
-/// Multiset merge end-to-end: two leaves carry multisets; the merge step
-/// derives a Schwartz–Zippel challenge from the framework (no sponge in the
-/// step body), evaluates all three polynomials at it, and enforces the three
-/// openings. The fused proof verifies and persists three claim instances.
-#[test]
-fn multiset_merge_end_to_end() -> Result<()> {
-    let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
-        .register(WitnessMultiset::<Pasta, R>::new())?
-        .register(MergeMultisets::<Pasta, R>::new())?
-        .finalize(pasta)?;
-    let mut rng = StdRng::seed_from_u64(5678);
-
-    let a = poly(&[1, 2, 3]);
-    let b = poly(&[4, 0, 5]);
-    let a_com = app.commit_polynomial(&a)?;
-    let b_com = app.commit_polynomial(&b)?;
-
-    let (left, ()) = app.seed(
-        &mut rng,
-        WitnessMultiset::new(),
-        WitnessMultisetWitness {
-            commitment: a_com,
-            polynomial: a.clone(),
-        },
-    )?;
-    assert!(app.verify(&left, &mut rng)?);
-    let (right, ()) = app.seed(
-        &mut rng,
-        WitnessMultiset::new(),
-        WitnessMultisetWitness {
-            commitment: b_com,
-            polynomial: b.clone(),
-        },
-    )?;
-
-    // The product polynomial and its commitment, supplied by the prover.
-    // (`iter_coeffs` pads to the rank's capacity; trim before multiplying.)
-    let product = {
-        let trimmed = |p: &sparse::Polynomial<Fp, R>| {
-            let mut coeffs: Vec<Fp> = p.iter_coeffs().collect();
-            while coeffs
-                .last()
-                .is_some_and(|c| bool::from(ff::Field::is_zero(c)))
-            {
-                coeffs.pop();
-            }
-            coeffs
-        };
-        let mut out = Vec::new();
-        ragu_arithmetic::poly_mul(&trimmed(&a), &trimmed(&b), &mut out);
-        sparse::Polynomial::<Fp, R>::from_coeffs(out)
-    };
-    let product_com = app.commit_polynomial(&product)?;
-
-    let (merged, ()) = app.fuse(&mut rng, MergeMultisets::new(), product_com, left, right)?;
-    assert!(app.verify(&merged, &mut rng)?);
-    assert_eq!(
-        merged.proof().application_claims().len(),
-        ragu_pcd::NUM_POLY_QUERY_SLOTS
-    );
-    assert_eq!(merged.data().commitment, product_com);
-
-    // A dishonest product commitment (not binding the product polynomial) is
-    // rejected: the framework's native claim check catches it even though the
-    // in-circuit Schwartz–Zippel identity still holds.
-    let (left2, ()) = app.seed(
-        &mut rng,
-        WitnessMultiset::new(),
-        WitnessMultisetWitness {
-            commitment: a_com,
-            polynomial: a.clone(),
-        },
-    )?;
-    let (right2, ()) = app.seed(
-        &mut rng,
-        WitnessMultiset::new(),
-        WitnessMultisetWitness {
-            commitment: b_com,
-            polynomial: b.clone(),
-        },
-    )?;
-    let result = app.fuse(&mut rng, MergeMultisets::new(), a_com, left2, right2);
-    assert!(
-        matches!(result, Err(Error::InvalidWitness(_))),
-        "expected InvalidWitness, got wrong-commitment fuse result",
-    );
-
-    Ok(())
-}
+// The multiset merge end-to-end test lived here; `Multiset`/`MergeMultisets`
+// were a consumer concern and have been removed. The framework's poly-query
+// path is exercised by the `CommitAndOpen`/`OpenAndHash` tests above and by
+// `recursive_claims.rs`.

@@ -54,8 +54,7 @@ fn corrupted_claim_is_rejected_directly_and_recursively() -> Result<()> {
             rng,
             CommitAndOpen::new(Pasta::circuit_poseidon(pasta)),
             CommitAndOpenWitness {
-                com,
-                polynomial: p,
+                commitment: com,
                 claimed_y: None,
             },
         )?;
@@ -89,10 +88,9 @@ fn corrupted_claim_is_rejected_directly_and_recursively() -> Result<()> {
         &mut rng,
         OpenAndHash::new(Pasta::circuit_poseidon(pasta)),
         OpenAndHashWitness {
-            com: com1,
+            commitment: com1,
             x,
             y,
-            polynomial: p1,
         },
         corrupted_leaf,
         leaf2,

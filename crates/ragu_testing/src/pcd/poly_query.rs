@@ -25,7 +25,7 @@
 use core::marker::PhantomData;
 
 use ff::Field;
-use ragu_arithmetic::{CurveAffine, Cycle};
+use ragu_arithmetic::Cycle;
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{
     Result,
@@ -34,11 +34,12 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_pcd::{
+    PolyCommitment,
     header::{Header, Suffix},
     step::{Encoded, Index, Step, StepCtx},
 };
 use ragu_primitives::{
-    Element, GadgetExt, Point,
+    Element, GadgetExt,
     allocator::{Allocator, Standard},
     poseidon::Sponge,
 };
@@ -79,18 +80,17 @@ impl<F: Field, R: Rank> Header<F> for HashedOpening<R> {
     }
 }
 
-/// Witness for [`CommitAndOpen`]: a polynomial and its framework commitment.
+/// Witness for [`CommitAndOpen`]: a committed-polynomial handle.
 ///
-/// `com` must come from
-/// [`Application::commit_polynomial`](ragu_pcd::Application::commit_polynomial)
-/// applied to `polynomial` — fuse rejects the witness otherwise.
+/// `commitment` comes from
+/// [`Application::commit_polynomial`](ragu_pcd::Application::commit_polynomial),
+/// which bundles the polynomial with the commitment derived from it.
 /// `claimed_y` overrides the honestly-computed evaluation when set; it exists
 /// so tests can exercise the framework's rejection of dishonest evaluation
 /// claims.
-pub struct CommitAndOpenWitness<C: CurveAffine, R: Rank> {
-    pub com: C,
-    pub polynomial: sparse::Polynomial<C::Base, R>,
-    pub claimed_y: Option<C::Base>,
+pub struct CommitAndOpenWitness<C: Cycle, R: Rank> {
+    pub commitment: PolyCommitment<C, R>,
+    pub claimed_y: Option<C::CircuitField>,
 }
 
 /// A seedable leaf step exercising the full poly-query oracle loop:
@@ -120,7 +120,7 @@ impl<'params, C: Cycle, R> CommitAndOpen<'params, C, R> {
 
 impl<C: Cycle, R: Rank> Step<C> for CommitAndOpen<'_, C, R> {
     const INDEX: Index = Index::new(0);
-    type Witness<'source> = CommitAndOpenWitness<C::NestedCurve, R>;
+    type Witness<'source> = CommitAndOpenWitness<C, R>;
     type Aux<'source> = ();
     type Left = ();
     type Right = ();
@@ -146,41 +146,41 @@ impl<C: Cycle, R: Rank> Step<C> for CommitAndOpen<'_, C, R> {
     {
         let allocator = &mut Standard::new();
 
-        // (1) Witness the polynomial (prover-only) and allocate its
-        // commitment in-circuit.
-        let com_witness = witness.as_ref().map(|w| w.com);
+        // (1) Witness the committed polynomial: allocate its commitment
+        // in-circuit and retain the polynomial for the claim.
         let claimed_y = witness.as_ref().map(|w| w.claimed_y);
-        let polynomial_witness = witness.map(|w| w.polynomial);
-        let com = Point::alloc(ctx.dr, com_witness)?;
+        let commitment = witness.map(|w| w.commitment);
+        let handle = ctx.witness_polynomial(commitment)?;
 
         // (2) Derive a challenge bound to the commitment.
-        let z = ctx.derive_challenge(com.clone())?;
+        let z = ctx.derive_challenge(handle.commitment().clone())?;
 
         // (3) Evaluate the polynomial at the challenge (natively; the
         // polynomial is not in-circuit). A dishonest override, if provided,
         // takes the evaluation's place so fuse-time rejection can be tested.
         let y_value = z.value().map(|z| *z).and_then(|z| {
-            polynomial_witness
+            handle
+                .polynomial()
                 .as_ref()
                 .and_then(|p| claimed_y.map(|claimed| claimed.unwrap_or_else(|| p.eval(z))))
         });
         let y = Element::alloc(ctx.dr, allocator, y_value)?;
 
         // (4) Enforce the evaluation as a poly-query claim.
-        let coefficients = polynomial_witness
-            .as_ref()
-            .map(|p| p.iter_coeffs().collect::<Vec<_>>());
-        ctx.enforce_poly_query(com.clone(), z, y, coefficients)?;
+        ctx.enforce_poly_query(&handle, z, y)?;
 
         // Output digest binds the commitment.
         let mut sponge = Sponge::new(ctx.dr, self.poseidon_params);
-        com.write(ctx.dr, &mut sponge)?;
+        handle.commitment().write(ctx.dr, &mut sponge)?;
         let output = sponge.squeeze(ctx.dr)?;
         let output_hash = output.value().map(|v| *v);
         let output_encoded = Encoded::from_gadget(output);
 
         let output_data = output_hash.and_then(|hash| {
-            polynomial_witness.map(|polynomial| HashedOpeningData { hash, polynomial })
+            handle
+                .polynomial()
+                .clone()
+                .map(|polynomial| HashedOpeningData { hash, polynomial })
         });
 
         Ok((
@@ -195,12 +195,11 @@ impl<C: Cycle, R: Rank> Step<C> for CommitAndOpen<'_, C, R> {
     }
 }
 
-/// Witness for [`OpenAndHash`]: an opening `(com, x, y)` of `polynomial`.
-pub struct OpenAndHashWitness<C: CurveAffine, R: Rank> {
-    pub com: C,
-    pub x: C::Base,
-    pub y: C::Base,
-    pub polynomial: sparse::Polynomial<C::Base, R>,
+/// Witness for [`OpenAndHash`]: an opening `(x, y)` of a committed polynomial.
+pub struct OpenAndHashWitness<C: Cycle, R: Rank> {
+    pub commitment: PolyCommitment<C, R>,
+    pub x: C::CircuitField,
+    pub y: C::CircuitField,
 }
 
 /// A step that merges two [`HashedOpening`] children: it opens a witnessed
@@ -223,7 +222,7 @@ impl<'params, C: Cycle, R> OpenAndHash<'params, C, R> {
 
 impl<C: Cycle, R: Rank> Step<C> for OpenAndHash<'_, C, R> {
     const INDEX: Index = Index::new(1);
-    type Witness<'source> = OpenAndHashWitness<C::NestedCurve, R>;
+    type Witness<'source> = OpenAndHashWitness<C, R>;
     type Aux<'source> = ();
     type Left = HashedOpening<R>;
     type Right = HashedOpening<R>;
@@ -251,30 +250,29 @@ impl<C: Cycle, R: Rank> Step<C> for OpenAndHash<'_, C, R> {
         let left_encoded = Encoded::new(ctx.dr, allocator, left)?;
         let right_encoded = Encoded::new(ctx.dr, allocator, right)?;
 
-        let com_witness = witness.as_ref().map(|w| w.com);
         let x_witness = witness.as_ref().map(|w| w.x);
         let y_witness = witness.as_ref().map(|w| w.y);
-        let polynomial_witness = witness.map(|w| w.polynomial);
-        let coefficients = polynomial_witness
-            .as_ref()
-            .map(|p| p.iter_coeffs().collect::<Vec<_>>());
+        let commitment = witness.map(|w| w.commitment);
+        let handle = ctx.witness_polynomial(commitment)?;
 
-        let com = Point::alloc(ctx.dr, com_witness)?;
         let x = Element::alloc(ctx.dr, allocator, x_witness)?;
         let y = Element::alloc(ctx.dr, allocator, y_witness)?;
 
         let mut sponge = Sponge::new(ctx.dr, self.poseidon_params);
         sponge.absorb(ctx.dr, left_encoded.as_gadget())?;
         sponge.absorb(ctx.dr, right_encoded.as_gadget())?;
-        com.write(ctx.dr, &mut sponge)?;
+        handle.commitment().write(ctx.dr, &mut sponge)?;
         let output = sponge.squeeze(ctx.dr)?;
         let output_hash = output.value().map(|v| *v);
         let output_encoded = Encoded::from_gadget(output);
 
-        ctx.enforce_poly_query(com, x, y, coefficients)?;
+        ctx.enforce_poly_query(&handle, x, y)?;
 
         let output_data = output_hash.and_then(|hash| {
-            polynomial_witness.map(|polynomial| HashedOpeningData { hash, polynomial })
+            handle
+                .polynomial()
+                .clone()
+                .map(|polynomial| HashedOpeningData { hash, polynomial })
         });
 
         Ok((

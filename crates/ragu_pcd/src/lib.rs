@@ -31,6 +31,7 @@ pub mod fuzz_utils;
 pub mod header;
 mod internal;
 pub mod oracle;
+pub mod poly_commitment;
 mod proof;
 pub mod step;
 mod verify;
@@ -39,6 +40,7 @@ use alloc::collections::BTreeMap;
 use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 
 use header::Header;
+pub use poly_commitment::{PolyCommitment, PolyQueryHandle};
 pub use proof::{ClaimOpening, Pcd, Proof};
 use ragu_arithmetic::{CryptoRngCore, Cycle};
 use ragu_circuits::{
@@ -64,6 +66,15 @@ pub(crate) const RAGU_TAG: &[u8] = b"FIXME";
 ///
 /// The slots are bound by the circuit's $k(Y)$ public-input polynomial and
 /// recursively enforced at the next fuse via the PCS $(P, u, v)$ accumulator.
+///
+/// The specific value is governed by the enforcement circuit's endoscaling
+/// budget, not by any consumer. Each slot contributes one host commitment per
+/// child proof to the point list the next fuse endoscales, so
+/// `NUM_ENDOSCALING_POINTS = 37 + 2 * NUM_POLY_QUERY_SLOTS` (see the `nested`
+/// module); the resulting number of endoscaling steps — at four endoscalings
+/// per step — must fit the enforcement circuit's target size. Raising this
+/// constant widens that circuit; it is capped by what fits, not by the needs
+/// of any particular claim producer.
 pub const NUM_POLY_QUERY_SLOTS: usize = 4;
 
 /// Builder for an [`Application`] for proof-carrying data.
@@ -304,18 +315,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     }
 
     /// Commits to a `CircuitField` polynomial in the framework's poly-query
-    /// commitment scheme, returning a nested-curve point that can be
-    /// witnessed in-circuit (e.g. allocated as a
-    /// [`Point`](ragu_primitives::Point), exposed through a
-    /// [`Header`], or hashed).
+    /// commitment scheme, returning a [`PolyCommitment`] that bundles the
+    /// polynomial with the nested-curve commitment derived from it.
     ///
     /// The commitment is an (unblinded) Pedersen commitment to the
     /// coefficients on the host curve, carried onto the nested curve via the
-    /// framework's standard bridge encoding. It is the commitment that
-    /// [`StepCtx::enforce_poly_query`](step::StepCtx::enforce_poly_query)
-    /// claims are checked against at fuse time: a claim whose `com` does not
-    /// equal `commit_polynomial(...)` of its coefficients is rejected as an
-    /// invalid witness.
+    /// framework's standard bridge encoding. Thread the returned
+    /// [`PolyCommitment`] into a step's witness and turn it into an in-circuit
+    /// [`PolyQueryHandle`] with
+    /// [`StepCtx::witness_polynomial`](step::StepCtx::witness_polynomial);
+    /// [`StepCtx::enforce_poly_query`](step::StepCtx::enforce_poly_query) then
+    /// raises the opening claim. Because the commitment is derived from the
+    /// polynomial here, the two cannot be mismatched by an honest caller.
     ///
     /// # Errors
     ///
@@ -325,7 +336,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     pub fn commit_polynomial(
         &self,
         polynomial: &ragu_circuits::polynomials::sparse::Polynomial<C::CircuitField, R>,
-    ) -> Result<C::NestedCurve> {
-        internal::challenge::commit_polynomial::<C, R>(self.params, polynomial)
+    ) -> Result<PolyCommitment<C, R>> {
+        let com = internal::challenge::commit_polynomial::<C, R>(self.params, polynomial)?;
+        Ok(PolyCommitment::new(polynomial.clone(), com))
     }
 }

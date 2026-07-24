@@ -9,16 +9,19 @@
 //! framework hooks added in the future (e.g. transcript threading) belong on
 //! [`FrameworkHooks`] as well.
 
-use alloc::vec::Vec;
-
 use ragu_arithmetic::Cycle;
+use ragu_circuits::polynomials::Rank;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
+    maybe::Maybe,
 };
 use ragu_primitives::{Element, Point};
 
-use crate::framework_hooks::{ChallengeInput, FrameworkHooks};
+use crate::{
+    framework_hooks::{ChallengeInput, FrameworkHooks},
+    poly_commitment::{PolyCommitment, PolyQueryHandle},
+};
 
 /// Framework-side state threaded through [`Step::witness`](super::Step::witness).
 /// The poly-query claim sink is exposed via
@@ -61,11 +64,32 @@ where
         self.poseidon
     }
 
-    /// Records a poly-query claim: the polynomial with the given
-    /// `coefficients` (little-endian), committed to by `com` (a nested curve
-    /// point — see
-    /// [`Application::commit_polynomial`](crate::Application::commit_polynomial)),
-    /// evaluates to `y` at the point `x`.
+    /// Witnesses a [`PolyCommitment`] in-circuit, producing a
+    /// [`PolyQueryHandle`].
+    ///
+    /// The commitment is allocated as an in-circuit [`Point`] (reachable via
+    /// [`PolyQueryHandle::commitment`] for challenges, hashing, etc.) while the
+    /// polynomial is retained for a later
+    /// [`enforce_poly_query`](Self::enforce_poly_query). Because the
+    /// [`PolyCommitment`] came from
+    /// [`Application::commit_polynomial`](crate::Application::commit_polynomial),
+    /// the commitment and the polynomial cannot be mismatched by an honest
+    /// caller.
+    pub fn witness_polynomial<R: Rank>(
+        &mut self,
+        commitment: DriverValue<D, PolyCommitment<C, R>>,
+    ) -> Result<PolyQueryHandle<'dr, D, C, R>> {
+        let com = Point::alloc(self.dr, commitment.as_ref().map(|c| c.commitment()))?;
+        let polynomial = commitment.map(PolyCommitment::into_polynomial);
+        Ok(PolyQueryHandle::new(com, polynomial))
+    }
+
+    /// Records a poly-query claim: the polynomial behind `commitment` evaluates
+    /// to `y` at the point `x`.
+    ///
+    /// `commitment` is a [`PolyQueryHandle`] from
+    /// [`witness_polynomial`](Self::witness_polynomial); it carries both the
+    /// in-circuit commitment and the polynomial, so the two cannot drift apart.
     ///
     /// This is the *succinct* claim path: the polynomial stays out of the
     /// circuit, and enforcement is **recursive**. The claim wires occupy one
@@ -89,15 +113,19 @@ where
     /// For claims over polynomials small enough to evaluate in-circuit,
     /// [`oracle::WitnessedPolynomial`](crate::oracle::WitnessedPolynomial)
     /// remains available as the fully in-circuit alternative.
-    pub fn enforce_poly_query(
+    pub fn enforce_poly_query<R: Rank>(
         &mut self,
-        com: Point<'dr, D, C::NestedCurve>,
+        commitment: &PolyQueryHandle<'dr, D, C, R>,
         x: Element<'dr, D>,
         y: Element<'dr, D>,
-        coefficients: DriverValue<D, Vec<D::F>>,
     ) -> Result<()> {
-        self.hooks
-            .enforce_polynomial_query(self.dr, com, x, y, coefficients)
+        self.hooks.enforce_polynomial_query(
+            self.dr,
+            commitment.com(),
+            x,
+            y,
+            commitment.coefficients(),
+        )
     }
 
     /// Derives a sound Fiat–Shamir challenge from `input`: the in-circuit
