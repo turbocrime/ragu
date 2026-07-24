@@ -108,6 +108,27 @@ where
     /// That pre-check carries no soundness weight (it runs on the prover);
     /// enforcement never relies on prover behavior.
     ///
+    /// # Soundness status — incomplete for interior nodes
+    ///
+    /// **A claim's `com` is not yet bound in-circuit to the polynomial the
+    /// parent folds.** Every piece is individually pinned — `com` by the
+    /// circuit's $k(Y)$, the polynomial's host commitment by the `copying`
+    /// circuit, and the fold by `loading`/endoscaling — but the *link* between
+    /// `com` and that host commitment exists only in the prover-side
+    /// pre-check. A prover who skips it can derive a challenge from `com`
+    /// (which commits to $P$) and then have the framework enforce the opening
+    /// of an unrelated $P'$. A **root** proof is safe:
+    /// [`Application::verify`](crate::Application::verify) re-derives the
+    /// bridge and rejects. An interior (fused) node is not.
+    ///
+    /// Closing this requires binding a nested-curve commitment to its
+    /// polynomial — the nested-side PCS accumulation, which the framework has
+    /// not built yet (it is the same deferred work as the accumulator's root
+    /// opening). Until then, do not rely on an interior claim's `com` to bind
+    /// a Fiat–Shamir challenge. See `POLY_QUERY_SOUNDNESS.md`, and the
+    /// executable demonstration in `tests/recursive_claims.rs`
+    /// (`poly_query_com_is_not_bound_to_the_folded_polynomial`).
+    ///
     /// A step body may call this at most `NUM_POLY_QUERY_SLOTS` times, and the
     /// call count must not depend on witness values (it is circuit structure).
     /// For claims over polynomials small enough to evaluate in-circuit,

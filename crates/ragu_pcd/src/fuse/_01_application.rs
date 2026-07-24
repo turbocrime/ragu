@@ -98,7 +98,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 ));
             }
             let (host, expected) = challenge::commit_polynomial_full::<C, R>(self.params, &poly)?;
-            if expected != claim.com {
+            #[cfg(feature = "unstable-fuzzing")]
+            let precheck = !self.skip_claim_precheck;
+            #[cfg(not(feature = "unstable-fuzzing"))]
+            let precheck = true;
+            if precheck && expected != claim.com {
                 return Err(Error::InvalidWitness(
                     "poly-query claim rejected: the claimed commitment does not bind the claimed \
                      polynomial"

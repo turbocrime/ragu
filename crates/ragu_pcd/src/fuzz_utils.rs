@@ -74,10 +74,45 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     }
 }
 
+impl<C: Cycle, R: Rank> Proof<C, R> {
+    /// Replace the carried claim polynomial and its host commitment in `slot`,
+    /// leaving the instance-bound claim `(com, x, y)` — and therefore the
+    /// application circuit's $k(Y)$ binding — untouched.
+    ///
+    /// This is the *poly-query commitment binding* attack shape: a prover
+    /// declares a claim against `com` (which the step's Fiat–Shamir challenges
+    /// and header hashes reference) but hands the parent a different
+    /// polynomial to fold. Passing a `poly` that still satisfies
+    /// `poly.eval(x) == y` keeps the parent's $f(X)$ quotient exact, so the
+    /// fuse has no honest reason to reject.
+    ///
+    /// `host` should be `poly`'s host-curve commitment, so the substitution is
+    /// self-consistent everywhere the *host* side is checked.
+    pub fn corrupt_claim_poly(
+        &mut self,
+        slot: usize,
+        poly: sparse::Polynomial<C::CircuitField, R>,
+        host: C::HostCurve,
+    ) {
+        self.claim_polys[slot] = poly;
+        self.claim_host_commitments[slot] = host;
+    }
+}
+
 impl<C: Cycle, R: Rank, H: crate::Header<C::CircuitField>> crate::Pcd<C, R, H> {
     /// Apply a [`Corruption`] to the underlying proof.
     pub fn corrupt(&mut self, corruption: Corruption<C::CircuitField>) {
         self.proof_mut().corrupt(corruption);
+    }
+
+    /// Apply [`Proof::corrupt_claim_poly`] to the underlying proof.
+    pub fn corrupt_claim_poly(
+        &mut self,
+        slot: usize,
+        poly: sparse::Polynomial<C::CircuitField, R>,
+        host: C::HostCurve,
+    ) {
+        self.proof_mut().corrupt_claim_poly(slot, poly, host);
     }
 }
 

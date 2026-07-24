@@ -108,3 +108,121 @@ fn corrupted_claim_is_rejected_directly_and_recursively() -> Result<()> {
 
     Ok(())
 }
+
+/// **S1 — the claim commitment is not bound to the folded polynomial.**
+///
+/// A claim's instance-bound `com` is what the *step* sees: its Fiat-Shamir
+/// challenge and header hash are derived from it. The polynomial the *parent*
+/// folds into `f(X)` and the PCS accumulator is carried separately, under its
+/// own host-curve commitment. Every piece is individually pinned — `com` by
+/// the child's `k(Y)`, the host commitment by `copying` against the child's
+/// eval bridge stage, and the fold by `loading`/endoscaling — but nothing ties
+/// `com` to the host commitment except a prover-side pre-check that the code
+/// itself documents as carrying no soundness weight.
+///
+/// So the adversary is a prover who declines to run that pre-check and hands
+/// in a child that is internally consistent everywhere, desynced only between
+/// `com` (which commits to `P`) and the carried polynomial `P'`. The step's
+/// challenge `z` is bound to `P`, yet the statement the parent enforces is
+/// about `P'`.
+///
+/// Root verification catches this (`verify.rs` re-derives `bridge(host)` and
+/// compares it to `com`). An interior fuse does not — that is the gap.
+#[test]
+fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
+    use ragu_pcd::PolyCommitment;
+
+    let pasta = Pasta::baked();
+    // A prover that simply does not run the fuse-time pre-check.
+    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
+        .register(CommitAndOpen::<Pasta, R>::new(Pasta::circuit_poseidon(
+            pasta,
+        )))?
+        .register(OpenAndHash::<Pasta, R>::new(Pasta::circuit_poseidon(pasta)))?
+        .skip_claim_precheck_for_testing()
+        .finalize(pasta)?;
+    let mut rng = StdRng::seed_from_u64(2024);
+
+    // `com` commits to P, but the claim carries P'. Both are honest-looking:
+    // the step derives z from com (so z is bound to P) and claims y = P'(z).
+    let p = poly(&[3, 1, 4, 1, 5]);
+    let p_prime = poly(&[9, 2, 6]);
+    assert_ne!(p.eval(Fp::from(7u64)), p_prime.eval(Fp::from(7u64)));
+    let com_of_p = app.commit_polynomial(&p)?.commitment();
+    let desynced = PolyCommitment::<Pasta, R>::desync_for_testing(p_prime.clone(), com_of_p);
+
+    let (cheat, ()) = app.seed(
+        &mut rng,
+        CommitAndOpen::new(Pasta::circuit_poseidon(pasta)),
+        CommitAndOpenWitness {
+            commitment: desynced,
+            claimed_y: None,
+        },
+    )?;
+
+    // The claim really is desynced: com commits to P, the carried poly is P'.
+    let claim = cheat.proof().application_claims()[0];
+    assert_eq!(claim.com, com_of_p, "instance holds P's commitment");
+    assert_eq!(
+        claim.y,
+        p_prime.eval(claim.x),
+        "but the claimed opening is of P'"
+    );
+    assert_ne!(claim.y, p.eval(claim.x), "P and P' disagree at z");
+
+    // The root verifier checks the bridge, so it rejects.
+    assert!(
+        !app.verify(&cheat, &mut rng)?,
+        "root verify must reject a claim whose com does not bridge its host"
+    );
+
+    // Fused as a child, the desync goes unnoticed.
+    let p2 = poly(&[2, 7, 1, 8]);
+    let com2 = app.commit_polynomial(&p2)?;
+    let (leaf2, ()) = app.seed(
+        &mut rng,
+        CommitAndOpen::new(Pasta::circuit_poseidon(pasta)),
+        CommitAndOpenWitness {
+            commitment: com2,
+            claimed_y: None,
+        },
+    )?;
+
+    let p3 = poly(&[5, 5, 5]);
+    let com3 = app.commit_polynomial(&p3)?;
+    let x = Fp::from(11u64);
+    let y = p3.eval(x);
+    let fused = app.fuse(
+        &mut rng,
+        OpenAndHash::new(Pasta::circuit_poseidon(pasta)),
+        OpenAndHashWitness {
+            commitment: com3,
+            x,
+            y,
+        },
+        cheat,
+        leaf2,
+    );
+
+    match fused {
+        Err(e) => std::eprintln!("interior fuse rejected the desync: {e:?}"),
+        Ok((parent, ())) => {
+            let verified = app.verify(&parent, &mut rng)?;
+            // This assertion documents the *current* gap. Once the claim
+            // commitment is bound in-circuit (POLY_QUERY_SOUNDNESS.md), the
+            // fuse must fail or the parent must not verify -- invert then.
+            assert!(
+                verified,
+                "expected the unsound status quo: a parent of a desynced-claim \
+                 child still verifies. If this now fails, the binding has landed \
+                 -- invert this assertion."
+            );
+            std::eprintln!(
+                "S1 CONFIRMED: parent verified a claim whose com does not commit \
+                 to the polynomial that was folded."
+            );
+        }
+    }
+
+    Ok(())
+}

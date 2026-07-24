@@ -60,6 +60,23 @@ impl<C: Cycle, R: Rank> PolyCommitment<C, R> {
         self.com
     }
 
+    /// Builds a handle whose commitment deliberately does **not** bind its
+    /// polynomial, modelling a prover that patched
+    /// [`Application::commit_polynomial`](crate::Application::commit_polynomial)
+    /// out of the loop.
+    ///
+    /// The honest API makes this state unrepresentable; it exists only so
+    /// tests can exercise the framework's own enforcement rather than the
+    /// prover-side pre-check. Pair with
+    /// [`ApplicationBuilder::skip_claim_precheck_for_testing`](crate::ApplicationBuilder::skip_claim_precheck_for_testing).
+    #[cfg(feature = "unstable-fuzzing")]
+    pub fn desync_for_testing(
+        polynomial: sparse::Polynomial<C::CircuitField, R>,
+        com: C::NestedCurve,
+    ) -> Self {
+        Self { polynomial, com }
+    }
+
     /// Consumes the bundle, returning the polynomial.
     pub(crate) fn into_polynomial(self) -> sparse::Polynomial<C::CircuitField, R> {
         self.polynomial

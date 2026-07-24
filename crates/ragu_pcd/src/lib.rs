@@ -83,6 +83,9 @@ pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, const HEADER_SIZE: usi
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
     num_application_steps: usize,
     header_map: BTreeMap<header::Suffix, TypeId>,
+    /// Test-only: see [`ApplicationBuilder::skip_claim_precheck_for_testing`].
+    #[cfg(feature = "unstable-fuzzing")]
+    skip_claim_precheck: bool,
     _marker: PhantomData<[(); HEADER_SIZE]>,
 }
 
@@ -106,6 +109,8 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             nested_registry: RegistryBuilder::new(),
             num_application_steps: 0,
             header_map: BTreeMap::new(),
+            #[cfg(feature = "unstable-fuzzing")]
+            skip_claim_precheck: false,
             _marker: PhantomData,
         }
     }
@@ -212,8 +217,23 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             params,
             num_application_steps: self.num_application_steps,
             seeded_trivial: OnceCell::new(),
+            #[cfg(feature = "unstable-fuzzing")]
+            skip_claim_precheck: self.skip_claim_precheck,
             _marker: PhantomData,
         })
+    }
+
+    /// Disables the fuse-time poly-query pre-check, modelling a malicious
+    /// prover who simply does not run it.
+    ///
+    /// The pre-check in `fuse::_01_application` runs on the prover and
+    /// carries no soundness weight by design; disabling it lets tests
+    /// distinguish what the *circuits* enforce from what the honest prover
+    /// merely declines to do.
+    #[cfg(feature = "unstable-fuzzing")]
+    pub fn skip_claim_precheck_for_testing(mut self) -> Self {
+        self.skip_claim_precheck = true;
+        self
     }
 
     fn prevent_duplicate_suffixes<H: Header<C::CircuitField>>(&mut self) -> Result<()> {
@@ -242,6 +262,10 @@ pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     num_application_steps: usize,
     /// Cached seeded trivial proof for rerandomization.
     seeded_trivial: OnceCell<Proof<C, R>>,
+    /// Test-only: skip the prover-side poly-query pre-check. See
+    /// [`ApplicationBuilder::skip_claim_precheck_for_testing`].
+    #[cfg(feature = "unstable-fuzzing")]
+    pub(crate) skip_claim_precheck: bool,
     _marker: PhantomData<[(); HEADER_SIZE]>,
 }
 
