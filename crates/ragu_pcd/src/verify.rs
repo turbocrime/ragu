@@ -144,7 +144,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 && polys.len() == crate::NUM_POLY_QUERY_SLOTS
                 && host_coms.len() == crate::NUM_POLY_QUERY_SLOTS
                 && claims.iter().zip(polys.iter()).zip(host_coms.iter()).all(
-                    |((&(com, x, y), poly), host)| {
+                    |((claim, poly), host)| {
+                        let crate::ClaimOpening { com, x, y } = *claim;
                         poly.eval(x) == y
                             && poly
                                 .commit_to_affine::<C::HostCurve>(C::host_generators(self.params))

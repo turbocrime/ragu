@@ -232,17 +232,17 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                         Ok(ClaimInstance {
                             com: Point::alloc(
                                 dr,
-                                proof.as_ref().map(|p| p.application_claims()[i].0),
+                                proof.as_ref().map(|p| p.application_claims()[i].com),
                             )?,
                             x: Element::alloc(
                                 dr,
                                 allocator,
-                                proof.as_ref().map(|p| p.application_claims()[i].1),
+                                proof.as_ref().map(|p| p.application_claims()[i].x),
                             )?,
                             y: Element::alloc(
                                 dr,
                                 allocator,
-                                proof.as_ref().map(|p| p.application_claims()[i].2),
+                                proof.as_ref().map(|p| p.application_claims()[i].y),
                             )?,
                         })
                     })

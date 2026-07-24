@@ -59,9 +59,9 @@ fn oracle_end_to_end() -> Result<()> {
         leaf1.proof().application_claims().len(),
         ragu_pcd::NUM_POLY_QUERY_SLOTS
     );
-    let (claim_com, _z, claim_y) = leaf1.proof().application_claims()[0];
-    assert_eq!(claim_com, com1);
-    assert_eq!(claim_y, p1.eval(leaf1.proof().application_claims()[0].1));
+    let claim0 = leaf1.proof().application_claims()[0];
+    assert_eq!(claim0.com, com1);
+    assert_eq!(claim0.y, p1.eval(claim0.x));
 
     let p2 = poly(&[2, 7, 1, 8, 2, 8]);
     let com2 = app.commit_polynomial(&p2)?;

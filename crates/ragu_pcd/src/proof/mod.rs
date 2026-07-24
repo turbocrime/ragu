@@ -133,6 +133,22 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     }
 }
 
+/// A polynomial-opening claim carried on a [`Proof`]: the polynomial's
+/// nested-curve commitment `com`, the opening point `x`, and the claimed
+/// evaluation `y` (the committed polynomial satisfies $p(x) = y$).
+///
+/// Named fields rather than a positional `(com, x, y)` tuple so downstream
+/// folding code reads `claim.x` / `claim.y` instead of `claim.1` / `claim.2`.
+#[derive(Clone, Copy, Debug)]
+pub struct ClaimOpening<Curve, F> {
+    /// The polynomial's nested-curve commitment.
+    pub com: Curve,
+    /// The opening point.
+    pub x: F,
+    /// The claimed evaluation $p(x) = y$.
+    pub y: F,
+}
+
 /// Represents a recursive proof for the correctness of some computation.
 ///
 /// All fields are flat (no nested component structs). Polynomial fields are
@@ -244,7 +260,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     /// claim into $f(X)$ and the PCS accumulator, and its `compute_v` circuit
     /// re-derives the matching terms.
     pub(crate) application_claims:
-        alloc::vec::Vec<(C::NestedCurve, C::CircuitField, C::CircuitField)>,
+        alloc::vec::Vec<ClaimOpening<C::NestedCurve, C::CircuitField>>,
 
     /// The claim polynomials, in slot order — carried for exactly one fuse
     /// level so the parent can fold them into $f(X)$ and $p(X)$, and so the
@@ -353,7 +369,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     /// unused slots holding the canonical padding claim. The instances are
     /// bound to the application circuit's $k(Y)$ and recursively enforced when
     /// this proof is fused as a child.
-    pub fn application_claims(&self) -> &[(C::NestedCurve, C::CircuitField, C::CircuitField)] {
+    pub fn application_claims(&self) -> &[ClaimOpening<C::NestedCurve, C::CircuitField>] {
         &self.application_claims
     }
 

@@ -39,7 +39,7 @@ use alloc::collections::BTreeMap;
 use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 
 use header::Header;
-pub use proof::{Pcd, Proof};
+pub use proof::{ClaimOpening, Pcd, Proof};
 use ragu_arithmetic::{CryptoRngCore, Cycle};
 use ragu_circuits::{
     polynomials::Rank,

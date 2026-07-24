@@ -68,7 +68,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 self.right_header.resize(len, C::CircuitField::ZERO);
             }
             Corruption::ClaimY(slot, v) => {
-                self.application_claims[slot].2 += v;
+                self.application_claims[slot].y += v;
             }
         }
     }

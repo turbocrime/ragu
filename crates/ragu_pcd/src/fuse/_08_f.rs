@@ -170,7 +170,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // Must remain the trailing block, matching `poly_queries`.
         for proof in [left, right] {
             for (poly, claim) in proof.claim_polys.iter().zip(&proof.application_claims) {
-                iters.push(factor_iter(poly.iter_coeffs(), claim.1));
+                iters.push(factor_iter(poly.iter_coeffs(), claim.x));
             }
         }
 

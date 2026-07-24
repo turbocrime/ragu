@@ -835,7 +835,11 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             application_claims: self
                 .application_claims
                 .iter()
-                .map(|c| (c.com, c.x, c.y))
+                .map(|c| super::ClaimOpening {
+                    com: c.com,
+                    x: c.x,
+                    y: c.y,
+                })
                 .collect(),
             claim_polys: self.claim_polys,
             claim_host_commitments: self.claim_host_commitments,

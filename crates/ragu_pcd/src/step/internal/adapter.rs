@@ -133,6 +133,61 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
     pub fn challenge_widths(&self) -> &[usize] {
         &self.challenge_widths
     }
+
+    /// Fills unused poly-query slots with the canonical padding claim (as
+    /// in-circuit constants) so every application circuit exposes exactly
+    /// [`NUM_POLY_QUERY_SLOTS`] claim tuples in its instance.
+    fn pad_claim_wires<'dr, D: Driver<'dr, F = C::CircuitField>>(
+        &self,
+        dr: &mut D,
+        claim_wires: &mut Vec<ClaimWires<'dr, D, C::NestedCurve>>,
+    ) -> Result<()> {
+        while claim_wires.len() < NUM_POLY_QUERY_SLOTS {
+            let com = ragu_primitives::Point::constant(dr, self.padding.com)?;
+            let x = Element::constant(dr, self.padding.x);
+            let y = Element::constant(dr, self.padding.y);
+            let coefficients =
+                D::just(|| alloc::vec![<C::CircuitField as ragu_arithmetic::ff::Field>::ONE]);
+            claim_wires.push(ClaimWires {
+                com,
+                x,
+                y,
+                coefficients,
+            });
+        }
+        Ok(())
+    }
+
+    /// Extracts the witness-only claim values (instances plus coefficients)
+    /// the fuse needs, in slot order, consuming the claim wires.
+    fn extract_claims<'dr, D: Driver<'dr, F = C::CircuitField>>(
+        claim_wires: Vec<ClaimWires<'dr, D, C::NestedCurve>>,
+    ) -> Result<DriverValue<D, Vec<PolyQueryClaim<C::CircuitField, C::NestedCurve>>>> {
+        let mut claims_value = D::just(|| Vec::with_capacity(NUM_POLY_QUERY_SLOTS));
+        for claim_wire in claim_wires {
+            let ClaimWires {
+                com,
+                x,
+                y,
+                coefficients,
+            } = claim_wire;
+            let claim = D::try_just(|| {
+                Ok(PolyQueryClaim {
+                    com: com.value().take(),
+                    x: *x.value().take(),
+                    y: *y.value().take(),
+                    coefficients: coefficients.take(),
+                })
+            })?;
+            claims_value = claims_value.and_then(|mut v| {
+                claim.map(|c| {
+                    v.push(c);
+                    v
+                })
+            });
+        }
+        Ok(claims_value)
+    }
 }
 
 impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::CircuitField>
@@ -201,22 +256,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
             ));
         }
 
-        // Fill the remaining slots with the canonical padding claim, as
-        // in-circuit constants: every application circuit exposes exactly
-        // NUM_POLY_QUERY_SLOTS claim tuples in its instance.
-        while claim_wires.len() < NUM_POLY_QUERY_SLOTS {
-            let com = ragu_primitives::Point::constant(dr, self.padding.com)?;
-            let x = Element::constant(dr, self.padding.x);
-            let y = Element::constant(dr, self.padding.y);
-            let coefficients =
-                D::just(|| alloc::vec![<C::CircuitField as ragu_arithmetic::ff::Field>::ONE]);
-            claim_wires.push(ClaimWires {
-                com,
-                x,
-                y,
-                coefficients,
-            });
-        }
+        self.pad_claim_wires(dr, &mut claim_wires)?;
 
         let mut elements = Vec::with_capacity(InstanceLen::<HEADER_SIZE>::len());
         left.write(dr, &mut elements)?;
@@ -233,29 +273,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
         }
 
         // Extract the claim values (instances plus coefficients) for the fuse.
-        let mut claims_value = D::just(|| Vec::with_capacity(NUM_POLY_QUERY_SLOTS));
-        for claim_wire in claim_wires {
-            let ClaimWires {
-                com,
-                x,
-                y,
-                coefficients,
-            } = claim_wire;
-            let claim = D::try_just(|| {
-                Ok(PolyQueryClaim {
-                    com: com.value().take(),
-                    x: *x.value().take(),
-                    y: *y.value().take(),
-                    coefficients: coefficients.take(),
-                })
-            })?;
-            claims_value = claims_value.and_then(|mut v| {
-                claim.map(|c| {
-                    v.push(c);
-                    v
-                })
-            });
-        }
+        let claims_value = Self::extract_claims(claim_wires)?;
 
         let adapter_aux = D::try_just(|| {
             let left_header = elements[0..HEADER_SIZE]
