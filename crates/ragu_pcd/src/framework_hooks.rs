@@ -24,14 +24,20 @@
 //!   witness fails early with [`Error::InvalidWitness`] instead of producing a
 //!   proof its parent cannot fuse.
 //!
-//! * [`derive_challenge`](FrameworkHooks::derive_challenge) — derives a
-//!   Fiat–Shamir challenge from any [`ChallengeInput`] as the **in-circuit
-//!   Poseidon sponge hash** of the input's elements. The squeezed challenge
-//!   wire is constrained to equal that hash, so the derivation is *sound*:
-//!   within the proof system's guarantees, a prover cannot pick the challenge
-//!   independently of the input. Every application circuit gets at most
-//!   [`NUM_CHALLENGE_SLOTS`](crate::NUM_CHALLENGE_SLOTS) of these, each of at
-//!   most [`CHALLENGE_WIDTH`](crate::CHALLENGE_WIDTH) elements.
+//! * challenge slots — the bookkeeping behind
+//!   [`StepCtx::derive_challenge`](crate::step::StepCtx::derive_challenge):
+//!   the slot cap, the determinism guard, and the
+//!   `(bridged stage commitment, challenge)` pairs the adapter writes into the
+//!   application circuit's public instance. Every application circuit gets at
+//!   most [`NUM_CHALLENGE_SLOTS`](crate::NUM_CHALLENGE_SLOTS) slots, each
+//!   committing at most [`CHALLENGE_WIDTH`](crate::CHALLENGE_WIDTH) elements.
+//!
+//!   The derivation itself lives on [`StepCtx`](crate::step::StepCtx), not
+//!   here, because it needs the whole [`Cycle`](ragu_arithmetic::Cycle) — host
+//!   generators to commit the stage, nested generators to bridge it, and the
+//!   circuit Poseidon to hash the result — while this container is
+//!   parameterized only by the nested curve. Folding the `Cycle` in here and
+//!   reuniting the two halves would be the tidier shape.
 //!
 //! ## Structure discovery
 //!
@@ -55,13 +61,17 @@
 //!
 //! ## Challenge soundness
 //!
-//! The challenge is computed by an in-circuit sponge, so on a value-carrying
-//! driver the returned `Element` holds the real challenge value at the moment
-//! of the call — the step body can immediately use it (e.g. to evaluate a
-//! polynomial at it and enforce the evaluation) — while on structure-only
-//! drivers the same sponge synthesizes the constraints that make the
-//! derivation binding. There is no native side-channel to trust: the hash the
-//! prover computes is the hash the circuit enforces.
+//! A challenge is the hash of a commitment to the values it is derived from —
+//! computed natively, witnessed, and re-derived by the parent from the same
+//! instance-bound commitment. On a value-carrying driver the returned `Element`
+//! holds the real value immediately, so the step body can use it at once.
+//!
+//! **The binding is not yet enforced.** The `(point, challenge)` pair is bound
+//! to the child's application $k(Y)$, and the stage is committed, but no
+//! circuit re-derives `challenge = Hash(point)` yet. Until that circuit exists
+//! the challenge is a free witness against a malicious prover. This is the same
+//! deferred posture as every other commitment in the framework — see
+//! `POLY_QUERY_SOUNDNESS.md`.
 //!
 //! The framework collects the resulting outputs through the adapter's `Aux` for
 //! later fuse-time processing. New framework hooks (e.g. transcript threading)
@@ -77,7 +87,7 @@ use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverValue},
 };
-use ragu_primitives::{Element, GadgetExt, Point, poseidon::Sponge};
+use ragu_primitives::{Element, GadgetExt, Point};
 
 /// A single polynomial-commitment opening claim, with the polynomial it opens.
 ///
@@ -103,6 +113,20 @@ pub struct PolyQueryClaim<F: Field, C: CurveAffine<Base = F>> {
 /// can write them into the application circuit's public instance (binding them
 /// to the circuit's $k(Y)$), alongside the witness-only coefficient values the
 /// fuse needs for the PCS folding.
+/// The in-circuit wires of a derived challenge: the bridged commitment to the
+/// slot's stage, and the challenge hashed from it. Both go into the application
+/// circuit's public instance so the parent can re-derive one from the other.
+pub struct ChallengeWires<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
+    /// The slot's stage commitment, bridged onto the nested curve.
+    pub point: Point<'dr, D, C>,
+    /// The challenge, hashed from [`point`](Self::point).
+    pub challenge: Element<'dr, D>,
+}
+
+/// The in-circuit wires of a single poly-query claim, retained so the adapter
+/// can write them into the application circuit's public instance (binding them
+/// to the circuit's $k(Y)$), alongside the witness-only coefficient values the
+/// fuse needs for the PCS folding.
 pub struct ClaimWires<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     /// The claimed nested-curve commitment point, as witnessed by the step.
     pub com: Point<'dr, D, C>,
@@ -114,7 +138,7 @@ pub struct ClaimWires<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     pub coefficients: DriverValue<D, Vec<D::F>>,
 }
 
-/// An input to [`derive_challenge`](FrameworkHooks::derive_challenge): a
+/// An input to [`derive_challenge`](crate::step::StepCtx::derive_challenge): a
 /// bundle of in-circuit data exposed as a canonical sequence of [`Element`]s.
 /// The challenge is a Poseidon sponge hash over exactly this sequence,
 /// computed *in-circuit*, so it is sound: the squeezed challenge wire is
@@ -226,7 +250,7 @@ impl_challenge_input_tuple!(A, B, C2, D2);
 /// [`Step::witness`](crate::step::Step::witness) invocation.
 ///
 /// Holds the polynomial-commitment opening-claim sink and the record of
-/// [`derive_challenge`](Self::derive_challenge) calls. The framework's adapter
+/// [`derive_challenge`](crate::step::StepCtx::derive_challenge) calls. The framework's adapter
 /// constructs this, passes it to the step, then surfaces
 /// [`into_outputs`](Self::into_outputs) through its `Aux` for later fuse-time
 /// processing.
@@ -237,7 +261,13 @@ pub struct FrameworkHooks<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     /// Assigns each claim its slot, which fixes the bridge stage — and
     /// therefore the generator positions — its `com` commits to.
     witnessed_claims: usize,
-    /// Number of [`derive_challenge`](Self::derive_challenge) calls so far.
+    /// The `(bridged stage commitment, challenge)` pair each
+    /// [`derive_challenge`](crate::step::StepCtx::derive_challenge) call produced, in slot
+    /// order.
+    challenge_pairs: Vec<ChallengeWires<'dr, D, C>>,
+    /// The values each challenge stage commits, in slot order.
+    challenge_inputs: Vec<DriverValue<D, [D::F; crate::CHALLENGE_WIDTH]>>,
+    /// Number of [`derive_challenge`](crate::step::StepCtx::derive_challenge) calls so far.
     /// Each occupies one of the
     /// [`NUM_CHALLENGE_SLOTS`](crate::NUM_CHALLENGE_SLOTS) slots; the widths
     /// need no recording, being compile-time constants of the input types.
@@ -256,15 +286,20 @@ pub struct FrameworkHookOutputs<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>
     /// [`FrameworkHooks::enforce_polynomial_query`], in call order — the
     /// in-circuit wires plus the witness-only coefficient values.
     pub poly_query_claims: Vec<ClaimWires<'dr, D, C>>,
-    /// Number of [`FrameworkHooks::derive_challenge`] calls. The
+    /// Number of [`StepCtx::derive_challenge`](crate::step::StepCtx::derive_challenge) calls. The
     /// registration-time dry run reads this to discover the call count; the
     /// adapter compares it against that count after real synthesis.
     pub challenge_calls: usize,
+    /// The `(bridged commitment, challenge)` pair per `derive_challenge` call,
+    /// in slot order.
+    pub challenge_pairs: Vec<ChallengeWires<'dr, D, C>>,
+    /// The values each challenge stage commits, in slot order.
+    pub challenge_inputs: Vec<DriverValue<D, [D::F; crate::CHALLENGE_WIDTH]>>,
 }
 
 impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C> {
     /// Creates a new, empty hook container in **discovery mode**: no expected
-    /// call layout, so [`derive_challenge`](Self::derive_challenge) records
+    /// call layout, so [`derive_challenge`](crate::step::StepCtx::derive_challenge) records
     /// input widths without checking them. Used by the registration-time dry
     /// run that discovers the call layout; real synthesis goes through
     /// [`with_expected`](Self::with_expected).
@@ -273,13 +308,15 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C>
             poly_query_claims: Vec::new(),
             witnessed_claims: 0,
             challenge_calls: 0,
+            challenge_pairs: Vec::new(),
+            challenge_inputs: Vec::new(),
             expected_calls: None,
         }
     }
 
     /// Creates a hook container with the `derive_challenge` call count
     /// discovered at registration time. Each
-    /// [`derive_challenge`](Self::derive_challenge) call is checked against it,
+    /// [`derive_challenge`](crate::step::StepCtx::derive_challenge) call is checked against it,
     /// so a body that makes more calls than the dry run did fails at the
     /// offending call.
     pub fn with_expected(expected_calls: usize) -> Self {
@@ -287,6 +324,8 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C>
             poly_query_claims: Vec::new(),
             witnessed_claims: 0,
             challenge_calls: 0,
+            challenge_pairs: Vec::new(),
+            challenge_inputs: Vec::new(),
             expected_calls: Some(expected_calls),
         }
     }
@@ -307,7 +346,7 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C>
 
     /// Takes the next challenge slot, enforcing both the framework cap and the
     /// discovered call count.
-    fn take_challenge_slot(&mut self) -> Result<()> {
+    pub(crate) fn take_challenge_slot(&mut self) -> Result<usize> {
         if self.challenge_calls >= crate::NUM_CHALLENGE_SLOTS {
             return Err(Error::InvalidWitness(
                 "step derived more challenges than there are challenge slots".into(),
@@ -322,8 +361,24 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C>
                     .into(),
             ));
         }
+        let slot = self.challenge_calls;
         self.challenge_calls += 1;
-        Ok(())
+        Ok(slot)
+    }
+
+    /// Records a derived challenge's `(bridged stage commitment, challenge)`
+    /// pair. The adapter writes these into the application circuit's public
+    /// instance, binding them to its $k(Y)$ so the parent's binding circuit can
+    /// re-derive the challenge from the point.
+    pub(crate) fn record_challenge(
+        &mut self,
+        point: Point<'dr, D, C>,
+        challenge: Element<'dr, D>,
+        inputs: DriverValue<D, [D::F; crate::CHALLENGE_WIDTH]>,
+    ) {
+        self.challenge_pairs
+            .push(ChallengeWires { point, challenge });
+        self.challenge_inputs.push(inputs);
     }
 
     /// Records a claim that the polynomial with the given `coefficients`
@@ -398,54 +453,13 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C>
     /// than the registration-time dry run made. An honest step body cannot
     /// trip either: circuit structure must not depend on witness values, so
     /// the dry run and the real run make identical calls.
-    pub fn derive_challenge<G, P>(
-        &mut self,
-        dr: &mut D,
-        poseidon: &'dr P,
-        input: G,
-    ) -> Result<Element<'dr, D>>
-    where
-        G: ChallengeInput<'dr, D>,
-        P: ragu_arithmetic::PoseidonPermutation<D::F>,
-    {
-        const {
-            assert!(
-                G::ELEMENTS <= crate::CHALLENGE_WIDTH,
-                "challenge input is wider than CHALLENGE_WIDTH; hash it down to a single \
-                 binding element first",
-            );
-        }
-
-        self.take_challenge_slot()?;
-
-        let mut elements = Vec::with_capacity(G::ELEMENTS);
-        input.append_elements(dr, &mut elements)?;
-
-        // A `ChallengeInput` whose `append_elements` disagrees with its
-        // `ELEMENTS` would make the synthesized circuit's shape depend on
-        // something the compile-time width does not describe.
-        if elements.len() != G::ELEMENTS {
-            return Err(Error::InvalidWitness(
-                "challenge input serialized a different number of elements than its declared \
-                 width"
-                    .into(),
-            ));
-        }
-
-        // Sound Fiat–Shamir: hash the input in-circuit. The constraint system
-        // ties the squeezed challenge to the absorbed wires on every driver.
-        let mut sponge = Sponge::new(dr, poseidon);
-        for element in &elements {
-            sponge.absorb(dr, element)?;
-        }
-        sponge.squeeze(dr)
-    }
-
     /// Consumes the container and returns every hook's accumulated output.
     pub fn into_outputs(self) -> FrameworkHookOutputs<'dr, D, C> {
         FrameworkHookOutputs {
             poly_query_claims: self.poly_query_claims,
             challenge_calls: self.challenge_calls,
+            challenge_pairs: self.challenge_pairs,
+            challenge_inputs: self.challenge_inputs,
         }
     }
 }
@@ -458,57 +472,31 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> Default for FrameworkHook
 
 #[cfg(test)]
 mod tests {
-    use ragu_arithmetic::{Cycle, ff::Field as _};
+    use ragu_arithmetic::Cycle;
     use ragu_core::{
-        drivers::emulator::Emulator,
-        maybe::{Always, Empty, Maybe as _, MaybeKind},
+        drivers::emulator::{Emulator, Wireless},
+        maybe::Empty,
     };
     use ragu_pasta::{Fp, Pasta};
-    use ragu_primitives::allocator::Standard;
 
     use super::*;
 
     type NestedCurve = <Pasta as Cycle>::NestedCurve;
-
-    /// A `derive_challenge` call records the input's element width, in call
-    /// order, on a structure-only driver.
-    #[test]
-    fn derive_challenge_records_call_layout() {
-        let pasta = Pasta::baked();
-        let mut dr = Emulator::counter();
-        let allocator = &mut Standard::new();
-        let mut hooks = FrameworkHooks::<_, NestedCurve>::new();
-
-        let a = Element::alloc(&mut dr, allocator, Empty).expect("alloc a");
-        let b = Element::alloc(&mut dr, allocator, Empty).expect("alloc b");
-        // Two-element input -> one recorded call of width 2.
-        let _challenge = hooks
-            .derive_challenge(&mut dr, Pasta::circuit_poseidon(pasta), (a, b))
-            .expect("derive_challenge");
-
-        let outputs = hooks.into_outputs();
-        assert_eq!(outputs.challenge_calls, 1);
-    }
+    type Dr<'dr> = Emulator<Wireless<Empty, Fp>>;
 
     /// The framework caps a step body at `NUM_CHALLENGE_SLOTS` challenges.
     #[test]
-    fn derive_challenge_is_capped_at_the_slot_count() {
-        let pasta = Pasta::baked();
-        let mut dr = Emulator::counter();
-        let allocator = &mut Standard::new();
-        let mut hooks = FrameworkHooks::<_, NestedCurve>::new();
-
-        let a = Element::alloc(&mut dr, allocator, Empty).expect("alloc a");
-        for _ in 0..crate::NUM_CHALLENGE_SLOTS {
-            hooks
-                .derive_challenge(&mut dr, Pasta::circuit_poseidon(pasta), a.clone())
-                .expect("a call within the cap should succeed");
+    fn challenge_slots_are_capped() {
+        let mut hooks = FrameworkHooks::<Dr<'_>, NestedCurve>::new();
+        for expected in 0..crate::NUM_CHALLENGE_SLOTS {
+            assert_eq!(
+                hooks.take_challenge_slot().expect("within the cap"),
+                expected
+            );
         }
-
         let error = hooks
-            .derive_challenge(&mut dr, Pasta::circuit_poseidon(pasta), a)
-            .err()
-            .expect("the call past the cap should fail");
+            .take_challenge_slot()
+            .expect_err("the call past the cap should fail");
         assert!(
             alloc::format!("{error}").contains("challenge slots"),
             "unexpected error: {error}"
@@ -518,21 +506,12 @@ mod tests {
     /// A body that derives more challenges than the registration-time dry run
     /// did is rejected, rather than silently synthesizing a larger circuit.
     #[test]
-    fn derive_challenge_rejects_more_calls_than_discovered() {
-        let pasta = Pasta::baked();
-        let mut dr = Emulator::counter();
-        let allocator = &mut Standard::new();
-        let mut hooks = FrameworkHooks::<_, NestedCurve>::with_expected(1);
-
-        let a = Element::alloc(&mut dr, allocator, Empty).expect("alloc a");
-        hooks
-            .derive_challenge(&mut dr, Pasta::circuit_poseidon(pasta), a.clone())
-            .expect("the discovered call should succeed");
-
+    fn challenge_slots_respect_the_discovered_count() {
+        let mut hooks = FrameworkHooks::<Dr<'_>, NestedCurve>::with_expected(1);
+        hooks.take_challenge_slot().expect("the discovered call");
         let error = hooks
-            .derive_challenge(&mut dr, Pasta::circuit_poseidon(pasta), a)
-            .err()
-            .expect("an undiscovered call should fail");
+            .take_challenge_slot()
+            .expect_err("an undiscovered call should fail");
         assert!(
             alloc::format!("{error}").contains("discovered call count"),
             "unexpected error: {error}"
@@ -542,46 +521,15 @@ mod tests {
     /// The width of a challenge input is a compile-time property of its type.
     #[test]
     fn challenge_input_widths_are_compile_time() {
-        type D<'dr> = Emulator<ragu_core::drivers::emulator::Wireless<Empty, Fp>>;
-        type Nested<'dr> = Point<'dr, D<'dr>, NestedCurve>;
-
-        const fn width<'dr, G: ChallengeInput<'dr, D<'dr>>>() -> usize {
+        const fn width<'dr, G: ChallengeInput<'dr, Dr<'dr>>>() -> usize {
             G::ELEMENTS
         }
+        type NestedPoint<'dr> = Point<'dr, Dr<'dr>, NestedCurve>;
 
-        assert_eq!(width::<Element<'_, D<'_>>>(), 1);
-        assert_eq!(width::<Nested<'_>>(), 2);
-        assert_eq!(width::<(Element<'_, D<'_>>, Nested<'_>)>(), 3);
-        assert_eq!(width::<[Nested<'_>; 2]>(), 4);
-        assert!(width::<[Nested<'_>; 2]>() <= crate::CHALLENGE_WIDTH);
-    }
-
-    /// On a value-carrying driver the challenge resolves immediately, is
-    /// deterministic in the input values, and distinct inputs yield distinct
-    /// challenges.
-    #[test]
-    fn derive_challenge_is_deterministic_and_binding() {
-        let pasta = Pasta::baked();
-
-        let challenge_for = |x: u64, y: u64| -> Fp {
-            let mut dr = Emulator::execute();
-            let allocator = &mut Standard::new();
-            let mut hooks = FrameworkHooks::<_, NestedCurve>::new();
-            let a = Element::alloc(&mut dr, allocator, Always::maybe_just(|| Fp::from(x)))
-                .expect("alloc a");
-            let b = Element::alloc(&mut dr, allocator, Always::maybe_just(|| Fp::from(y)))
-                .expect("alloc b");
-            let challenge = hooks
-                .derive_challenge(&mut dr, Pasta::circuit_poseidon(pasta), (a, b))
-                .expect("derive_challenge");
-            *challenge.value().take()
-        };
-
-        let c1 = challenge_for(3, 5);
-        let c2 = challenge_for(3, 5);
-        let c3 = challenge_for(3, 6);
-        assert_eq!(c1, c2);
-        assert_ne!(c1, c3);
-        assert!(!bool::from(c1.is_zero()));
+        assert_eq!(width::<Element<'_, Dr<'_>>>(), 1);
+        assert_eq!(width::<NestedPoint<'_>>(), 2);
+        assert_eq!(width::<(Element<'_, Dr<'_>>, NestedPoint<'_>)>(), 3);
+        assert_eq!(width::<[NestedPoint<'_>; 2]>(), 4);
+        assert!(width::<[NestedPoint<'_>; 2]>() <= crate::CHALLENGE_WIDTH);
     }
 }

@@ -17,7 +17,7 @@
 //! parent can fold them.
 
 use ragu_arithmetic::{CryptoRngCore, Cycle};
-use ragu_circuits::{CircuitExt, polynomials::Rank, polynomials::sparse};
+use ragu_circuits::{CircuitExt, polynomials::Rank, polynomials::sparse, staging::MultiStage};
 use ragu_core::{Error, Result};
 
 use crate::{
@@ -47,10 +47,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     )> {
         let (left_proof, left_data) = left.into_parts();
         let (right_proof, right_data) = right.into_parts();
-        let (trace, aux) =
-            Adapter::<C, S, R, HEADER_SIZE>::proving(step, self.params, builder.bridge_alpha())?
-                .trace((left_data, right_data, witness))?
-                .into_parts();
+        let (trace, aux) = MultiStage::new(Adapter::<C, S, R, HEADER_SIZE>::proving(
+            step,
+            self.params,
+            builder.bridge_alpha(),
+            builder.challenge_alpha(),
+        )?)
+        .trace((left_data, right_data, witness))?
+        .into_parts();
         let rx = self.native_registry.assemble(
             &trace,
             S::INDEX.circuit_index(self.num_application_steps)?,
@@ -63,6 +67,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             output_data,
             step_aux,
             claims,
+            challenges,
+            challenge_inputs,
         } = aux;
 
         // Pre-check every poly-query claim natively before committing to the
@@ -123,8 +129,29 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         builder.set_circuit_id(S::INDEX.circuit_index(self.num_application_steps)?);
         builder.set_left_header(left_header.into_inner());
         builder.set_right_header(right_header.into_inner());
+
+        // The challenge stages are part of the application circuit's trace:
+        // `r(X) = r'(X) + a(X) + b(X)`. `assemble` produced only `r'`, so add
+        // each stage back. They are kept separately too, because each is
+        // committed on its own — hashing that commitment is what produced the
+        // slot's challenge.
+        assert_eq!(challenge_inputs.len(), crate::NUM_CHALLENGE_SLOTS);
+        let mut rx = rx;
+        let mut challenge_stage_polys = alloc::vec::Vec::with_capacity(challenge_inputs.len());
+        for (slot, inputs) in challenge_inputs.into_iter().enumerate() {
+            let stage = crate::step::internal::challenge_stage::stage_rx::<C::CircuitField, R>(
+                slot,
+                challenge::challenge_stage_alpha::<C>(builder.challenge_alpha(), slot),
+                inputs,
+            )?;
+            rx.add_assign(&stage);
+            challenge_stage_polys.push(stage);
+        }
+        builder.set_challenge_stage_polys(challenge_stage_polys);
+
         builder.set_native_application_rx(rx);
         builder.set_application_claims(claims, claim_polys, claim_host_commitments);
+        builder.set_application_challenges(challenges);
 
         Ok((left_proof, right_proof, output_data, step_aux))
     }

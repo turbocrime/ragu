@@ -43,6 +43,7 @@ use header::Header;
 pub use poly_commitment::{PolyCommitment, PolyQueryHandle};
 pub use proof::{ClaimOpening, Pcd, Proof};
 use ragu_arithmetic::{CryptoRngCore, Cycle};
+use ragu_circuits::staging::MultiStage;
 use ragu_circuits::{
     polynomials::Rank,
     registry::{Registry, RegistryBuilder},
@@ -128,7 +129,7 @@ pub const CHALLENGE_WIDTH: usize = 4;
 /// calls is already over half of it. Note that this is why unused slots are
 /// *not* padded, unlike the poly-query slots: an unused claim slot is four
 /// wires, but an unused challenge slot would be a whole permutation.
-pub const NUM_CHALLENGE_SLOTS: usize = 4;
+pub const NUM_CHALLENGE_SLOTS: usize = 2;
 
 /// Builder for an [`Application`] for proof-carrying data.
 pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
@@ -192,7 +193,9 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         // identity does not depend on the runtime generators.
         let adapter = Adapter::<C, S, R, HEADER_SIZE>::new(step)?;
 
-        self.native_registry = self.native_registry.register_circuit(adapter)?;
+        self.native_registry = self
+            .native_registry
+            .register_circuit(MultiStage::new(adapter))?;
         self.num_application_steps += 1;
 
         Ok(self)
@@ -239,16 +242,16 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         )?;
 
         // Then, register internal steps
-        self.native_registry =
-            self.native_registry
-                .register_internal_step(Adapter::<C, _, R, HEADER_SIZE>::new(
-                    step::internal::rerandomize::Rerandomize::<()>::new(),
-                )?)?;
-        self.native_registry =
-            self.native_registry
-                .register_internal_step(Adapter::<C, _, R, HEADER_SIZE>::new(
-                    step::internal::trivial::Trivial::new(),
-                )?)?;
+        self.native_registry = self
+            .native_registry
+            .register_internal_step(MultiStage::new(Adapter::<C, _, R, HEADER_SIZE>::new(
+                step::internal::rerandomize::Rerandomize::<()>::new(),
+            )?))?;
+        self.native_registry = self
+            .native_registry
+            .register_internal_step(MultiStage::new(Adapter::<C, _, R, HEADER_SIZE>::new(
+                step::internal::trivial::Trivial::new(),
+            )?))?;
 
         assert_eq!(
             self.native_registry.log2_circuits(),

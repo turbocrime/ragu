@@ -276,6 +276,7 @@ pub mod claims;
 
 pub mod stages {
     pub mod ab;
+    pub mod challenge_bridge;
     pub mod claim_bridge;
     pub mod eval;
     pub mod f;

@@ -2,7 +2,11 @@ use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use ragu_arithmetic::Cycle;
-use ragu_circuits::{Circuit, WithAux, polynomials::Rank};
+use ragu_circuits::{
+    WithAux,
+    polynomials::Rank,
+    staging::{MultiStageCircuit, StageBuilder},
+};
 use ragu_core::{
     Result,
     drivers::{
@@ -18,9 +22,12 @@ use ragu_primitives::{
     vec::{CollectFixed, ConstLen, FixedVec, Len},
 };
 
-use super::super::{Step, StepCtx};
+use super::{
+    super::{Step, StepCtx},
+    challenge_stage,
+};
 use crate::{
-    Header, NUM_POLY_QUERY_SLOTS,
+    Header, NUM_CHALLENGE_SLOTS, NUM_POLY_QUERY_SLOTS,
     framework_hooks::{ClaimWires, FrameworkHookOutputs, FrameworkHooks, PolyQueryClaim},
     internal::challenge::PaddingClaim,
 };
@@ -32,7 +39,7 @@ pub struct InstanceLen<const HEADER_SIZE: usize>;
 
 impl<const HEADER_SIZE: usize> Len for InstanceLen<HEADER_SIZE> {
     fn len() -> usize {
-        HEADER_SIZE * 3 + NUM_POLY_QUERY_SLOTS * 4
+        HEADER_SIZE * 3 + NUM_POLY_QUERY_SLOTS * 4 + NUM_CHALLENGE_SLOTS * 3
     }
 }
 
@@ -49,7 +56,7 @@ impl<const HEADER_SIZE: usize> Len for InstanceLen<HEADER_SIZE> {
 /// same body runs with `Empty` witnesses for wiring extraction and metrics,
 /// so the call sequence cannot differ between this dry run and real
 /// synthesis. (A body that violates that requirement is caught at synthesis
-/// time by the determinism guard in [`FrameworkHooks::derive_challenge`].)
+/// time by the determinism guard in [`StepCtx::derive_challenge`].)
 ///
 /// [`ChallengeInput::ELEMENTS`]: crate::framework_hooks::ChallengeInput::ELEMENTS
 pub(crate) fn discover_hook_layout<C: Cycle, S: Step<C>, const HEADER_SIZE: usize>(
@@ -90,6 +97,14 @@ pub(crate) struct AdapterAux<'source, C: Cycle, S: Step<C>, const HEADER_SIZE: u
     /// every claim natively, persists the claim instances in the proof, and
     /// the *next* fuse enforces them recursively via the PCS accumulator.
     pub claims: Vec<PolyQueryClaim<C::CircuitField, C::NestedCurve>>,
+    /// The derived-challenge pairs the circuit exposes, padded to exactly
+    /// [`NUM_CHALLENGE_SLOTS`] entries, in slot order — matching the instance
+    /// layout the circuit committed to.
+    pub challenges: Vec<crate::proof::ChallengeOpening<C::NestedCurve, C::CircuitField>>,
+    /// The values each challenge stage commits, in slot order, zero-padded to
+    /// [`CHALLENGE_WIDTH`](crate::CHALLENGE_WIDTH). Plain field elements: the
+    /// fuse holds the rank, so it builds the stage polynomials itself.
+    pub challenge_inputs: Vec<[C::CircuitField; crate::CHALLENGE_WIDTH]>,
     // Note: `derive_challenge` calls leave nothing here — the challenge is
     // derived and constrained in-circuit (a Poseidon sponge over the input
     // wires), so nothing needs resolving downstream.
@@ -120,7 +135,7 @@ pub(crate) struct Adapter<'params, C: Cycle, S, R: Rank, const HEADER_SIZE: usiz
     /// Cycle params and the proof's shared bridge-alpha source, threaded into
     /// [`StepCtx`] so a witnessed polynomial's claim bridge — and therefore its
     /// `com` — can be built. `None` on structure-only adapters.
-    claim_bridge: Option<(&'params C::Params, C::ScalarField)>,
+    claim_bridge: Option<(&'params C::Params, C::ScalarField, C::CircuitField)>,
     _marker: PhantomData<(C, R)>,
 }
 
@@ -156,10 +171,11 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
         step: S,
         params: &'params C::Params,
         bridge_alpha: C::ScalarField,
+        challenge_alpha: C::CircuitField,
     ) -> Result<Self> {
         Ok(Adapter {
             padding: Some(PaddingClaim::new(params)?),
-            claim_bridge: Some((params, bridge_alpha)),
+            claim_bridge: Some((params, bridge_alpha, challenge_alpha)),
             ..Self::new(step)?
         })
     }
@@ -187,7 +203,7 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
         claim_wires: &mut Vec<ClaimWires<'dr, D, C::NestedCurve>>,
     ) -> Result<()> {
         let padding_host = self.padding.as_ref().map(|p| p.host);
-        let claim_bridge = self.claim_bridge;
+        let claim_bridge = self.claim_bridge.map(|(params, alpha, _)| (params, alpha));
         let padding_x = self.padding.as_ref().map(|p| p.x);
         let padding_y = self.padding.as_ref().map(|p| p.y);
         let allocator = &mut Standard::new();
@@ -246,6 +262,53 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
         Ok(())
     }
 
+    /// Fills unused challenge slots so every application circuit exposes
+    /// exactly [`NUM_CHALLENGE_SLOTS`] pairs in its instance.
+    ///
+    /// An unused slot still has reserved wires, so it still has a commitment —
+    /// the all-zero stage, blinded. Deriving its challenge honestly keeps the
+    /// binding circuit uniform: it re-derives every slot without knowing which
+    /// the step actually used.
+    fn pad_challenge_pairs<'dr, D: Driver<'dr, F = C::CircuitField>>(
+        &self,
+        dr: &mut D,
+        pairs: &mut Vec<crate::framework_hooks::ChallengeWires<'dr, D, C::NestedCurve>>,
+        inputs: &mut Vec<DriverValue<D, [C::CircuitField; crate::CHALLENGE_WIDTH]>>,
+    ) -> Result<()>
+    where
+        Self: 'dr,
+    {
+        let allocator = &mut Standard::new();
+        while pairs.len() < NUM_CHALLENGE_SLOTS {
+            let slot = pairs.len();
+            let claim_bridge = self.claim_bridge;
+            let derived = D::try_just(move || {
+                let (params, bridge_alpha, challenge_alpha) = claim_bridge.ok_or_else(|| {
+                    ragu_core::Error::InvalidWitness(
+                        "padding challenge unavailable; a proving adapter must be built with \
+                         `Adapter::proving`"
+                            .into(),
+                    )
+                })?;
+                crate::internal::challenge::staged_challenge::<C, R>(
+                    params,
+                    slot,
+                    challenge_alpha,
+                    bridge_alpha,
+                    [<C::CircuitField as ragu_arithmetic::ff::Field>::ZERO; crate::CHALLENGE_WIDTH],
+                )
+            })?;
+            let point =
+                ragu_primitives::Point::alloc(dr, derived.as_ref().map(|(point, _)| *point))?;
+            let challenge = Element::alloc(dr, allocator, derived.map(|(_, challenge)| challenge))?;
+            pairs.push(crate::framework_hooks::ChallengeWires { point, challenge });
+            inputs.push(D::just(|| {
+                [<C::CircuitField as ragu_arithmetic::ff::Field>::ZERO; crate::CHALLENGE_WIDTH]
+            }));
+        }
+        Ok(())
+    }
+
     /// Extracts the witness-only claim values (instances plus coefficients)
     /// the fuse needs, in slot order, consuming the claim wires.
     fn extract_claims<'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -278,9 +341,13 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
     }
 }
 
-impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::CircuitField>
-    for Adapter<'_, C, S, R, HEADER_SIZE>
+impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize>
+    MultiStageCircuit<C::CircuitField, R> for Adapter<'_, C, S, R, HEADER_SIZE>
 {
+    /// An application circuit's stages are its challenge slots: one committed
+    /// partial trace per `derive_challenge` call, so each challenge can be
+    /// bound to a commitment of the values known when it was derived.
+    type Last = challenge_stage::Last<C::CircuitField, R>;
     type Instance<'source> = (
         FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
         FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
@@ -302,34 +369,49 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
         unreachable!("k(Y) is computed manually for ragu_pcd circuit implementations")
     }
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
+    fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
-        dr: &mut D,
+        builder: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
         witness: DriverValue<D, Self::Witness<'source>>,
     ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>>
     where
         Self: 'dr,
     {
+        // Staging phase 1: reserve every challenge slot's wires before any
+        // witness runs. This resolves the whole `Parent` chain up front, which
+        // is what lets the slots be handed to the step body one at a time
+        // despite having distinct types.
+        let (slot0, builder) =
+            builder.add_stage::<challenge_stage::Stage0<C::CircuitField, R>>()?;
+        let (slot1, builder) =
+            builder.add_stage::<challenge_stage::Stage1<C::CircuitField, R>>()?;
+        let dr = builder.finish();
+        let mut challenge_slots = challenge_stage::Slots::new(slot0, slot1);
+
         let (left, right, witness) = witness.cast();
 
         let mut hooks = FrameworkHooks::with_expected(self.challenge_calls);
         let ((left, right, output), output_data, step_aux) = {
-            let mut ctx = match self.claim_bridge {
-                Some((params, bridge_alpha)) => StepCtx::<'_, '_, _, C>::proving(
+            let ctx = match self.claim_bridge {
+                Some((params, bridge_alpha, challenge_alpha)) => StepCtx::<'_, '_, _, C>::proving(
                     dr,
                     &mut hooks,
                     self.poseidon,
                     params,
                     bridge_alpha,
+                    challenge_alpha,
                 ),
                 None => StepCtx::<'_, '_, _, C>::new(dr, &mut hooks, self.poseidon),
             };
+            let mut ctx = ctx.with_challenge_slots(&mut challenge_slots);
             self.step
                 .witness::<_, HEADER_SIZE>(&mut ctx, witness, left, right)?
         };
         let FrameworkHookOutputs {
             poly_query_claims: mut claim_wires,
             challenge_calls,
+            mut challenge_pairs,
+            mut challenge_inputs,
         } = hooks.into_outputs();
 
         // Determinism guard, complementing the per-call checks inside
@@ -354,6 +436,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
         }
 
         self.pad_claim_wires(dr, &mut claim_wires)?;
+        self.pad_challenge_pairs(dr, &mut challenge_pairs, &mut challenge_inputs)?;
 
         let mut elements = Vec::with_capacity(InstanceLen::<HEADER_SIZE>::len());
         left.write(dr, &mut elements)?;
@@ -368,9 +451,42 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
             claim.x.write(dr, &mut elements)?;
             claim.y.write(dr, &mut elements)?;
         }
+        // Then the challenge slots: per slot, the bridged stage commitment's
+        // two coordinates and the challenge hashed from it. The parent's
+        // binding circuit re-derives the second from the first.
+        for pair in &challenge_pairs {
+            pair.point.write(dr, &mut elements)?;
+            pair.challenge.write(dr, &mut elements)?;
+        }
 
         // Extract the claim values (instances plus coefficients) for the fuse.
         let claims_value = Self::extract_claims(claim_wires)?;
+
+        let mut inputs_value = D::just(|| Vec::with_capacity(NUM_CHALLENGE_SLOTS));
+        for inputs in challenge_inputs {
+            inputs_value = inputs_value.and_then(|mut v| {
+                inputs.map(|i| {
+                    v.push(i);
+                    v
+                })
+            });
+        }
+
+        let mut challenges_value = D::just(|| Vec::with_capacity(NUM_CHALLENGE_SLOTS));
+        for pair in challenge_pairs {
+            let opening = D::try_just(|| {
+                Ok(crate::proof::ChallengeOpening {
+                    point: pair.point.value().take(),
+                    challenge: *pair.challenge.value().take(),
+                })
+            })?;
+            challenges_value = challenges_value.and_then(|mut v| {
+                opening.map(|o| {
+                    v.push(o);
+                    v
+                })
+            });
+        }
 
         let adapter_aux = D::try_just(|| {
             let left_header = elements[0..HEADER_SIZE]
@@ -389,6 +505,8 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
                 output_data: output_data.take(),
                 step_aux: step_aux.take(),
                 claims: claims_value.take(),
+                challenges: challenges_value.take(),
+                challenge_inputs: inputs_value.take(),
             })
         })?;
 
@@ -406,6 +524,8 @@ mod tests {
     };
     use ragu_pasta::{Fp, Pasta};
     use ragu_primitives::allocator::{Allocator, Standard};
+
+    use ragu_circuits::{Circuit, staging::MultiStage};
 
     use super::*;
     use crate::{
@@ -532,10 +652,11 @@ mod tests {
     }
 
     #[test]
-    fn instance_len_covers_headers_and_claim_slots() {
-        assert_eq!(InstanceLen::<1>::len(), 3 + NUM_POLY_QUERY_SLOTS * 4);
-        assert_eq!(InstanceLen::<4>::len(), 12 + NUM_POLY_QUERY_SLOTS * 4);
-        assert_eq!(InstanceLen::<10>::len(), 30 + NUM_POLY_QUERY_SLOTS * 4);
+    fn instance_len_covers_headers_claims_and_challenges() {
+        let slots = NUM_POLY_QUERY_SLOTS * 4 + NUM_CHALLENGE_SLOTS * 3;
+        assert_eq!(InstanceLen::<1>::len(), 3 + slots);
+        assert_eq!(InstanceLen::<4>::len(), 12 + slots);
+        assert_eq!(InstanceLen::<10>::len(), 30 + slots);
     }
 
     #[test]
@@ -547,17 +668,21 @@ mod tests {
             TestStep,
             Pasta::baked(),
             <Pasta as Cycle>::ScalarField::ONE,
+            <Pasta as Cycle>::CircuitField::ONE,
         )
         .expect("adapter construction should succeed");
         let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
 
-        let output = adapter
+        let output = MultiStage::new(adapter)
             .witness(dr, witness)
             .expect("witness should succeed")
             .into_output();
 
         // Output should have 3 * HEADER_SIZE elements (left + right + output headers)
-        assert_eq!(output.len(), HEADER_SIZE * 3 + NUM_POLY_QUERY_SLOTS * 4);
+        assert_eq!(
+            output.len(),
+            HEADER_SIZE * 3 + NUM_POLY_QUERY_SLOTS * 4 + NUM_CHALLENGE_SLOTS * 3
+        );
     }
 
     #[test]
@@ -569,11 +694,12 @@ mod tests {
             TestStep,
             Pasta::baked(),
             <Pasta as Cycle>::ScalarField::ONE,
+            <Pasta as Cycle>::CircuitField::ONE,
         )
         .expect("adapter construction should succeed");
         let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
 
-        let aux = adapter
+        let aux = MultiStage::new(adapter)
             .witness(dr, witness)
             .expect("witness should succeed")
             .into_aux();
@@ -584,6 +710,8 @@ mod tests {
             output_data,
             step_aux: _,
             claims: _,
+            challenges: _,
+            challenge_inputs: _,
         } = aux.take();
 
         // Left header should start with 10
@@ -684,11 +812,14 @@ mod tests {
         let adapter = Adapter::<Pasta, ChallengeStep, TestR, HEADER_SIZE>::new(ChallengeStep)
             .expect("discovery should succeed");
 
-        let output = adapter
+        let output = MultiStage::new(adapter)
             .witness(dr, Empty)
             .expect("structure-only synthesis should succeed")
             .into_output();
 
-        assert_eq!(output.len(), HEADER_SIZE * 3 + NUM_POLY_QUERY_SLOTS * 4);
+        assert_eq!(
+            output.len(),
+            HEADER_SIZE * 3 + NUM_POLY_QUERY_SLOTS * 4 + NUM_CHALLENGE_SLOTS * 3
+        );
     }
 }

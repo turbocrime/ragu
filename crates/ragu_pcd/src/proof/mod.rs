@@ -149,6 +149,17 @@ pub struct ClaimOpening<Curve, F> {
     pub y: F,
 }
 
+/// A derived Fiat–Shamir challenge, as the application circuit's instance
+/// exposes it: the bridged commitment to the slot's challenge stage, and the
+/// challenge hashed from it.
+#[derive(Clone, Copy, Debug)]
+pub struct ChallengeOpening<Curve, F> {
+    /// The slot's stage commitment, bridged onto the nested curve.
+    pub point: Curve,
+    /// The challenge, hashed from [`point`](Self::point).
+    pub challenge: F,
+}
+
 /// Represents a recursive proof for the correctness of some computation.
 ///
 /// All fields are flat (no nested component structs). Polynomial fields are
@@ -181,6 +192,14 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) native_inner_collapse_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_outer_collapse_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_compute_v_rx: sparse::Polynomial<C::CircuitField, R>,
+    /// The application circuit's challenge-stage polynomials, in slot order.
+    ///
+    /// Carried like [`claim_polys`](Self::claim_polys) rather than as an
+    /// [`RxIndex`] component: each stage is summed into the application trace
+    /// (so the circuit check covers it), and *separately* committed on the host
+    /// generators, because hashing that separate commitment is what the slot's
+    /// challenge is.
+    pub(crate) challenge_stage_polys: alloc::vec::Vec<sparse::Polynomial<C::CircuitField, R>>,
 
     // Bridge rx polynomials (non-cached, set by caller)
     pub(crate) bridge_preamble_rx: sparse::Polynomial<C::ScalarField, R>,
@@ -260,6 +279,10 @@ pub struct Proof<C: Cycle, R: Rank> {
     /// claim into $f(X)$ and the PCS accumulator, and its `compute_v` circuit
     /// re-derives the matching terms.
     pub(crate) application_claims: alloc::vec::Vec<ClaimOpening<C::NestedCurve, C::CircuitField>>,
+    /// The derived challenges the step's circuit exposes, one per
+    /// [`NUM_CHALLENGE_SLOTS`](crate::NUM_CHALLENGE_SLOTS) slot, in slot order.
+    pub(crate) application_challenges:
+        alloc::vec::Vec<ChallengeOpening<C::NestedCurve, C::CircuitField>>,
 
     /// The claim polynomials, in slot order — carried for exactly one fuse
     /// level so the parent can fold them into $f(X)$ and $p(X)$, and so the
@@ -378,6 +401,11 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     /// this proof is fused as a child.
     pub fn application_claims(&self) -> &[ClaimOpening<C::NestedCurve, C::CircuitField>] {
         &self.application_claims
+    }
+
+    /// The derived challenges this proof's circuit exposes, in slot order.
+    pub fn application_challenges(&self) -> &[ChallengeOpening<C::NestedCurve, C::CircuitField>] {
+        &self.application_challenges
     }
 
     pub(crate) fn native_registry_xy_poly(&self) -> &sparse::Polynomial<C::CircuitField, R> {
@@ -593,7 +621,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
             .native_registry
             .xy(C::CircuitField::ONE, C::CircuitField::ONE);
 
-        let mut builder = ProofBuilder::new(self.params, C::ScalarField::ONE);
+        let mut builder = ProofBuilder::new(self.params, C::ScalarField::ONE, C::CircuitField::ONE);
 
         builder.set_circuit_id(CircuitIndex::new(0));
         builder.set_left_header(vec![C::CircuitField::ZERO; HEADER_SIZE]);
@@ -624,6 +652,25 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
             vec![padding.poly.clone(); crate::NUM_POLY_QUERY_SLOTS],
             vec![padding.host; crate::NUM_POLY_QUERY_SLOTS],
         );
+        // Challenge slots: a trivial proof derives no challenges, so every slot
+        // holds the all-zero stage's honest pair (mirroring the adapter's
+        // padding, so the binding circuit can re-derive every slot uniformly).
+        builder.set_application_challenges(
+            (0..crate::NUM_CHALLENGE_SLOTS)
+                .map(|slot| {
+                    let (point, challenge) = crate::internal::challenge::staged_challenge::<C, R>(
+                        self.params,
+                        slot,
+                        builder.challenge_alpha(),
+                        builder.bridge_alpha(),
+                        [C::CircuitField::ZERO; crate::CHALLENGE_WIDTH],
+                    )
+                    .expect("trivial padding challenge");
+                    ChallengeOpening { point, challenge }
+                })
+                .collect(),
+        );
+
         let padding_host_commitment = padding.host;
 
         // Native rx polynomials (all trivial ones)

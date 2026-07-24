@@ -78,7 +78,7 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
 
 #[test]
 fn test_rerandomize_consistency() {
-    use ragu_circuits::polynomials;
+    use ragu_circuits::{polynomials, staging::MultiStage};
     use ragu_core::{
         Result,
         drivers::{Driver, DriverValue},
@@ -137,8 +137,12 @@ fn test_rerandomize_consistency() {
     .unwrap();
 
     let mut builder: TestRegistryBuilder<'_, _, R> = TestRegistryBuilder::new();
-    let single_h = builder.register_circuit(circuit_single).unwrap();
-    let pair_h = builder.register_circuit(circuit_pair).unwrap();
+    let single_h = builder
+        .register_circuit(MultiStage::new(circuit_single))
+        .unwrap();
+    let pair_h = builder
+        .register_circuit(MultiStage::new(circuit_pair))
+        .unwrap();
     let registry = builder.finalize().unwrap();
 
     let x = Fp::from(5u64);

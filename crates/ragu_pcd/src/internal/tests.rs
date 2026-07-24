@@ -92,11 +92,11 @@ fn test_internal_circuit_constraint_counts() {
         }};
     }
 
-    check_constraints!(Hashes1Circuit,        mul = 1452, lin = 2058);
-    check_constraints!(Hashes2Circuit,        mul = 2000, lin = 2951);
-    check_constraints!(InnerCollapseCircuit,  mul = 1877, lin = 1918);
-    check_constraints!(OuterCollapseCircuit,  mul = 2026, lin = 3006);
-    check_constraints!(ComputeVCircuit,       mul = 1316, lin = 1893);
+    check_constraints!(Hashes1Circuit,        mul = 1458, lin = 2058);
+    check_constraints!(Hashes2Circuit,        mul = 2006, lin = 2951);
+    check_constraints!(InnerCollapseCircuit,  mul = 1883, lin = 1918);
+    check_constraints!(OuterCollapseCircuit,  mul = 2044, lin = 3030);
+    check_constraints!(ComputeVCircuit,       mul = 1334, lin = 1921);
 }
 
 #[rustfmt::skip]
@@ -109,11 +109,11 @@ fn test_internal_stage_parameters() {
         }};
     }
 
-    check_stage!(Preamble, skip =   1, num = 346);
-    check_stage!(OuterError,  skip = 347, num = 186);
-    check_stage!(InnerError,  skip = 533, num = 399);
-    check_stage!(Query,   skip = 347, num =  23);
-    check_stage!(Eval,    skip = 370, num =  22);
+    check_stage!(Preamble, skip =   1, num = 352);
+    check_stage!(OuterError,  skip = 353, num = 186);
+    check_stage!(InnerError,  skip = 539, num = 399);
+    check_stage!(Query,   skip = 353, num =  23);
+    check_stage!(Eval,    skip = 376, num =  22);
 }
 
 /// Helper test to print current constraint counts in copy-pasteable format.
@@ -201,7 +201,11 @@ fn test_native_registry_digest() {
         .finalize(pasta)
         .unwrap();
 
-    let expected = fp!(0x3cd69b2301e344784dc5e0e3ad5e6dabfdd9d6518c7ae4c45e3ce8ce3e64cb3a);
+    // Changed when challenge derivation moved into application-circuit stages:
+    // every application circuit gained `NUM_CHALLENGE_SLOTS` staged wire
+    // regions and `NUM_CHALLENGE_SLOTS * 3` instance elements (the bridged
+    // stage commitment and its challenge, per slot).
+    let expected = fp!(0x31a8e720243d134e0200e01162f71f3fd3eb663362e39acae30b198dff11b07f);
 
     assert_eq!(
         app.native_registry.digest(),

@@ -42,6 +42,18 @@ pub struct ClaimInstance<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     pub y: Element<'dr, D>,
 }
 
+/// A single derived-challenge pair witnessed from a child proof: the bridged
+/// commitment to that slot's challenge stage, and the challenge hashed from it.
+/// The wire layout (point.x, point.y, challenge) matches the challenge-slot
+/// region of the application circuit's instance.
+#[derive(Gadget, Consistent)]
+pub struct ChallengeInstance<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
+    #[ragu(gadget)]
+    pub point: Point<'dr, D, C::NestedCurve>,
+    #[ragu(gadget)]
+    pub challenge: Element<'dr, D>,
+}
+
 /// Witness data for a single child proof in the preamble stage.
 pub struct ChildWitness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     /// Output header for this child proof.
@@ -108,6 +120,10 @@ pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const
     /// canonical padding claim).
     #[ragu(gadget)]
     pub claims: FixedVec<ClaimInstance<'dr, D, C>, ConstLen<NUM_POLY_QUERY_SLOTS>>,
+    /// The derived-challenge pairs the child's circuit exposed, in slot order.
+    #[ragu(gadget)]
+    pub challenges:
+        FixedVec<ChallengeInstance<'dr, D, C>, ConstLen<{ crate::NUM_CHALLENGE_SLOTS }>>,
     #[ragu(gadget)]
     pub circuit_id: Element<'dr, D>,
     #[ragu(gadget)]
@@ -166,6 +182,10 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
             claim.com.write(dr, &mut ky)?;
             claim.x.write(dr, &mut ky)?;
             claim.y.write(dr, &mut ky)?;
+        }
+        for pair in self.challenges.iter() {
+            pair.point.write(dr, &mut ky)?;
+            pair.challenge.write(dr, &mut ky)?;
         }
         ky.finish_ky(dr)
     }
@@ -248,6 +268,36 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                     })
                     .try_collect_fixed()?
             },
+            challenges: {
+                D::try_just(|| {
+                    if proof.as_ref().take().application_challenges().len()
+                        != crate::NUM_CHALLENGE_SLOTS
+                    {
+                        return Err(Error::MalformedEncoding(
+                            "proof does not carry exactly NUM_CHALLENGE_SLOTS challenge pairs"
+                                .into(),
+                        ));
+                    }
+                    Ok(())
+                })?;
+                (0..crate::NUM_CHALLENGE_SLOTS)
+                    .map(|i| {
+                        Ok(ChallengeInstance {
+                            point: Point::alloc(
+                                dr,
+                                proof.as_ref().map(|p| p.application_challenges()[i].point),
+                            )?,
+                            challenge: Element::alloc(
+                                dr,
+                                allocator,
+                                proof
+                                    .as_ref()
+                                    .map(|p| p.application_challenges()[i].challenge),
+                            )?,
+                        })
+                    })
+                    .try_collect_fixed()?
+            },
             circuit_id: Element::alloc(
                 dr,
                 allocator,
@@ -325,8 +375,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
 
     fn values() -> usize {
         // 2 proofs * (3 headers * HEADER_SIZE + claim slots (4 wires each)
+        //             + challenge slots (3 wires each)
         //             + 1 circuit_id + unified instance wires)
-        2 * (3 * HEADER_SIZE + 4 * NUM_POLY_QUERY_SLOTS + 1 + unified::NUM_WIRES)
+        2 * (3 * HEADER_SIZE
+            + 4 * NUM_POLY_QUERY_SLOTS
+            + 3 * crate::NUM_CHALLENGE_SLOTS
+            + 1
+            + unified::NUM_WIRES)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

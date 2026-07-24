@@ -21,6 +21,7 @@ use ragu_primitives::{Element, Point};
 use crate::{
     framework_hooks::{ChallengeInput, FrameworkHooks},
     poly_commitment::{PolyCommitment, PolyQueryHandle},
+    step::internal::challenge_stage::ChallengeSlots,
 };
 
 /// Framework-side state threaded through [`Step::witness`](super::Step::witness).
@@ -40,7 +41,12 @@ where
     /// Cycle params and the proof's shared bridge-alpha source, needed to build
     /// a claim's bridge stage. `None` on structure-only passes, where no
     /// witness values exist and the commitment is never computed.
-    claim_bridge: Option<(&'dr C::Params, C::ScalarField)>,
+    claim_bridge: Option<(&'dr C::Params, C::ScalarField, C::CircuitField)>,
+    /// The application circuit's reserved challenge-stage wires, lent by the
+    /// adapter. `None` on the registration dry run, which has no
+    /// `StageBuilder`. The concrete store is `R`-parameterized; erasing it here
+    /// keeps the rank out of every `Step::witness` signature.
+    challenge_slots: Option<&'a mut dyn ChallengeSlots<'dr, D, C>>,
 }
 
 impl<'a, 'dr, D, C> StepCtx<'a, 'dr, D, C>
@@ -58,6 +64,7 @@ where
             hooks,
             poseidon,
             claim_bridge: None,
+            challenge_slots: None,
         }
     }
 
@@ -71,13 +78,24 @@ where
         poseidon: &'dr C::CircuitPoseidon,
         params: &'dr C::Params,
         bridge_alpha: C::ScalarField,
+        challenge_alpha: C::CircuitField,
     ) -> Self {
         Self {
             dr,
             hooks,
             poseidon,
-            claim_bridge: Some((params, bridge_alpha)),
+            claim_bridge: Some((params, bridge_alpha, challenge_alpha)),
+            challenge_slots: None,
         }
+    }
+
+    /// Lends this context the adapter's reserved challenge-stage wires.
+    pub(crate) fn with_challenge_slots(
+        mut self,
+        slots: &'a mut dyn ChallengeSlots<'dr, D, C>,
+    ) -> Self {
+        self.challenge_slots = Some(slots);
+        self
     }
 
     /// The cycle's Poseidon parameters, for step bodies that hash in-circuit
@@ -107,7 +125,7 @@ where
         let host_for_com = commitment.as_ref().map(|c| c.host());
         let claim_bridge = self.claim_bridge;
         let com_value = D::try_just(move || {
-            let (params, bridge_alpha) = claim_bridge.ok_or_else(|| {
+            let (params, bridge_alpha, _) = claim_bridge.ok_or_else(|| {
                 ragu_core::Error::Initialization(
                     "witness_polynomial requires the proving adapter".into(),
                 )
@@ -197,6 +215,75 @@ where
         &mut self,
         input: G,
     ) -> Result<Element<'dr, D>> {
-        self.hooks.derive_challenge(self.dr, self.poseidon, input)
+        const {
+            assert!(
+                G::ELEMENTS <= crate::CHALLENGE_WIDTH,
+                "challenge input is wider than CHALLENGE_WIDTH",
+            );
+        }
+        self.hooks.take_challenge_slot()?;
+
+        let mut elements = alloc::vec::Vec::with_capacity(G::ELEMENTS);
+        input.append_elements(self.dr, &mut elements)?;
+        if elements.len() != G::ELEMENTS {
+            return Err(ragu_core::Error::InvalidWitness(
+                "challenge input serialized a different number of elements than its declared \
+                 width"
+                    .into(),
+            ));
+        }
+
+        // Fill this slot's reserved stage wires with the input values, then pin
+        // every one of them: the stage's commitment covers the whole width, so
+        // an unconstrained wire would let a prover vary the commitment — and
+        // with it the challenge — for free.
+        let inputs = D::try_just(|| {
+            let mut inputs = [<D::F as ragu_arithmetic::ff::Field>::ZERO; crate::CHALLENGE_WIDTH];
+            for (cell, element) in inputs.iter_mut().zip(elements.iter()) {
+                *cell = *element.value().take();
+            }
+            Ok(inputs)
+        })?;
+
+        let claim_bridge = self.claim_bridge;
+        let filled = match self.challenge_slots.as_deref_mut() {
+            Some(slots) => slots.fill_next(self.dr, claim_bridge, inputs.clone())?,
+            None => None,
+        };
+        let Some(filled) = filled else {
+            // Discovery dry run: no `StageBuilder`, so no slots to fill. Only
+            // the call count is read from it.
+            return Element::alloc(
+                self.dr,
+                &mut ragu_primitives::allocator::Standard::new(),
+                D::try_just(|| {
+                    Err(ragu_core::Error::Initialization(
+                        "derive_challenge on the registration dry run has no stage to commit"
+                            .into(),
+                    ))
+                })?,
+            );
+        };
+
+        for (index, wire) in filled.wires.iter().enumerate() {
+            match elements.get(index) {
+                Some(element) => ragu_primitives::GadgetExt::enforce_equal(wire, self.dr, element)?,
+                None => Element::enforce_zero(wire, self.dr)?,
+            }
+        }
+
+        // The challenge is the hash of this slot's stage commitment, bridged
+        // onto the nested curve so its coordinates are native. Both the point
+        // and the challenge are witnessed here; the parent's binding circuit
+        // re-derives one from the other, against the instance-bound pair.
+        let point = Point::alloc(self.dr, filled.derived.as_ref().map(|(point, _)| *point))?;
+        let challenge = Element::alloc(
+            self.dr,
+            &mut ragu_primitives::allocator::Standard::new(),
+            filled.derived.map(|(_, challenge)| challenge),
+        )?;
+        self.hooks
+            .record_challenge(point, challenge.clone(), inputs);
+        Ok(challenge)
     }
 }
