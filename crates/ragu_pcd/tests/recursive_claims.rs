@@ -210,9 +210,14 @@ fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
         Err(e) => std::eprintln!("interior fuse rejected the desync: {e:?}"),
         Ok((parent, ())) => {
             let verified = app.verify(&parent, &mut rng)?;
-            // This assertion documents the *current* gap. Once the claim
-            // commitment is bound in-circuit (POLY_QUERY_SOUNDNESS.md), the
-            // fuse must fail or the parent must not verify -- invert then.
+            // `com` is now the commitment of the claim's bridge stage, which
+            // the proof carries and whose wires `loading` ties to the folded
+            // host commitment -- parity with `bridge_f`. What is still missing
+            // is the link from any commitment to the polynomial it commits to,
+            // i.e. the framework-wide deferred PCS opening, which no
+            // commitment in the system has yet. So a prover can still carry a
+            // bridge rx that disagrees with `com`. Invert this assertion when
+            // the nested-side PCS lands; see POLY_QUERY_SOUNDNESS.md.
             assert!(
                 verified,
                 "expected the unsound status quo: a parent of a desynced-claim \
