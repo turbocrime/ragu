@@ -225,7 +225,11 @@ fn test_nested_registry_digest() {
         .finalize(pasta)
         .unwrap();
 
-    let expected = fq!(0x36b2d2c71720d18405cf6baac9b0f2d9c15eea0b5e3b66ac4f66a7760bbf8804);
+    // Changed when the per-claim bridge stages were added: the nested registry
+    // gained one bonding mask per poly-query claim slot
+    // (`InternalCircuitIndex::BridgeClaim`), and the `Loading` circuit's final
+    // stage moved from `eval` to the last claim-bridge stage.
+    let expected = fq!(0x3f6a5e19a18fcbbfef1ec308a6394eefe982e058c41a757303ba4c12204295f6);
 
     assert_eq!(
         app.nested_registry.digest(),

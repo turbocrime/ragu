@@ -31,6 +31,7 @@ use ragu_core::{
 };
 use ragu_primitives::{GadgetExt as _, Point};
 
+use crate::NUM_POLY_QUERY_SLOTS;
 use crate::internal::{
     endoscalar::{EndoscalarStage, Points, PointsStage},
     native::RxIndex,
@@ -80,7 +81,7 @@ impl<C: CurveAffine, R: Rank> Circuit<C, R> {
 }
 
 impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
-    type Last = stages::eval::Stage<C, R>;
+    type Last = stages::claim_bridge::Stage3<C, R>;
     type Instance<'source> = ();
     type Witness<'source> = ();
     type Output = ();
@@ -108,7 +109,11 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         let (ab_guard, dr) = dr.add_stage::<stages::ab::Stage<C, R>>()?;
         let (query_guard, dr) = dr.add_stage::<stages::query::Stage<C, R>>()?;
         let (f_guard, dr) = dr.add_stage::<stages::f::Stage<C, R>>()?;
-        let dr = dr.skip_stage::<stages::eval::Stage<C, R>>()?;
+        let (eval_guard, dr) = dr.add_stage::<stages::eval::Stage<C, R>>()?;
+        let (claim0_guard, dr) = dr.add_stage::<stages::claim_bridge::Stage0<C, R>>()?;
+        let (claim1_guard, dr) = dr.add_stage::<stages::claim_bridge::Stage1<C, R>>()?;
+        let (claim2_guard, dr) = dr.add_stage::<stages::claim_bridge::Stage2<C, R>>()?;
+        let (claim3_guard, dr) = dr.add_stage::<stages::claim_bridge::Stage3<C, R>>()?;
         let dr = dr.finish();
 
         // Load stage gadgets. Witness values are never accessed — the circuit
@@ -125,6 +130,13 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         let ab = ab_guard.unenforced(dr, w!())?;
         let query = query_guard.unenforced(dr, w!())?;
         let f_stage = f_guard.unenforced(dr, w!())?;
+        let eval = eval_guard.unenforced(dr, w!())?;
+        let claim_bridges = [
+            claim0_guard.unenforced(dr, w!())?.host,
+            claim1_guard.unenforced(dr, w!())?.host,
+            claim2_guard.unenforced(dr, w!())?.host,
+            claim3_guard.unenforced(dr, w!())?.host,
+        ];
 
         // Walk through PointsStage inputs, mirroring the accumulation order
         // in `compute_p` (_10_p.rs).
@@ -161,6 +173,16 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
 
         // The initial point (f.commitment) must match BridgeF.native_f.
         points.initial.enforce_equal(dr, &f_stage.native_f)?;
+
+        // Each poly-query claim's bridge stage must witness exactly the host
+        // commitment this proof records for that slot. The stage's wires are
+        // therefore the host point, so committing the stage (which yields the
+        // claim's instance-bound `com`) binds `com` to that host commitment —
+        // mirroring how `BridgeF.native_f` ties `bridge_f_commitment` above.
+        for (slot, bridge_host) in claim_bridges.iter().enumerate() {
+            debug_assert!(slot < NUM_POLY_QUERY_SLOTS);
+            bridge_host.enforce_equal(dr, &eval.claims[slot])?;
+        }
 
         Ok(WithAux::new((), D::unit()))
     }

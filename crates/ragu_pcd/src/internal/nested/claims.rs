@@ -115,6 +115,9 @@ where
                     .flat_map(|step| source.rx(RxIndex::EndoscalingStep(step as u32)));
                 processor.bonding_claim(id, final_rxs)?;
             }
+            BridgeClaim(slot) => {
+                processor.bonding_claim(id, source.rx(RxIndex::BridgeClaim(slot)))?;
+            }
             BridgePreamble => {
                 processor.bonding_claim(id, source.rx(RxIndex::BridgePreamble))?;
             }

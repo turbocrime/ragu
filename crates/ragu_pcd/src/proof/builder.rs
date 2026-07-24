@@ -548,6 +548,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             nested::RxIndex::BridgeAB => 2,
             nested::RxIndex::BridgeQuery => 3,
             nested::RxIndex::BridgeEval => 4,
+            nested::RxIndex::BridgeClaim(slot) => 5 + slot as u64,
             _ => panic!("not a cached bridge: {idx:?}"),
         };
         self.bridge_alpha.pow_vartime([n])
@@ -587,6 +588,38 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             claims: claim_host_commitments_array()
         }
     );
+
+    /// Derives the bridge stage rx for poly-query claim `slot`.
+    ///
+    /// The stage's wires are that claim's host commitment, so committing this
+    /// rx yields the claim's instance-bound `com` — making `com` the
+    /// commitment of a polynomial the proof carries, at parity with every
+    /// other cross-curve commitment. The per-slot stage types differ (they
+    /// chain through `Parent`), so this cannot use the `cached_bridge!` macro.
+    pub(crate) fn claim_bridge_rx(
+        &self,
+        slot: usize,
+    ) -> Result<sparse::Polynomial<C::ScalarField, R>> {
+        use nested::stages::claim_bridge as cb;
+        let host = self.claim_host_commitments_array()[slot];
+        let alpha = self.bridge_alpha_power(nested::RxIndex::BridgeClaim(slot as u32));
+        let witness = cb::Witness { host };
+        match slot {
+            0 => cb::Stage0::<C::HostCurve, R>::rx(alpha, &witness),
+            1 => cb::Stage1::<C::HostCurve, R>::rx(alpha, &witness),
+            2 => cb::Stage2::<C::HostCurve, R>::rx(alpha, &witness),
+            3 => cb::Stage3::<C::HostCurve, R>::rx(alpha, &witness),
+            _ => unreachable!("NUM_POLY_QUERY_SLOTS is 4"),
+        }
+    }
+
+    /// The nested-curve commitment to claim `slot`'s bridge stage — the value
+    /// carried as that claim's `com`.
+    pub(crate) fn claim_bridge_commitment(&self, slot: usize) -> Result<C::NestedCurve> {
+        Ok(self
+            .claim_bridge_rx(slot)?
+            .commit_to_affine(C::nested_generators(self.params)))
+    }
 
     /// The claim host commitments as a fixed-size array, for the eval bridge
     /// stage witness. Requires `set_application_claims` to have been called.
@@ -746,7 +779,12 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             };
         }
 
+        let claim_bridge_rxs = (0..crate::NUM_POLY_QUERY_SLOTS)
+            .map(|slot| self.claim_bridge_rx(slot))
+            .collect::<Result<alloc::vec::Vec<_>>>()?;
+
         Ok(Proof {
+            claim_bridge_rxs,
             bridge_alpha: self.bridge_alpha,
 
             circuit_id: take!(circuit_id),

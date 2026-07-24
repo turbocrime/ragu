@@ -267,6 +267,13 @@ pub struct Proof<C: Cycle, R: Rank> {
     /// claims natively.
     pub(crate) claim_polys: alloc::vec::Vec<sparse::Polynomial<C::CircuitField, R>>,
 
+    /// Per-claim bridge stage rx polynomials, in slot order. Each one's wires
+    /// are the corresponding claim's host commitment, and its commitment is
+    /// the claim's instance-bound `com`. Carrying them is what makes `com` the
+    /// commitment of a polynomial the proof actually holds — at parity with
+    /// every other cross-curve commitment (e.g. `bridge_f_rx`).
+    pub(crate) claim_bridge_rxs: alloc::vec::Vec<sparse::Polynomial<C::ScalarField, R>>,
+
     /// The claims' host-curve commitments, in slot order — these are the
     /// points the parent's endoscaling accumulation consumes; each bridges to
     /// the corresponding `application_claims` nested point.
@@ -320,6 +327,7 @@ impl<C: Cycle, R: Rank> core::ops::Index<nested::RxIndex> for Proof<C, R> {
             BridgeQuery => &self.bridge_query_rx.0,
             BridgeF => &self.bridge_f_rx,
             BridgeEval => &self.bridge_eval_rx.0,
+            BridgeClaim(slot) => &self.claim_bridge_rxs[slot as usize],
             ChildPointsStage(side) => &self.child_stage_rx(side).points_stage,
             ChildBridge(kind, side) => self.child_stage_rx(side).bridge_at(kind),
         }

@@ -73,6 +73,8 @@ pub enum InternalCircuitIndex {
     BridgeF,
     /// Bridge `eval` stage mask.
     BridgeEval,
+    /// Per-claim bridge stage mask, indexed by poly-query claim slot.
+    BridgeClaim(u32),
     /// Loading circuit over all nested stages.
     Loading,
     /// Copying circuit relating current preamble to a child proof's stages.
@@ -82,7 +84,7 @@ pub enum InternalCircuitIndex {
 impl InternalCircuitIndex {
     /// The number of internal circuits registered by [`register_all`],
     /// equal to the number of entries in [`InternalCircuitIndex::ALL`].
-    pub const NUM: usize = NUM_ENDOSCALING_STEPS + 14;
+    pub const NUM: usize = NUM_ENDOSCALING_STEPS + 14 + crate::NUM_POLY_QUERY_SLOTS;
 
     /// All variants in canonical iteration order.
     ///
@@ -115,6 +117,13 @@ impl InternalCircuitIndex {
         push(&mut slots, &mut c, Self::BridgeQuery);
         push(&mut slots, &mut c, Self::BridgeF);
         push(&mut slots, &mut c, Self::BridgeEval);
+        {
+            let mut i = 0;
+            while i < crate::NUM_POLY_QUERY_SLOTS {
+                push(&mut slots, &mut c, Self::BridgeClaim(i as u32));
+                i += 1;
+            }
+        }
         push(&mut slots, &mut c, Self::Loading);
         push(&mut slots, &mut c, Self::Copying(Side::Left));
         push(&mut slots, &mut c, Self::Copying(Side::Right));
@@ -198,6 +207,8 @@ pub enum RxIndex {
     BridgeF,
     /// Bridge `eval` rx polynomial.
     BridgeEval,
+    /// Per-claim bridge rx polynomial, indexed by poly-query claim slot.
+    BridgeClaim(u32),
     /// Child proof's `PointsStage` rx polynomial (per-side, for copying).
     ChildPointsStage(Side),
     /// Child proof's bridge rx polynomial (per-side, for copying),
@@ -208,7 +219,7 @@ pub enum RxIndex {
 impl RxIndex {
     /// The number of rx components in the nested field,
     /// equal to the number of entries in [`RxIndex::ALL`].
-    pub const NUM: usize = NUM_ENDOSCALING_STEPS + 24;
+    pub const NUM: usize = NUM_ENDOSCALING_STEPS + 24 + crate::NUM_POLY_QUERY_SLOTS;
 
     /// All variants in canonical order (circuits, then stages).
     ///
@@ -238,6 +249,13 @@ impl RxIndex {
         push(&mut slots, &mut c, Self::BridgeQuery);
         push(&mut slots, &mut c, Self::BridgeF);
         push(&mut slots, &mut c, Self::BridgeEval);
+        {
+            let mut i = 0;
+            while i < crate::NUM_POLY_QUERY_SLOTS {
+                push(&mut slots, &mut c, Self::BridgeClaim(i as u32));
+                i += 1;
+            }
+        }
         push(&mut slots, &mut c, Self::ChildPointsStage(Side::Left));
         push(&mut slots, &mut c, Self::ChildPointsStage(Side::Right));
         {
@@ -258,6 +276,7 @@ pub mod claims;
 
 pub mod stages {
     pub mod ab;
+    pub mod claim_bridge;
     pub mod eval;
     pub mod f;
     pub mod inner_error;
@@ -318,6 +337,13 @@ pub fn register_all<'params, C: Cycle, R: Rank>(
             BridgeEval => {
                 registry.register_bonding(stages::eval::Stage::<C::HostCurve, R>::mask()?)
             }
+            BridgeClaim(slot) => registry.register_bonding(match slot {
+                0 => stages::claim_bridge::Stage0::<C::HostCurve, R>::mask()?,
+                1 => stages::claim_bridge::Stage1::<C::HostCurve, R>::mask()?,
+                2 => stages::claim_bridge::Stage2::<C::HostCurve, R>::mask()?,
+                3 => stages::claim_bridge::Stage3::<C::HostCurve, R>::mask()?,
+                _ => unreachable!("NUM_POLY_QUERY_SLOTS is 4"),
+            }),
             Loading => {
                 let circuit = circuits::loading::Circuit::<C::HostCurve, R>::new();
                 registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?)
