@@ -361,7 +361,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         &self,
         polynomial: &ragu_circuits::polynomials::sparse::Polynomial<C::CircuitField, R>,
     ) -> Result<PolyCommitment<C, R>> {
-        let com = internal::challenge::commit_polynomial::<C, R>(self.params, polynomial)?;
-        Ok(PolyCommitment::new(polynomial.clone(), com))
+        let host = internal::challenge::host_commitment::<C, R>(self.params, polynomial)?;
+        Ok(PolyCommitment::new(polynomial.clone(), host))
     }
 }

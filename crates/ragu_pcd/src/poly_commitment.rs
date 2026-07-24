@@ -37,27 +37,33 @@ use ragu_primitives::Point;
 /// [`StepCtx::witness_polynomial`](crate::step::StepCtx::witness_polynomial).
 pub struct PolyCommitment<C: Cycle, R: Rank> {
     polynomial: sparse::Polynomial<C::CircuitField, R>,
-    com: C::NestedCurve,
+    host: C::HostCurve,
 }
 
 impl<C: Cycle, R: Rank> Clone for PolyCommitment<C, R> {
     fn clone(&self) -> Self {
         Self {
             polynomial: self.polynomial.clone(),
-            com: self.com,
+            host: self.host,
         }
     }
 }
 
 impl<C: Cycle, R: Rank> PolyCommitment<C, R> {
-    /// Bundles a polynomial with the commitment derived from it.
-    pub(crate) fn new(polynomial: sparse::Polynomial<C::CircuitField, R>, com: C::NestedCurve) -> Self {
-        Self { polynomial, com }
+    /// Bundles a polynomial with the host-curve commitment derived from it.
+    pub(crate) fn new(
+        polynomial: sparse::Polynomial<C::CircuitField, R>,
+        host: C::HostCurve,
+    ) -> Self {
+        Self { polynomial, host }
     }
 
-    /// The nested-curve commitment to the polynomial.
-    pub fn commitment(&self) -> C::NestedCurve {
-        self.com
+    /// The polynomial's host-curve commitment. The nested-curve `com` a claim
+    /// carries is derived from this by the framework, in
+    /// [`StepCtx::witness_polynomial`](crate::step::StepCtx::witness_polynomial),
+    /// once the claim's slot is known.
+    pub(crate) fn host(&self) -> C::HostCurve {
+        self.host
     }
 
     /// Builds a handle whose commitment deliberately does **not** bind its
@@ -72,9 +78,9 @@ impl<C: Cycle, R: Rank> PolyCommitment<C, R> {
     #[cfg(feature = "unstable-fuzzing")]
     pub fn desync_for_testing(
         polynomial: sparse::Polynomial<C::CircuitField, R>,
-        com: C::NestedCurve,
+        host: C::HostCurve,
     ) -> Self {
-        Self { polynomial, com }
+        Self { polynomial, host }
     }
 
     /// Consumes the bundle, returning the polynomial.
@@ -95,6 +101,8 @@ impl<C: Cycle, R: Rank> PolyCommitment<C, R> {
 pub struct PolyQueryHandle<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> {
     com: Point<'dr, D, C::NestedCurve>,
     polynomial: DriverValue<D, sparse::Polynomial<D::F, R>>,
+    host: DriverValue<D, C::HostCurve>,
+    slot: usize,
 }
 
 impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> PolyQueryHandle<'dr, D, C, R> {
@@ -102,8 +110,26 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> PolyQueryHandl
     pub(crate) fn new(
         com: Point<'dr, D, C::NestedCurve>,
         polynomial: DriverValue<D, sparse::Polynomial<D::F, R>>,
+        host: DriverValue<D, C::HostCurve>,
+        slot: usize,
     ) -> Self {
-        Self { com, polynomial }
+        Self {
+            com,
+            polynomial,
+            host,
+            slot,
+        }
+    }
+
+    /// The claim slot this handle was assigned when it was witnessed.
+    pub(crate) fn slot(&self) -> usize {
+        self.slot
+    }
+
+    /// The polynomial's host-curve commitment — the point the parent folds,
+    /// and the one this handle's `com` bridges.
+    pub(crate) fn host(&self) -> DriverValue<D, C::HostCurve> {
+        self.host.clone()
     }
 
     /// The in-circuit commitment point, for use in challenges, hashing, etc.

@@ -148,8 +148,11 @@ fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
     let p = poly(&[3, 1, 4, 1, 5]);
     let p_prime = poly(&[9, 2, 6]);
     assert_ne!(p.eval(Fp::from(7u64)), p_prime.eval(Fp::from(7u64)));
-    let com_of_p = app.commit_polynomial(&p)?.commitment();
-    let desynced = PolyCommitment::<Pasta, R>::desync_for_testing(p_prime.clone(), com_of_p);
+    // The handle's host commitment is P's, but its polynomial is P'. The
+    // framework derives `com` from the host, so the step's challenge is bound
+    // to P while the parent folds P'.
+    let host_of_p = p.commit_to_affine::<<Pasta as Cycle>::HostCurve>(Pasta::host_generators(pasta));
+    let desynced = PolyCommitment::<Pasta, R>::desync_for_testing(p_prime.clone(), host_of_p);
 
     let (cheat, ()) = app.seed(
         &mut rng,
@@ -162,7 +165,6 @@ fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
 
     // The claim really is desynced: com commits to P, the carried poly is P'.
     let claim = cheat.proof().application_claims()[0];
-    assert_eq!(claim.com, com_of_p, "instance holds P's commitment");
     assert_eq!(
         claim.y,
         p_prime.eval(claim.x),

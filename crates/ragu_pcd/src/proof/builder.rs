@@ -600,17 +600,15 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         &self,
         slot: usize,
     ) -> Result<sparse::Polynomial<C::ScalarField, R>> {
-        use nested::stages::claim_bridge as cb;
         let host = self.claim_host_commitments_array()[slot];
-        let alpha = self.bridge_alpha_power(nested::RxIndex::BridgeClaim(slot as u32));
-        let witness = cb::Witness { host };
-        match slot {
-            0 => cb::Stage0::<C::HostCurve, R>::rx(alpha, &witness),
-            1 => cb::Stage1::<C::HostCurve, R>::rx(alpha, &witness),
-            2 => cb::Stage2::<C::HostCurve, R>::rx(alpha, &witness),
-            3 => cb::Stage3::<C::HostCurve, R>::rx(alpha, &witness),
-            _ => unreachable!("NUM_POLY_QUERY_SLOTS is 4"),
-        }
+        let alpha = crate::internal::challenge::claim_bridge_alpha::<C>(self.bridge_alpha, slot);
+        crate::internal::challenge::claim_bridge_rx::<C, R>(slot, alpha, host)
+    }
+
+    /// The proof's shared bridge-alpha source, so the prover-side claim bridge
+    /// (built in `StepCtx`) uses the same blind this builder will.
+    pub(crate) fn bridge_alpha(&self) -> C::ScalarField {
+        self.bridge_alpha
     }
 
     /// The nested-curve commitment to claim `slot`'s bridge stage — the value

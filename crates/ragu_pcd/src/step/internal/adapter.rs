@@ -89,7 +89,7 @@ pub(crate) struct AdapterAux<'source, C: Cycle, S: Step<C>, const HEADER_SIZE: u
     // wires), so nothing needs resolving downstream.
 }
 
-pub(crate) struct Adapter<C: Cycle, S, R: Rank, const HEADER_SIZE: usize> {
+pub(crate) struct Adapter<'params, C: Cycle, S, R: Rank, const HEADER_SIZE: usize> {
     step: S,
     /// The `derive_challenge` call layout (input width per call, in call
     /// order) discovered from the step's witness body at construction time;
@@ -110,10 +110,16 @@ pub(crate) struct Adapter<C: Cycle, S, R: Rank, const HEADER_SIZE: usize> {
     /// constant, so an application circuit's identity does not depend on the
     /// runtime generators.
     padding: Option<PaddingClaim<C, R>>,
+    /// Cycle params and the proof's shared bridge-alpha source, threaded into
+    /// [`StepCtx`] so a witnessed polynomial's claim bridge — and therefore its
+    /// `com` — can be built. `None` on structure-only adapters.
+    claim_bridge: Option<(&'params C::Params, C::ScalarField)>,
     _marker: PhantomData<(C, R)>,
 }
 
-impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Adapter<C, S, R, HEADER_SIZE> {
+impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
+    Adapter<'params, C, S, R, HEADER_SIZE>
+{
     /// Wraps `step` for registration/keygen, discovering its `derive_challenge`
     /// call layout and poly-query claim count with a dry run of the witness
     /// body (see [`discover_hook_layout`]). Param-free: discovery uses the baked
@@ -130,6 +136,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Adapter<C, S, R, H
             num_claims,
             poseidon,
             padding: None,
+            claim_bridge: None,
             _marker: PhantomData,
         })
     }
@@ -138,9 +145,14 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Adapter<C, S, R, H
     /// [`new`](Self::new), but additionally computes the canonical padding
     /// claim from `params` so the unused poly-query slots can be witnessed at
     /// proving time.
-    pub fn proving(step: S, params: &C::Params) -> Result<Self> {
+    pub fn proving(
+        step: S,
+        params: &'params C::Params,
+        bridge_alpha: C::ScalarField,
+    ) -> Result<Self> {
         Ok(Adapter {
             padding: Some(PaddingClaim::new(params)?),
+            claim_bridge: Some((params, bridge_alpha)),
             ..Self::new(step)?
         })
     }
@@ -167,21 +179,34 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Adapter<C, S, R, H
         dr: &mut D,
         claim_wires: &mut Vec<ClaimWires<'dr, D, C::NestedCurve>>,
     ) -> Result<()> {
-        let padding_com = self.padding.as_ref().map(|p| p.com);
+        let padding_host = self.padding.as_ref().map(|p| p.host);
+        let claim_bridge = self.claim_bridge;
         let padding_x = self.padding.as_ref().map(|p| p.x);
         let padding_y = self.padding.as_ref().map(|p| p.y);
         let allocator = &mut Standard::new();
         while claim_wires.len() < NUM_POLY_QUERY_SLOTS {
+            // Each slot's `com` is that slot's bridge stage commitment, so the
+            // padding commitment differs per slot just like a real claim's.
+            let slot = claim_wires.len();
             let com = ragu_primitives::Point::alloc(
                 dr,
                 D::try_just(move || {
-                    padding_com.ok_or_else(|| {
+                    let (params, bridge_alpha) = claim_bridge.ok_or_else(|| {
                         ragu_core::Error::InvalidWitness(
                             "padding claim commitment unavailable; a proving adapter must be \
                              built with `Adapter::proving`"
                                 .into(),
                         )
-                    })
+                    })?;
+                    let host = padding_host.ok_or_else(|| {
+                        ragu_core::Error::InvalidWitness("padding claim host unavailable".into())
+                    })?;
+                    crate::internal::challenge::claim_bridge_commitment::<C, R>(
+                        params,
+                        slot,
+                        crate::internal::challenge::claim_bridge_alpha::<C>(bridge_alpha, slot),
+                        host,
+                    )
                 })?,
             )?;
             let x = Element::alloc(
@@ -247,7 +272,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Adapter<C, S, R, H
 }
 
 impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::CircuitField>
-    for Adapter<C, S, R, HEADER_SIZE>
+    for Adapter<'_, C, S, R, HEADER_SIZE>
 {
     type Instance<'source> = (
         FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
@@ -282,7 +307,16 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
 
         let mut hooks = FrameworkHooks::with_expected(self.challenge_widths.clone());
         let ((left, right, output), output_data, step_aux) = {
-            let mut ctx = StepCtx::<'_, '_, _, C>::new(dr, &mut hooks, self.poseidon);
+            let mut ctx = match self.claim_bridge {
+                Some((params, bridge_alpha)) => StepCtx::<'_, '_, _, C>::proving(
+                    dr,
+                    &mut hooks,
+                    self.poseidon,
+                    params,
+                    bridge_alpha,
+                ),
+                None => StepCtx::<'_, '_, _, C>::new(dr, &mut hooks, self.poseidon),
+            };
             self.step
                 .witness::<_, HEADER_SIZE>(&mut ctx, witness, left, right)?
         };
@@ -357,6 +391,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
 
 #[cfg(test)]
 mod tests {
+    use ragu_arithmetic::ff::Field;
     use ragu_circuits::polynomials::TestRank;
     use ragu_core::{
         drivers::emulator::Emulator,
@@ -372,7 +407,10 @@ mod tests {
         step::{Encoded, Index, Step},
     };
 
-    type TestR = TestRank;
+    // The per-claim bridge stages sit at the end of the nested stage chain, so
+    // building one needs a rank that fits `skip_gates + num_gates` (~177).
+    // `TestRank` (n = 32) is too small; production rank is unaffected.
+    type TestR = ragu_circuits::polynomials::ProductionRank;
     const HEADER_SIZE: usize = 4;
 
     struct TestHeader;
@@ -500,7 +538,7 @@ mod tests {
         let dr = &mut dr;
 
         let adapter =
-            Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::proving(TestStep, Pasta::baked())
+            Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::proving(TestStep, Pasta::baked(), <Pasta as Cycle>::ScalarField::ONE)
                 .expect("adapter construction should succeed");
         let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
 
@@ -519,7 +557,7 @@ mod tests {
         let dr = &mut dr;
 
         let adapter =
-            Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::proving(TestStep, Pasta::baked())
+            Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::proving(TestStep, Pasta::baked(), <Pasta as Cycle>::ScalarField::ONE)
                 .expect("adapter construction should succeed");
         let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
 

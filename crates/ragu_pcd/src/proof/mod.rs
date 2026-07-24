@@ -605,8 +605,17 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
             .expect("trivial padding claim");
         builder.set_application_claims(
             (0..crate::NUM_POLY_QUERY_SLOTS)
-                .map(|_| crate::framework_hooks::PolyQueryClaim {
-                    com: padding.com,
+                .map(|slot| crate::framework_hooks::PolyQueryClaim {
+                    com: crate::internal::challenge::claim_bridge_commitment::<C, R>(
+                        self.params,
+                        slot,
+                        crate::internal::challenge::claim_bridge_alpha::<C>(
+                            builder.bridge_alpha(),
+                            slot,
+                        ),
+                        padding.host,
+                    )
+                    .expect("trivial padding bridge commitment"),
                     x: padding.x,
                     y: padding.y,
                     coefficients: vec![C::CircuitField::ONE],

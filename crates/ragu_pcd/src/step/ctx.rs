@@ -37,6 +37,10 @@ where
     pub dr: &'a mut D,
     hooks: &'a mut FrameworkHooks<'dr, D, C::NestedCurve>,
     poseidon: &'dr C::CircuitPoseidon,
+    /// Cycle params and the proof's shared bridge-alpha source, needed to build
+    /// a claim's bridge stage. `None` on structure-only passes, where no
+    /// witness values exist and the commitment is never computed.
+    claim_bridge: Option<(&'dr C::Params, C::ScalarField)>,
 }
 
 impl<'a, 'dr, D, C> StepCtx<'a, 'dr, D, C>
@@ -53,6 +57,26 @@ where
             dr,
             hooks,
             poseidon,
+            claim_bridge: None,
+        }
+    }
+
+    /// Like [`new`](Self::new), for the proving path: `params` and
+    /// `bridge_alpha` let [`witness_polynomial`](Self::witness_polynomial)
+    /// build each claim's bridge stage, whose commitment becomes that claim's
+    /// `com`.
+    pub(crate) fn proving(
+        dr: &'a mut D,
+        hooks: &'a mut FrameworkHooks<'dr, D, C::NestedCurve>,
+        poseidon: &'dr C::CircuitPoseidon,
+        params: &'dr C::Params,
+        bridge_alpha: C::ScalarField,
+    ) -> Self {
+        Self {
+            dr,
+            hooks,
+            poseidon,
+            claim_bridge: Some((params, bridge_alpha)),
         }
     }
 
@@ -79,9 +103,27 @@ where
         &mut self,
         commitment: DriverValue<D, PolyCommitment<C, R>>,
     ) -> Result<PolyQueryHandle<'dr, D, C, R>> {
-        let com = Point::alloc(self.dr, commitment.as_ref().map(|c| c.commitment()))?;
+        let slot = self.hooks.next_claim_slot()?;
+        let host = commitment.as_ref().map(|c| c.host());
+        let claim_bridge = self.claim_bridge;
+        let host_for_com = host.clone();
+        let com_value = D::try_just(move || {
+            let (params, bridge_alpha) = claim_bridge.ok_or_else(|| {
+                ragu_core::Error::Initialization(
+                    "witness_polynomial requires the proving adapter".into(),
+                )
+            })?;
+            let alpha = crate::internal::challenge::claim_bridge_alpha::<C>(bridge_alpha, slot);
+            crate::internal::challenge::claim_bridge_commitment::<C, R>(
+                params,
+                slot,
+                alpha,
+                host_for_com.take(),
+            )
+        })?;
+        let com = Point::alloc(self.dr, com_value)?;
         let polynomial = commitment.map(PolyCommitment::into_polynomial);
-        Ok(PolyQueryHandle::new(com, polynomial))
+        Ok(PolyQueryHandle::new(com, polynomial, host, slot))
     }
 
     /// Records a poly-query claim: the polynomial behind `commitment` evaluates

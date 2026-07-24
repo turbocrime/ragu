@@ -143,21 +143,30 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             claims.len() == crate::NUM_POLY_QUERY_SLOTS
                 && polys.len() == crate::NUM_POLY_QUERY_SLOTS
                 && host_coms.len() == crate::NUM_POLY_QUERY_SLOTS
-                && claims.iter().zip(polys.iter()).zip(host_coms.iter()).all(
-                    |((claim, poly), host)| {
+                && claims
+                    .iter()
+                    .zip(polys.iter())
+                    .zip(host_coms.iter())
+                    .enumerate()
+                    .all(|(slot, ((claim, poly), host))| {
                         let crate::ClaimOpening { com, x, y } = *claim;
+                        let bridge_alpha = pcd.proof().bridge_alpha;
                         poly.eval(x) == y
                             && poly
                                 .commit_to_affine::<C::HostCurve>(C::host_generators(self.params))
                                 == *host
-                            && crate::internal::challenge::bridge_commitment::<C, R>(
+                            && crate::internal::challenge::claim_bridge_commitment::<C, R>(
                                 self.params,
+                                slot,
+                                crate::internal::challenge::claim_bridge_alpha::<C>(
+                                    bridge_alpha,
+                                    slot,
+                                ),
                                 *host,
                             )
                             .map(|bridge| bridge == com)
                             .unwrap_or(false)
-                    },
-                )
+                    })
         };
 
         // TODO: Add checks for registry_wx0_poly, registry_wx1_poly, and registry_wy_poly.

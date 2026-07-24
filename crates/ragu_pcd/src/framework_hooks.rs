@@ -214,6 +214,11 @@ impl_challenge_input_tuple!(A, B, C2, D2);
 /// processing.
 pub struct FrameworkHooks<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     poly_query_claims: Vec<ClaimWires<'dr, D, C>>,
+    /// Number of polynomials witnessed so far via
+    /// [`StepCtx::witness_polynomial`](crate::step::StepCtx::witness_polynomial).
+    /// Assigns each claim its slot, which fixes the bridge stage — and
+    /// therefore the generator positions — its `com` commits to.
+    witnessed_claims: usize,
     /// Input width (element count) of each
     /// [`derive_challenge`](Self::derive_challenge) call, in call order.
     challenge_widths: Vec<usize>,
@@ -247,6 +252,7 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C>
     pub fn new() -> Self {
         Self {
             poly_query_claims: Vec::new(),
+            witnessed_claims: 0,
             challenge_widths: Vec::new(),
             expected_widths: None,
         }
@@ -259,9 +265,24 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C>
     pub fn with_expected(expected_widths: Vec<usize>) -> Self {
         Self {
             poly_query_claims: Vec::new(),
+            witnessed_claims: 0,
             challenge_widths: Vec::new(),
             expected_widths: Some(expected_widths),
         }
+    }
+
+    /// Assigns the next poly-query claim slot, in `witness_polynomial` call
+    /// order. The call sequence is circuit structure (discovered by the
+    /// adapter's dry run), so the assignment is deterministic.
+    pub(crate) fn next_claim_slot(&mut self) -> Result<usize> {
+        let slot = self.witnessed_claims;
+        if slot >= crate::NUM_POLY_QUERY_SLOTS {
+            return Err(Error::InvalidWitness(
+                "step witnessed more polynomials than there are poly-query claim slots".into(),
+            ));
+        }
+        self.witnessed_claims += 1;
+        Ok(slot)
     }
 
     /// Records a claim that the polynomial with the given `coefficients`

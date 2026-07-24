@@ -47,7 +47,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     )> {
         let (left_proof, left_data) = left.into_parts();
         let (right_proof, right_data) = right.into_parts();
-        let (trace, aux) = Adapter::<C, S, R, HEADER_SIZE>::proving(step, self.params)?
+        let (trace, aux) = Adapter::<C, S, R, HEADER_SIZE>::proving(step, self.params, builder.bridge_alpha())?
             .trace((left_data, right_data, witness))?
             .into_parts();
         let rx = self.native_registry.assemble(
@@ -77,7 +77,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         assert_eq!(claims.len(), crate::NUM_POLY_QUERY_SLOTS);
         let mut claim_polys = alloc::vec::Vec::with_capacity(claims.len());
         let mut claim_host_commitments = alloc::vec::Vec::with_capacity(claims.len());
-        for claim in &claims {
+        for (slot, claim) in claims.iter().enumerate() {
             // Reject an over-capacity coefficient vector gracefully; otherwise
             // `sparse::Polynomial::from_coeffs` would panic on it. Mirrors the
             // guard in `oracle::WitnessedPolynomial::alloc`.
@@ -97,7 +97,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                         .into(),
                 ));
             }
-            let (host, expected) = challenge::commit_polynomial_full::<C, R>(self.params, &poly)?;
+            let host = challenge::host_commitment::<C, R>(self.params, &poly)?;
+            let expected = challenge::claim_bridge_commitment::<C, R>(
+                self.params,
+                slot,
+                challenge::claim_bridge_alpha::<C>(builder.bridge_alpha(), slot),
+                host,
+            )?;
             #[cfg(feature = "unstable-fuzzing")]
             let precheck = !self.skip_claim_precheck;
             #[cfg(not(feature = "unstable-fuzzing"))]
