@@ -18,7 +18,6 @@ use ragu_core::{
 };
 use ragu_primitives::{
     Element, GadgetExt,
-    allocator::Standard,
     vec::{CollectFixed, ConstLen, FixedVec, Len},
 };
 
@@ -29,7 +28,7 @@ use super::{
 use crate::{
     Header, NUM_CHALLENGE_SLOTS, NUM_POLY_QUERY_SLOTS,
     framework_hooks::{
-        ClaimWires, FrameworkHookOutputs, FrameworkHooks, PolyQueryClaim, ProofValues,
+        ClaimWires, FrameworkHookOutputs, FrameworkHooks, HookLayout, PolyQueryClaim, ProofValues,
     },
 };
 
@@ -75,9 +74,9 @@ fn collect_values<'dr, D: Driver<'dr>, T: Send>(
 /// [`ChallengeInput::ELEMENTS`]: crate::framework_hooks::ChallengeInput::ELEMENTS
 pub(crate) fn discover_hook_layout<C: Cycle, S: Step<C>, const HEADER_SIZE: usize>(
     step: &S,
-) -> Result<(usize, usize)> {
+) -> Result<HookLayout> {
     let mut dr: Emulator<Wireless<Empty, C::CircuitField>> = Emulator::counter();
-    let mut hooks = FrameworkHooks::<_, C>::discovery();
+    let mut hooks = FrameworkHooks::<_, C>::new();
     {
         let mut ctx = StepCtx::<'_, '_, _, C>::new(&mut dr, &mut hooks);
         step.witness::<_, HEADER_SIZE>(&mut ctx, Empty, Empty, Empty)?;
@@ -91,7 +90,10 @@ pub(crate) fn discover_hook_layout<C: Cycle, S: Step<C>, const HEADER_SIZE: usiz
         ));
     }
 
-    Ok((outputs.challenge_calls, num_claims))
+    Ok(HookLayout {
+        challenge_calls: outputs.challenge_calls,
+        claims: num_claims,
+    })
 }
 
 /// Auxiliary data produced by [`Adapter::witness`]: the two input headers, the
@@ -122,15 +124,11 @@ pub(crate) struct AdapterAux<'source, C: Cycle, S: Step<C>, const HEADER_SIZE: u
 
 pub(crate) struct Adapter<'params, C: Cycle, S, R: Rank, const HEADER_SIZE: usize> {
     step: S,
-    /// The number of `derive_challenge` calls the step body makes, discovered
-    /// from its witness body at construction time; see
-    /// [`discover_hook_layout`]. Part of the circuit structure: each call
-    /// consumes one of the reserved challenge stages.
-    challenge_calls: usize,
-    /// The number of poly-query claims the step body raises, discovered by the
-    /// same dry run. Part of the circuit structure: the real synthesis must
-    /// raise exactly this many (determinism guard in [`Adapter::witness`]).
-    num_claims: usize,
+    /// The hook-call counts discovered from the step's witness body at
+    /// construction time; see [`discover_hook_layout`]. Part of the circuit
+    /// structure, so synthesis replays them as a determinism guard — enforced
+    /// by [`FrameworkHooks::finish`], not here.
+    layout: HookLayout,
     /// Cycle params and the proof's shared bridge-alpha source, threaded into
     /// [`StepCtx`] so a witnessed polynomial's claim bridge — and therefore its
     /// `com` — can be built. `None` on structure-only adapters.
@@ -148,11 +146,10 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
     /// `claim_bridge` is left unset. Use [`proving`](Self::proving) to build
     /// the adapter that actually proves.
     pub fn new(step: S) -> Result<Self> {
-        let (challenge_calls, num_claims) = discover_hook_layout::<C, S, HEADER_SIZE>(&step)?;
+        let layout = discover_hook_layout::<C, S, HEADER_SIZE>(&step)?;
         Ok(Adapter {
             step,
-            challenge_calls,
-            num_claims,
+            layout,
             claim_bridge: None,
             _marker: PhantomData,
         })
@@ -206,101 +203,7 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
     /// step body makes.
     #[cfg(test)]
     pub fn challenge_calls(&self) -> usize {
-        self.challenge_calls
-    }
-
-    /// Fills unused poly-query slots with the canonical padding claim so every
-    /// application circuit exposes exactly [`NUM_POLY_QUERY_SLOTS`] claim tuples
-    /// in its instance.
-    ///
-    /// The padding is *witnessed* (like a real claim), not baked as an
-    /// in-circuit constant, so an application circuit's structure never depends
-    /// on the runtime generators. Its values materialize only on value-carrying
-    /// (proving) drivers, where `self.claim_bridge` is `Some`; structure-only
-    /// (keygen) drivers never evaluate these closures (`Empty::try_just`
-    /// discards them), so `None` is fine there.
-    fn pad_claim_wires<'dr, D: Driver<'dr, F = C::CircuitField>>(
-        dr: &mut D,
-        proof_values: DriverValue<D, ProofValues<'dr, C>>,
-        claim_wires: &mut Vec<ClaimWires<'dr, D, C::NestedCurve>>,
-    ) -> Result<()> {
-        let allocator = &mut Standard::new();
-        while claim_wires.len() < NUM_POLY_QUERY_SLOTS {
-            // Each slot's `com` is that slot's bridge stage commitment, so the
-            // padding commitment differs per slot just like a real claim's.
-            let slot = claim_wires.len();
-            let slot_values = Maybe::clone(&proof_values);
-            let padding = D::try_just(move || {
-                let proof_values = slot_values.take();
-                let (host, x, y) =
-                    crate::internal::challenge::padding_claim::<C>(proof_values.params);
-                let com = crate::internal::challenge::claim_bridge_commitment::<C, R>(
-                    proof_values.params,
-                    slot,
-                    crate::internal::challenge::claim_bridge_alpha::<C>(
-                        proof_values.bridge_alpha,
-                        slot,
-                    ),
-                    host,
-                )?;
-                Ok((com, x, y))
-            })?;
-
-            claim_wires.push(ClaimWires {
-                com: ragu_primitives::Point::alloc(dr, padding.as_ref().map(|(com, _, _)| *com))?,
-                x: Element::alloc(dr, allocator, padding.as_ref().map(|(_, x, _)| *x))?,
-                y: Element::alloc(dr, allocator, padding.map(|(_, _, y)| y))?,
-                coefficients: D::just(|| {
-                    alloc::vec![<C::CircuitField as ragu_arithmetic::ff::Field>::ONE]
-                }),
-            });
-        }
-        Ok(())
-    }
-
-    /// Fills unused challenge slots so every application circuit exposes
-    /// exactly [`NUM_CHALLENGE_SLOTS`] pairs in its instance.
-    ///
-    /// An unused slot is *filled*, not skipped. Its wires are reserved either
-    /// way — `configure_stage` allocates them before the body runs — and an
-    /// allocated wire is a free one: the `Coeff::Zero` it is allocated with is
-    /// the honest assignment, not a constraint. Leaving the guard unconsumed
-    /// would therefore leave `CHALLENGE_WIDTH` unconstrained wires inside a
-    /// region the stage commits, which is exactly the grinding this module's
-    /// [wire discipline](challenge_stage#wire-discipline) forbids: a prover
-    /// could vary them, and with them the commitment and its challenge.
-    ///
-    /// So padding runs the same path a used slot does — `fill_next`, then pin
-    /// every wire — differing only in that all of them are pinned to zero and
-    /// none to a caller's element. Deriving the challenge honestly also keeps
-    /// the parent's binding circuit uniform: it re-derives every slot without
-    /// knowing which the step actually used.
-    fn pad_challenge_pairs<'dr, D: Driver<'dr, F = C::CircuitField>>(
-        dr: &mut D,
-        slots: &mut dyn challenge_stage::ChallengeSlots<'dr, D, C>,
-        proof_values: DriverValue<D, ProofValues<'dr, C>>,
-        pairs: &mut Vec<crate::framework_hooks::ChallengeWires<'dr, D, C::NestedCurve>>,
-        inputs: &mut Vec<DriverValue<D, [C::CircuitField; crate::CHALLENGE_WIDTH]>>,
-    ) -> Result<()>
-    where
-        Self: 'dr,
-    {
-        let allocator = &mut Standard::new();
-        while pairs.len() < NUM_CHALLENGE_SLOTS {
-            let zeros = D::just(|| {
-                [<C::CircuitField as ragu_arithmetic::ff::Field>::ZERO; crate::CHALLENGE_WIDTH]
-            });
-            let filled = slots.fill_next(dr, Maybe::clone(&proof_values), Maybe::clone(&zeros))?;
-            for wire in filled.wires.iter() {
-                Element::enforce_zero(wire, dr)?;
-            }
-            let point =
-                ragu_primitives::Point::alloc(dr, filled.derived.as_ref().map(|(p, _)| *p))?;
-            let challenge = Element::alloc(dr, allocator, filled.derived.map(|(_, c)| c))?;
-            pairs.push(crate::framework_hooks::ChallengeWires { point, challenge });
-            inputs.push(zeros);
-        }
-        Ok(())
+        self.layout.challenge_calls
     }
 
     /// Extracts the witness-only claim values (instances plus coefficients)
@@ -385,8 +288,7 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize>
         // only get here from `Adapter::proving`.
         let proof_values = self.proof_values::<D>()?;
 
-        let mut hooks =
-            FrameworkHooks::with_expected(self.challenge_calls, Maybe::clone(&proof_values));
+        let mut hooks = FrameworkHooks::with_expected(self.layout, Maybe::clone(&proof_values));
         let ((left, right, output), output_data, step_aux) = {
             let mut ctx = StepCtx::<'_, '_, _, C>::new(dr, &mut hooks)
                 .with_challenge_slots(&mut challenge_slots);
@@ -394,41 +296,11 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize>
                 .witness::<_, HEADER_SIZE>(&mut ctx, witness, left, right)?
         };
         let FrameworkHookOutputs {
-            poly_query_claims: mut claim_wires,
-            challenge_calls,
-            mut challenge_pairs,
-            mut challenge_inputs,
-        } = hooks.into_outputs();
-
-        // Determinism guard, complementing the per-call checks inside
-        // `derive_challenge`: every discovered call must have happened, or the
-        // synthesized circuit would differ from the registered structure.
-        if challenge_calls != self.challenge_calls {
-            return Err(ragu_core::Error::InvalidWitness(
-                "derive_challenge called fewer times than the discovered call count; \
-                 circuit structure must not depend on witness values"
-                    .into(),
-            ));
-        }
-
-        // Determinism guard for poly-query claims: the claim count is part of
-        // the circuit structure (each claim's wires occupy an instance slot).
-        if claim_wires.len() != self.num_claims {
-            return Err(ragu_core::Error::InvalidWitness(
-                "enforce_poly_query call count diverged from the discovered claim count; \
-                 circuit structure must not depend on witness values"
-                    .into(),
-            ));
-        }
-
-        Self::pad_claim_wires(dr, Maybe::clone(&proof_values), &mut claim_wires)?;
-        Self::pad_challenge_pairs(
-            dr,
-            &mut challenge_slots,
-            proof_values,
-            &mut challenge_pairs,
-            &mut challenge_inputs,
-        )?;
+            poly_query_claims: claim_wires,
+            challenge_pairs,
+            challenge_inputs,
+            ..
+        } = hooks.finish::<R>(dr, &mut challenge_slots)?;
 
         let mut elements = Vec::with_capacity(InstanceLen::<HEADER_SIZE>::len());
         left.write(dr, &mut elements)?;
