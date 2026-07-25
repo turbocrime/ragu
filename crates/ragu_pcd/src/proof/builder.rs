@@ -600,9 +600,35 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         eval,
         {
             native_eval: native_eval_commitment(),
-            claims: claim_host_commitments_array()
+            claims: claim_host_commitments_array(),
+            challenge_stages: challenge_stage_commitments_array()
         }
     );
+
+    /// The challenge-stage host commitments as a fixed array.
+    fn challenge_stage_commitments_array(&self) -> [C::HostCurve; crate::NUM_CHALLENGE_SLOTS] {
+        assert_eq!(
+            self.challenge_stage_commitments.len(),
+            crate::NUM_CHALLENGE_SLOTS,
+            "challenge_stage_commitments not set before deriving the eval bridge"
+        );
+        core::array::from_fn(|i| self.challenge_stage_commitments[i])
+    }
+
+    /// Derives the bridge stage rx for challenge slot `slot`.
+    ///
+    /// The stage's wires are that slot's host-curve stage commitment, so
+    /// committing this rx yields the nested point the challenge is hashed
+    /// from — at parity with the claim bridges.
+    pub(crate) fn challenge_bridge_rx(
+        &self,
+        slot: usize,
+    ) -> Result<sparse::Polynomial<C::ScalarField, R>> {
+        let host = self.challenge_stage_commitments_array()[slot];
+        let alpha =
+            crate::internal::challenge::challenge_bridge_alpha::<C>(self.bridge_alpha, slot);
+        crate::internal::challenge::challenge_bridge_rx::<C, R>(slot, alpha, host)
+    }
 
     /// Derives the bridge stage rx for poly-query claim `slot`.
     ///
@@ -828,11 +854,15 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             };
         }
 
+        let challenge_bridge_rxs = (0..crate::NUM_CHALLENGE_SLOTS)
+            .map(|slot| self.challenge_bridge_rx(slot))
+            .collect::<Result<Vec<_>>>()?;
         let claim_bridge_rxs = (0..crate::NUM_POLY_QUERY_SLOTS)
             .map(|slot| self.claim_bridge_rx(slot))
             .collect::<Result<alloc::vec::Vec<_>>>()?;
 
         Ok(Proof {
+            challenge_bridge_rxs,
             claim_bridge_rxs,
             bridge_alpha: self.bridge_alpha,
 

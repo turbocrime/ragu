@@ -235,8 +235,11 @@ fn test_nested_registry_digest() {
     // stage moved from `eval` to the last claim-bridge stage. Changed again
     // when challenge stages joined the accumulation: the nested preamble
     // stashes two more commitments per child and the endoscaling point list
-    // grew by `2 * NUM_CHALLENGE_SLOTS`.
-    let expected = fq!(0x0159d484864429061b94570994c3665124aef9938b7bcf8b9e285a73b732ff54);
+    // grew by `2 * NUM_CHALLENGE_SLOTS`. Changed again when the challenge
+    // bridge stages landed: one more bonding mask per challenge slot, the eval
+    // bridge widened to record them, and `Loading`'s final stage moved from the
+    // last claim bridge to the last challenge bridge.
+    let expected = fq!(0x1af519a9f875913886258ac6c8e6ba03ba398b941c8a71b8b4e885ab6ce23f39);
 
     assert_eq!(
         app.nested_registry.digest(),

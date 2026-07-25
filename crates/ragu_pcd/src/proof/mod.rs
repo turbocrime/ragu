@@ -295,6 +295,9 @@ pub struct Proof<C: Cycle, R: Rank> {
     /// the claim's instance-bound `com`. Carrying them is what makes `com` the
     /// commitment of a polynomial the proof actually holds — at parity with
     /// every other cross-curve commitment (e.g. `bridge_f_rx`).
+    /// Bridge stage rxs for the challenge slots, in slot order. Committing
+    /// each yields the nested point that slot's challenge is hashed from.
+    pub(crate) challenge_bridge_rxs: alloc::vec::Vec<sparse::Polynomial<C::ScalarField, R>>,
     pub(crate) claim_bridge_rxs: alloc::vec::Vec<sparse::Polynomial<C::ScalarField, R>>,
 
     /// The claims' host-curve commitments, in slot order — these are the
@@ -356,6 +359,7 @@ impl<C: Cycle, R: Rank> core::ops::Index<nested::RxIndex> for Proof<C, R> {
             BridgeF => &self.bridge_f_rx,
             BridgeEval => &self.bridge_eval_rx.0,
             BridgeClaim(slot) => &self.claim_bridge_rxs[slot as usize],
+            BridgeChallenge(slot) => &self.challenge_bridge_rxs[slot as usize],
             ChildPointsStage(side) => &self.child_stage_rx(side).points_stage,
             ChildBridge(kind, side) => self.child_stage_rx(side).bridge_at(kind),
         }

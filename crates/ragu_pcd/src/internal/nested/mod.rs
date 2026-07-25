@@ -77,6 +77,8 @@ pub enum InternalCircuitIndex {
     BridgeEval,
     /// Per-claim bridge stage mask, indexed by poly-query claim slot.
     BridgeClaim(u32),
+    /// Per-challenge bridge stage mask, indexed by challenge slot.
+    BridgeChallenge(u32),
     /// Loading circuit over all nested stages.
     Loading,
     /// Copying circuit relating current preamble to a child proof's stages.
@@ -86,7 +88,8 @@ pub enum InternalCircuitIndex {
 impl InternalCircuitIndex {
     /// The number of internal circuits registered by [`register_all`],
     /// equal to the number of entries in [`InternalCircuitIndex::ALL`].
-    pub const NUM: usize = NUM_ENDOSCALING_STEPS + 14 + crate::NUM_POLY_QUERY_SLOTS;
+    pub const NUM: usize =
+        NUM_ENDOSCALING_STEPS + 14 + crate::NUM_POLY_QUERY_SLOTS + crate::NUM_CHALLENGE_SLOTS;
 
     /// All variants in canonical iteration order.
     ///
@@ -123,6 +126,11 @@ impl InternalCircuitIndex {
             let mut i = 0;
             while i < crate::NUM_POLY_QUERY_SLOTS {
                 push(&mut slots, &mut c, Self::BridgeClaim(i as u32));
+                i += 1;
+            }
+            let mut i = 0;
+            while i < crate::NUM_CHALLENGE_SLOTS {
+                push(&mut slots, &mut c, Self::BridgeChallenge(i as u32));
                 i += 1;
             }
         }
@@ -211,6 +219,8 @@ pub enum RxIndex {
     BridgeEval,
     /// Per-claim bridge rx polynomial, indexed by poly-query claim slot.
     BridgeClaim(u32),
+    /// Per-challenge bridge rx polynomial, indexed by challenge slot.
+    BridgeChallenge(u32),
     /// Child proof's `PointsStage` rx polynomial (per-side, for copying).
     ChildPointsStage(Side),
     /// Child proof's bridge rx polynomial (per-side, for copying),
@@ -221,7 +231,8 @@ pub enum RxIndex {
 impl RxIndex {
     /// The number of rx components in the nested field,
     /// equal to the number of entries in [`RxIndex::ALL`].
-    pub const NUM: usize = NUM_ENDOSCALING_STEPS + 24 + crate::NUM_POLY_QUERY_SLOTS;
+    pub const NUM: usize =
+        NUM_ENDOSCALING_STEPS + 24 + crate::NUM_POLY_QUERY_SLOTS + crate::NUM_CHALLENGE_SLOTS;
 
     /// All variants in canonical order (circuits, then stages).
     ///
@@ -255,6 +266,11 @@ impl RxIndex {
             let mut i = 0;
             while i < crate::NUM_POLY_QUERY_SLOTS {
                 push(&mut slots, &mut c, Self::BridgeClaim(i as u32));
+                i += 1;
+            }
+            let mut i = 0;
+            while i < crate::NUM_CHALLENGE_SLOTS {
+                push(&mut slots, &mut c, Self::BridgeChallenge(i as u32));
                 i += 1;
             }
         }
@@ -340,6 +356,11 @@ pub fn register_all<'params, C: Cycle, R: Rank>(
             BridgeEval => {
                 registry.register_bonding(stages::eval::Stage::<C::HostCurve, R>::mask()?)
             }
+            BridgeChallenge(slot) => registry.register_bonding(match slot {
+                0 => stages::challenge_bridge::Stage0::<C::HostCurve, R>::mask()?,
+                1 => stages::challenge_bridge::Stage1::<C::HostCurve, R>::mask()?,
+                _ => unreachable!("NUM_CHALLENGE_SLOTS is 2"),
+            }),
             BridgeClaim(slot) => registry.register_bonding(match slot {
                 0 => stages::claim_bridge::Stage0::<C::HostCurve, R>::mask()?,
                 1 => stages::claim_bridge::Stage1::<C::HostCurve, R>::mask()?,

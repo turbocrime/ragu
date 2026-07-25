@@ -81,7 +81,7 @@ impl<C: CurveAffine, R: Rank> Circuit<C, R> {
 }
 
 impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
-    type Last = stages::claim_bridge::Stage3<C, R>;
+    type Last = stages::challenge_bridge::Stage1<C, R>;
     type Instance<'source> = ();
     type Witness<'source> = ();
     type Output = ();
@@ -114,6 +114,8 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         let (claim1_guard, dr) = dr.add_stage::<stages::claim_bridge::Stage1<C, R>>()?;
         let (claim2_guard, dr) = dr.add_stage::<stages::claim_bridge::Stage2<C, R>>()?;
         let (claim3_guard, dr) = dr.add_stage::<stages::claim_bridge::Stage3<C, R>>()?;
+        let (challenge0_guard, dr) = dr.add_stage::<stages::challenge_bridge::Stage0<C, R>>()?;
+        let (challenge1_guard, dr) = dr.add_stage::<stages::challenge_bridge::Stage1<C, R>>()?;
         let dr = dr.finish();
 
         // Load stage gadgets. Witness values are never accessed — the circuit
@@ -136,6 +138,10 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
             claim1_guard.unenforced(dr, w!())?.host,
             claim2_guard.unenforced(dr, w!())?.host,
             claim3_guard.unenforced(dr, w!())?.host,
+        ];
+        let challenge_bridges = [
+            challenge0_guard.unenforced(dr, w!())?.host,
+            challenge1_guard.unenforced(dr, w!())?.host,
         ];
 
         // Walk through PointsStage inputs, mirroring the accumulation order
@@ -186,6 +192,16 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         for (slot, bridge_host) in claim_bridges.iter().enumerate() {
             debug_assert!(slot < NUM_POLY_QUERY_SLOTS);
             bridge_host.enforce_equal(dr, &eval.claims[slot])?;
+        }
+
+        // Each challenge bridge's wires are that slot's stage commitment — the
+        // same host point the eval bridge records and `_10_p` folds. This is
+        // what makes the nested point in the application instance the bridge
+        // image of the commitment actually accumulated, rather than a free
+        // witness.
+        for (slot, bridge_host) in challenge_bridges.iter().enumerate() {
+            debug_assert!(slot < crate::NUM_CHALLENGE_SLOTS);
+            bridge_host.enforce_equal(dr, &eval.challenge_stages[slot])?;
         }
 
         Ok(WithAux::new((), D::unit()))
