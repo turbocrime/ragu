@@ -328,8 +328,8 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     /// `application_claims`).
     claim_polys: Vec<sparse::Polynomial<C::CircuitField, R>>,
     /// The claims' host-curve commitments, in slot order.
-    claim_host_commitments: Vec<C::HostCurve>,
-    challenge_stage_commitments: Vec<C::HostCurve>,
+    claim_host_commitments: Option<[C::HostCurve; crate::NUM_POLY_QUERY_SLOTS]>,
+    challenge_stage_commitments: Option<[C::HostCurve; crate::NUM_CHALLENGE_SLOTS]>,
 }
 
 impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
@@ -418,8 +418,8 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             application_challenges: Vec::new(),
             challenge_stage_polys: Vec::new(),
             claim_polys: Vec::new(),
-            claim_host_commitments: Vec::new(),
-            challenge_stage_commitments: Vec::new(),
+            claim_host_commitments: None,
+            challenge_stage_commitments: None,
         }
     }
 
@@ -609,19 +609,15 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         eval,
         {
             native_eval: native_eval_commitment(),
-            claims: claim_host_commitments_array(),
-            challenge_stages: challenge_stage_commitments_array()
+            claims: claim_host_commitments(),
+            challenge_stages: challenge_stage_commitments()
         }
     );
 
-    /// The challenge-stage host commitments as a fixed array.
-    fn challenge_stage_commitments_array(&self) -> [C::HostCurve; crate::NUM_CHALLENGE_SLOTS] {
-        assert_eq!(
-            self.challenge_stage_commitments.len(),
-            crate::NUM_CHALLENGE_SLOTS,
-            "challenge_stage_commitments not set before deriving the eval bridge"
-        );
-        core::array::from_fn(|i| self.challenge_stage_commitments[i])
+    /// The challenge-stage host commitments, for the eval bridge stage witness.
+    fn challenge_stage_commitments(&self) -> [C::HostCurve; crate::NUM_CHALLENGE_SLOTS] {
+        self.challenge_stage_commitments
+            .expect("challenge_stage_commitments not set before deriving the eval bridge")
     }
 
     /// Derives the bridge stage rx for challenge slot `slot`.
@@ -633,7 +629,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         &self,
         slot: usize,
     ) -> Result<sparse::Polynomial<C::ScalarField, R>> {
-        let host = self.challenge_stage_commitments_array()[slot];
+        let host = self.challenge_stage_commitments()[slot];
         let alpha =
             crate::internal::challenge::challenge_bridge_alpha::<C>(self.bridge_alpha, slot);
         crate::internal::challenge::challenge_bridge_rx::<C, R>(slot, alpha, host)
@@ -650,7 +646,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         &self,
         slot: usize,
     ) -> Result<sparse::Polynomial<C::ScalarField, R>> {
-        let host = self.claim_host_commitments_array()[slot];
+        let host = self.claim_host_commitments()[slot];
         let alpha = crate::internal::challenge::claim_bridge_alpha::<C>(self.bridge_alpha, slot);
         crate::internal::challenge::claim_bridge_rx::<C, R>(slot, alpha, host)
     }
@@ -674,15 +670,11 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             .commit_to_affine(C::nested_generators(self.params)))
     }
 
-    /// The claim host commitments as a fixed-size array, for the eval bridge
-    /// stage witness. Requires `set_application_claims` to have been called.
-    fn claim_host_commitments_array(&self) -> [C::HostCurve; crate::NUM_POLY_QUERY_SLOTS] {
-        assert_eq!(
-            self.claim_host_commitments.len(),
-            crate::NUM_POLY_QUERY_SLOTS,
-            "claim_host_commitments not set before deriving the eval bridge"
-        );
-        core::array::from_fn(|i| self.claim_host_commitments[i])
+    /// The claim host commitments, for the eval bridge stage witness. Requires
+    /// `set_application_claims` to have been called.
+    fn claim_host_commitments(&self) -> [C::HostCurve; crate::NUM_POLY_QUERY_SLOTS] {
+        self.claim_host_commitments
+            .expect("claim_host_commitments not set before deriving the eval bridge")
     }
 
     setter!(
@@ -754,10 +746,9 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             "double-set: challenge_stage_polys"
         );
         assert_eq!(polys.len(), crate::NUM_CHALLENGE_SLOTS);
-        self.challenge_stage_commitments = polys
-            .iter()
-            .map(|poly| poly.commit_to_affine::<C::HostCurve>(C::host_generators(self.params)))
-            .collect();
+        self.challenge_stage_commitments = Some(core::array::from_fn(|i| {
+            polys[i].commit_to_affine::<C::HostCurve>(C::host_generators(self.params))
+        }));
         self.challenge_stage_polys = polys;
     }
 
@@ -792,7 +783,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         assert_eq!(claim_host_commitments.len(), crate::NUM_POLY_QUERY_SLOTS);
         self.application_claims = claims;
         self.claim_polys = claim_polys;
-        self.claim_host_commitments = claim_host_commitments;
+        self.claim_host_commitments = Some(core::array::from_fn(|i| claim_host_commitments[i]));
     }
 
     getter!(w, w, C::CircuitField);
@@ -963,7 +954,9 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
 
             application_challenges: core::mem::take(&mut self.application_challenges),
             challenge_stage_polys: core::mem::take(&mut self.challenge_stage_polys),
-            challenge_stage_commitments: core::mem::take(&mut self.challenge_stage_commitments)
+            challenge_stage_commitments: self
+                .challenge_stage_commitments
+                .expect("challenge_stage_commitments not set")
                 .into_iter()
                 .map(Cached)
                 .collect(),
@@ -979,6 +972,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             claim_polys: self.claim_polys,
             claim_host_commitments: self
                 .claim_host_commitments
+                .expect("claim_host_commitments not set")
                 .into_iter()
                 .map(Cached)
                 .collect(),
