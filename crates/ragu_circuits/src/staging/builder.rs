@@ -186,6 +186,53 @@ impl<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R> + 'dr> StageGuard<'dr, D, R
     }
 }
 
+/// A [`StageGuard`] for a stage whose position came from a value-level layout
+/// rather than a `Parent` type chain.
+///
+/// Produced by [`StageBuilder::configure_induced`], which documents the
+/// obligation the caller takes on. Consumed exactly like a [`StageGuard`].
+#[must_use = "InducedGuard must be consumed via `enforced` or `unenforced`"]
+pub struct InducedGuard<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R>> {
+    stage: S,
+    stage_wires: Vec<D::Wire>,
+    _marker: PhantomData<(&'dr (), R, S)>,
+}
+
+impl<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R> + 'dr> InducedGuard<'dr, D, R, S> {
+    /// As [`StageGuard::enforced`].
+    pub fn enforced<'source: 'dr>(
+        self,
+        dr: &mut D,
+        witness: DriverValue<D, S::Witness<'source>>,
+    ) -> Result<Bound<'dr, D, S::OutputKind>>
+    where
+        Bound<'dr, D, S::OutputKind>: Consistent<'dr, D>,
+    {
+        let output = self.into_guard().unenforced_inner(witness)?;
+        output.enforce_consistent(dr)?;
+        Ok(output)
+    }
+
+    /// As [`StageGuard::unenforced`].
+    pub fn unenforced<'source: 'dr>(
+        self,
+        _dr: &mut D,
+        witness: DriverValue<D, S::Witness<'source>>,
+    ) -> Result<Bound<'dr, D, S::OutputKind>> {
+        self.into_guard().unenforced_inner(witness)
+    }
+
+    /// Wire injection is identical once the wires are reserved; only where the
+    /// geometry came from differs.
+    fn into_guard(self) -> StageGuard<'dr, D, R, S> {
+        StageGuard {
+            stage: self.stage,
+            stage_wires: self.stage_wires,
+            _marker: PhantomData,
+        }
+    }
+}
+
 impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D::F, R>>
     StageBuilder<'a, 'dr, D, R, Current, Target>
 {
@@ -239,6 +286,67 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
                 _marker: PhantomData,
             },
         ))
+    }
+
+    /// Reserves one stage's wires from a **value-level** layout rather than
+    /// from a `Parent` type chain.
+    ///
+    /// [`configure_stage`](Self::configure_stage) reads its geometry from
+    /// `Next::values()` and `Next::num_gates()`, which the `Parent = Current`
+    /// bound places in the chain. When a circuit's stage *count* is a property
+    /// of the application being built rather than of any Rust type, that chain
+    /// cannot be written down, and the geometry comes from
+    /// [`InducedStages`](super::InducedStages) instead — the same numbers,
+    /// folded over recorded widths.
+    ///
+    /// `stage` supplies only the witness body, so one concrete type serves
+    /// every slot of a family: `values` and `num_gates` are taken from the
+    /// layout, not from the type, and the type's own chain position is
+    /// ignored.
+    ///
+    /// # The invariant this moves
+    ///
+    /// The typed path guarantees by construction that a stage occupies the
+    /// positions its mask covers. Here that guarantee becomes the caller's:
+    /// **the `values` and `num_gates` passed here must come from the same
+    /// [`InducedStages`](super::InducedStages) that produced the stage's
+    /// [`mask`](super::InducedStages::mask), and no typed stage may follow an
+    /// induced run** — a later `Parent` chain would compute `skip_gates` from
+    /// types and miss the induced wires entirely. Stage positions determine
+    /// where committed values live, so this is a soundness-relevant
+    /// obligation, not a style rule.
+    ///
+    /// `Current` deliberately does not advance: an induced run has no
+    /// type-level position to advance to.
+    pub fn configure_induced<S: Stage<D::F, R> + 'dr>(
+        &mut self,
+        stage: S,
+        values: usize,
+        num_gates: usize,
+    ) -> Result<InducedGuard<'dr, D, R, S>> {
+        let mut emulator = Emulator::counter();
+        let mut num_wires = stage.witness(&mut emulator, Empty)?.num_wires()?;
+
+        if num_wires > values {
+            return Err(ragu_core::Error::GateBoundExceeded { limit: num_gates });
+        }
+
+        let allocator = &mut Standard::new();
+        let mut wires = Vec::with_capacity(num_wires);
+        for _ in 0..num_wires {
+            wires.push(allocator.alloc(self.driver, || Ok(Coeff::Zero))?);
+        }
+
+        while (num_wires / 2) < num_gates {
+            allocator.alloc(self.driver, || Ok(Coeff::Zero))?;
+            num_wires += 1;
+        }
+
+        Ok(InducedGuard {
+            stage,
+            stage_wires: wires,
+            _marker: PhantomData,
+        })
     }
 
     /// Adds the next stage to the builder using [`Self::configure_stage`],
