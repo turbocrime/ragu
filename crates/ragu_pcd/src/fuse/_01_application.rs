@@ -91,8 +91,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let mut claim_host_commitments = alloc::vec::Vec::with_capacity(claims.len());
         for (slot, claim) in claims.iter().enumerate() {
             // Reject an over-capacity coefficient vector gracefully; otherwise
-            // `sparse::Polynomial::from_coeffs` would panic on it. Mirrors the
-            // guard in `oracle::WitnessedPolynomial::alloc`.
+            // `sparse::Polynomial::from_coeffs` would panic on it.
             if claim.coefficients.len() > R::num_coeffs() {
                 return Err(Error::InvalidWitness(
                     "poly-query claim rejected: coefficient count exceeds the polynomial rank \

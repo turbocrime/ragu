@@ -30,7 +30,6 @@ mod fuse;
 pub mod fuzz_utils;
 pub mod header;
 mod internal;
-pub mod oracle;
 pub mod poly_commitment;
 mod proof;
 pub mod step;
@@ -85,13 +84,13 @@ pub const NUM_POLY_QUERY_SLOTS: usize = 4;
 /// ([`ChallengeInput::ELEMENTS`](framework_hooks::ChallengeInput::ELEMENTS)),
 /// and exceeding this bound is a compile error, not a runtime one. (It is a
 /// post-monomorphization error, so it surfaces on `cargo build`/`cargo test`
-/// rather than `cargo check`.) Circuit
-/// structure must not depend on witness values, and a challenge input whose
-/// width is only known at runtime — a `Vec`, a slice, a polynomial with a
-/// runtime capacity — cannot offer that guarantee. Compress such data into a
-/// single binding element first (for example
-/// [`WitnessedPolynomial::hash_commitment`](oracle::WitnessedPolynomial::hash_commitment))
-/// and derive the challenge from that.
+/// rather than `cargo check`.) Circuit structure must not depend on witness
+/// values, and a challenge input whose width is only known at runtime — a
+/// `Vec`, a slice, a polynomial with a runtime capacity — cannot offer that
+/// guarantee. Compress such data into a single binding element first, the way
+/// [`witness_polynomial`](step::StepCtx::witness_polynomial) reduces a whole
+/// polynomial to one in-circuit commitment point, and derive the challenge from
+/// that.
 ///
 /// This is the width of the *stage* each slot commits. Fixing it at compile
 /// time is what lets that stage be one type chained [`NUM_CHALLENGE_SLOTS`]

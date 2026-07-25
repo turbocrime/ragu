@@ -80,11 +80,11 @@ impl Cycle for Pasta {
         &params.pallas
     }
 
-    fn circuit_poseidon_baked() -> &'static Self::CircuitPoseidon {
+    fn circuit_poseidon(_params: &Self::Params) -> &Self::CircuitPoseidon {
         &poseidon_fp::PoseidonFp
     }
 
-    fn scalar_poseidon_baked() -> &'static Self::ScalarPoseidon {
+    fn scalar_poseidon(_params: &Self::Params) -> &Self::ScalarPoseidon {
         &poseidon_fq::PoseidonFq
     }
 

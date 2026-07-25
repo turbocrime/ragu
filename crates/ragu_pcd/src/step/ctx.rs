@@ -1,9 +1,9 @@
 //! Context object threaded through [`Step::witness`](super::Step::witness).
 //!
-//! Bundles the framework-side state — the [`Driver`], the [`FrameworkHooks`]
-//! container, and the cycle's Poseidon parameters — so that reusable
-//! sub-components called from a step body can take a single `&mut StepCtx`
-//! rather than juggling individual arguments. The poly-query claim sink is
+//! Bundles the framework-side state — the [`Driver`] and the
+//! [`FrameworkHooks`] container — so that reusable sub-components called from a
+//! step body can take a single `&mut StepCtx` rather than juggling individual
+//! arguments. The poly-query claim sink is
 //! exposed via [`enforce_poly_query`](StepCtx::enforce_poly_query) and the
 //! challenge hook via [`derive_challenge`](StepCtx::derive_challenge). New
 //! framework hooks added in the future (e.g. transcript threading) belong on
@@ -37,7 +37,6 @@ where
     /// allocation and constraint emission.
     pub dr: &'a mut D,
     hooks: &'a mut FrameworkHooks<'dr, D, C::NestedCurve>,
-    poseidon: &'dr C::CircuitPoseidon,
     /// Cycle params and the proof's shared bridge-alpha source, needed to build
     /// a claim's bridge stage. `None` on structure-only passes, where no
     /// witness values exist and the commitment is never computed.
@@ -57,12 +56,10 @@ where
     pub(crate) fn new(
         dr: &'a mut D,
         hooks: &'a mut FrameworkHooks<'dr, D, C::NestedCurve>,
-        poseidon: &'dr C::CircuitPoseidon,
     ) -> Self {
         Self {
             dr,
             hooks,
-            poseidon,
             claim_bridge: None,
             challenge_slots: None,
         }
@@ -75,7 +72,6 @@ where
     pub(crate) fn proving(
         dr: &'a mut D,
         hooks: &'a mut FrameworkHooks<'dr, D, C::NestedCurve>,
-        poseidon: &'dr C::CircuitPoseidon,
         params: &'dr C::Params,
         bridge_alpha: C::ScalarField,
         challenge_alpha: C::CircuitField,
@@ -83,7 +79,6 @@ where
         Self {
             dr,
             hooks,
-            poseidon,
             claim_bridge: Some((params, bridge_alpha, challenge_alpha)),
             challenge_slots: None,
         }
@@ -96,14 +91,6 @@ where
     ) -> Self {
         self.challenge_slots = Some(slots);
         self
-    }
-
-    /// The cycle's Poseidon parameters, for step bodies that hash in-circuit
-    /// (e.g. via [`Sponge`](ragu_primitives::poseidon::Sponge) or the
-    /// [`oracle`](crate::oracle) gadgets) without threading parameters through
-    /// their own state.
-    pub fn poseidon(&self) -> &'dr C::CircuitPoseidon {
-        self.poseidon
     }
 
     /// Witnesses a [`PolyCommitment`] in-circuit, producing a

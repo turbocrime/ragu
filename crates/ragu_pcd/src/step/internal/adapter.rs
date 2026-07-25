@@ -74,12 +74,11 @@ fn collect_values<'dr, D: Driver<'dr>, T: Send>(
 /// [`ChallengeInput::ELEMENTS`]: crate::framework_hooks::ChallengeInput::ELEMENTS
 pub(crate) fn discover_hook_layout<C: Cycle, S: Step<C>, const HEADER_SIZE: usize>(
     step: &S,
-    poseidon: &C::CircuitPoseidon,
 ) -> Result<(usize, usize)> {
     let mut dr: Emulator<Wireless<Empty, C::CircuitField>> = Emulator::counter();
     let mut hooks = FrameworkHooks::<_, C::NestedCurve>::new();
     {
-        let mut ctx = StepCtx::<'_, '_, _, C>::new(&mut dr, &mut hooks, poseidon);
+        let mut ctx = StepCtx::<'_, '_, _, C>::new(&mut dr, &mut hooks);
         step.witness::<_, HEADER_SIZE>(&mut ctx, Empty, Empty, Empty)?;
     }
 
@@ -131,10 +130,6 @@ pub(crate) struct Adapter<'params, C: Cycle, S, R: Rank, const HEADER_SIZE: usiz
     /// same dry run. Part of the circuit structure: the real synthesis must
     /// raise exactly this many (determinism guard in [`Adapter::witness`]).
     num_claims: usize,
-    /// The cycle's baked Poseidon constants, threaded into the step body via
-    /// [`StepCtx`] for in-circuit challenge derivation. These are compile-time
-    /// constants (`&'static`), so no runtime params are needed to obtain them.
-    poseidon: &'static C::CircuitPoseidon,
     /// The canonical padding claim used to fill unused poly-query slots.
     /// `None` on adapters built for registration/keygen (structure-only, where
     /// the value is never taken); `Some` on the proving adapter. The padding is
@@ -154,19 +149,16 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
 {
     /// Wraps `step` for registration/keygen, discovering its `derive_challenge`
     /// call count and poly-query claim count with a dry run of the witness
-    /// body (see [`discover_hook_layout`]). Param-free: discovery uses the baked
-    /// Poseidon constants, and the padding claim is left unset (`None`) because
-    /// keygen is structure-only and never takes its value. Use
-    /// [`proving`](Self::proving) to build the adapter that actually proves.
+    /// body (see [`discover_hook_layout`]). Param-free: the padding claim is
+    /// left unset (`None`) because keygen is structure-only and never takes its
+    /// value. Use [`proving`](Self::proving) to build the adapter that actually
+    /// proves.
     pub fn new(step: S) -> Result<Self> {
-        let poseidon = C::circuit_poseidon_baked();
-        let (challenge_calls, num_claims) =
-            discover_hook_layout::<C, S, HEADER_SIZE>(&step, poseidon)?;
+        let (challenge_calls, num_claims) = discover_hook_layout::<C, S, HEADER_SIZE>(&step)?;
         Ok(Adapter {
             step,
             challenge_calls,
             num_claims,
-            poseidon,
             padding: None,
             claim_bridge: None,
             _marker: PhantomData,
@@ -400,12 +392,11 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize>
                 Some((params, bridge_alpha, challenge_alpha)) => StepCtx::<'_, '_, _, C>::proving(
                     dr,
                     &mut hooks,
-                    self.poseidon,
                     params,
                     bridge_alpha,
                     challenge_alpha,
                 ),
-                None => StepCtx::<'_, '_, _, C>::new(dr, &mut hooks, self.poseidon),
+                None => StepCtx::<'_, '_, _, C>::new(dr, &mut hooks),
             };
             let mut ctx = ctx.with_challenge_slots(&mut challenge_slots);
             self.step

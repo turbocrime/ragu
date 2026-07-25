@@ -4,4 +4,3 @@
 
 pub mod nontrivial;
 pub mod poly_query;
-pub mod sound_oracle;
