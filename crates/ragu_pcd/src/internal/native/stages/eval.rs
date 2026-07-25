@@ -240,9 +240,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     type OutputKind = Kind![C::CircuitField; Output<'_, _>];
 
     fn values() -> usize {
-        // 2 * ChildEvaluations (15 + claim slots + challenge slots each)
-        //   + current step elements (6)
-        2 * (15 + NUM_POLY_QUERY_SLOTS + crate::NUM_CHALLENGE_SLOTS) + 6
+        // 2 * ChildEvaluations (one evaluation per RxIndex, 4 scalars, one per
+        //   claim slot, one per challenge slot) + current step elements (6)
+        2 * (super::super::RxIndex::NUM + 4 + NUM_POLY_QUERY_SLOTS + crate::NUM_CHALLENGE_SLOTS) + 6
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

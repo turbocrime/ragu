@@ -147,6 +147,29 @@ pub(crate) fn challenge_bridge_commitment<C: Cycle, R: Rank>(
         .commit_to_affine(C::nested_generators(params)))
 }
 
+/// Hashes a bridged challenge-stage commitment into the challenge it derives.
+///
+/// The native counterpart of what the `challenge_binding` circuit enforces
+/// in-circuit for every child slot; the two must agree exactly. Kept as one
+/// function so a change to the sponge shape cannot silently desync the prover,
+/// the root verifier, and the circuit.
+///
+/// [`challenge_binding`]: crate::internal::native::circuits::challenge_binding
+pub(crate) fn challenge_from_point<C: Cycle>(
+    params: &C::Params,
+    point: C::NestedCurve,
+) -> Result<C::CircuitField> {
+    use ragu_core::{drivers::emulator::Emulator, maybe::Maybe};
+    use ragu_primitives::{GadgetExt, Point, poseidon::Sponge};
+
+    let mut dr = Emulator::execute();
+    let point = Point::constant(&mut dr, point)?;
+    let mut sponge = Sponge::new(&mut dr, C::circuit_poseidon(params));
+    point.write(&mut dr, &mut sponge)?;
+    let challenge = sponge.squeeze(&mut dr)?;
+    Ok(*challenge.value().take())
+}
+
 /// Derives challenge `slot`'s value from the values its stage commits.
 ///
 /// The full prover-side chain: build the application-side stage rx from
@@ -161,9 +184,6 @@ pub(crate) fn staged_challenge<C: Cycle, R: Rank>(
     bridge_alpha: C::ScalarField,
     inputs: [C::CircuitField; crate::CHALLENGE_WIDTH],
 ) -> Result<(C::NestedCurve, C::CircuitField)> {
-    use ragu_core::{drivers::emulator::Emulator, maybe::Maybe};
-    use ragu_primitives::{GadgetExt, Point, poseidon::Sponge};
-
     use crate::step::internal::challenge_stage;
 
     let stage_rx = challenge_stage::stage_rx::<C::CircuitField, R>(
@@ -184,14 +204,7 @@ pub(crate) fn staged_challenge<C: Cycle, R: Rank>(
         host,
     )?;
 
-    // Native evaluation of the same sponge the binding circuit will run
-    // in-circuit, using the framework's own native-hash idiom.
-    let mut dr = Emulator::execute();
-    let point = Point::constant(&mut dr, bridged)?;
-    let mut sponge = Sponge::new(&mut dr, C::circuit_poseidon(params));
-    point.write(&mut dr, &mut sponge)?;
-    let challenge = sponge.squeeze(&mut dr)?;
-    let challenge = *challenge.value().take();
+    let challenge = challenge_from_point::<C>(params, bridged)?;
 
     Ok((bridged, challenge))
 }

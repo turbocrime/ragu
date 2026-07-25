@@ -29,6 +29,7 @@ pub mod stages {
 }
 
 pub mod circuits {
+    pub mod challenge_binding;
     pub mod compute_v;
     pub mod hashes_1;
     pub mod hashes_2;
@@ -47,6 +48,7 @@ pub enum InternalCircuitIndex {
     InnerCollapseCircuit,
     OuterCollapseCircuit,
     ComputeVCircuit,
+    ChallengeBindingCircuit,
     // Native stages
     PreambleStage,
     InnerErrorStage,
@@ -54,6 +56,7 @@ pub enum InternalCircuitIndex {
     QueryStage,
     EvalStage,
     // Final stage masks
+    PreambleFinalStaged,
     InnerErrorFinalStaged,
     OuterErrorFinalStaged,
     EvalFinalStaged,
@@ -78,7 +81,7 @@ pub const fn total_circuit_counts(num_application_steps: usize) -> (usize, u32) 
 impl InternalCircuitIndex {
     /// The number of internal circuits registered by [`register_all`],
     /// equal to the number of variants in [`InternalCircuitIndex`].
-    pub const NUM: usize = 14 + crate::NUM_CHALLENGE_SLOTS;
+    pub const NUM: usize = 16 + crate::NUM_CHALLENGE_SLOTS;
 
     /// All variants in canonical iteration order.
     ///
@@ -98,11 +101,13 @@ impl InternalCircuitIndex {
         push(&mut slots, &mut c, Self::InnerCollapseCircuit);
         push(&mut slots, &mut c, Self::OuterCollapseCircuit);
         push(&mut slots, &mut c, Self::ComputeVCircuit);
+        push(&mut slots, &mut c, Self::ChallengeBindingCircuit);
         push(&mut slots, &mut c, Self::PreambleStage);
         push(&mut slots, &mut c, Self::InnerErrorStage);
         push(&mut slots, &mut c, Self::OuterErrorStage);
         push(&mut slots, &mut c, Self::QueryStage);
         push(&mut slots, &mut c, Self::EvalStage);
+        push(&mut slots, &mut c, Self::PreambleFinalStaged);
         push(&mut slots, &mut c, Self::InnerErrorFinalStaged);
         push(&mut slots, &mut c, Self::OuterErrorFinalStaged);
         push(&mut slots, &mut c, Self::EvalFinalStaged);
@@ -138,11 +143,13 @@ pub struct InternalCircuitValues<T> {
     pub inner_collapse_circuit: T,
     pub outer_collapse_circuit: T,
     pub compute_v_circuit: T,
+    pub challenge_binding_circuit: T,
     pub preamble_stage: T,
     pub inner_error_stage: T,
     pub outer_error_stage: T,
     pub query_stage: T,
     pub eval_stage: T,
+    pub preamble_final_staged: T,
     pub inner_error_final_staged: T,
     pub outer_error_final_staged: T,
     pub eval_final_staged: T,
@@ -161,11 +168,13 @@ impl<T> InternalCircuitValues<T> {
             InnerCollapseCircuit => &self.inner_collapse_circuit,
             OuterCollapseCircuit => &self.outer_collapse_circuit,
             ComputeVCircuit => &self.compute_v_circuit,
+            ChallengeBindingCircuit => &self.challenge_binding_circuit,
             PreambleStage => &self.preamble_stage,
             InnerErrorStage => &self.inner_error_stage,
             OuterErrorStage => &self.outer_error_stage,
             QueryStage => &self.query_stage,
             EvalStage => &self.eval_stage,
+            PreambleFinalStaged => &self.preamble_final_staged,
             InnerErrorFinalStaged => &self.inner_error_final_staged,
             OuterErrorFinalStaged => &self.outer_error_final_staged,
             EvalFinalStaged => &self.eval_final_staged,
@@ -196,11 +205,13 @@ impl<T> InternalCircuitValues<T> {
             inner_collapse_circuit: f(InnerCollapseCircuit)?,
             outer_collapse_circuit: f(OuterCollapseCircuit)?,
             compute_v_circuit: f(ComputeVCircuit)?,
+            challenge_binding_circuit: f(ChallengeBindingCircuit)?,
             preamble_stage: f(PreambleStage)?,
             inner_error_stage: f(InnerErrorStage)?,
             outer_error_stage: f(OuterErrorStage)?,
             query_stage: f(QueryStage)?,
             eval_stage: f(EvalStage)?,
+            preamble_final_staged: f(PreambleFinalStaged)?,
             inner_error_final_staged: f(InnerErrorFinalStaged)?,
             outer_error_final_staged: f(OuterErrorFinalStaged)?,
             eval_final_staged: f(EvalFinalStaged)?,
@@ -229,6 +240,7 @@ pub enum RxIndex {
     InnerCollapse,
     OuterCollapse,
     ComputeV,
+    ChallengeBinding,
     // Stages
     Preamble,
     InnerError,
@@ -239,7 +251,7 @@ pub enum RxIndex {
 
 impl RxIndex {
     /// The number of rx polynomial components.
-    pub const NUM: usize = 11;
+    pub const NUM: usize = 12;
 
     /// All variants in canonical order.
     ///
@@ -258,6 +270,7 @@ impl RxIndex {
         push(&mut slots, &mut c, Self::InnerCollapse);
         push(&mut slots, &mut c, Self::OuterCollapse);
         push(&mut slots, &mut c, Self::ComputeV);
+        push(&mut slots, &mut c, Self::ChallengeBinding);
         push(&mut slots, &mut c, Self::Preamble);
         push(&mut slots, &mut c, Self::InnerError);
         push(&mut slots, &mut c, Self::OuterError);
@@ -281,6 +294,7 @@ pub struct RxValues<T> {
     pub inner_collapse: T,
     pub outer_collapse: T,
     pub compute_v: T,
+    pub challenge_binding: T,
     pub preamble: T,
     pub inner_error: T,
     pub outer_error: T,
@@ -299,6 +313,7 @@ impl<T> RxValues<T> {
             InnerCollapse => &self.inner_collapse,
             OuterCollapse => &self.outer_collapse,
             ComputeV => &self.compute_v,
+            ChallengeBinding => &self.challenge_binding,
             Preamble => &self.preamble,
             InnerError => &self.inner_error,
             OuterError => &self.outer_error,
@@ -329,6 +344,7 @@ impl<T> RxValues<T> {
             inner_collapse: f(InnerCollapse)?,
             outer_collapse: f(OuterCollapse)?,
             compute_v: f(ComputeV)?,
+            challenge_binding: f(ChallengeBinding)?,
             preamble: f(Preamble)?,
             inner_error: f(InnerError)?,
             outer_error: f(OuterError)?,
@@ -392,6 +408,10 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
             EvalStage => {
                 registry.register_bonding(stages::eval::Stage::<C, R, HEADER_SIZE>::mask()?)
             }
+            PreambleFinalStaged => {
+                registry
+                    .register_bonding(stages::preamble::Stage::<C, R, HEADER_SIZE>::final_mask()?)
+            }
             InnerErrorFinalStaged => registry.register_bonding(stages::inner_error::Stage::<
                 C,
                 R,
@@ -454,6 +474,13 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
                     R,
                     HEADER_SIZE,
                 >::new())?
+            }
+            ChallengeBindingCircuit => {
+                registry.register_internal_circuit(circuits::challenge_binding::Circuit::<
+                    C,
+                    R,
+                    HEADER_SIZE,
+                >::new(params))?
             }
         };
     }

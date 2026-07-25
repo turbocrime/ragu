@@ -192,6 +192,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) native_inner_collapse_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_outer_collapse_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_compute_v_rx: sparse::Polynomial<C::CircuitField, R>,
+    pub(crate) native_challenge_binding_rx: sparse::Polynomial<C::CircuitField, R>,
     /// The application circuit's challenge-stage polynomials, in slot order.
     ///
     /// Carried like [`claim_polys`](Self::claim_polys) rather than as an
@@ -252,6 +253,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     native_inner_collapse_commitment: Cached<C::HostCurve>,
     native_outer_collapse_commitment: Cached<C::HostCurve>,
     native_compute_v_commitment: Cached<C::HostCurve>,
+    native_challenge_binding_commitment: Cached<C::HostCurve>,
 
     // Bridge commitments (non-cached)
     pub(crate) bridge_preamble_commitment: C::NestedCurve,
@@ -326,6 +328,7 @@ impl<C: Cycle, R: Rank> core::ops::Index<RxIndex> for Proof<C, R> {
             InnerCollapse => &self.native_inner_collapse_rx,
             OuterCollapse => &self.native_outer_collapse_rx,
             ComputeV => &self.native_compute_v_rx,
+            ChallengeBinding => &self.native_challenge_binding_rx,
         }
     }
 }
@@ -484,6 +487,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             InnerCollapse => self.native_inner_collapse_commitment.0,
             OuterCollapse => self.native_outer_collapse_commitment.0,
             ComputeV => self.native_compute_v_commitment.0,
+            ChallengeBinding => self.native_challenge_binding_commitment.0,
         }
     }
 
@@ -715,6 +719,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
         builder.set_native_inner_collapse_rx(ones_host.clone());
         builder.set_native_outer_collapse_rx(ones_host.clone());
         builder.set_native_compute_v_rx(ones_host.clone());
+        builder.set_native_challenge_binding_rx(ones_host.clone());
 
         // Bridge polynomials: compute via Stage::rx() with trivial witnesses
         // so that traces are valid for their witnesses (not just ones).
@@ -843,6 +848,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                 inner_collapse: host_commitment,
                 outer_collapse: host_commitment,
                 compute_v: host_commitment,
+                challenge_binding: host_commitment,
                 stashed_preamble: host_commitment,
                 stashed_inner_error: host_commitment,
                 stashed_outer_error: host_commitment,

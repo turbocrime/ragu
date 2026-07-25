@@ -36,6 +36,12 @@ pub enum Corruption<F> {
     /// recursively (the instance-bound claim no longer matches the
     /// application circuit's k(Y), and `compute_v`'s claim quotient breaks).
     ClaimY(usize, F),
+    /// Perturb the derived challenge in the given slot, leaving the point it
+    /// was derived from intact. This is the challenge-grinding shape: a prover
+    /// who wants a challenge other than the one its committed inputs hash to.
+    /// The `challenge_binding` circuit re-derives $\text{Hash}(\text{point})$
+    /// for every child slot, so a parent cannot assemble its trace at all.
+    ChallengeValue(usize, F),
 }
 
 impl<C: Cycle, R: Rank> Proof<C, R> {
@@ -69,6 +75,9 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             }
             Corruption::ClaimY(slot, v) => {
                 self.application_claims[slot].y += v;
+            }
+            Corruption::ChallengeValue(slot, v) => {
+                self.application_challenges[slot].challenge += v;
             }
         }
     }

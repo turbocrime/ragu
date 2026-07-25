@@ -236,6 +236,7 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     native_inner_collapse_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_outer_collapse_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_compute_v_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_challenge_binding_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
 
     // Bridge rx polynomials + commitments (set together by caller)
     bridge_preamble_rx: Option<sparse::Polynomial<C::ScalarField, R>>,
@@ -295,6 +296,7 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     native_inner_collapse_commitment: OnceCell<C::HostCurve>,
     native_outer_collapse_commitment: OnceCell<C::HostCurve>,
     native_compute_v_commitment: OnceCell<C::HostCurve>,
+    native_challenge_binding_commitment: OnceCell<C::HostCurve>,
 
     // Cached bridge commitment caches (lazily computed from their cached rxs)
     bridge_outer_error_commitment: OnceCell<C::NestedCurve>,
@@ -357,6 +359,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             native_inner_collapse_rx: None,
             native_outer_collapse_rx: None,
             native_compute_v_rx: None,
+            native_challenge_binding_rx: None,
             bridge_preamble_rx: None,
             bridge_preamble_commitment: None,
             bridge_s_prime_rx: None,
@@ -401,6 +404,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             native_inner_collapse_commitment: OnceCell::new(),
             native_outer_collapse_commitment: OnceCell::new(),
             native_compute_v_commitment: OnceCell::new(),
+            native_challenge_binding_commitment: OnceCell::new(),
             bridge_outer_error_commitment: OnceCell::new(),
             bridge_ab_commitment: OnceCell::new(),
             bridge_query_commitment: OnceCell::new(),
@@ -440,6 +444,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     native_setter!(set_native_inner_collapse_rx, native_inner_collapse_rx);
     native_setter!(set_native_outer_collapse_rx, native_outer_collapse_rx);
     native_setter!(set_native_compute_v_rx, native_compute_v_rx);
+    native_setter!(set_native_challenge_binding_rx, native_challenge_binding_rx);
 
     native_poly_with_commitment_setter!(set_native_a_poly, native_a_poly, native_a_commitment);
     native_poly_with_commitment_setter!(set_native_b_poly, native_b_poly, native_b_commitment);
@@ -524,6 +529,12 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         native_compute_v_commitment,
         native_compute_v_commitment,
         native_compute_v_rx
+    );
+    lazy_commitment!(
+        native,
+        native_challenge_binding_commitment,
+        native_challenge_binding_commitment,
+        native_challenge_binding_rx
     );
 
     explicit_commitment_getter!(native_a_commitment, native_a_commitment, set_native_a_poly);
@@ -826,6 +837,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         self.native_inner_collapse_commitment();
         self.native_outer_collapse_commitment();
         self.native_compute_v_commitment();
+        self.native_challenge_binding_commitment();
 
         // Force lazy evaluation of cached bridge commitments.
         self.bridge_outer_error_commitment()?;
@@ -885,6 +897,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             native_inner_collapse_rx: take!(native_inner_collapse_rx),
             native_outer_collapse_rx: take!(native_outer_collapse_rx),
             native_compute_v_rx: take!(native_compute_v_rx),
+            native_challenge_binding_rx: take!(native_challenge_binding_rx),
 
             bridge_preamble_rx: take!(bridge_preamble_rx),
             bridge_preamble_commitment: take!(bridge_preamble_commitment),
@@ -945,6 +958,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             native_inner_collapse_commitment: cached!(native_inner_collapse_commitment),
             native_outer_collapse_commitment: cached!(native_outer_collapse_commitment),
             native_compute_v_commitment: cached!(native_compute_v_commitment),
+            native_challenge_binding_commitment: cached!(native_challenge_binding_commitment),
 
             child_left_stage_rx: take!(child_left_stage_rx),
             child_right_stage_rx: take!(child_right_stage_rx),

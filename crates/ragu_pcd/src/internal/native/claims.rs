@@ -27,7 +27,8 @@ use crate::internal::claims::{Builder, Source, sum_polynomials};
 /// Number of circuits using unified $k(y)$ in [`build`].
 ///
 /// These circuits use [`unified::InternalOutputKind`]:
-/// [`hashes_2`], [`inner_collapse`], [`outer_collapse`], [`compute_v`].
+/// [`hashes_2`], [`inner_collapse`], [`outer_collapse`], [`compute_v`],
+/// [`challenge_binding`].
 ///
 /// Note: [`hashes_1`] separately uses `unified_bridge_ky` because its public
 /// inputs include child proof headers (see [`hashes_1::Output`]).
@@ -38,8 +39,9 @@ use crate::internal::claims::{Builder, Source, sum_polynomials};
 /// [`inner_collapse`]: crate::internal::native::circuits::inner_collapse
 /// [`outer_collapse`]: crate::internal::native::circuits::outer_collapse
 /// [`compute_v`]: crate::internal::native::circuits::compute_v
+/// [`challenge_binding`]: crate::internal::native::circuits::challenge_binding
 /// [`unified::InternalOutputKind`]: crate::internal::native::unified::InternalOutputKind
-const NUM_UNIFIED_CIRCUITS: usize = 4;
+const NUM_UNIFIED_CIRCUITS: usize = 5;
 
 /// Trait that processes claim values into accumulated outputs.
 ///
@@ -230,6 +232,13 @@ where
                 }
             }
 
+            // challenge_binding: ChallengeBinding + Preamble
+            ChallengeBindingCircuit => {
+                for (cb, pre) in source.rx(Rx(ChallengeBinding)).zip(source.rx(Rx(Preamble))) {
+                    processor.internal_circuit_claim(id, [cb, pre].into_iter());
+                }
+            }
+
             // Native stages (aggregated across all proofs)
             PreambleStage => {
                 processor.bonding_claim(id, source.rx(Rx(Preamble)))?;
@@ -248,6 +257,9 @@ where
             }
 
             // Final stage bonding claims
+            PreambleFinalStaged => {
+                processor.bonding_claim(id, source.rx(Rx(ChallengeBinding)))?;
+            }
             InnerErrorFinalStaged => {
                 processor.bonding_claim(id, source.rx(Rx(InnerCollapse)))?;
             }

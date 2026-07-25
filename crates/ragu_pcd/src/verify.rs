@@ -169,11 +169,60 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     })
         };
 
+        // Check the proof's own derived challenges. Like the claims above,
+        // these are bound recursively one fuse level up — by the
+        // `challenge_binding` circuit, which re-derives every child slot's
+        // challenge from its point — so a root proof's own challenges are
+        // still unbound and the verifier rebuilds each one natively:
+        // stage polynomial -> host commitment -> nested bridge -> hash.
+        //
+        // [`challenge_binding`]: crate::internal::native::circuits::challenge_binding
+        let derived_challenges = {
+            let challenges = pcd.proof().application_challenges();
+            let polys = &pcd.proof().challenge_stage_polys;
+            let host_coms = &pcd.proof().challenge_stage_commitments;
+            challenges.len() == crate::NUM_CHALLENGE_SLOTS
+                && polys.len() == crate::NUM_CHALLENGE_SLOTS
+                && host_coms.len() == crate::NUM_CHALLENGE_SLOTS
+                && challenges
+                    .iter()
+                    .zip(polys.iter())
+                    .zip(host_coms.iter())
+                    .enumerate()
+                    .all(|(slot, ((pair, poly), host))| {
+                        let crate::proof::ChallengeOpening { point, challenge } = *pair;
+                        let bridge_alpha = pcd.proof().bridge_alpha;
+                        poly.commit_to_affine::<C::HostCurve>(C::host_generators(self.params))
+                            == *host
+                            && crate::internal::challenge::challenge_bridge_commitment::<C, R>(
+                                self.params,
+                                slot,
+                                crate::internal::challenge::challenge_bridge_alpha::<C>(
+                                    bridge_alpha,
+                                    slot,
+                                ),
+                                *host,
+                            )
+                            .map(|bridge| bridge == point)
+                            .unwrap_or(false)
+                            && crate::internal::challenge::challenge_from_point::<C>(
+                                self.params,
+                                point,
+                            )
+                            .map(|derived| derived == challenge)
+                            .unwrap_or(false)
+                    })
+        };
+
         // TODO: Add checks for registry_wx0_poly, registry_wx1_poly, and registry_wy_poly.
         // - registry_wx0/wx1: need child proof x challenges (x₀, x₁) which "disappear" in preamble
         // - registry_wy: interstitial value that will be elided later
 
-        Ok(native_revdot_claims && nested_revdot_claims && registry_xy_claim && poly_query_claims)
+        Ok(native_revdot_claims
+            && nested_revdot_claims
+            && registry_xy_claim
+            && poly_query_claims
+            && derived_challenges)
     }
 }
 

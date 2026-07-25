@@ -109,6 +109,89 @@ fn corrupted_claim_is_rejected_directly_and_recursively() -> Result<()> {
     Ok(())
 }
 
+/// A derived challenge that is not the hash of the point it was derived from
+/// is rejected — directly at root verify, and recursively when the proof is
+/// fused as a child.
+///
+/// This is the check that makes a staged challenge worth anything. The
+/// application circuit spends one gate exposing the pair
+/// $(\text{point},\, \text{challenge})$ and does *not* hash; if nothing
+/// downstream re-derived the challenge, a prover could name any value it liked
+/// and grind whatever argument consumes it.
+///
+/// **What this test does and does not isolate.** The pair is written into the
+/// child's application $k(Y)$, so editing a finished proof also breaks the
+/// child's revdot claim — the parent would reject this child even without the
+/// `challenge_binding` circuit. Isolating that circuit needs an adversary that
+/// forges the challenge *at proving time*, so $k(Y)$ stays consistent, which
+/// in turn needs a testing seam through `StepCtx::derive_challenge`. That the
+/// circuit is load-bearing is established separately and more directly:
+/// deliberately mis-deriving the challenge inside it (squeezing twice) makes
+/// every honest proof in the suite fail to verify.
+#[test]
+fn forged_challenge_is_rejected_directly_and_recursively() -> Result<()> {
+    let pasta = Pasta::baked();
+    let app = open_app()?;
+    let mut rng = StdRng::seed_from_u64(99);
+
+    let make_leaf = |rng: &mut StdRng, coeffs: &[u64]| -> Result<_> {
+        let p = poly(coeffs);
+        let com = app.commit_polynomial(&p)?;
+        let (leaf, ()) = app.seed(
+            rng,
+            CommitAndOpen::new(Pasta::circuit_poseidon(pasta)),
+            CommitAndOpenWitness {
+                commitment: com,
+                claimed_y: None,
+            },
+        )?;
+        Ok(leaf)
+    };
+
+    let honest = make_leaf(&mut rng, &[3, 1, 4, 1, 5])?;
+    assert!(app.verify(&honest, &mut rng)?);
+
+    // Keep the point, change the challenge.
+    let mut forged = honest;
+    forged.corrupt(Corruption::ChallengeValue(0, Fp::from(1u64)));
+    assert!(
+        !app.verify(&forged, &mut rng)?,
+        "root verify must reject a challenge that is not its point's hash"
+    );
+
+    // Fused as a child, `challenge_binding` re-derives the challenge from the
+    // point and enforces the pair, so the parent cannot be produced.
+    let leaf2 = make_leaf(&mut rng, &[2, 7, 1, 8])?;
+    let p3 = poly(&[5, 5, 5]);
+    let com3 = app.commit_polynomial(&p3)?;
+    let x = Fp::from(11u64);
+    let y = p3.eval(x);
+
+    let fused = app.fuse(
+        &mut rng,
+        OpenAndHash::new(Pasta::circuit_poseidon(pasta)),
+        OpenAndHashWitness {
+            commitment: com3,
+            x,
+            y,
+        },
+        forged,
+        leaf2,
+    );
+
+    match fused {
+        Err(e) => std::eprintln!("interior fuse rejected the forged challenge: {e:?}"),
+        Ok((parent, ())) => {
+            assert!(
+                !app.verify(&parent, &mut rng)?,
+                "a parent of a forged-challenge child must not verify"
+            );
+        }
+    }
+
+    Ok(())
+}
+
 /// **S1 — the claim commitment is not bound to the folded polynomial.**
 ///
 /// A claim's instance-bound `com` is what the *step* sees: its Fiat-Shamir

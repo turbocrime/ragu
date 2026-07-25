@@ -24,9 +24,11 @@ use crate::{
 };
 
 /// Number of curve points in this stage: the native preamble commitment plus,
-/// per child, the 15 `_10_p` components, the stashed poly-query claim
-/// commitments, and the stashed challenge-stage commitments.
-pub const NUM_POINTS: usize = 1 + 2 * (15 + NUM_POLY_QUERY_SLOTS + crate::NUM_CHALLENGE_SLOTS);
+/// per child, the `_10_p` components (one per [`RxIndex`], plus `a`, `b`,
+/// `registry_xy` and `p`), the stashed poly-query claim commitments, and the
+/// stashed challenge-stage commitments.
+pub const NUM_POINTS: usize =
+    1 + 2 * (RxIndex::NUM + 4 + NUM_POLY_QUERY_SLOTS + crate::NUM_CHALLENGE_SLOTS);
 
 /// Witness data for a single child proof in the preamble bridge stage.
 ///
@@ -51,6 +53,8 @@ pub struct ChildWitness<C: CurveAffine> {
     pub outer_collapse: C,
     /// Commitment from the child's compute_v circuit.
     pub compute_v: C,
+    /// Commitment from the child's challenge binding circuit.
+    pub challenge_binding: C,
 
     /// Stashed commitment from the child's preamble bridge stage.
     pub stashed_preamble: C,
@@ -93,6 +97,7 @@ impl<C: CurveAffine> ChildWitness<C> {
             inner_collapse: proof.native_rx_commitment(RxIndex::InnerCollapse),
             outer_collapse: proof.native_rx_commitment(RxIndex::OuterCollapse),
             compute_v: proof.native_rx_commitment(RxIndex::ComputeV),
+            challenge_binding: proof.native_rx_commitment(RxIndex::ChallengeBinding),
             stashed_preamble: proof.native_rx_commitment(RxIndex::Preamble),
             stashed_inner_error: proof.native_rx_commitment(RxIndex::InnerError),
             stashed_outer_error: proof.native_rx_commitment(RxIndex::OuterError),
@@ -142,6 +147,9 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     /// Point commitment from the child's compute_v circuit.
     #[ragu(gadget)]
     pub compute_v: Point<'dr, D, C>,
+    /// Point commitment from the child's challenge binding circuit.
+    #[ragu(gadget)]
+    pub challenge_binding: Point<'dr, D, C>,
 
     /// Stashed commitment from the child's preamble bridge stage.
     #[ragu(gadget)]
@@ -195,6 +203,7 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> core::ops::Index<RxIndex>
             InnerCollapse => &self.inner_collapse,
             OuterCollapse => &self.outer_collapse,
             ComputeV => &self.compute_v,
+            ChallengeBinding => &self.challenge_binding,
             Preamble => &self.stashed_preamble,
             InnerError => &self.stashed_inner_error,
             OuterError => &self.stashed_outer_error,
@@ -213,6 +222,7 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> ChildOutput<'dr, D, C> {
             inner_collapse: Point::alloc(dr, witness.as_ref().map(|w| w.inner_collapse))?,
             outer_collapse: Point::alloc(dr, witness.as_ref().map(|w| w.outer_collapse))?,
             compute_v: Point::alloc(dr, witness.as_ref().map(|w| w.compute_v))?,
+            challenge_binding: Point::alloc(dr, witness.as_ref().map(|w| w.challenge_binding))?,
             stashed_preamble: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_preamble))?,
             stashed_inner_error: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_inner_error))?,
             stashed_outer_error: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_outer_error))?,

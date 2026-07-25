@@ -315,8 +315,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
 
     fn values() -> usize {
         // InternalCircuitIndex::NUM + registry_wxy (1)
-        //   + 2 * ChildEvaluations (16 + challenge slots each)
-        InternalCircuitIndex::NUM + 1 + 2 * (16 + crate::NUM_CHALLENGE_SLOTS)
+        //   + 2 * ChildEvaluations (one rx evaluation per RxIndex, one per
+        //     challenge slot, and 5 scalars)
+        InternalCircuitIndex::NUM + 1 + 2 * (RxIndex::NUM + crate::NUM_CHALLENGE_SLOTS + 5)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

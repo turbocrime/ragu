@@ -40,7 +40,7 @@ use crate::internal::{Side, endoscalar};
 /// The endoscaling circuits process these points across
 /// [`NUM_ENDOSCALING_STEPS`] steps.
 pub const NUM_ENDOSCALING_POINTS: usize =
-    37 + 2 * crate::NUM_POLY_QUERY_SLOTS + 2 * crate::NUM_CHALLENGE_SLOTS;
+    39 + 2 * crate::NUM_POLY_QUERY_SLOTS + 2 * crate::NUM_CHALLENGE_SLOTS;
 
 /// Number of endoscaling steps, derived from [`NUM_ENDOSCALING_POINTS`] via
 /// [`endoscalar::num_steps`].

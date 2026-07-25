@@ -92,11 +92,12 @@ fn test_internal_circuit_constraint_counts() {
         }};
     }
 
-    check_constraints!(Hashes1Circuit,        mul = 1458, lin = 2058);
-    check_constraints!(Hashes2Circuit,        mul = 2006, lin = 2951);
-    check_constraints!(InnerCollapseCircuit,  mul = 1883, lin = 1918);
-    check_constraints!(OuterCollapseCircuit,  mul = 2044, lin = 3030);
-    check_constraints!(ComputeVCircuit,       mul = 1356, lin = 1953);
+    check_constraints!(Hashes1Circuit,          mul = 1458, lin = 2058);
+    check_constraints!(Hashes2Circuit,          mul = 2006, lin = 2951);
+    check_constraints!(InnerCollapseCircuit,    mul = 1883, lin = 1918);
+    check_constraints!(OuterCollapseCircuit,    mul = 2044, lin = 3030);
+    check_constraints!(ComputeVCircuit,         mul = 1372, lin = 1979);
+    check_constraints!(ChallengeBindingCircuit, mul = 1536, lin = 2379);
 }
 
 #[rustfmt::skip]
@@ -112,8 +113,8 @@ fn test_internal_stage_parameters() {
     check_stage!(Preamble, skip =   1, num = 352);
     check_stage!(OuterError,  skip = 353, num = 186);
     check_stage!(InnerError,  skip = 539, num = 399);
-    check_stage!(Query,   skip = 353, num =  27);
-    check_stage!(Eval,    skip = 380, num =  24);
+    check_stage!(Query,   skip = 353, num =  29);
+    check_stage!(Eval,    skip = 382, num =  25);
 }
 
 /// Helper test to print current constraint counts in copy-pasteable format.
@@ -143,6 +144,10 @@ fn print_internal_circuit_constraint_counts() {
             InternalCircuitIndex::OuterCollapseCircuit,
         ),
         ("ComputeVCircuit", InternalCircuitIndex::ComputeVCircuit),
+        (
+            "ChallengeBindingCircuit",
+            InternalCircuitIndex::ChallengeBindingCircuit,
+        ),
     ];
 
     println!("\n// Copy-paste the following into test_internal_circuit_constraint_counts:");
@@ -204,8 +209,11 @@ fn test_native_registry_digest() {
     // Changed when challenge derivation moved into application-circuit stages:
     // every application circuit gained `NUM_CHALLENGE_SLOTS` staged wire
     // regions and `NUM_CHALLENGE_SLOTS * 3` instance elements (the bridged
-    // stage commitment and its challenge, per slot).
-    let expected = fp!(0x2de379ac81e762ac789c243b0c034aa054b52947c1fab5aaee31cea6d6c9b17c);
+    // stage commitment and its challenge, per slot). Changed again when the
+    // `challenge_binding` circuit landed: the native registry gained that
+    // circuit, a `PreambleFinalStaged` mask, and one more `RxIndex` component
+    // (which widens the `query` and `eval` stages by one evaluation per child).
+    let expected = fp!(0x1366112639faf229a1253d6173552581306313e17f8110f3e057d09c4dc73a66);
 
     assert_eq!(
         app.native_registry.digest(),
@@ -238,8 +246,11 @@ fn test_nested_registry_digest() {
     // grew by `2 * NUM_CHALLENGE_SLOTS`. Changed again when the challenge
     // bridge stages landed: one more bonding mask per challenge slot, the eval
     // bridge widened to record them, and `Loading`'s final stage moved from the
-    // last claim bridge to the last challenge bridge.
-    let expected = fq!(0x1af519a9f875913886258ac6c8e6ba03ba398b941c8a71b8b4e885ab6ce23f39);
+    // last claim bridge to the last challenge bridge. Changed again when the
+    // `challenge_binding` circuit landed: its rx joins the per-child
+    // commitment walk, so `NUM_ENDOSCALING_POINTS` grew by two and the nested
+    // preamble stashes one more commitment per child.
+    let expected = fq!(0x27cc1b6504ed5cebe1e0106265c3cd9527a4b4b5ac5659f1d853649c0a633cae);
 
     assert_eq!(
         app.nested_registry.digest(),
