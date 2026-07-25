@@ -44,6 +44,13 @@ where
 // 105 no longer fits: the poly-query claim slots extend application_ky, and
 // outer_collapse (the largest internal circuit) was already within a few
 // gates of the rank bound at 105.
+//
+// This is not a free test parameter. It is the widest header the framework
+// claims to support, and it is one half of a pair with
+// `NUM_POLY_QUERY_SLOTS` — at 100 and 4, `outer_collapse` measures 2044 of
+// its 2048 gates, so neither number can rise without the other falling. See
+// that constant's documentation for the trade; a fifth slot fits only if
+// this drops to around 60.
 pub const HEADER_SIZE: usize = 100;
 
 // Number of dummy application circuits to register before testing internal

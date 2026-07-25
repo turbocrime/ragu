@@ -67,14 +67,34 @@ pub(crate) const RAGU_TAG: &[u8] = b"FIXME";
 /// The slots are bound by the circuit's $k(Y)$ public-input polynomial and
 /// recursively enforced at the next fuse via the PCS $(P, u, v)$ accumulator.
 ///
-/// The specific value is governed by the enforcement circuit's endoscaling
-/// budget, not by any consumer. Each slot contributes one host commitment per
-/// child proof to the point list the next fuse endoscales, so
-/// `NUM_ENDOSCALING_POINTS = 37 + 2 * NUM_POLY_QUERY_SLOTS` (see the `nested`
-/// module); the resulting number of endoscaling steps — at four endoscalings
-/// per step — must fit the enforcement circuit's target size. Raising this
-/// constant widens that circuit; it is capped by what fits, not by the needs
-/// of any particular claim producer.
+/// # Why four
+///
+/// Not a consumer's choice, and not the endoscaling budget either — the
+/// binding circuit is `outer_collapse`, and it is **exactly full**. Each slot
+/// puts four more elements (`com.x`, `com.y`, `x`, `y`) per child proof into
+/// the $k(Y)$ the collapse circuits absorb, and at `HEADER_SIZE = 100` —
+/// the widest header the framework claims to support, which is what
+/// `internal::tests` pins — `OuterCollapseCircuit` measures 2044 gates of its
+/// 2048. A fifth slot needs about eight more and fails registration with
+/// `GateBoundExceeded`.
+///
+/// So this constant trades directly against `HEADER_SIZE`: at
+/// `HEADER_SIZE = 60` a fifth slot registers cleanly. Raising the slot count
+/// therefore means *narrowing the supported header*, and both numbers have to
+/// move together — which is why `internal::tests::HEADER_SIZE` is part of the
+/// contract rather than an arbitrary test fixture. Changing either one without
+/// re-measuring `test_internal_circuit_constraint_counts` will fail there.
+///
+/// Each slot also contributes one host commitment per child to the point list
+/// the next fuse endoscales (see `NUM_ENDOSCALING_POINTS` in the `nested`
+/// module), but that budget has room; the collapse circuit runs out first.
+///
+/// A slot is one *query*, not one polynomial: a step that opens the same
+/// polynomial at two points spends two slots, calling
+/// [`witness_polynomial`](step::StepCtx::witness_polynomial) once per slot
+/// because each slot's `com` is its own bridge-stage commitment. The framework
+/// pays for all four slots whether or not a step uses them, so an opening's
+/// marginal cost is zero until the budget is gone.
 pub const NUM_POLY_QUERY_SLOTS: usize = 4;
 
 /// Maximum element width of a single
