@@ -14,53 +14,91 @@
 //! stage (as [`super::eval`] does for its stashed copies) would yield a single
 //! commitment that cannot identify an individual claim.
 //!
-//! The stages chain after [`super::eval`] in slot order, so slot `i`'s wires
-//! occupy a distinct, statically-known region of the trace. The stage itself is
-//! [`host_bridge::Stage`](super::host_bridge::Stage), shared with
-//! [`super::challenge_bridge`]; only the chain differs.
+//! ## Why this family is a run
+//!
+//! How many claim slots exist is a property of the application being built, not
+//! of any Rust type, so this family cannot be a chain of aliases the way
+//! [`super::challenge_bridge`] is. It is a [`host_bridge::Run`] instead: one
+//! stage in the typed hierarchy spanning every slot, subdivided by a
+//! [`layout`] that says where each slot's wires begin.
+//!
+//! Nothing downstream has to care. The run occupies the same gates the alias
+//! chain did, so [`super::challenge_bridge`] chains after [`Run`] exactly as it
+//! chained after the last alias, and the loading circuit's `Last` is still an
+//! ordinary stage type.
 
-/// Bridge stage for poly-query claim slot 0.
-pub type Stage0<C, R> = super::host_bridge::Stage<C, R, super::eval::Stage<C, R>>;
-/// Bridge stage for poly-query claim slot 1.
-pub type Stage1<C, R> = super::host_bridge::Stage<C, R, Stage0<C, R>>;
-/// Bridge stage for poly-query claim slot 2.
-pub type Stage2<C, R> = super::host_bridge::Stage<C, R, Stage1<C, R>>;
-/// Bridge stage for poly-query claim slot 3.
-pub type Stage3<C, R> = super::host_bridge::Stage<C, R, Stage2<C, R>>;
-/// Bridge stage for poly-query claim slot 4.
-pub type Stage4<C, R> = super::host_bridge::Stage<C, R, Stage3<C, R>>;
-/// Bridge stage for poly-query claim slot 5.
-pub type Stage5<C, R> = super::host_bridge::Stage<C, R, Stage4<C, R>>;
-/// Bridge stage for poly-query claim slot 6.
-pub type Stage6<C, R> = super::host_bridge::Stage<C, R, Stage5<C, R>>;
-/// Bridge stage for poly-query claim slot 7.
-pub type Stage7<C, R> = super::host_bridge::Stage<C, R, Stage6<C, R>>;
+use ragu_arithmetic::CurveAffine;
+use ragu_circuits::{polynomials::Rank, staging::InducedStages};
+use ragu_primitives::vec::Len;
 
-/// The end of the claim-bridge chain — what the next family chains after.
-/// Naming it here means extending the chain above is the only edit needed;
-/// [`super::challenge_bridge`] follows this rather than a specific slot.
-pub type Last<C, R> = Stage7<C, R>;
+use super::host_bridge;
 
-/// Compile-time guard: the number of aliases above must match the number of
-/// claim slots. Bump both together.
-const _: () = assert!(crate::NUM_POLY_QUERY_SLOTS == 8);
+/// The number of poly-query claim slots, as a type.
+///
+/// [`Len`] is how the framework carries a length that is known at compile time
+/// but is not a literal — the same escape hatch `FixedVec` uses. Making the
+/// count an application parameter means changing what this returns, not
+/// rewriting the stage hierarchy.
+pub struct Slots;
+
+impl Len for Slots {
+    fn len() -> usize {
+        crate::NUM_POLY_QUERY_SLOTS
+    }
+}
+
+/// The claim-bridge family: every slot, as one stage chained after
+/// [`super::eval`].
+pub type Run<C, R> = host_bridge::Run<C, R, super::eval::Stage<C, R>, Slots>;
+
+/// The witness body for a single claim slot.
+///
+/// Its own chain position is unused — where a slot's wires land comes from
+/// [`layout`], not from this type — so one type serves every slot.
+pub type Slot<C, R> = host_bridge::Stage<C, R, ()>;
+
+/// The layout subdividing [`Run`] into one slot per claim.
+pub fn layout<C: CurveAffine, R: Rank>() -> InducedStages {
+    Run::<C, R>::layout()
+}
 
 #[cfg(test)]
 mod tests {
+    use ragu_circuits::staging::{Stage, StageExt};
     use ragu_pasta::EqAffine;
 
     use super::*;
     use crate::internal::tests::{R, assert_stage_values};
 
+    /// The field the nested stages are defined over.
+    type F = <EqAffine as CurveAffine>::Base;
+
     #[test]
     fn stage_values_matches_wire_count() {
-        assert_stage_values(&Stage0::<EqAffine, R>::default());
-        assert_stage_values(&Stage1::<EqAffine, R>::default());
-        assert_stage_values(&Stage2::<EqAffine, R>::default());
-        assert_stage_values(&Stage3::<EqAffine, R>::default());
-        assert_stage_values(&Stage4::<EqAffine, R>::default());
-        assert_stage_values(&Stage5::<EqAffine, R>::default());
-        assert_stage_values(&Stage6::<EqAffine, R>::default());
-        assert_stage_values(&Stage7::<EqAffine, R>::default());
+        assert_stage_values(&Slot::<EqAffine, R>::default());
+        assert_stage_values(&Run::<EqAffine, R>::default());
+    }
+
+    /// The layout tiles the run exactly: one slot per claim, starting where the
+    /// run starts and ending where it ends.
+    ///
+    /// `configure_induced` enforces this at reservation time too, but pinning
+    /// it here says which of the two descriptions moved when it breaks.
+    #[test]
+    fn layout_tiles_the_run() {
+        let layout = layout::<EqAffine, R>();
+
+        assert_eq!(layout.len(), crate::NUM_POLY_QUERY_SLOTS);
+        assert_eq!(
+            layout.skip_gates(0),
+            <Run<EqAffine, R> as Stage<F, R>>::skip_gates(),
+            "the first slot does not start where the run does"
+        );
+        assert_eq!(
+            layout.final_skip_gates(),
+            <Run<EqAffine, R> as Stage<F, R>>::skip_gates()
+                + <Run<EqAffine, R> as StageExt<F, R>>::num_gates(),
+            "the slots do not fill the run"
+        );
     }
 }

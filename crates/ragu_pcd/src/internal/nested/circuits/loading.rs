@@ -112,14 +112,10 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         let (query_guard, dr) = dr.add_stage::<stages::query::Stage<C, R>>()?;
         let (f_guard, dr) = dr.add_stage::<stages::f::Stage<C, R>>()?;
         let (eval_guard, dr) = dr.add_stage::<stages::eval::Stage<C, R>>()?;
-        let (claim0_guard, dr) = dr.add_stage::<stages::claim_bridge::Stage0<C, R>>()?;
-        let (claim1_guard, dr) = dr.add_stage::<stages::claim_bridge::Stage1<C, R>>()?;
-        let (claim2_guard, dr) = dr.add_stage::<stages::claim_bridge::Stage2<C, R>>()?;
-        let (claim3_guard, dr) = dr.add_stage::<stages::claim_bridge::Stage3<C, R>>()?;
-        let (claim4_guard, dr) = dr.add_stage::<stages::claim_bridge::Stage4<C, R>>()?;
-        let (claim5_guard, dr) = dr.add_stage::<stages::claim_bridge::Stage5<C, R>>()?;
-        let (claim6_guard, dr) = dr.add_stage::<stages::claim_bridge::Stage6<C, R>>()?;
-        let (claim7_guard, dr) = dr.add_stage::<stages::claim_bridge::Stage7<C, R>>()?;
+        let (claim_guards, dr) = dr.configure_induced::<stages::claim_bridge::Run<C, R>, _>(
+            stages::claim_bridge::Slot::<C, R>::default(),
+            &stages::claim_bridge::layout::<C, R>(),
+        )?;
         let (challenge0_guard, dr) = dr.add_stage::<stages::challenge_bridge::Stage0<C, R>>()?;
         let (challenge1_guard, dr) = dr.add_stage::<stages::challenge_bridge::Stage1<C, R>>()?;
         let dr = dr.finish();
@@ -139,16 +135,10 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         let query = query_guard.unenforced(dr, w!())?;
         let f_stage = f_guard.unenforced(dr, w!())?;
         let eval = eval_guard.unenforced(dr, w!())?;
-        let claim_bridges = [
-            claim0_guard.unenforced(dr, w!())?.host,
-            claim1_guard.unenforced(dr, w!())?.host,
-            claim2_guard.unenforced(dr, w!())?.host,
-            claim3_guard.unenforced(dr, w!())?.host,
-            claim4_guard.unenforced(dr, w!())?.host,
-            claim5_guard.unenforced(dr, w!())?.host,
-            claim6_guard.unenforced(dr, w!())?.host,
-            claim7_guard.unenforced(dr, w!())?.host,
-        ];
+        let claim_bridges = claim_guards
+            .into_iter()
+            .map(|guard| Ok(guard.unenforced(dr, w!())?.host))
+            .collect::<Result<alloc::vec::Vec<_>>>()?;
         let challenge_bridges = [
             challenge0_guard.unenforced(dr, w!())?.host,
             challenge1_guard.unenforced(dr, w!())?.host,
@@ -195,8 +185,12 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         // therefore the host point, so committing the stage (which yields the
         // claim's instance-bound `com`) binds `com` to that host commitment —
         // mirroring how `BridgeF.native_f` ties `bridge_f_commitment` above.
+        assert_eq!(
+            claim_bridges.len(),
+            NUM_POLY_QUERY_SLOTS,
+            "the claim-bridge run did not yield one slot per claim"
+        );
         for (slot, bridge_host) in claim_bridges.iter().enumerate() {
-            debug_assert!(slot < NUM_POLY_QUERY_SLOTS);
             bridge_host.enforce_equal(dr, &eval.claims[slot])?;
         }
 

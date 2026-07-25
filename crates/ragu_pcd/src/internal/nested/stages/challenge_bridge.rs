@@ -14,9 +14,15 @@
 //!
 //! Each slot gets its own stage, chained after the claim bridges, so slot `i`'s
 //! wires occupy a distinct, statically-known region of the trace.
+//!
+//! The challenge count is fixed by the framework rather than by the
+//! application, so this family stays a chain of aliases. It chains after
+//! [`claim_bridge::Run`](super::claim_bridge::Run) — a run occupies its gates
+//! like any other stage, so nothing here has to know the claim family is
+//! subdivided at runtime.
 
 /// Bridge stage for challenge slot 0.
-pub type Stage0<C, R> = super::host_bridge::Stage<C, R, super::claim_bridge::Last<C, R>>;
+pub type Stage0<C, R> = super::host_bridge::Stage<C, R, super::claim_bridge::Run<C, R>>;
 /// Bridge stage for challenge slot 1.
 pub type Stage1<C, R> = super::host_bridge::Stage<C, R, Stage0<C, R>>;
 

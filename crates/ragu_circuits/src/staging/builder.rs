@@ -195,11 +195,12 @@ impl<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R> + 'dr> StageGuard<'dr, D, R
     }
 }
 
-/// A [`StageGuard`] for a stage whose position came from a value-level layout
-/// rather than a `Parent` type chain.
+/// A [`StageGuard`] for one slot of an induced run, whose position within the
+/// run came from a value-level layout rather than a `Parent` type chain.
 ///
-/// Produced by [`StageBuilder::configure_induced`], which documents the
-/// obligation the caller takes on. Consumed exactly like a [`StageGuard`].
+/// Produced by [`StageBuilder::configure_induced`]. Consumed exactly like a
+/// [`StageGuard`] — the wires are already reserved, so nothing downstream of
+/// reservation differs.
 #[must_use = "InducedGuard must be consumed via `enforced` or `unenforced`"]
 pub struct InducedGuard<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R>> {
     stage: S,
@@ -305,37 +306,91 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
         ))
     }
 
-    /// Reserves one stage's wires from a **value-level** layout rather than
-    /// from a `Parent` type chain.
+    /// Reserves a **run** of stages whose slot boundaries come from a
+    /// value-level layout, while the run as a whole occupies one ordinary
+    /// typed stage `Next`.
     ///
     /// [`configure_stage`](Self::configure_stage) reads its geometry from
     /// `Next::values()` and `Next::num_gates()`, which the `Parent = Current`
-    /// bound places in the chain. When a circuit's stage *count* is a property
-    /// of the application being built rather than of any Rust type, that chain
-    /// cannot be written down, and the geometry comes from
-    /// [`InducedStages`](super::InducedStages) instead — the same numbers,
-    /// folded over recorded widths.
+    /// bound places in the chain. That works when the stage *count* is a
+    /// property of a Rust type. When it is instead a property of the
+    /// application being built, the chain cannot be written down slot by slot
+    /// — but it can still be written down as a whole: `Next` spans every slot,
+    /// and [`InducedStages`](super::InducedStages) says where inside that span
+    /// the boundaries fall.
     ///
-    /// `stage` supplies only the witness body, so one concrete type serves
-    /// every slot of a family: `values` and `num_gates` are taken from the
-    /// layout, not from the type, and the type's own chain position is
-    /// ignored.
+    /// That is what keeps a run ordinary. `Next` sits in the `Parent` chain
+    /// like any other stage, so `skip_gates` stays correct for everything
+    /// after it and typed stages — including
+    /// [`MultiStageCircuit::Last`](super::MultiStageCircuit::Last) — may follow
+    /// a run with no special handling. The typestate advances to `Next`
+    /// exactly as it would have.
     ///
-    /// # The invariant this moves
+    /// `stage` supplies only the witness body and is cloned per slot, so one
+    /// concrete type serves the whole family: each slot's width comes from the
+    /// layout, not from the type, and the type's own chain position is unused.
     ///
-    /// The typed path guarantees by construction that a stage occupies the
-    /// positions its mask covers. Here that guarantee becomes the caller's:
-    /// **the `values` and `num_gates` passed here must come from the same
-    /// [`InducedStages`](super::InducedStages) that produced the stage's
-    /// [`mask`](super::InducedStages::mask), and no typed stage may follow an
-    /// induced run** — a later `Parent` chain would compute `skip_gates` from
-    /// types and miss the induced wires entirely. Stage positions determine
-    /// where committed values live, so this is a soundness-relevant
-    /// obligation, not a style rule.
+    /// # Errors
     ///
-    /// `Current` deliberately does not advance: an induced run has no
-    /// type-level position to advance to.
-    pub fn configure_induced<S: Stage<D::F, R> + 'dr>(
+    /// Returns [`GateBoundExceeded`](ragu_core::Error::GateBoundExceeded) if
+    /// `layout` does not tile `Next` exactly — if it starts at a different gate
+    /// than `Next` does, or if its slots do not sum to `Next`'s span. This is
+    /// the check that ties the value-level layout to the type-level one, and it
+    /// is what lets the rest of the staging system keep trusting types: the
+    /// caller may choose the slot count freely, but a layout that would place
+    /// committed wires outside the span its mask covers is rejected here,
+    /// before any wire is allocated.
+    ///
+    /// A slot whose witness allocates an odd number of wires is padded to a
+    /// whole gate, exactly as [`configure_stage`](Self::configure_stage) pads a
+    /// typed stage; the layout must budget for that padding, since it is what
+    /// the slot's own mask will cover.
+    pub fn configure_induced<Next, S>(
+        mut self,
+        stage: S,
+        layout: &super::InducedStages,
+    ) -> Result<(
+        Vec<InducedGuard<'dr, D, R, S>>,
+        StageBuilder<'a, 'dr, D, R, Next, Target>,
+    )>
+    where
+        Next: Stage<D::F, R, Parent = Current>,
+        S: Stage<D::F, R> + Clone + 'dr,
+    {
+        // The run must tile the typed stage that stands for it: same start
+        // gate, same end gate. Either mismatch would put a slot's wires
+        // somewhere its mask does not cover.
+        if layout.skip_gates(0) != Next::skip_gates()
+            || layout.final_skip_gates() != Next::skip_gates() + Next::num_gates()
+        {
+            return Err(ragu_core::Error::GateBoundExceeded {
+                limit: Next::num_gates(),
+            });
+        }
+
+        let mut guards = Vec::with_capacity(layout.len());
+        for slot in 0..layout.len() {
+            guards.push(self.reserve_slot(
+                stage.clone(),
+                layout.width(slot),
+                layout.num_gates(slot),
+            )?);
+        }
+
+        Ok((
+            guards,
+            StageBuilder {
+                driver: self.driver,
+                on_finish: self.on_finish,
+                _marker: PhantomData,
+            },
+        ))
+    }
+
+    /// Reserves one slot of an induced run: the wire-allocation half of
+    /// [`configure_stage`](Self::configure_stage), with the geometry supplied
+    /// rather than read off a type.
+    fn reserve_slot<S: Stage<D::F, R> + 'dr>(
         &mut self,
         stage: S,
         values: usize,

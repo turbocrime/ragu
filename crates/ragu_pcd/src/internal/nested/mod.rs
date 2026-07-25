@@ -362,17 +362,10 @@ pub fn register_all<'params, C: Cycle, R: Rank>(
                 1 => stages::challenge_bridge::Stage1::<C::HostCurve, R>::mask()?,
                 _ => unreachable!("NUM_CHALLENGE_SLOTS is 2"),
             }),
-            BridgeClaim(slot) => registry.register_bonding(match slot {
-                0 => stages::claim_bridge::Stage0::<C::HostCurve, R>::mask()?,
-                1 => stages::claim_bridge::Stage1::<C::HostCurve, R>::mask()?,
-                2 => stages::claim_bridge::Stage2::<C::HostCurve, R>::mask()?,
-                3 => stages::claim_bridge::Stage3::<C::HostCurve, R>::mask()?,
-                4 => stages::claim_bridge::Stage4::<C::HostCurve, R>::mask()?,
-                5 => stages::claim_bridge::Stage5::<C::HostCurve, R>::mask()?,
-                6 => stages::claim_bridge::Stage6::<C::HostCurve, R>::mask()?,
-                7 => stages::claim_bridge::Stage7::<C::HostCurve, R>::mask()?,
-                _ => unreachable!("NUM_POLY_QUERY_SLOTS is 8"),
-            }),
+            BridgeClaim(slot) => registry.register_bonding(
+                stages::claim_bridge::layout::<C::HostCurve, R>()
+                    .mask::<C::ScalarField, R>(slot as usize)?,
+            ),
             Loading => {
                 let circuit = circuits::loading::Circuit::<C::HostCurve, R>::new();
                 registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?)

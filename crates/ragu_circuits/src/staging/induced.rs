@@ -14,6 +14,28 @@
 //! same masks, same rx, but folded over recorded widths rather than over a
 //! `Parent` type chain.
 //!
+//! ## An induced run is still one typed stage
+//!
+//! A layout does not replace the typed hierarchy; it subdivides one stage of
+//! it. The type system keeps describing the whole chain — the run appears in it
+//! as a single [`Stage`](super::Stage) whose `values()` spans every slot — and
+//! the layout says only where the slot boundaries fall *inside* that span.
+//!
+//! That works because gate spans add: a stage occupying `w` wires occupies
+//! `w.div_ceil(2)` gates, so a run of slots whose widths are all even spans
+//! exactly as many gates as the sum of its parts. Declaring the run as one
+//! typed stage therefore leaves `skip_gates` correct for everything that
+//! follows, and ordinary typed stages — including
+//! [`MultiStageCircuit::Last`](super::MultiStageCircuit::Last) — chain after it
+//! with no special handling. Nothing downstream of the run has to know the run
+//! was subdivided.
+//!
+//! Layouts are anchored for exactly this reason: [`InducedStages::after`] takes
+//! the run's position from the typed stage that spans it, so the layout
+//! describes a suffix of the trace rather than restating the prefix. See
+//! [`StageBuilder::configure_induced`](super::StageBuilder::configure_induced),
+//! which reserves a run and checks the layout against the span it was given.
+//!
 //! * [`skip_gates`](InducedStages::skip_gates) / [`num_gates`](InducedStages::num_gates)
 //!   mirror [`Stage::skip_gates`](super::Stage::skip_gates) and
 //!   [`StageExt::num_gates`](super::StageExt::num_gates) — the fold over the
@@ -21,9 +43,10 @@
 //! * [`mask`](InducedStages::mask) / [`final_mask`](InducedStages::final_mask)
 //!   mirror [`StageExt::mask`](super::StageExt::mask) and
 //!   [`StageExt::final_mask`](super::StageExt::final_mask).
-//! * [`rx`](InducedStages::rx) mirrors
-//!   [`StageExt::rx_configured`](super::StageExt::rx_configured), taking the
-//!   stage's slot values directly instead of re-running a typed witness.
+//! * [`rx_configured`](InducedStages::rx_configured) mirrors
+//!   [`StageExt::rx_configured`](super::StageExt::rx_configured), running a
+//!   stage body for its values but positioning them from the layout;
+//!   [`rx`](InducedStages::rx) is the same thing given the values directly.
 
 use alloc::{boxed::Box, vec::Vec};
 
@@ -37,20 +60,48 @@ use crate::{
 };
 
 /// A discovered, value-level stage layout: the wire width of each induced
-/// stage, in stage order.
+/// stage, in stage order, plus the gate the run starts at.
 ///
 /// See [`InducedStages`]'s module for how this mirrors the typed
 /// [`Stage`](super::Stage) geometry.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InducedStages {
+    /// Gates before the first slot, including the SYSTEM gate — the run's
+    /// anchor in the surrounding typed chain.
+    skip_gates: usize,
     widths: Vec<usize>,
 }
 
 impl InducedStages {
-    /// Creates a layout from the wire width of each stage, in stage order.
+    /// Creates a layout from the wire width of each stage, in stage order,
+    /// anchored at the start of the trace.
     /// (does not count the final stage, which is left as implicit)
     pub fn new(widths: Vec<usize>) -> Self {
-        Self { widths }
+        // What `after::<_, _, ()>` would produce: the base stage skips the
+        // SYSTEM gate and occupies nothing. Spelled out because `new` has no
+        // field or rank to name `()`'s `Stage` impl with.
+        Self {
+            skip_gates: 1,
+            widths,
+        }
+    }
+
+    /// Creates a layout for a run that begins immediately after the typed
+    /// stage `S` — the run's slots subdivide the span of the stage that
+    /// *follows* `S`.
+    ///
+    /// This is the constructor to reach for whenever the run is not the first
+    /// thing in the trace. Anchoring here rather than restating the prefix
+    /// widths means the typed chain stays the single source of truth for
+    /// everything before the run, so a change to an earlier stage cannot leave
+    /// the layout silently describing the wrong gates.
+    pub fn after<F: Field, R: Rank, S: super::Stage<F, R>>(widths: Vec<usize>) -> Self {
+        use super::StageExt;
+
+        Self {
+            skip_gates: S::skip_gates() + S::num_gates(),
+            widths,
+        }
     }
 
     /// Returns the number of stages in this layout.
@@ -91,10 +142,11 @@ impl InducedStages {
     /// Panics if `stage > self.len()` (equality is permitted: it yields the
     /// first gate after the last stage).
     pub fn skip_gates(&self, stage: usize) -> usize {
-        1 + self.widths[..stage]
-            .iter()
-            .map(|w| w.div_ceil(2))
-            .sum::<usize>()
+        self.skip_gates
+            + self.widths[..stage]
+                .iter()
+                .map(|w| w.div_ceil(2))
+                .sum::<usize>()
     }
 
     /// Returns `skip_gates` for the final trace — the first gate after every
@@ -151,6 +203,38 @@ impl InducedStages {
             2 * self.num_gates(stage),
             values,
         )
+    }
+
+    /// Computes the (partial) $r(X)$ polynomial for the given stage by running
+    /// a [`Stage`](super::Stage) body for its values; the value-level mirror of
+    /// [`StageExt::rx_configured`](super::StageExt::rx_configured).
+    ///
+    /// The stage supplies the witness body only — where the resulting wires
+    /// land comes from this layout, not from the type's own chain position.
+    /// That is the whole point: one stage type serves every slot of a run.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `stage >= self.len()`.
+    pub fn rx_configured<F: Field, R: Rank, S: super::Stage<F, R>>(
+        &self,
+        stage: usize,
+        alpha: F,
+        body: &S,
+        witness: S::Witness<'_>,
+    ) -> Result<sparse::Polynomial<F, R>> {
+        use ragu_core::{
+            drivers::emulator::Emulator,
+            maybe::{Always, MaybeKind},
+        };
+
+        let values = {
+            let mut dr = Emulator::extractor();
+            let out = body.witness(&mut dr, Always::maybe_just(|| witness))?;
+            dr.wires(&out)?
+        };
+
+        self.rx(stage, alpha, &values)
     }
 }
 
@@ -248,16 +332,58 @@ mod tests {
         }
     }
 
-    /// The induced reservation path reserves exactly what the typed path does,
-    /// given the same geometry.
+    /// A two-wire stage, the shape every slot of a real induced run has: one
+    /// value pair, exactly one gate, no padding.
+    #[derive(Clone, Default)]
+    struct TypedTwo;
+
+    #[derive(Gadget, Write)]
+    struct TwoElements<'dr, #[ragu(driver)] D: Driver<'dr>> {
+        #[ragu(gadget)]
+        a: Element<'dr, D>,
+        #[ragu(gadget)]
+        b: Element<'dr, D>,
+    }
+
+    impl Stage<Fp, R> for TypedTwo {
+        type Parent = ();
+        type Witness<'source> = [Fp; 2];
+        type OutputKind =
+            <TwoElements<'static, PhantomData<Fp>> as Gadget<'static, PhantomData<Fp>>>::Kind;
+
+        fn values() -> usize {
+            2
+        }
+
+        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+            &self,
+            dr: &mut D,
+            witness: DriverValue<D, Self::Witness<'source>>,
+        ) -> Result<Bound<'dr, D, Self::OutputKind>>
+        where
+            Self: 'dr,
+        {
+            use ragu_core::maybe::Maybe;
+            use ragu_primitives::allocator::Standard;
+            let alloc = &mut Standard::new();
+            let a = Element::alloc(dr, alloc, witness.as_ref().map(|w| w[0]))?;
+            let b = Element::alloc(dr, alloc, witness.as_ref().map(|w| w[1]))?;
+            Ok(TwoElements { a, b })
+        }
+    }
+
+    /// An induced run reserves exactly what the equivalent chain of typed
+    /// stages reserves, and leaves the trace at the same gate.
     ///
-    /// `configure_induced` moves an invariant out of the type system: the
-    /// typed path guarantees a stage occupies the positions its mask covers,
-    /// while the induced path makes that the caller's obligation. This pins
-    /// the two paths together for the case where both are expressible, so a
-    /// change to one that does not change the other fails here.
+    /// This is the property that lets a run be declared to the type system as
+    /// one stage: a run of two 2-wire slots and a single 4-wire stage cover the
+    /// same gates, so anything chaining after the run — including
+    /// `MultiStageCircuit::Last` — computes `skip_gates` correctly without
+    /// knowing the run was subdivided. If the two paths ever diverge, every
+    /// stage positioned after a run moves, so this is pinned rather than
+    /// argued.
     #[test]
-    fn induced_reservation_matches_typed() -> Result<()> {
+    fn induced_run_matches_typed_chain() -> Result<()> {
         use ragu_core::{
             drivers::emulator::{Emulator, Wireless},
             maybe::Empty,
@@ -265,7 +391,13 @@ mod tests {
 
         use crate::staging::StageBuilder;
 
-        let layout = InducedStages::new(alloc::vec![4]);
+        // Two 2-wire slots subdividing the span of one 4-wire typed stage.
+        let layout = InducedStages::new(alloc::vec![2, 2]);
+        assert_eq!(
+            layout.final_skip_gates(),
+            <TypedFour as Stage<Fp, R>>::skip_gates() + <TypedFour as StageExt<Fp, R>>::num_gates(),
+            "the run does not tile the typed stage that stands for it"
+        );
 
         let mut typed_dr: Emulator<Wireless<Empty, Fp>> = Emulator::counter();
         let typed = StageBuilder::<'_, '_, _, R, (), TypedFour>::new(&mut typed_dr, |_| {})
@@ -273,16 +405,56 @@ mod tests {
             .0;
 
         let mut induced_dr: Emulator<Wireless<Empty, Fp>> = Emulator::counter();
-        let mut builder = StageBuilder::<'_, '_, _, R, (), TypedFour>::new(&mut induced_dr, |_| {});
-        let induced = builder.configure_induced(TypedFour, layout.width(0), layout.num_gates(0))?;
+        let (induced, _) =
+            StageBuilder::<'_, '_, _, R, (), TypedFour>::new(&mut induced_dr, |_| {})
+                .configure_induced::<TypedFour, _>(TypedTwo, &layout)?;
 
+        assert_eq!(induced.len(), 2, "one guard per slot");
         assert_eq!(
-            induced.num_reserved(),
+            induced.iter().map(|g| g.num_reserved()).sum::<usize>(),
             typed.num_reserved(),
-            "induced reservation differs from the typed path"
+            "induced run reserves a different number of wires than the typed chain"
         );
 
         Ok(())
+    }
+
+    /// A layout that does not tile its typed stage is rejected before any wire
+    /// is allocated — the check that keeps the value-level and type-level
+    /// geometries from drifting apart.
+    #[test]
+    fn induced_run_must_tile_its_typed_stage() {
+        use ragu_core::{
+            drivers::emulator::{Emulator, Wireless},
+            maybe::Empty,
+        };
+
+        use crate::staging::StageBuilder;
+
+        // Three slots where the typed stage spans only two gates.
+        let layout = InducedStages::new(alloc::vec![2, 2, 2]);
+
+        let mut dr: Emulator<Wireless<Empty, Fp>> = Emulator::counter();
+        let result = StageBuilder::<'_, '_, _, R, (), TypedFour>::new(&mut dr, |_| {})
+            .configure_induced::<TypedFour, _>(TypedTwo, &layout);
+
+        assert!(
+            result.is_err(),
+            "an over-long run was accepted into a shorter typed span"
+        );
+    }
+
+    /// An anchored layout puts its first slot exactly where the following
+    /// typed stage would have started.
+    #[test]
+    fn anchored_layout_starts_after_its_base() {
+        let layout = InducedStages::after::<Fp, R, TypedFour>(alloc::vec![2, 2]);
+
+        assert_eq!(
+            layout.skip_gates(0),
+            <TypedThree as Stage<Fp, R>>::skip_gates(),
+            "an anchored run does not start where the next typed stage would"
+        );
     }
 
     #[test]

@@ -15,14 +15,18 @@
 use core::marker::PhantomData;
 
 use ragu_arithmetic::CurveAffine;
-use ragu_circuits::polynomials::Rank;
+use ragu_circuits::{polynomials::Rank, staging::InducedStages};
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
     maybe::Maybe,
 };
-use ragu_primitives::{Point, io::Write};
+use ragu_primitives::{
+    Point,
+    io::Write,
+    vec::{FixedVec, Len},
+};
 
 /// Number of curve points in each bridge stage: one host commitment.
 const NUM: usize = 1;
@@ -44,10 +48,18 @@ pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
 /// A bridge stage carrying one host-curve point, chained after `P`.
 ///
 /// The chain is expressed through the `Parent` associated type, which cannot be
-/// computed from a const generic on stable Rust — hence a type parameter and a
-/// chain of aliases per family, rather than one const-generic type.
+/// computed from a const generic on stable Rust. A family whose length is fixed
+/// by a Rust type writes itself as a chain of aliases over this; a family whose
+/// length is a property of the application uses [`Run`] instead, and passes
+/// this as the per-slot witness body with its chain position unused.
 pub struct Stage<C, R, P> {
     _marker: PhantomData<(C, R, P)>,
+}
+
+impl<C, R, P> Clone for Stage<C, R, P> {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
 }
 
 impl<C, R, P> Default for Stage<C, R, P> {
@@ -80,5 +92,85 @@ impl<C: CurveAffine, R: Rank, P: ragu_circuits::staging::Stage<C::Base, R>>
         Ok(Output {
             host: Point::alloc(dr, witness.as_ref().map(|w| w.host))?,
         })
+    }
+}
+
+/// A whole family of [`Stage`] slots, spanning `L::len()` of them, chained
+/// after `P`.
+///
+/// A family whose length is a property of the application cannot be a chain of
+/// aliases — but it does not have to be. `Run` is the family's single entry in
+/// the typed hierarchy: one ordinary [`Stage`](ragu_circuits::staging::Stage)
+/// covering every slot's wires, with
+/// [`InducedStages`] saying where the slot boundaries fall inside it.
+///
+/// This is exact rather than approximate. Each slot is [`NUM`] points, so
+/// `2 * NUM` wires, so a whole number of gates with nothing wasted to padding;
+/// a run of `L::len()` slots therefore spans precisely the gates that a chain
+/// of `L::len()` aliases would have. Everything after the run — including the
+/// circuit's [`Last`](ragu_circuits::staging::MultiStageCircuit::Last) stage —
+/// chains onto `Run` and computes the same `skip_gates` it always did, with no
+/// knowledge that the span is subdivided. `ragu_circuits`' own
+/// `induced_run_matches_typed_chain` test pins that equivalence.
+///
+/// `L` carries the slot count as a type so the count stays a compile-time fact
+/// even when it is not a literal — the escape hatch [`Len`] documents for
+/// exactly this case.
+pub struct Run<C, R, P, L> {
+    _marker: PhantomData<(C, R, P, L)>,
+}
+
+impl<C, R, P, L> Default for Run<C, R, P, L> {
+    fn default() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<C, R, P, L> Run<C, R, P, L>
+where
+    C: CurveAffine,
+    R: Rank,
+    P: ragu_circuits::staging::Stage<C::Base, R>,
+    L: Len,
+{
+    /// The layout subdividing this run into its slots, anchored at the gate the
+    /// run begins on.
+    ///
+    /// This is the only place the run's geometry is described twice — once as
+    /// `Run`'s own `values()`, once as the slot widths here — and
+    /// [`configure_induced`](ragu_circuits::staging::StageBuilder::configure_induced)
+    /// rejects the pair if they disagree.
+    pub fn layout() -> InducedStages {
+        InducedStages::after::<C::Base, R, P>(alloc::vec![NUM * 2; L::len()])
+    }
+}
+
+impl<C: CurveAffine, R: Rank, P: ragu_circuits::staging::Stage<C::Base, R>, L: Len>
+    ragu_circuits::staging::Stage<C::Base, R> for Run<C, R, P, L>
+{
+    type Parent = P;
+    type Witness<'source> = &'source [C];
+    type OutputKind = Kind![C::Base; FixedVec<Point<'_, _, C>, L>];
+
+    fn values() -> usize {
+        NUM * 2 * L::len()
+    }
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'source>>,
+    ) -> Result<Bound<'dr, D, Self::OutputKind>>
+    where
+        Self: 'dr,
+    {
+        let mut points = alloc::vec::Vec::with_capacity(L::len());
+        for slot in 0..L::len() {
+            points.push(Point::alloc(dr, witness.as_ref().map(|w| w[slot]))?);
+        }
+
+        FixedVec::new(points)
     }
 }

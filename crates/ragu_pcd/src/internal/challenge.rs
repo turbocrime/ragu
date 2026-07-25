@@ -90,25 +90,22 @@ pub(crate) fn claim_bridge_alpha<C: Cycle>(
 /// Builds poly-query claim `slot`'s bridge stage rx: a stage whose wires are
 /// the claim's host commitment.
 ///
-/// Dispatches on the slot because each slot is a distinct type with distinct
-/// generator positions.
+/// The slot is an index into the claim-bridge run's layout rather than a
+/// distinct type, so this reads the stage's position off the layout instead of
+/// dispatching. That is what lets the slot count be an application parameter:
+/// there is nothing here to widen when it changes.
 pub(crate) fn claim_bridge_rx<C: Cycle, R: Rank>(
     slot: usize,
     alpha: C::ScalarField,
     host: C::HostCurve,
 ) -> Result<sparse::Polynomial<C::ScalarField, R>> {
     let witness = host_bridge::Witness { host };
-    match slot {
-        0 => claim_bridge::Stage0::<C::HostCurve, R>::rx(alpha, &witness),
-        1 => claim_bridge::Stage1::<C::HostCurve, R>::rx(alpha, &witness),
-        2 => claim_bridge::Stage2::<C::HostCurve, R>::rx(alpha, &witness),
-        3 => claim_bridge::Stage3::<C::HostCurve, R>::rx(alpha, &witness),
-        4 => claim_bridge::Stage4::<C::HostCurve, R>::rx(alpha, &witness),
-        5 => claim_bridge::Stage5::<C::HostCurve, R>::rx(alpha, &witness),
-        6 => claim_bridge::Stage6::<C::HostCurve, R>::rx(alpha, &witness),
-        7 => claim_bridge::Stage7::<C::HostCurve, R>::rx(alpha, &witness),
-        _ => unreachable!("NUM_POLY_QUERY_SLOTS is 8"),
-    }
+    claim_bridge::layout::<C::HostCurve, R>().rx_configured(
+        slot,
+        alpha,
+        &claim_bridge::Slot::<C::HostCurve, R>::default(),
+        &witness,
+    )
 }
 
 /// The nested-curve commitment to claim `slot`'s bridge stage — the value a
