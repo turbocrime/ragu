@@ -963,7 +963,10 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
 
             application_challenges: core::mem::take(&mut self.application_challenges),
             challenge_stage_polys: core::mem::take(&mut self.challenge_stage_polys),
-            challenge_stage_commitments: core::mem::take(&mut self.challenge_stage_commitments),
+            challenge_stage_commitments: core::mem::take(&mut self.challenge_stage_commitments)
+                .into_iter()
+                .map(Cached)
+                .collect(),
             application_claims: self
                 .application_claims
                 .iter()
@@ -974,7 +977,11 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
                 })
                 .collect(),
             claim_polys: self.claim_polys,
-            claim_host_commitments: self.claim_host_commitments,
+            claim_host_commitments: self
+                .claim_host_commitments
+                .into_iter()
+                .map(Cached)
+                .collect(),
         })
     }
 }

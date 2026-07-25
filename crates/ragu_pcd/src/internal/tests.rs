@@ -96,7 +96,7 @@ fn test_internal_circuit_constraint_counts() {
     check_constraints!(Hashes2Circuit,          mul = 2006, lin = 2951);
     check_constraints!(InnerCollapseCircuit,    mul = 1883, lin = 1918);
     check_constraints!(OuterCollapseCircuit,    mul = 2044, lin = 3030);
-    check_constraints!(ComputeVCircuit,         mul = 1372, lin = 1979);
+    check_constraints!(ComputeVCircuit,         mul = 1380, lin = 1995);
     check_constraints!(ChallengeBindingCircuit, mul = 1536, lin = 2379);
 }
 
@@ -216,9 +216,15 @@ fn test_native_registry_digest() {
     // Changed again when unused challenge slots started being *filled* rather
     // than skipped: a skipped slot left its `CHALLENGE_WIDTH` reserved wires
     // unconstrained inside a region the stage commits, so each padded slot now
-    // pins them to zero. Only the native digest moves — application circuits
-    // are the ones with challenge stages.
-    let expected = fp!(0x3417605f0dc3ee69323a6a5cce45b3669a11841965c802df4ef9c8f8a87eb705);
+    // pins them to zero. Changed again when slot padding stopped being its own
+    // routine and started calling `derive_challenge` — which, like every real
+    // call, takes a fresh gate allocator, so a padded slot's challenge element
+    // no longer shares a gate with the next slot's. Changed again when the
+    // challenge stages became `RxIndex` variants: they moved from their own
+    // position in the `_10_p` accumulation into the `RxIndex::ALL` block, and
+    // `compute_v` gained the poly-query triple every other rx component has
+    // (four more per fuse, one per child per slot).
+    let expected = fp!(0x3347a700bed1281ea007c5b6ef8dc1042034e5385254df558d96e2e6be7786bf);
 
     assert_eq!(
         app.native_registry.digest(),
@@ -254,8 +260,11 @@ fn test_nested_registry_digest() {
     // last claim bridge to the last challenge bridge. Changed again when the
     // `challenge_binding` circuit landed: its rx joins the per-child
     // commitment walk, so `NUM_ENDOSCALING_POINTS` grew by two and the nested
-    // preamble stashes one more commitment per child.
-    let expected = fq!(0x27cc1b6504ed5cebe1e0106265c3cd9527a4b4b5ac5659f1d853649c0a633cae);
+    // preamble stashes one more commitment per child. Changed again when the
+    // challenge stages became `RxIndex` variants: the point count is unchanged,
+    // but they moved within the per-child block, from after the poly-query
+    // claims to inside the `RxIndex::ALL` run.
+    let expected = fq!(0x15576ca1721dbffe0db4f79c053960ce696c2902ab572dab6df0655abd2823d2);
 
     assert_eq!(
         app.nested_registry.digest(),

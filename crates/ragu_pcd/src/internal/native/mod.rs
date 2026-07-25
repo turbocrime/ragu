@@ -247,11 +247,21 @@ pub enum RxIndex {
     OuterError,
     Query,
     Eval,
+    /// An application circuit's challenge-stage polynomial, by slot.
+    ///
+    /// An application circuit is multi-stage — $r(X) = r'(X) + a(X) + b(X)$ —
+    /// and each challenge slot contributes one staged partial trace. Those
+    /// stages are rx polynomials of the child like any other: committed per
+    /// child, folded in `_10_p`, tied to the endoscaling point list in
+    /// `loading`, and opened at $xz$ by `compute_v` against the quotient
+    /// `_08_f` folds. Being an [`RxIndex`] variant is what gets them all of
+    /// that from the same code every other component uses.
+    ChallengeStage(u32),
 }
 
 impl RxIndex {
     /// The number of rx polynomial components.
-    pub const NUM: usize = 12;
+    pub const NUM: usize = 12 + crate::NUM_CHALLENGE_SLOTS;
 
     /// All variants in canonical order.
     ///
@@ -276,6 +286,11 @@ impl RxIndex {
         push(&mut slots, &mut c, Self::OuterError);
         push(&mut slots, &mut c, Self::Query);
         push(&mut slots, &mut c, Self::Eval);
+        let mut i = 0;
+        while i < crate::NUM_CHALLENGE_SLOTS {
+            push(&mut slots, &mut c, Self::ChallengeStage(i as u32));
+            i += 1;
+        }
         assert!(c == Self::NUM);
         slots
     }
@@ -300,6 +315,8 @@ pub struct RxValues<T> {
     pub outer_error: T,
     pub query: T,
     pub eval: T,
+    /// One per challenge slot, in slot order.
+    pub challenge_stages: [T; crate::NUM_CHALLENGE_SLOTS],
 }
 
 impl<T> RxValues<T> {
@@ -319,6 +336,7 @@ impl<T> RxValues<T> {
             OuterError => &self.outer_error,
             Query => &self.query,
             Eval => &self.eval,
+            ChallengeStage(slot) => &self.challenge_stages[slot as usize],
         }
     }
 
@@ -350,6 +368,16 @@ impl<T> RxValues<T> {
             outer_error: f(OuterError)?,
             query: f(Query)?,
             eval: f(Eval)?,
+            challenge_stages: {
+                let mut slots = alloc::vec::Vec::with_capacity(crate::NUM_CHALLENGE_SLOTS);
+                for slot in 0..crate::NUM_CHALLENGE_SLOTS {
+                    slots.push(f(ChallengeStage(slot as u32))?);
+                }
+                match <[T; crate::NUM_CHALLENGE_SLOTS]>::try_from(slots) {
+                    Ok(slots) => slots,
+                    Err(_) => unreachable!("pushed exactly NUM_CHALLENGE_SLOTS values"),
+                }
+            },
         })
     }
 }
@@ -365,12 +393,6 @@ pub enum RxComponent {
     AbB,
     /// An rx polynomial component indexed by [`RxIndex`].
     Rx(RxIndex),
-    /// An application circuit's challenge-stage polynomial, by slot.
-    ///
-    /// Deliberately *not* an [`RxIndex`] variant: `RxIndex::ALL` drives the
-    /// per-child commitment walk in the `loading` circuit, and a challenge
-    /// stage's commitment rides the poly-query claims' rails instead.
-    ChallengeStage(u32),
 }
 
 /// Registers internal native circuits and masks into the provided registry.

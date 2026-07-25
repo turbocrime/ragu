@@ -104,7 +104,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         host: C::HostCurve,
     ) {
         self.claim_polys[slot] = poly;
-        self.claim_host_commitments[slot] = host;
+        self.set_claim_host_commitment(slot, host);
     }
 }
 

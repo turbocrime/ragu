@@ -31,16 +31,16 @@ use crate::internal::{Side, endoscalar};
 /// Number of curve points accumulated during `compute_p` for nested field
 /// endoscaling verification.
 ///
-/// This is the sum of per-child commitment components (for both proofs,
-/// including each child's poly-query claim host commitments and its
-/// challenge-stage commitments), current-step
-/// stage proof components, and the `f.commitment` base polynomial. See
-/// `_10_p` for the canonical accumulation order.
+/// This is the sum of per-child commitment components (for both proofs: one
+/// per [`RxIndex`](crate::internal::native::RxIndex) — challenge stages
+/// included — plus `a`, `b`, `registry_xy`, `p`, and the poly-query claim host
+/// commitments), current-step stage proof components, and the `f.commitment`
+/// base polynomial. See `_10_p` for the canonical accumulation order.
 ///
 /// The endoscaling circuits process these points across
 /// [`NUM_ENDOSCALING_STEPS`] steps.
 pub const NUM_ENDOSCALING_POINTS: usize =
-    39 + 2 * crate::NUM_POLY_QUERY_SLOTS + 2 * crate::NUM_CHALLENGE_SLOTS;
+    1 + 2 * (crate::internal::native::RxIndex::NUM + 4 + crate::NUM_POLY_QUERY_SLOTS) + 6;
 
 /// Number of endoscaling steps, derived from [`NUM_ENDOSCALING_POINTS`] via
 /// [`endoscalar::num_steps`].

@@ -161,10 +161,6 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
             for stashed_claim in child.stashed_claims.iter() {
                 walker.enforce_equal(dr, stashed_claim)?;
             }
-            // After the claims, matching the `_10_p` accumulation order.
-            for stashed_stage in child.stashed_challenge_stages.iter() {
-                walker.enforce_equal(dr, stashed_stage)?;
-            }
         }
 
         walker.enforce_equal(dr, &s_prime.registry_wx0)?;

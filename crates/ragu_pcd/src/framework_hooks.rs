@@ -105,7 +105,6 @@
 use alloc::vec::Vec;
 
 use ragu_arithmetic::{CurveAffine, Cycle, ff::Field};
-use ragu_circuits::polynomials::Rank;
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverValue},
@@ -113,13 +112,10 @@ use ragu_core::{
 };
 use ragu_primitives::{
     Element, GadgetExt, Point,
-    allocator::Standard,
     vec::{ConstLen, FixedVec},
 };
 
-use crate::{
-    NUM_CHALLENGE_SLOTS, NUM_POLY_QUERY_SLOTS, step::internal::challenge_stage::ChallengeSlots,
-};
+use crate::{NUM_CHALLENGE_SLOTS, NUM_POLY_QUERY_SLOTS};
 
 /// A single polynomial-commitment opening claim, with the polynomial it opens.
 ///
@@ -387,9 +383,9 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHookOutputs<'d
         let challenges = collect_values::<D, _>(challenges)?;
         let challenge_inputs = collect_values::<D, _>(self.challenge_inputs)?;
 
-        // `finish` padded each to its slot count, so these conversions cannot
-        // fail; the fixed types are what make that guarantee readable at every
-        // consumer, instead of a length assertion at each one.
+        // `StepCtx::finish_slots` padded each to its slot count, so these
+        // conversions cannot fail; the fixed types are what make that guarantee
+        // readable at every consumer, instead of a length assertion at each one.
         D::try_just(move || {
             Ok(FrameworkAux {
                 claims: FixedVec::try_from(claims.take())?,
@@ -444,12 +440,11 @@ impl<C: Cycle> Copy for Alphas<C> {}
 ///
 /// A [`DriverValue`] rather than an `Option`, because its absence is exactly
 /// the driver's absence of values — unlike [`HookLayout`], which
-/// distinguishes two passes that are *both* structure-only. Every use already
-/// sits inside a `try_just` that a structure-only driver discards, so there is
-/// no absent case to handle and no error to invent for a state that cannot
-/// arise: registration builds its adapter with `Adapter::new` and only ever
-/// witnesses it on a structure-only driver, while proving builds it with
-/// `Adapter::proving`. Those two facts meet once, in `Adapter::witness`.
+/// distinguishes two passes that are *both* structure-only. Every use sits
+/// inside a `try_just` that a structure-only driver discards, so no hook body
+/// has an absent case to handle. The adapter assembles this once, in its
+/// `witness`, from the blinds the driver carried and the parameters it was
+/// built with.
 pub struct ProofValues<'dr, C: Cycle> {
     pub(crate) params: &'dr C::Params,
     pub(crate) bridge_alpha: C::ScalarField,
@@ -656,32 +651,33 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
         Ok(())
     }
 
-    /// Completes the fixed-size slot layout and drains the hooks.
+    /// The number of poly-query claim slots filled so far, and the number of
+    /// challenge slots. [`StepCtx::finish_slots`](crate::step::StepCtx) reads
+    /// these to know how many remain to pad.
+    pub(crate) fn claims_filled(&self) -> usize {
+        self.poly_query_claims.len()
+    }
+
+    /// See [`claims_filled`](Self::claims_filled).
+    pub(crate) fn challenges_filled(&self) -> usize {
+        self.challenge_pairs.len()
+    }
+
+    /// Checks that the step body made exactly the hook calls the registration
+    /// dry run discovered, and spends the guard.
     ///
-    /// The two determinism guards first: every discovered call must have
-    /// happened, or the synthesized circuit would differ from the registered
-    /// structure. These complement the per-call checks inside
+    /// Every discovered call must have happened, or the synthesized circuit
+    /// would differ from the registered structure. This complements the
+    /// per-call checks inside
     /// [`take_challenge_slot`](Self::take_challenge_slot) and
-    /// [`next_claim_slot`](Self::next_claim_slot), which catch the excess; this
-    /// catches the shortfall.
+    /// [`next_claim_slot`](Self::next_claim_slot), which catch the excess;
+    /// this catches the shortfall.
     ///
-    /// Then padding. Every application circuit exposes exactly
-    /// [`NUM_POLY_QUERY_SLOTS`] claims and [`NUM_CHALLENGE_SLOTS`] challenge
-    /// pairs, whatever the body used, so the instance shape — which the
-    /// internal circuits read as a fixed-width record — never depends on the
-    /// step. The unused slots are filled with values that are *real*, not
-    /// sentinel: a claim that is trivially true, and a challenge honestly
-    /// derived from an all-zero stage. Nothing downstream distinguishes them.
-    ///
-    /// `R` is a method parameter rather than a type parameter so the rank stays
-    /// out of this container, and out of every `Step::witness` signature with
-    /// it.
-    pub(crate) fn finish<R: Rank>(
-        mut self,
-        dr: &mut D,
-        slots: &mut dyn ChallengeSlots<'dr, D, C>,
-    ) -> Result<FrameworkHookOutputs<'dr, D, C>> {
-        if let Some(expected) = self.expected {
+    /// The guard is cleared once checked, because the padding that follows
+    /// calls the very same hooks a body does — and it is supposed to exceed the
+    /// body's count.
+    pub(crate) fn check_layout(&mut self) -> Result<()> {
+        if let Some(expected) = self.expected.take() {
             if self.challenge_calls != expected.challenge_calls {
                 return Err(Error::InvalidWitness(
                     "derive_challenge called fewer times than the discovered call count; \
@@ -696,84 +692,6 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
                         .into(),
                 ));
             }
-        }
-
-        self.pad_claims::<R>(dr)?;
-        self.pad_challenges(dr, slots)?;
-        Ok(self.into_outputs())
-    }
-
-    /// Fills unused poly-query slots with the canonical padding claim.
-    ///
-    /// The padding is *witnessed*, like a real claim, rather than baked in as a
-    /// circuit constant, so an application circuit's identity never depends on
-    /// the runtime generators. Each slot's `com` is that slot's bridge stage
-    /// commitment, so the padding commitment differs per slot exactly as a real
-    /// claim's does.
-    fn pad_claims<R: Rank>(&mut self, dr: &mut D) -> Result<()> {
-        let allocator = &mut Standard::new();
-        while self.poly_query_claims.len() < NUM_POLY_QUERY_SLOTS {
-            let slot = self.poly_query_claims.len();
-            let proof_values = self.proof_values();
-            let padding = D::try_just(move || {
-                let proof_values = proof_values.take();
-                let (host, x, y) =
-                    crate::internal::challenge::padding_claim::<C>(proof_values.params);
-                let com = crate::internal::challenge::claim_bridge_commitment::<C, R>(
-                    proof_values.params,
-                    slot,
-                    crate::internal::challenge::claim_bridge_alpha::<C>(
-                        proof_values.bridge_alpha,
-                        slot,
-                    ),
-                    host,
-                )?;
-                Ok((com, x, y))
-            })?;
-
-            self.poly_query_claims.push(ClaimWires {
-                com: Point::alloc(dr, padding.as_ref().map(|(com, _, _)| *com))?,
-                x: Element::alloc(dr, allocator, padding.as_ref().map(|(_, x, _)| *x))?,
-                y: Element::alloc(dr, allocator, padding.map(|(_, _, y)| y))?,
-                coefficients: D::just(|| alloc::vec![D::F::ONE]),
-            });
-        }
-        Ok(())
-    }
-
-    /// Fills unused challenge slots.
-    ///
-    /// An unused slot is *filled*, not skipped. Its wires are reserved either
-    /// way — the stage builder allocates them before the body runs — and an
-    /// allocated wire is a free one: the `Coeff::Zero` it is allocated with is
-    /// the honest assignment, not a constraint. Leaving the slot's guard
-    /// unconsumed would therefore leave [`CHALLENGE_WIDTH`](crate::CHALLENGE_WIDTH)
-    /// unconstrained wires inside a region the stage commits, which is exactly
-    /// the grinding the challenge stages' wire discipline forbids: a prover
-    /// could vary them, and with them the commitment and its challenge.
-    ///
-    /// So padding runs the same path a used slot does — fill, then pin every
-    /// wire — differing only in that all of them are pinned to zero and none to
-    /// a caller's element. Deriving the challenge honestly also keeps the
-    /// parent's binding circuit uniform: it re-derives every slot without
-    /// knowing which ones the step actually used.
-    fn pad_challenges(
-        &mut self,
-        dr: &mut D,
-        slots: &mut dyn ChallengeSlots<'dr, D, C>,
-    ) -> Result<()> {
-        let allocator = &mut Standard::new();
-        while self.challenge_pairs.len() < NUM_CHALLENGE_SLOTS {
-            let zeros = D::just(|| [D::F::ZERO; crate::CHALLENGE_WIDTH]);
-            let filled = slots.fill_next(dr, self.proof_values(), Maybe::clone(&zeros))?;
-            for wire in filled.wires.iter() {
-                Element::enforce_zero(wire, dr)?;
-            }
-            self.challenge_pairs.push(ChallengeWires {
-                point: Point::alloc(dr, filled.derived.as_ref().map(|(p, _)| *p))?,
-                challenge: Element::alloc(dr, allocator, filled.derived.map(|(_, c)| c))?,
-            });
-            self.challenge_inputs.push(zeros);
         }
         Ok(())
     }

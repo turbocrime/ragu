@@ -35,7 +35,7 @@ mod proof;
 pub mod step;
 mod verify;
 
-use alloc::{boxed::Box, collections::BTreeMap, format, vec::Vec};
+use alloc::collections::BTreeMap;
 use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 
 use header::Header;
@@ -146,25 +146,6 @@ pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, const HEADER_SIZE: usi
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
     num_application_steps: usize,
-    /// Application-circuit registrations, deferred until
-    /// [`finalize`](Self::finalize) supplies the cycle parameters.
-    ///
-    /// A step's circuit is registered by building its [`Adapter`], and the
-    /// adapter takes the parameters. Nothing about *planning* consumes them —
-    /// every framework use sits inside a `try_just` a structure-only driver
-    /// discards — so deferring costs nothing, and it buys an adapter that never
-    /// has to represent their absence. Registration order is preserved, so the
-    /// registry digest is unaffected.
-    #[allow(clippy::type_complexity)]
-    deferred_circuits: Vec<
-        Box<
-            dyn FnOnce(
-                    &'params C::Params,
-                    RegistryBuilder<'params, C::CircuitField, R>,
-                ) -> Result<RegistryBuilder<'params, C::CircuitField, R>>
-                + 'params,
-        >,
-    >,
     header_map: BTreeMap<header::Suffix, TypeId>,
     /// Test-only: see [`ApplicationBuilder::skip_claim_precheck_for_testing`].
     #[cfg(feature = "unstable-fuzzing")]
@@ -191,7 +172,6 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             native_registry: RegistryBuilder::new(),
             nested_registry: RegistryBuilder::new(),
             num_application_steps: 0,
-            deferred_circuits: Vec::new(),
             header_map: BTreeMap::new(),
             #[cfg(feature = "unstable-fuzzing")]
             skip_claim_precheck: false,
@@ -217,19 +197,13 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
 
         // Building the adapter discovers the step's hook-call layout — its
         // `derive_challenge` and `enforce_poly_query` counts — by dry-running
-        // the witness body, and takes the cycle parameters, which do not exist
-        // until `finalize`. Nothing here needs them, so the whole registration
-        // is deferred to where they arrive; the index and suffix checks above
-        // stay eager, and in practice `register` is chained straight into
-        // `finalize`, so a step's own errors surface no later than before.
-        let index = self.num_application_steps;
-        self.deferred_circuits
-            .push(Box::new(move |params, registry| {
-                let adapter = Adapter::<C, S, R, HEADER_SIZE>::new(step, params).map_err(|e| {
-                    Error::Initialization(format!("application step {index}: {e}").into())
-                })?;
-                registry.register_circuit(MultiStage::new(adapter))
-            }));
+        // the witness body. That dry run is structure-only, so it needs no
+        // cycle parameters, which is what lets registration stay eager here
+        // while `finalize` remains where the parameters arrive.
+        let adapter = Adapter::<C, S, R, HEADER_SIZE>::new(step, None)?;
+        self.native_registry = self
+            .native_registry
+            .register_circuit(MultiStage::new(adapter))?;
         self.num_application_steps += 1;
 
         Ok(self)
@@ -262,17 +236,13 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         params: &'params C::Params,
     ) -> Result<Application<'params, C, R, HEADER_SIZE>> {
         // Build the native registry:
-        // 1. Application circuits (deferred from `register`, in order)
+        // 1. Application circuits (already registered)
         // 2. Internal circuits and masks
         // 3. Internal steps
         let (total_circuits, log2_circuits) =
             internal::native::total_circuit_counts(self.num_application_steps);
 
-        for register in core::mem::take(&mut self.deferred_circuits) {
-            self.native_registry = register(params, self.native_registry)?;
-        }
-
-        // Then, register internal circuits and masks
+        // First, register internal circuits and masks
         self.native_registry = internal::native::register_all::<C, R, HEADER_SIZE>(
             self.native_registry,
             params,
@@ -284,13 +254,13 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             .native_registry
             .register_internal_step(MultiStage::new(Adapter::<C, _, R, HEADER_SIZE>::new(
                 step::internal::rerandomize::Rerandomize::<()>::new(),
-                params,
+                Some(params),
             )?))?;
         self.native_registry = self
             .native_registry
             .register_internal_step(MultiStage::new(Adapter::<C, _, R, HEADER_SIZE>::new(
                 step::internal::trivial::Trivial::new(),
-                params,
+                Some(params),
             )?))?;
 
         assert_eq!(

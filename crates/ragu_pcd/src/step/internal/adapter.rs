@@ -101,18 +101,18 @@ pub(crate) struct Adapter<'params, C: Cycle, S, R: Rank, const HEADER_SIZE: usiz
     /// The hook-call counts discovered from the step's witness body at
     /// construction time; see [`discover_hook_layout`]. Part of the circuit
     /// structure, so synthesis replays them as a determinism guard — enforced
-    /// by [`FrameworkHooks::finish`], not here.
+    /// by [`StepCtx::finish_slots`], not here.
     layout: HookLayout,
-    /// The cycle's runtime parameters.
+    /// The cycle's runtime parameters, absent during registration.
     ///
-    /// Unconditional: registration defers building this adapter until
-    /// [`ApplicationBuilder::finalize`](crate::ApplicationBuilder::finalize),
-    /// which is where the parameters first exist, so there is no pass that has
-    /// to work without them. What *is* absent during registration — the
-    /// proof's blinds — rides
-    /// [`Witness`](MultiStageCircuit::Witness) instead, where the driver
-    /// resolves it.
-    params: &'params C::Params,
+    /// `ApplicationBuilder::register` runs before
+    /// [`finalize`](crate::ApplicationBuilder::finalize) supplies them, and it
+    /// only needs the circuit's *structure*: the layout dry run above is
+    /// structure-only, and the parameters are read solely to build a proof's
+    /// witness values. So registration passes `None`, and the one place that
+    /// reads them — [`witness`](MultiStageCircuit::witness) — does so inside a
+    /// `try_just` that a structure-only driver discards.
+    params: Option<&'params C::Params>,
     _marker: PhantomData<(C, R)>,
 }
 
@@ -123,11 +123,10 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
     /// call count and poly-query claim count with a dry run of the witness
     /// body (see [`discover_hook_layout`]).
     ///
-    /// The only constructor. Registration and proving build the adapter the
-    /// same way; the difference between them — whether a proof's blinds exist
-    /// — is carried by [`Witness`](MultiStageCircuit::Witness), so the driver
-    /// resolves it rather than this type.
-    pub fn new(step: S, params: &'params C::Params) -> Result<Self> {
+    /// The only constructor. `params` is `None` at registration, which runs
+    /// before the cycle parameters exist and needs only the circuit's
+    /// structure; see the field's documentation.
+    pub fn new(step: S, params: Option<&'params C::Params>) -> Result<Self> {
         let layout = discover_hook_layout::<C, S, HEADER_SIZE>(&step)?;
         Ok(Adapter {
             step,
@@ -194,17 +193,36 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize>
         let mut challenge_slots = challenge_stage::Slots::new(slot0, slot1);
 
         let (alphas, left, right, witness) = witness.cast();
-        // `Self: 'dr` gives `'params: 'dr`, so the parameters coerce.
-        let proof_values = alphas.map(|a| ProofValues::new(self.params, a.bridge, a.challenge));
+        // `Self: 'dr` gives `'params: 'dr`, so the parameters coerce. The
+        // closure runs only on a value-carrying driver, and every such driver
+        // is building a proof — which only `Application` can do, and only with
+        // the parameters it was finalized against. Registration, the one pass
+        // built with `None`, is structure-only, so `Empty::try_just` discards
+        // this without calling it.
+        let params = self.params;
+        let proof_values = D::try_just(move || {
+            let params = params.ok_or_else(|| {
+                ragu_core::Error::InvalidWitness(
+                    "step witnessed with proof blinds but no cycle parameters".into(),
+                )
+            })?;
+            let alphas = alphas.take();
+            Ok(ProofValues::new(params, alphas.bridge, alphas.challenge))
+        })?;
 
         let mut hooks = FrameworkHooks::with_expected(self.layout, Maybe::clone(&proof_values));
         let ((left, right, output), output_data, step_aux) = {
             let mut ctx = StepCtx::<'_, '_, _, C>::new(dr, &mut hooks)
                 .with_challenge_slots(&mut challenge_slots);
-            self.step
-                .witness::<_, HEADER_SIZE>(&mut ctx, witness, left, right)?
+            let body = self
+                .step
+                .witness::<_, HEADER_SIZE>(&mut ctx, witness, left, right)?;
+            // Check the body against the discovered layout and fill whatever
+            // slots it left over, through the same hooks it used.
+            ctx.finish_slots::<R>()?;
+            body
         };
-        let outputs = hooks.finish::<R>(dr, &mut challenge_slots)?;
+        let outputs = hooks.into_outputs();
 
         let mut elements = Vec::with_capacity(InstanceLen::<HEADER_SIZE>::len());
         left.write(dr, &mut elements)?;
@@ -411,8 +429,9 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, Pasta::baked())
-            .expect("adapter construction should succeed");
+        let adapter =
+            Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, Some(Pasta::baked()))
+                .expect("adapter construction should succeed");
         let witness = Always::maybe_just(|| (test_alphas(), Fp::from(10u64), Fp::from(20u64), ()));
 
         let output = MultiStage::new(adapter)
@@ -432,8 +451,9 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, Pasta::baked())
-            .expect("adapter construction should succeed");
+        let adapter =
+            Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, Some(Pasta::baked()))
+                .expect("adapter construction should succeed");
         let witness = Always::maybe_just(|| (test_alphas(), Fp::from(10u64), Fp::from(20u64), ()));
 
         let aux = MultiStage::new(adapter)
@@ -460,17 +480,20 @@ mod tests {
     /// A step without `derive_challenge` calls discovers no calls.
     #[test]
     fn discovery_finds_no_calls_for_plain_step() {
-        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, Pasta::baked())
-            .expect("discovery should succeed");
+        let adapter =
+            Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, Some(Pasta::baked()))
+                .expect("discovery should succeed");
         assert_eq!(adapter.challenge_calls(), 0);
     }
 
     /// The dry run counts each `derive_challenge` call.
     #[test]
     fn discovery_finds_challenge_call() {
-        let adapter =
-            Adapter::<Pasta, ChallengeStep, TestR, HEADER_SIZE>::new(ChallengeStep, Pasta::baked())
-                .expect("discovery should succeed");
+        let adapter = Adapter::<Pasta, ChallengeStep, TestR, HEADER_SIZE>::new(
+            ChallengeStep,
+            Some(Pasta::baked()),
+        )
+        .expect("discovery should succeed");
         assert_eq!(adapter.challenge_calls(), 1);
     }
 
@@ -528,7 +551,7 @@ mod tests {
 
         let error = Adapter::<Pasta, TooManyChallenges, TestR, HEADER_SIZE>::new(
             TooManyChallenges,
-            Pasta::baked(),
+            Some(Pasta::baked()),
         )
         .err()
         .expect("the challenge slot cap should reject this step");
@@ -548,9 +571,11 @@ mod tests {
         let mut dr: Emulator<Wireless<Empty, Fp>> = Emulator::counter();
         let dr = &mut dr;
 
-        let adapter =
-            Adapter::<Pasta, ChallengeStep, TestR, HEADER_SIZE>::new(ChallengeStep, Pasta::baked())
-                .expect("discovery should succeed");
+        let adapter = Adapter::<Pasta, ChallengeStep, TestR, HEADER_SIZE>::new(
+            ChallengeStep,
+            Some(Pasta::baked()),
+        )
+        .expect("discovery should succeed");
 
         let output = MultiStage::new(adapter)
             .witness(dr, Empty)

@@ -305,12 +305,14 @@ pub struct Proof<C: Cycle, R: Rank> {
 
     /// The claims' host-curve commitments, in slot order — these are the
     /// points the parent's endoscaling accumulation consumes; each bridges to
-    /// the corresponding `application_claims` nested point.
-    pub(crate) claim_host_commitments: alloc::vec::Vec<C::HostCurve>,
+    /// the corresponding `application_claims` nested point. [`Cached`]: each is
+    /// the commitment of the matching [`claim_polys`](Self::claim_polys) entry.
+    claim_host_commitments: alloc::vec::Vec<Cached<C::HostCurve>>,
     /// Host-curve commitments to
     /// [`challenge_stage_polys`](Self::challenge_stage_polys), in slot order.
     /// Hashing the bridged form of each is what produced that slot's challenge.
-    pub(crate) challenge_stage_commitments: alloc::vec::Vec<C::HostCurve>,
+    /// [`Cached`], like every other commitment here.
+    challenge_stage_commitments: alloc::vec::Vec<Cached<C::HostCurve>>,
 }
 
 impl<C: Cycle, R: Rank> core::ops::Index<RxIndex> for Proof<C, R> {
@@ -330,6 +332,7 @@ impl<C: Cycle, R: Rank> core::ops::Index<RxIndex> for Proof<C, R> {
             OuterCollapse => &self.native_outer_collapse_rx,
             ComputeV => &self.native_compute_v_rx,
             ChallengeBinding => &self.native_challenge_binding_rx,
+            ChallengeStage(slot) => &self.challenge_stage_polys[slot as usize],
         }
     }
 }
@@ -341,7 +344,6 @@ impl<C: Cycle, R: Rank> core::ops::Index<RxComponent> for Proof<C, R> {
             RxComponent::AbA => &self.native_a_poly,
             RxComponent::AbB => &self.native_b_poly,
             RxComponent::Rx(idx) => &self[idx],
-            RxComponent::ChallengeStage(slot) => &self.challenge_stage_polys[slot as usize],
         }
     }
 }
@@ -489,6 +491,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             OuterCollapse => self.native_outer_collapse_commitment.0,
             ComputeV => self.native_compute_v_commitment.0,
             ChallengeBinding => self.native_challenge_binding_commitment.0,
+            ChallengeStage(slot) => self.challenge_stage_commitment(slot as usize),
         }
     }
 
@@ -498,8 +501,38 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             RxComponent::AbA => self.native_a_commitment.0,
             RxComponent::AbB => self.native_b_commitment.0,
             RxComponent::Rx(idx) => self.native_rx_commitment(idx),
-            RxComponent::ChallengeStage(slot) => self.challenge_stage_commitments[slot as usize],
         }
+    }
+
+    /// The host commitment of the claim polynomial in `slot`.
+    pub(crate) fn claim_host_commitment(&self, slot: usize) -> C::HostCurve {
+        self.claim_host_commitments[slot].0
+    }
+
+    /// The host commitment of the challenge-stage polynomial in `slot`.
+    pub(crate) fn challenge_stage_commitment(&self, slot: usize) -> C::HostCurve {
+        self.challenge_stage_commitments[slot].0
+    }
+
+    /// The claims' host commitments, in slot order.
+    pub(crate) fn claim_host_commitments(
+        &self,
+    ) -> impl ExactSizeIterator<Item = C::HostCurve> + '_ {
+        self.claim_host_commitments.iter().map(|c| c.0)
+    }
+
+    /// The challenge stages' host commitments, in slot order.
+    pub(crate) fn challenge_stage_commitments(
+        &self,
+    ) -> impl ExactSizeIterator<Item = C::HostCurve> + '_ {
+        self.challenge_stage_commitments.iter().map(|c| c.0)
+    }
+
+    /// Overwrites a claim's host commitment, for the corruption helpers in
+    /// [`fuzz_utils`](crate::fuzz_utils).
+    #[cfg(feature = "unstable-fuzzing")]
+    pub(crate) fn set_claim_host_commitment(&mut self, slot: usize, host: C::HostCurve) {
+        self.claim_host_commitments[slot] = Cached(host);
     }
 
     pub(crate) fn native_registry_xy_commitment(&self) -> C::HostCurve {
@@ -798,8 +831,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
             // `host_commitment` (ones_host), except registry_xy which
             // has its own commitment.
             for _ in 0..2 {
-                for _ in &RxIndex::ALL {
-                    points.push(host_commitment);
+                for &id in &RxIndex::ALL {
+                    points.push(match id {
+                        // The challenge stages are rx components like any
+                        // other, but their commitments are real: the padded
+                        // all-zero stage, blinded per slot.
+                        RxIndex::ChallengeStage(slot) => challenge_stage_commitments[slot as usize],
+                        _ => host_commitment,
+                    });
                 }
                 points.push(host_commitment); // AbA
                 points.push(host_commitment); // AbB
@@ -807,11 +846,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                 points.push(host_commitment); // P placeholder
                 for _ in 0..crate::NUM_POLY_QUERY_SLOTS {
                     points.push(padding_host_commitment); // claim slots
-                }
-                // Challenge-stage commitments, after the claims, matching the
-                // `_10_p` accumulation order.
-                for commitment in &challenge_stage_commitments {
-                    points.push(*commitment);
                 }
             }
 

@@ -166,7 +166,7 @@ where
     // trace with every challenge stage, exactly as `ComputeVCircuit` does with
     // `Query` and `Eval`.
     let mut app_stages: alloc::vec::Vec<_> = (0..crate::NUM_CHALLENGE_SLOTS)
-        .map(|slot| source.rx(ChallengeStage(slot as u32)))
+        .map(|slot| source.rx(Rx(RxIndex::ChallengeStage(slot as u32))))
         .collect();
     for (app_id, rx) in source.app_circuits().zip(source.rx(Rx(Application))) {
         let stages = app_stages
@@ -273,7 +273,7 @@ where
                 )?;
             }
             ChallengeStage(slot) => {
-                processor.bonding_claim(id, source.rx(RxComponent::ChallengeStage(slot)))?;
+                processor.bonding_claim(id, source.rx(Rx(RxIndex::ChallengeStage(slot))))?;
             }
             ChallengeFinalStaged => {
                 processor.bonding_claim(id, source.rx(Rx(Application)))?;

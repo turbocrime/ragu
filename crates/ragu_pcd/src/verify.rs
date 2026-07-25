@@ -62,10 +62,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // slot-indexed check further down relies on these lengths.
         if pcd.proof().application_claims().len() != crate::NUM_POLY_QUERY_SLOTS
             || pcd.proof().claim_polys.len() != crate::NUM_POLY_QUERY_SLOTS
-            || pcd.proof().claim_host_commitments.len() != crate::NUM_POLY_QUERY_SLOTS
+            || pcd.proof().claim_host_commitments().len() != crate::NUM_POLY_QUERY_SLOTS
             || pcd.proof().application_challenges().len() != crate::NUM_CHALLENGE_SLOTS
             || pcd.proof().challenge_stage_polys.len() != crate::NUM_CHALLENGE_SLOTS
-            || pcd.proof().challenge_stage_commitments.len() != crate::NUM_CHALLENGE_SLOTS
+            || pcd.proof().challenge_stage_commitments().len() != crate::NUM_CHALLENGE_SLOTS
         {
             return Ok(false);
         }
@@ -143,7 +143,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let poly_query_claims = (0..crate::NUM_POLY_QUERY_SLOTS).all(|slot| {
             let crate::ClaimOpening { com, x, y } = pcd.proof().application_claims()[slot];
             let poly = &pcd.proof().claim_polys[slot];
-            let host = pcd.proof().claim_host_commitments[slot];
+            let host = pcd.proof().claim_host_commitment(slot);
             let alpha =
                 crate::internal::challenge::claim_bridge_alpha::<C>(pcd.proof().bridge_alpha, slot);
 
@@ -168,7 +168,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             let crate::proof::ChallengeOpening { point, challenge } =
                 pcd.proof().application_challenges()[slot];
             let poly = &pcd.proof().challenge_stage_polys[slot];
-            let host = pcd.proof().challenge_stage_commitments[slot];
+            let host = pcd.proof().challenge_stage_commitment(slot);
             let alpha = crate::internal::challenge::challenge_bridge_alpha::<C>(
                 pcd.proof().bridge_alpha,
                 slot,

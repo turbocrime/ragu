@@ -256,4 +256,73 @@ where
             .record_challenge(point, challenge.clone(), inputs);
         Ok(challenge)
     }
+
+    /// Closes out the framework's fixed-size slot layout, after the step body
+    /// has run.
+    ///
+    /// First the determinism guard
+    /// ([`FrameworkHooks::check_layout`](crate::framework_hooks::FrameworkHooks)),
+    /// then padding. Every application circuit exposes exactly
+    /// [`NUM_POLY_QUERY_SLOTS`](crate::NUM_POLY_QUERY_SLOTS) claims and
+    /// [`NUM_CHALLENGE_SLOTS`](crate::NUM_CHALLENGE_SLOTS) challenge pairs,
+    /// whatever the body used, so the instance shape — which the internal
+    /// circuits read as a fixed-width record — never depends on the step.
+    ///
+    /// Padding goes through the same doors a step body does:
+    /// [`witness_polynomial`](Self::witness_polynomial) plus
+    /// [`enforce_poly_query`](Self::enforce_poly_query) for a claim, and
+    /// [`derive_challenge`](Self::derive_challenge) for a challenge. There is
+    /// no second wire-allocation path to keep in step with the first, and the
+    /// padded values are *real*, not sentinel: a claim that is trivially true
+    /// (the constant polynomial $1$, opened at $0$ to $1$), and a challenge
+    /// honestly derived from an all-zero stage. Nothing downstream
+    /// distinguishes them.
+    ///
+    /// An unused challenge slot is *filled*, not skipped, because its wires are
+    /// reserved either way — the stage builder allocates them before the body
+    /// runs — and an allocated wire is a free one. Leaving them unconsumed
+    /// would put [`CHALLENGE_WIDTH`](crate::CHALLENGE_WIDTH) unconstrained
+    /// wires inside a region the stage commits, which is exactly the grinding
+    /// the challenge stages' wire discipline forbids. Deriving the challenge
+    /// honestly also keeps the parent's binding circuit uniform: it re-derives
+    /// every slot without knowing which the step actually used.
+    ///
+    /// `R` is a method parameter rather than a type parameter so the rank stays
+    /// out of this context, and out of every `Step::witness` signature with it.
+    pub(crate) fn finish_slots<R: Rank>(&mut self) -> Result<()> {
+        self.hooks.check_layout()?;
+
+        let allocator = &mut ragu_primitives::allocator::Standard::new();
+        while self.hooks.claims_filled() < crate::NUM_POLY_QUERY_SLOTS {
+            let proof_values = self.hooks.proof_values();
+            let padding = D::try_just(move || {
+                let (host, x, y) =
+                    crate::internal::challenge::padding_claim::<C>(proof_values.take().params);
+                let commitment =
+                    PolyCommitment::new(crate::internal::challenge::padding_poly::<C, R>(), host);
+                Ok((commitment, x, y))
+            })?;
+
+            // The commitment goes through `witness_polynomial`, so the padding
+            // slot's `com` is that slot's bridge-stage commitment, derived
+            // exactly as a real claim's is.
+            let handle = self.witness_polynomial::<R>(
+                padding
+                    .as_ref()
+                    .map(|(commitment, _, _)| commitment.clone()),
+            )?;
+            let x = Element::alloc(self.dr, allocator, padding.as_ref().map(|(_, x, _)| *x))?;
+            let y = Element::alloc(self.dr, allocator, padding.map(|(_, _, y)| y))?;
+            self.enforce_poly_query(&handle, x, y)?;
+        }
+
+        // A padding challenge is one derived from *nothing*: the empty input
+        // has `ELEMENTS == 0`, so every stage wire falls to `derive_challenge`'s
+        // pin-to-zero arm.
+        while self.hooks.challenges_filled() < crate::NUM_CHALLENGE_SLOTS {
+            self.derive_challenge::<[Element<'dr, D>; 0]>([])?;
+        }
+
+        Ok(())
+    }
 }

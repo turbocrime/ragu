@@ -86,6 +86,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             };
 
             for proof in [left, right] {
+                // Every rx component, including the application circuit's
+                // challenge stages: `RxIndex::ALL` is the one order the eval
+                // stage's `Write` impl, `loading`'s point walk, and this
+                // accumulation all follow.
                 for &id in &RxIndex::ALL {
                     acc.acc(&proof[id], proof.native_rx_commitment(id));
                 }
@@ -106,18 +110,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 // Folding them here (with their host commitments entering the
                 // endoscaling points list) is what makes the claims' commitment
                 // binding recursive.
-                for (poly, com) in proof.claim_polys.iter().zip(&proof.claim_host_commitments) {
-                    acc.acc(poly, *com);
-                }
-                // The child's challenge-stage polynomials, in slot order.
-                // Must stay immediately after the claims: this order is what
-                // the eval stage's `Write` impl weights the `v` Horner by.
-                for (poly, com) in proof
-                    .challenge_stage_polys
-                    .iter()
-                    .zip(&proof.challenge_stage_commitments)
-                {
-                    acc.acc(poly, *com);
+                for (poly, com) in proof.claim_polys.iter().zip(proof.claim_host_commitments()) {
+                    acc.acc(poly, com);
                 }
             }
 

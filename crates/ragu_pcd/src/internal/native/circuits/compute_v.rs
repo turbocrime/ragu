@@ -384,10 +384,6 @@ impl<'a, 'dr, D: Driver<'dr>> Source for EvaluationSource<'a, 'dr, D> {
             RxComponent::AbA => (&self.left.a_poly_at_xz, &self.right.a_poly_at_xz),
             RxComponent::AbB => (&self.left.b_poly_at_x, &self.right.b_poly_at_x),
             RxComponent::Rx(idx) => (self.left.rx.get(idx), self.right.rx.get(idx)),
-            RxComponent::ChallengeStage(slot) => (
-                &self.left.challenge_stages[slot as usize],
-                &self.right.challenge_stages[slot as usize],
-            ),
         };
         [left, right].into_iter()
     }
