@@ -111,7 +111,11 @@ use ragu_core::{
     drivers::{Driver, DriverValue},
     maybe::{Maybe, MaybeKind},
 };
-use ragu_primitives::{Element, GadgetExt, Point, allocator::Standard};
+use ragu_primitives::{
+    Element, GadgetExt, Point,
+    allocator::Standard,
+    vec::{ConstLen, FixedVec},
+};
 
 use crate::{
     NUM_CHALLENGE_SLOTS, NUM_POLY_QUERY_SLOTS, step::internal::challenge_stage::ChallengeSlots,
@@ -308,6 +312,94 @@ pub struct FrameworkHooks<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     proof_values: DriverValue<D, ProofValues<'dr, C>>,
 }
 
+/// Every hook's output as plain values, for the fuse.
+///
+/// The value-level counterpart of [`FrameworkHookOutputs`], which holds
+/// in-circuit wires. A step circuit's `Aux` carries one of these beside the
+/// step's own `Aux`, so the framework's contribution stays one named thing
+/// rather than a handful of sibling fields — and so adding a hook means adding
+/// a field here, which the compiler then forces every reader to acknowledge.
+pub struct FrameworkAux<C: Cycle> {
+    /// The step's poly-query claims, padded to exactly [`NUM_POLY_QUERY_SLOTS`]
+    /// entries, in slot order — matching the instance layout the circuit
+    /// committed to. Each carries the opened polynomial's coefficients; fuse
+    /// pre-checks every claim natively, persists the claim instances in the
+    /// proof, and the *next* fuse enforces them recursively via the PCS
+    /// accumulator.
+    pub claims:
+        FixedVec<PolyQueryClaim<C::CircuitField, C::NestedCurve>, ConstLen<NUM_POLY_QUERY_SLOTS>>,
+    /// The derived-challenge pairs the circuit exposes, padded to exactly
+    /// [`NUM_CHALLENGE_SLOTS`] entries, in slot order.
+    pub challenges: FixedVec<
+        crate::proof::ChallengeOpening<C::NestedCurve, C::CircuitField>,
+        ConstLen<NUM_CHALLENGE_SLOTS>,
+    >,
+    /// The values each challenge stage commits, in slot order, zero-padded to
+    /// [`CHALLENGE_WIDTH`](crate::CHALLENGE_WIDTH). Plain field elements: the
+    /// fuse holds the rank, so it builds the stage polynomials itself.
+    pub challenge_inputs:
+        FixedVec<[C::CircuitField; crate::CHALLENGE_WIDTH], ConstLen<NUM_CHALLENGE_SLOTS>>,
+}
+
+/// Transposes a list of per-item driver values into one driver value holding
+/// the list, in order.
+///
+/// The values are taken inside a single `try_just`, so on structure-only
+/// drivers the closure never runs (`Empty::try_just` discards it) and no
+/// `take` is attempted.
+fn collect_values<'dr, D: Driver<'dr>, T: Send>(
+    values: Vec<DriverValue<D, T>>,
+) -> Result<DriverValue<D, Vec<T>>> {
+    D::try_just(move || Ok(values.into_iter().map(Maybe::take).collect()))
+}
+
+impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHookOutputs<'dr, D, C> {
+    /// Reads each hook's wires back out as plain values, for the fuse.
+    pub(crate) fn into_values(self) -> Result<DriverValue<D, FrameworkAux<C>>> {
+        let mut claims = Vec::with_capacity(self.poly_query_claims.len());
+        for ClaimWires {
+            com,
+            x,
+            y,
+            coefficients,
+        } in self.poly_query_claims
+        {
+            claims.push(D::try_just(|| {
+                Ok(PolyQueryClaim {
+                    com: com.value().take(),
+                    x: *x.value().take(),
+                    y: *y.value().take(),
+                    coefficients: coefficients.take(),
+                })
+            })?);
+        }
+        let claims = collect_values::<D, _>(claims)?;
+
+        let mut challenges = Vec::with_capacity(self.challenge_pairs.len());
+        for pair in self.challenge_pairs {
+            challenges.push(D::try_just(|| {
+                Ok(crate::proof::ChallengeOpening {
+                    point: pair.point.value().take(),
+                    challenge: *pair.challenge.value().take(),
+                })
+            })?);
+        }
+        let challenges = collect_values::<D, _>(challenges)?;
+        let challenge_inputs = collect_values::<D, _>(self.challenge_inputs)?;
+
+        // `finish` padded each to its slot count, so these conversions cannot
+        // fail; the fixed types are what make that guarantee readable at every
+        // consumer, instead of a length assertion at each one.
+        D::try_just(move || {
+            Ok(FrameworkAux {
+                claims: FixedVec::try_from(claims.take())?,
+                challenges: FixedVec::try_from(challenges.take())?,
+                challenge_inputs: FixedVec::try_from(challenge_inputs.take())?,
+            })
+        })
+    }
+}
+
 /// The hook-call counts a step body's circuit structure commits to.
 ///
 /// Discovered by the registration-time dry run and replayed at synthesis: a
@@ -320,6 +412,32 @@ pub struct HookLayout {
     /// [`enforce_poly_query`](crate::step::StepCtx::enforce_poly_query) claims.
     pub claims: usize,
 }
+
+/// The proof's two blind sources, as the step circuit's witness carries them.
+///
+/// Separate from the cycle parameters on purpose. Both are absent during
+/// registration, but for different reasons: the parameters do not exist until
+/// [`ApplicationBuilder::finalize`](crate::ApplicationBuilder::finalize),
+/// while the blinds do not exist until a *proof* is being built. Only the
+/// second is an execution-mode difference, so only the second rides a
+/// [`DriverValue`] — and being plain field elements with no lifetime, they do
+/// so with none of the variance or outlives obligations a borrowed parameter
+/// would impose on the step circuit's `Witness`.
+pub struct Alphas<C: Cycle> {
+    /// Blinds the nested bridge stages.
+    pub bridge: C::ScalarField,
+    /// Blinds the application circuit's challenge stages.
+    pub challenge: C::CircuitField,
+}
+
+// Hand-written: `derive` would demand `C: Clone`/`C: Copy`, but both fields are
+// field elements, `Copy` for every `Cycle`.
+impl<C: Cycle> Clone for Alphas<C> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<C: Cycle> Copy for Alphas<C> {}
 
 /// The proof-level values a hook needs to compute a witness: the cycle
 /// parameters, and the proof's two blind sources.
@@ -364,18 +482,18 @@ impl<C: Cycle> Copy for ProofValues<'_, C> {}
 /// Aggregate of every hook's accumulated output, returned by
 /// [`FrameworkHooks::into_outputs`]. Adding a new hook means adding a field
 /// here, which forces every drain site to acknowledge it.
-pub struct FrameworkHookOutputs<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
+pub struct FrameworkHookOutputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     /// Polynomial-commitment opening claims raised via
     /// [`FrameworkHooks::enforce_polynomial_query`], in call order — the
     /// in-circuit wires plus the witness-only coefficient values.
-    pub poly_query_claims: Vec<ClaimWires<'dr, D, C>>,
+    pub poly_query_claims: Vec<ClaimWires<'dr, D, C::NestedCurve>>,
     /// Number of [`StepCtx::derive_challenge`](crate::step::StepCtx::derive_challenge) calls. The
     /// registration-time dry run reads this to discover the call count; the
     /// adapter compares it against that count after real synthesis.
     pub challenge_calls: usize,
     /// The `(bridged commitment, challenge)` pair per `derive_challenge` call,
     /// in slot order.
-    pub challenge_pairs: Vec<ChallengeWires<'dr, D, C>>,
+    pub challenge_pairs: Vec<ChallengeWires<'dr, D, C::NestedCurve>>,
     /// The values each challenge stage commits, in slot order.
     pub challenge_inputs: Vec<DriverValue<D, [D::F; crate::CHALLENGE_WIDTH]>>,
 }
@@ -562,7 +680,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
         mut self,
         dr: &mut D,
         slots: &mut dyn ChallengeSlots<'dr, D, C>,
-    ) -> Result<FrameworkHookOutputs<'dr, D, C::NestedCurve>> {
+    ) -> Result<FrameworkHookOutputs<'dr, D, C>> {
         if let Some(expected) = self.expected {
             if self.challenge_calls != expected.challenge_calls {
                 return Err(Error::InvalidWitness(
@@ -661,7 +779,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     }
 
     /// Consumes the container and returns every hook's accumulated output.
-    pub fn into_outputs(self) -> FrameworkHookOutputs<'dr, D, C::NestedCurve> {
+    pub fn into_outputs(self) -> FrameworkHookOutputs<'dr, D, C> {
         FrameworkHookOutputs {
             poly_query_claims: self.poly_query_claims,
             challenge_calls: self.challenge_calls,

@@ -26,6 +26,7 @@ use ragu_core::{Error, Result};
 
 use crate::{
     Application, Header, Pcd, Proof,
+    framework_hooks::{Alphas, FrameworkAux},
     internal::challenge,
     proof::ProofBuilder,
     step::{
@@ -51,14 +52,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     )> {
         let (left_proof, left_data) = left.into_parts();
         let (right_proof, right_data) = right.into_parts();
-        let (trace, aux) = MultiStage::new(Adapter::<C, S, R, HEADER_SIZE>::proving(
-            step,
-            self.params,
-            builder.bridge_alpha(),
-            builder.challenge_alpha(),
-        )?)
-        .trace((left_data, right_data, witness))?
-        .into_parts();
+        let (trace, aux) =
+            MultiStage::new(Adapter::<C, S, R, HEADER_SIZE>::new(step, self.params)?)
+                .trace((
+                    Alphas {
+                        bridge: builder.bridge_alpha(),
+                        challenge: builder.challenge_alpha(),
+                    },
+                    left_data,
+                    right_data,
+                    witness,
+                ))?
+                .into_parts();
         let rx = self.native_registry.assemble(
             &trace,
             S::INDEX.circuit_index(self.num_application_steps)?,
@@ -70,9 +75,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             right_header,
             output_data,
             step_aux,
-            claims,
-            challenges,
-            challenge_inputs,
+            framework:
+                FrameworkAux {
+                    claims,
+                    challenges,
+                    challenge_inputs,
+                },
         } = aux;
 
         // Pre-check every poly-query claim natively before committing to the
@@ -85,7 +93,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // with a dishonest witness fails here, with a useful error, instead
         // of at verification. Along the way, collect the claim polynomials
         // and host commitments the parent's PCS folding will consume.
-        assert_eq!(claims.len(), crate::NUM_POLY_QUERY_SLOTS);
         let precheck = self.claim_precheck_enabled();
         let mut claim_polys = alloc::vec::Vec::with_capacity(claims.len());
         let mut claim_host_commitments = alloc::vec::Vec::with_capacity(claims.len());
@@ -136,7 +143,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // commitment is what produced the slot's challenge — and
         // `native::claims::build` sums them back into the circuit's claim,
         // exactly as it does for `compute_v` with `query` and `eval`.
-        assert_eq!(challenge_inputs.len(), crate::NUM_CHALLENGE_SLOTS);
         let mut challenge_stage_polys = alloc::vec::Vec::with_capacity(challenge_inputs.len());
         for (slot, inputs) in challenge_inputs.into_iter().enumerate() {
             challenge_stage_polys.push(crate::step::internal::challenge_stage::stage_rx::<
@@ -151,8 +157,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         builder.set_challenge_stage_polys(challenge_stage_polys);
 
         builder.set_native_application_rx(rx);
-        builder.set_application_claims(claims, claim_polys, claim_host_commitments);
-        builder.set_application_challenges(challenges);
+        builder.set_application_claims(claims.into_inner(), claim_polys, claim_host_commitments);
+        builder.set_application_challenges(challenges.into_inner());
 
         Ok((left_proof, right_proof, output_data, step_aux))
     }

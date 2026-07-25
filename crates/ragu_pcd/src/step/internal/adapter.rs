@@ -27,9 +27,7 @@ use super::{
 };
 use crate::{
     Header, NUM_CHALLENGE_SLOTS, NUM_POLY_QUERY_SLOTS,
-    framework_hooks::{
-        ClaimWires, FrameworkHookOutputs, FrameworkHooks, HookLayout, PolyQueryClaim, ProofValues,
-    },
+    framework_hooks::{Alphas, FrameworkAux, FrameworkHooks, HookLayout, ProofValues},
 };
 
 /// Length of an application circuit's public instance: the three headers, then
@@ -42,18 +40,6 @@ impl<const HEADER_SIZE: usize> Len for InstanceLen<HEADER_SIZE> {
     fn len() -> usize {
         HEADER_SIZE * 3 + NUM_POLY_QUERY_SLOTS * 4 + NUM_CHALLENGE_SLOTS * 3
     }
-}
-
-/// Transposes a list of per-item driver values into one driver value holding
-/// the list, in order.
-///
-/// The values are taken inside a single `try_just`, so on structure-only
-/// drivers the closure never runs (`Empty::try_just` discards it) and no
-/// `take` is attempted.
-fn collect_values<'dr, D: Driver<'dr>, T: Send>(
-    values: Vec<DriverValue<D, T>>,
-) -> Result<DriverValue<D, Vec<T>>> {
-    D::try_just(move || Ok(values.into_iter().map(Maybe::take).collect()))
 }
 
 /// Discovers the hook-call counts of `step` — how many
@@ -105,21 +91,9 @@ pub(crate) struct AdapterAux<'source, C: Cycle, S: Step<C>, const HEADER_SIZE: u
     pub right_header: FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
     pub output_data: <S::Output as Header<C::CircuitField>>::Data,
     pub step_aux: S::Aux<'source>,
-    /// The step's poly-query claims, padded to exactly
-    /// [`NUM_POLY_QUERY_SLOTS`] entries with the canonical padding claim, in
-    /// slot order — matching the instance layout the circuit committed to.
-    /// Each carries the opened polynomial's coefficients; fuse pre-checks
-    /// every claim natively, persists the claim instances in the proof, and
-    /// the *next* fuse enforces them recursively via the PCS accumulator.
-    pub claims: Vec<PolyQueryClaim<C::CircuitField, C::NestedCurve>>,
-    /// The derived-challenge pairs the circuit exposes, padded to exactly
-    /// [`NUM_CHALLENGE_SLOTS`] entries, in slot order — matching the instance
-    /// layout the circuit committed to.
-    pub challenges: Vec<crate::proof::ChallengeOpening<C::NestedCurve, C::CircuitField>>,
-    /// The values each challenge stage commits, in slot order, zero-padded to
-    /// [`CHALLENGE_WIDTH`](crate::CHALLENGE_WIDTH). Plain field elements: the
-    /// fuse holds the rank, so it builds the stage polynomials itself.
-    pub challenge_inputs: Vec<[C::CircuitField; crate::CHALLENGE_WIDTH]>,
+    /// Every framework hook's output, as one named group beside the step's own
+    /// aux. See [`FrameworkAux`].
+    pub framework: FrameworkAux<C>,
 }
 
 pub(crate) struct Adapter<'params, C: Cycle, S, R: Rank, const HEADER_SIZE: usize> {
@@ -129,10 +103,16 @@ pub(crate) struct Adapter<'params, C: Cycle, S, R: Rank, const HEADER_SIZE: usiz
     /// structure, so synthesis replays them as a determinism guard — enforced
     /// by [`FrameworkHooks::finish`], not here.
     layout: HookLayout,
-    /// Cycle params and the proof's shared bridge-alpha source, threaded into
-    /// [`StepCtx`] so a witnessed polynomial's claim bridge — and therefore its
-    /// `com` — can be built. `None` on structure-only adapters.
-    claim_bridge: Option<(&'params C::Params, C::ScalarField, C::CircuitField)>,
+    /// The cycle's runtime parameters.
+    ///
+    /// Unconditional: registration defers building this adapter until
+    /// [`ApplicationBuilder::finalize`](crate::ApplicationBuilder::finalize),
+    /// which is where the parameters first exist, so there is no pass that has
+    /// to work without them. What *is* absent during registration — the
+    /// proof's blinds — rides
+    /// [`Witness`](MultiStageCircuit::Witness) instead, where the driver
+    /// resolves it.
+    params: &'params C::Params,
     _marker: PhantomData<(C, R)>,
 }
 
@@ -141,61 +121,19 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
 {
     /// Wraps `step` for registration/keygen, discovering its `derive_challenge`
     /// call count and poly-query claim count with a dry run of the witness
-    /// body (see [`discover_hook_layout`]). Param-free: keygen is
-    /// structure-only, so the padding values are never taken and
-    /// `claim_bridge` is left unset. Use [`proving`](Self::proving) to build
-    /// the adapter that actually proves.
-    pub fn new(step: S) -> Result<Self> {
+    /// body (see [`discover_hook_layout`]).
+    ///
+    /// The only constructor. Registration and proving build the adapter the
+    /// same way; the difference between them — whether a proof's blinds exist
+    /// — is carried by [`Witness`](MultiStageCircuit::Witness), so the driver
+    /// resolves it rather than this type.
+    pub fn new(step: S, params: &'params C::Params) -> Result<Self> {
         let layout = discover_hook_layout::<C, S, HEADER_SIZE>(&step)?;
         Ok(Adapter {
             step,
             layout,
-            claim_bridge: None,
+            params,
             _marker: PhantomData,
-        })
-    }
-
-    /// Wraps `step` for proving. Identical circuit structure to
-    /// [`new`](Self::new), but carries the `params` and blinds that let the
-    /// unused poly-query and challenge slots be padded at proving time.
-    pub fn proving(
-        step: S,
-        params: &'params C::Params,
-        bridge_alpha: C::ScalarField,
-        challenge_alpha: C::CircuitField,
-    ) -> Result<Self> {
-        Ok(Adapter {
-            claim_bridge: Some((params, bridge_alpha, challenge_alpha)),
-            ..Self::new(step)?
-        })
-    }
-
-    /// The proof-level values the hooks commit, as a driver value.
-    ///
-    /// This is the only place the adapter's construction-time mode and the
-    /// driver's value-carrying-ness have to agree. A structure-only driver
-    /// discards the closure, so registration never reaches the `ok_or_else`;
-    /// a value-carrying driver can only get here through
-    /// [`proving`](Self::proving), which always supplies them.
-    fn proof_values<'dr, D: Driver<'dr, F = C::CircuitField>>(
-        &self,
-    ) -> Result<DriverValue<D, ProofValues<'dr, C>>>
-    where
-        'params: 'dr,
-    {
-        let claim_bridge = self.claim_bridge;
-        D::try_just(move || {
-            claim_bridge
-                .map(|(params, bridge_alpha, challenge_alpha)| {
-                    ProofValues::new(params, bridge_alpha, challenge_alpha)
-                })
-                .ok_or_else(|| {
-                    ragu_core::Error::InvalidWitness(
-                        "proving on a value-carrying driver requires an adapter built with \
-                         `Adapter::proving`"
-                            .into(),
-                    )
-                })
         })
     }
 
@@ -204,31 +142,6 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
     #[cfg(test)]
     pub fn challenge_calls(&self) -> usize {
         self.layout.challenge_calls
-    }
-
-    /// Extracts the witness-only claim values (instances plus coefficients)
-    /// the fuse needs, in slot order, consuming the claim wires.
-    fn extract_claims<'dr, D: Driver<'dr, F = C::CircuitField>>(
-        claim_wires: Vec<ClaimWires<'dr, D, C::NestedCurve>>,
-    ) -> Result<DriverValue<D, Vec<PolyQueryClaim<C::CircuitField, C::NestedCurve>>>> {
-        let mut claims = Vec::with_capacity(claim_wires.len());
-        for claim_wire in claim_wires {
-            let ClaimWires {
-                com,
-                x,
-                y,
-                coefficients,
-            } = claim_wire;
-            claims.push(D::try_just(|| {
-                Ok(PolyQueryClaim {
-                    com: com.value().take(),
-                    x: *x.value().take(),
-                    y: *y.value().take(),
-                    coefficients: coefficients.take(),
-                })
-            })?);
-        }
-        collect_values::<D, _>(claims)
     }
 }
 
@@ -245,6 +158,7 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize>
         <S::Output as Header<C::CircuitField>>::Data,
     );
     type Witness<'source> = (
+        Alphas<C>,
         <S::Left as Header<C::CircuitField>>::Data,
         <S::Right as Header<C::CircuitField>>::Data,
         S::Witness<'source>,
@@ -279,14 +193,9 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize>
         let dr = builder.finish();
         let mut challenge_slots = challenge_stage::Slots::new(slot0, slot1);
 
-        let (left, right, witness) = witness.cast();
-
-        // The one place the adapter's construction-time mode and the driver's
-        // value-carrying-ness have to be reconciled. Everything downstream sees
-        // a plain driver value: a structure-only driver discards the closure, so
-        // there is no absent case to handle, and a value-carrying driver can
-        // only get here from `Adapter::proving`.
-        let proof_values = self.proof_values::<D>()?;
+        let (alphas, left, right, witness) = witness.cast();
+        // `Self: 'dr` gives `'params: 'dr`, so the parameters coerce.
+        let proof_values = alphas.map(|a| ProofValues::new(self.params, a.bridge, a.challenge));
 
         let mut hooks = FrameworkHooks::with_expected(self.layout, Maybe::clone(&proof_values));
         let ((left, right, output), output_data, step_aux) = {
@@ -295,12 +204,7 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize>
             self.step
                 .witness::<_, HEADER_SIZE>(&mut ctx, witness, left, right)?
         };
-        let FrameworkHookOutputs {
-            poly_query_claims: claim_wires,
-            challenge_pairs,
-            challenge_inputs,
-            ..
-        } = hooks.finish::<R>(dr, &mut challenge_slots)?;
+        let outputs = hooks.finish::<R>(dr, &mut challenge_slots)?;
 
         let mut elements = Vec::with_capacity(InstanceLen::<HEADER_SIZE>::len());
         left.write(dr, &mut elements)?;
@@ -310,7 +214,7 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize>
         // commitment point's two coordinates, then the opening point and the
         // claimed evaluation. This layout must match
         // `ProofInputs::application_ky`.
-        for claim in &claim_wires {
+        for claim in &outputs.poly_query_claims {
             claim.com.write(dr, &mut elements)?;
             claim.x.write(dr, &mut elements)?;
             claim.y.write(dr, &mut elements)?;
@@ -318,26 +222,13 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize>
         // Then the challenge slots: per slot, the bridged stage commitment's
         // two coordinates and the challenge hashed from it. The parent's
         // binding circuit re-derives the second from the first.
-        for pair in &challenge_pairs {
+        for pair in &outputs.challenge_pairs {
             pair.point.write(dr, &mut elements)?;
             pair.challenge.write(dr, &mut elements)?;
         }
 
-        // Extract the claim values (instances plus coefficients) for the fuse.
-        let claims_value = Self::extract_claims(claim_wires)?;
-
-        let inputs_value = collect_values::<D, _>(challenge_inputs)?;
-
-        let mut openings = Vec::with_capacity(challenge_pairs.len());
-        for pair in challenge_pairs {
-            openings.push(D::try_just(|| {
-                Ok(crate::proof::ChallengeOpening {
-                    point: pair.point.value().take(),
-                    challenge: *pair.challenge.value().take(),
-                })
-            })?);
-        }
-        let challenges_value = collect_values::<D, _>(openings)?;
+        // Read every hook's wires back out as values for the fuse.
+        let framework = outputs.into_values()?;
 
         let adapter_aux = D::try_just(|| {
             let left_header = elements[0..HEADER_SIZE]
@@ -355,9 +246,7 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize>
                 right_header,
                 output_data: output_data.take(),
                 step_aux: step_aux.take(),
-                claims: claims_value.take(),
-                challenges: challenges_value.take(),
-                challenge_inputs: inputs_value.take(),
+                framework: framework.take(),
             })
         })?;
 
@@ -448,6 +337,14 @@ mod tests {
         }
     }
 
+    /// Arbitrary blinds for tests that only care about circuit shape.
+    fn test_alphas() -> Alphas<Pasta> {
+        Alphas {
+            bridge: <Pasta as Cycle>::ScalarField::ONE,
+            challenge: <Pasta as Cycle>::CircuitField::ONE,
+        }
+    }
+
     /// Like [`TestStep`], but derives a challenge from a two-element gadget,
     /// inducing one stage of width 2.
     struct ChallengeStep;
@@ -514,14 +411,9 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::proving(
-            TestStep,
-            Pasta::baked(),
-            <Pasta as Cycle>::ScalarField::ONE,
-            <Pasta as Cycle>::CircuitField::ONE,
-        )
-        .expect("adapter construction should succeed");
-        let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
+        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, Pasta::baked())
+            .expect("adapter construction should succeed");
+        let witness = Always::maybe_just(|| (test_alphas(), Fp::from(10u64), Fp::from(20u64), ()));
 
         let output = MultiStage::new(adapter)
             .witness(dr, witness)
@@ -540,14 +432,9 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::proving(
-            TestStep,
-            Pasta::baked(),
-            <Pasta as Cycle>::ScalarField::ONE,
-            <Pasta as Cycle>::CircuitField::ONE,
-        )
-        .expect("adapter construction should succeed");
-        let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
+        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, Pasta::baked())
+            .expect("adapter construction should succeed");
+        let witness = Always::maybe_just(|| (test_alphas(), Fp::from(10u64), Fp::from(20u64), ()));
 
         let aux = MultiStage::new(adapter)
             .witness(dr, witness)
@@ -559,9 +446,7 @@ mod tests {
             right_header,
             output_data,
             step_aux: _,
-            claims: _,
-            challenges: _,
-            challenge_inputs: _,
+            framework: _,
         } = aux.take();
 
         // Left header should start with 10
@@ -575,7 +460,7 @@ mod tests {
     /// A step without `derive_challenge` calls discovers no calls.
     #[test]
     fn discovery_finds_no_calls_for_plain_step() {
-        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep)
+        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, Pasta::baked())
             .expect("discovery should succeed");
         assert_eq!(adapter.challenge_calls(), 0);
     }
@@ -583,8 +468,9 @@ mod tests {
     /// The dry run counts each `derive_challenge` call.
     #[test]
     fn discovery_finds_challenge_call() {
-        let adapter = Adapter::<Pasta, ChallengeStep, TestR, HEADER_SIZE>::new(ChallengeStep)
-            .expect("discovery should succeed");
+        let adapter =
+            Adapter::<Pasta, ChallengeStep, TestR, HEADER_SIZE>::new(ChallengeStep, Pasta::baked())
+                .expect("discovery should succeed");
         assert_eq!(adapter.challenge_calls(), 1);
     }
 
@@ -640,9 +526,12 @@ mod tests {
             }
         }
 
-        let error = Adapter::<Pasta, TooManyChallenges, TestR, HEADER_SIZE>::new(TooManyChallenges)
-            .err()
-            .expect("the challenge slot cap should reject this step");
+        let error = Adapter::<Pasta, TooManyChallenges, TestR, HEADER_SIZE>::new(
+            TooManyChallenges,
+            Pasta::baked(),
+        )
+        .err()
+        .expect("the challenge slot cap should reject this step");
         assert!(
             alloc::format!("{error}").contains("challenge slots"),
             "unexpected error: {error}"
@@ -659,8 +548,9 @@ mod tests {
         let mut dr: Emulator<Wireless<Empty, Fp>> = Emulator::counter();
         let dr = &mut dr;
 
-        let adapter = Adapter::<Pasta, ChallengeStep, TestR, HEADER_SIZE>::new(ChallengeStep)
-            .expect("discovery should succeed");
+        let adapter =
+            Adapter::<Pasta, ChallengeStep, TestR, HEADER_SIZE>::new(ChallengeStep, Pasta::baked())
+                .expect("discovery should succeed");
 
         let output = MultiStage::new(adapter)
             .witness(dr, Empty)
