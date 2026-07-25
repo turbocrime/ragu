@@ -406,8 +406,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     }
 
     /// Whether the fuse-time poly-query pre-check runs. Always `true` outside
-    /// the `unstable-fuzzing` feature; see
-    /// [`ApplicationBuilder::skip_claim_precheck_for_testing`].
+    /// the `unstable-fuzzing` feature, which is the only thing that can turn it
+    /// off.
+    #[cfg_attr(
+        feature = "unstable-fuzzing",
+        doc = "See [`ApplicationBuilder::skip_claim_precheck_for_testing`]."
+    )]
     pub(crate) fn claim_precheck_enabled(&self) -> bool {
         #[cfg(feature = "unstable-fuzzing")]
         {

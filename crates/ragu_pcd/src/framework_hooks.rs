@@ -73,10 +73,9 @@
 //!    binding them to its committed application rx.
 //! 2. The slot's stage polynomial is summed into the application circuit's
 //!    claim (in `native::claims`, as `ComputeVCircuit` treats `Query` and
-//!    `Eval`), folded in `_10_p`, and
-//!    mask-registered so the trace split is unique — so the stage's wires,
-//!    which `derive_challenge` pins to the caller's elements, are covered by
-//!    the circuit check.
+//!    `Eval`), folded in `_10_p`, and mask-registered so the trace split is
+//!    unique — so the stage's wires, which `derive_challenge` pins to the
+//!    caller's elements, are covered by the circuit check.
 //! 3. `point` is the bridge image of that stage's host commitment, tied in the
 //!    `loading` circuit against the eval-stage record and in `copying` against
 //!    the child's own.

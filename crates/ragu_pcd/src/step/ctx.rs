@@ -213,9 +213,8 @@ where
     /// nested curve. Both the bridged point and the challenge are witnessed
     /// here and written into the circuit's instance, and the parent's
     /// `challenge_binding` circuit re-derives one from the other — so no
-    /// Poseidon permutation is
-    /// synthesized in the application circuit, and the cost does not scale with
-    /// the input's width.
+    /// Poseidon permutation is synthesized in the application circuit, and the
+    /// cost does not scale with the input's width.
     ///
     /// On a value-carrying driver the returned `Element` holds the real
     /// challenge immediately, so the step body can evaluate polynomials at it
