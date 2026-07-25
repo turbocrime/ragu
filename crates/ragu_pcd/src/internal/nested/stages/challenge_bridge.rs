@@ -16,7 +16,7 @@
 //! wires occupy a distinct, statically-known region of the trace.
 
 /// Bridge stage for challenge slot 0.
-pub type Stage0<C, R> = super::host_bridge::Stage<C, R, super::claim_bridge::Stage3<C, R>>;
+pub type Stage0<C, R> = super::host_bridge::Stage<C, R, super::claim_bridge::Last<C, R>>;
 /// Bridge stage for challenge slot 1.
 pub type Stage1<C, R> = super::host_bridge::Stage<C, R, Stage0<C, R>>;
 

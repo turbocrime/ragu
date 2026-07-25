@@ -116,6 +116,10 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         let (claim1_guard, dr) = dr.add_stage::<stages::claim_bridge::Stage1<C, R>>()?;
         let (claim2_guard, dr) = dr.add_stage::<stages::claim_bridge::Stage2<C, R>>()?;
         let (claim3_guard, dr) = dr.add_stage::<stages::claim_bridge::Stage3<C, R>>()?;
+        let (claim4_guard, dr) = dr.add_stage::<stages::claim_bridge::Stage4<C, R>>()?;
+        let (claim5_guard, dr) = dr.add_stage::<stages::claim_bridge::Stage5<C, R>>()?;
+        let (claim6_guard, dr) = dr.add_stage::<stages::claim_bridge::Stage6<C, R>>()?;
+        let (claim7_guard, dr) = dr.add_stage::<stages::claim_bridge::Stage7<C, R>>()?;
         let (challenge0_guard, dr) = dr.add_stage::<stages::challenge_bridge::Stage0<C, R>>()?;
         let (challenge1_guard, dr) = dr.add_stage::<stages::challenge_bridge::Stage1<C, R>>()?;
         let dr = dr.finish();
@@ -140,6 +144,10 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
             claim1_guard.unenforced(dr, w!())?.host,
             claim2_guard.unenforced(dr, w!())?.host,
             claim3_guard.unenforced(dr, w!())?.host,
+            claim4_guard.unenforced(dr, w!())?.host,
+            claim5_guard.unenforced(dr, w!())?.host,
+            claim6_guard.unenforced(dr, w!())?.host,
+            claim7_guard.unenforced(dr, w!())?.host,
         ];
         let challenge_bridges = [
             challenge0_guard.unenforced(dr, w!())?.host,

@@ -103,7 +103,11 @@ pub(crate) fn claim_bridge_rx<C: Cycle, R: Rank>(
         1 => claim_bridge::Stage1::<C::HostCurve, R>::rx(alpha, &witness),
         2 => claim_bridge::Stage2::<C::HostCurve, R>::rx(alpha, &witness),
         3 => claim_bridge::Stage3::<C::HostCurve, R>::rx(alpha, &witness),
-        _ => unreachable!("NUM_POLY_QUERY_SLOTS is 4"),
+        4 => claim_bridge::Stage4::<C::HostCurve, R>::rx(alpha, &witness),
+        5 => claim_bridge::Stage5::<C::HostCurve, R>::rx(alpha, &witness),
+        6 => claim_bridge::Stage6::<C::HostCurve, R>::rx(alpha, &witness),
+        7 => claim_bridge::Stage7::<C::HostCurve, R>::rx(alpha, &witness),
+        _ => unreachable!("NUM_POLY_QUERY_SLOTS is 8"),
     }
 }
 

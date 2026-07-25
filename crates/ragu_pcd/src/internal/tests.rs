@@ -41,17 +41,21 @@ where
 //   cargo test -p ragu_pcd --release print_internal_circuit -- --nocapture
 // Then copy-paste the output into the check_constraints! calls in the test below.
 //
-// 105 no longer fits: the poly-query claim slots extend application_ky, and
-// outer_collapse (the largest internal circuit) was already within a few
-// gates of the rank bound at 105.
-//
 // This is not a free test parameter. It is the widest header the framework
 // claims to support, and it is one half of a pair with
-// `NUM_POLY_QUERY_SLOTS` — at 100 and 4, `outer_collapse` measures 2044 of
-// its 2048 gates, so neither number can rise without the other falling. See
-// that constant's documentation for the trade; a fifth slot fits only if
-// this drops to around 60.
-pub const HEADER_SIZE: usize = 100;
+// `NUM_POLY_QUERY_SLOTS`: both are charged to `outer_collapse`, the largest
+// internal circuit, at roughly 13 gates per header element and 12 per slot.
+// Measured points, all against its 2048-gate bound:
+//
+//     4 slots, header 100 -> 2044   (was the configuration; 4 gates spare)
+//     8 slots, header  90 -> 1962   (current)
+//     8 slots, header  84 -> 1884
+//     8 slots, header  60 -> 1572
+//
+// So a slot costs about one header element. Ten elements of header bought
+// four more claim slots and still left 86 gates spare, where the previous
+// configuration had 4. See `NUM_POLY_QUERY_SLOTS` for the rest of the trade.
+pub const HEADER_SIZE: usize = 90;
 
 // Number of dummy application circuits to register before testing internal
 // circuits. This ensures the tests work correctly even when application
@@ -99,12 +103,12 @@ fn test_internal_circuit_constraint_counts() {
         }};
     }
 
-    check_constraints!(Hashes1Circuit,          mul = 1458, lin = 2058);
-    check_constraints!(Hashes2Circuit,          mul = 2006, lin = 2951);
-    check_constraints!(InnerCollapseCircuit,    mul = 1883, lin = 1918);
-    check_constraints!(OuterCollapseCircuit,    mul = 2044, lin = 3030);
-    check_constraints!(ComputeVCircuit,         mul = 1380, lin = 1995);
-    check_constraints!(ChallengeBindingCircuit, mul = 1536, lin = 2379);
+    check_constraints!(Hashes1Circuit,          mul = 1444, lin = 2038);
+    check_constraints!(Hashes2Circuit,          mul = 1992, lin = 2951);
+    check_constraints!(InnerCollapseCircuit,    mul = 1869, lin = 1918);
+    check_constraints!(OuterCollapseCircuit,    mul = 1962, lin = 2894);
+    check_constraints!(ComputeVCircuit,         mul = 1426, lin = 2115);
+    check_constraints!(ChallengeBindingCircuit, mul = 1522, lin = 2379);
 }
 
 #[rustfmt::skip]
@@ -117,11 +121,11 @@ fn test_internal_stage_parameters() {
         }};
     }
 
-    check_stage!(Preamble, skip =   1, num = 352);
-    check_stage!(OuterError,  skip = 353, num = 186);
-    check_stage!(InnerError,  skip = 539, num = 399);
-    check_stage!(Query,   skip = 353, num =  29);
-    check_stage!(Eval,    skip = 382, num =  25);
+    check_stage!(Preamble, skip =   1, num = 338);
+    check_stage!(OuterError,  skip = 339, num = 186);
+    check_stage!(InnerError,  skip = 525, num = 399);
+    check_stage!(Query,   skip = 339, num =  29);
+    check_stage!(Eval,    skip = 368, num =  29);
 }
 
 /// Helper test to print current constraint counts in copy-pasteable format.
@@ -230,8 +234,10 @@ fn test_native_registry_digest() {
     // challenge stages became `RxIndex` variants: they moved from their own
     // position in the `_10_p` accumulation into the `RxIndex::ALL` block, and
     // `compute_v` gained the poly-query triple every other rx component has
-    // (four more per fuse, one per child per slot).
-    let expected = fp!(0x3347a700bed1281ea007c5b6ef8dc1042034e5385254df558d96e2e6be7786bf);
+    // (four more per fuse, one per child per slot). Changed again when
+    // `NUM_POLY_QUERY_SLOTS` went from 4 to 8 and `HEADER_SIZE` from 100 to 90
+    // — both change the width of every application circuit's instance.
+    let expected = fp!(0x0478d95125d31414109cac93a97349fcadde4bfd20b2a9dd60f6407080e8f5fb);
 
     assert_eq!(
         app.native_registry.digest(),
@@ -270,8 +276,11 @@ fn test_nested_registry_digest() {
     // preamble stashes one more commitment per child. Changed again when the
     // challenge stages became `RxIndex` variants: the point count is unchanged,
     // but they moved within the per-child block, from after the poly-query
-    // claims to inside the `RxIndex::ALL` run.
-    let expected = fq!(0x15576ca1721dbffe0db4f79c053960ce696c2902ab572dab6df0655abd2823d2);
+    // claims to inside the `RxIndex::ALL` run. Changed again when
+    // `NUM_POLY_QUERY_SLOTS` went from 4 to 8: four more claim-bridge masks,
+    // four more stashed commitments per child, and eight more endoscaling
+    // points.
+    let expected = fq!(0x3d0e8bd5e0a4aa89cb6a0cb5952661b9aa9ea462d041e9e98e0b296624aefa12);
 
     assert_eq!(
         app.nested_registry.digest(),

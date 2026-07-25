@@ -27,10 +27,23 @@ pub type Stage1<C, R> = super::host_bridge::Stage<C, R, Stage0<C, R>>;
 pub type Stage2<C, R> = super::host_bridge::Stage<C, R, Stage1<C, R>>;
 /// Bridge stage for poly-query claim slot 3.
 pub type Stage3<C, R> = super::host_bridge::Stage<C, R, Stage2<C, R>>;
+/// Bridge stage for poly-query claim slot 4.
+pub type Stage4<C, R> = super::host_bridge::Stage<C, R, Stage3<C, R>>;
+/// Bridge stage for poly-query claim slot 5.
+pub type Stage5<C, R> = super::host_bridge::Stage<C, R, Stage4<C, R>>;
+/// Bridge stage for poly-query claim slot 6.
+pub type Stage6<C, R> = super::host_bridge::Stage<C, R, Stage5<C, R>>;
+/// Bridge stage for poly-query claim slot 7.
+pub type Stage7<C, R> = super::host_bridge::Stage<C, R, Stage6<C, R>>;
+
+/// The end of the claim-bridge chain — what the next family chains after.
+/// Naming it here means extending the chain above is the only edit needed;
+/// [`super::challenge_bridge`] follows this rather than a specific slot.
+pub type Last<C, R> = Stage7<C, R>;
 
 /// Compile-time guard: the number of aliases above must match the number of
 /// claim slots. Bump both together.
-const _: () = assert!(crate::NUM_POLY_QUERY_SLOTS == 4);
+const _: () = assert!(crate::NUM_POLY_QUERY_SLOTS == 8);
 
 #[cfg(test)]
 mod tests {
@@ -45,5 +58,9 @@ mod tests {
         assert_stage_values(&Stage1::<EqAffine, R>::default());
         assert_stage_values(&Stage2::<EqAffine, R>::default());
         assert_stage_values(&Stage3::<EqAffine, R>::default());
+        assert_stage_values(&Stage4::<EqAffine, R>::default());
+        assert_stage_values(&Stage5::<EqAffine, R>::default());
+        assert_stage_values(&Stage6::<EqAffine, R>::default());
+        assert_stage_values(&Stage7::<EqAffine, R>::default());
     }
 }

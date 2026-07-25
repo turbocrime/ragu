@@ -67,35 +67,46 @@ pub(crate) const RAGU_TAG: &[u8] = b"FIXME";
 /// The slots are bound by the circuit's $k(Y)$ public-input polynomial and
 /// recursively enforced at the next fuse via the PCS $(P, u, v)$ accumulator.
 ///
-/// # Why four
+/// # What caps it, and what it trades against
 ///
-/// Not a consumer's choice, and not the endoscaling budget either — the
-/// binding circuit is `outer_collapse`, and it is **exactly full**. Each slot
-/// puts four more elements (`com.x`, `com.y`, `x`, `y`) per child proof into
-/// the $k(Y)$ the collapse circuits absorb, and at `HEADER_SIZE = 100` —
-/// the widest header the framework claims to support, which is what
-/// `internal::tests` pins — `OuterCollapseCircuit` measures 2044 gates of its
-/// 2048. A fifth slot needs about eight more and fails registration with
-/// `GateBoundExceeded`.
+/// Not a consumer's choice, and not the endoscaling budget — each slot does
+/// add one host commitment per child to the point list the next fuse
+/// endoscales (see `NUM_ENDOSCALING_POINTS` in the `nested` module), but that
+/// budget has room. The binding circuit is `outer_collapse`, the largest
+/// internal circuit, which absorbs the four elements (`com.x`, `com.y`, `x`,
+/// `y`) each slot adds per child to the application $k(Y)$.
 ///
-/// So this constant trades directly against `HEADER_SIZE`: at
-/// `HEADER_SIZE = 60` a fifth slot registers cleanly. Raising the slot count
-/// therefore means *narrowing the supported header*, and both numbers have to
-/// move together — which is why `internal::tests::HEADER_SIZE` is part of the
-/// contract rather than an arbitrary test fixture. Changing either one without
-/// re-measuring `test_internal_circuit_constraint_counts` will fail there.
+/// It shares that budget with `HEADER_SIZE`, at roughly 12 gates per slot
+/// against 13 per header element — so **a claim slot costs about one element
+/// of header**. Measured against `outer_collapse`'s 2048-gate bound:
 ///
-/// Each slot also contributes one host commitment per child to the point list
-/// the next fuse endoscales (see `NUM_ENDOSCALING_POINTS` in the `nested`
-/// module), but that budget has room; the collapse circuit runs out first.
+/// | slots | header | gates |
+/// | --- | --- | --- |
+/// | 4 | 100 | 2044 |
+/// | 8 | 90 | 1962 |
+/// | 8 | 84 | 1884 |
+/// | 8 | 60 | 1572 |
 ///
-/// A slot is one *query*, not one polynomial: a step that opens the same
-/// polynomial at two points spends two slots, calling
-/// [`witness_polynomial`](step::StepCtx::witness_polynomial) once per slot
-/// because each slot's `com` is its own bridge-stage commitment. The framework
-/// pays for all four slots whether or not a step uses them, so an opening's
-/// marginal cost is zero until the budget is gone.
-pub const NUM_POLY_QUERY_SLOTS: usize = 4;
+/// The two numbers are one pair, not two knobs, and `internal::tests` pins
+/// both: `HEADER_SIZE` there is the widest header the framework claims to
+/// support, so changing either without re-measuring
+/// `test_internal_circuit_constraint_counts` fails there.
+///
+/// An application that needs a wider header than the pinned one is not stuck
+/// with a compile-time compromise: it picks its own `HEADER_SIZE`, and
+/// [`finalize`](ApplicationBuilder::finalize) either fits or returns
+/// `GateBoundExceeded`. Capacity is settled at finalization, against the
+/// header that application actually configured.
+///
+/// # A slot is one query, not one polynomial
+///
+/// A step that opens the same polynomial at two points spends two slots,
+/// calling [`witness_polynomial`](step::StepCtx::witness_polynomial) once per
+/// slot — each slot's `com` is its own bridge-stage commitment, so the second
+/// query needs the second handle. The framework pays for every slot whether or
+/// not a step uses it, so an opening's marginal cost is zero until the budget
+/// is gone; what a repeat costs is one slot, exactly like any other query.
+pub const NUM_POLY_QUERY_SLOTS: usize = 8;
 
 /// Maximum element width of a single
 /// [`StepCtx::derive_challenge`](step::StepCtx::derive_challenge) input.
