@@ -28,7 +28,9 @@ use super::{
 };
 use crate::{
     Header, NUM_CHALLENGE_SLOTS, NUM_POLY_QUERY_SLOTS,
-    framework_hooks::{ClaimWires, FrameworkHookOutputs, FrameworkHooks, PolyQueryClaim},
+    framework_hooks::{
+        ClaimWires, FrameworkHookOutputs, FrameworkHooks, PolyQueryClaim, ProofValues,
+    },
 };
 
 /// Length of an application circuit's public instance: the three headers, then
@@ -75,7 +77,7 @@ pub(crate) fn discover_hook_layout<C: Cycle, S: Step<C>, const HEADER_SIZE: usiz
     step: &S,
 ) -> Result<(usize, usize)> {
     let mut dr: Emulator<Wireless<Empty, C::CircuitField>> = Emulator::counter();
-    let mut hooks = FrameworkHooks::<_, C::NestedCurve>::new();
+    let mut hooks = FrameworkHooks::<_, C>::discovery();
     {
         let mut ctx = StepCtx::<'_, '_, _, C>::new(&mut dr, &mut hooks);
         step.witness::<_, HEADER_SIZE>(&mut ctx, Empty, Empty, Empty)?;
@@ -171,6 +173,35 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
         })
     }
 
+    /// The proof-level values the hooks commit, as a driver value.
+    ///
+    /// This is the only place the adapter's construction-time mode and the
+    /// driver's value-carrying-ness have to agree. A structure-only driver
+    /// discards the closure, so registration never reaches the `ok_or_else`;
+    /// a value-carrying driver can only get here through
+    /// [`proving`](Self::proving), which always supplies them.
+    fn proof_values<'dr, D: Driver<'dr, F = C::CircuitField>>(
+        &self,
+    ) -> Result<DriverValue<D, ProofValues<'dr, C>>>
+    where
+        'params: 'dr,
+    {
+        let claim_bridge = self.claim_bridge;
+        D::try_just(move || {
+            claim_bridge
+                .map(|(params, bridge_alpha, challenge_alpha)| {
+                    ProofValues::new(params, bridge_alpha, challenge_alpha)
+                })
+                .ok_or_else(|| {
+                    ragu_core::Error::InvalidWitness(
+                        "proving on a value-carrying driver requires an adapter built with \
+                         `Adapter::proving`"
+                            .into(),
+                    )
+                })
+        })
+    }
+
     /// The number of [`derive_challenge`](StepCtx::derive_challenge) calls the
     /// step body makes.
     #[cfg(test)]
@@ -189,29 +220,27 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
     /// (keygen) drivers never evaluate these closures (`Empty::try_just`
     /// discards them), so `None` is fine there.
     fn pad_claim_wires<'dr, D: Driver<'dr, F = C::CircuitField>>(
-        &self,
         dr: &mut D,
+        proof_values: DriverValue<D, ProofValues<'dr, C>>,
         claim_wires: &mut Vec<ClaimWires<'dr, D, C::NestedCurve>>,
     ) -> Result<()> {
-        let claim_bridge = self.claim_bridge.map(|(params, alpha, _)| (params, alpha));
         let allocator = &mut Standard::new();
         while claim_wires.len() < NUM_POLY_QUERY_SLOTS {
             // Each slot's `com` is that slot's bridge stage commitment, so the
             // padding commitment differs per slot just like a real claim's.
             let slot = claim_wires.len();
+            let slot_values = Maybe::clone(&proof_values);
             let padding = D::try_just(move || {
-                let (params, bridge_alpha) = claim_bridge.ok_or_else(|| {
-                    ragu_core::Error::InvalidWitness(
-                        "padding claim unavailable; a proving adapter must be built with \
-                         `Adapter::proving`"
-                            .into(),
-                    )
-                })?;
-                let (host, x, y) = crate::internal::challenge::padding_claim::<C>(params);
+                let proof_values = slot_values.take();
+                let (host, x, y) =
+                    crate::internal::challenge::padding_claim::<C>(proof_values.params);
                 let com = crate::internal::challenge::claim_bridge_commitment::<C, R>(
-                    params,
+                    proof_values.params,
                     slot,
-                    crate::internal::challenge::claim_bridge_alpha::<C>(bridge_alpha, slot),
+                    crate::internal::challenge::claim_bridge_alpha::<C>(
+                        proof_values.bridge_alpha,
+                        slot,
+                    ),
                     host,
                 )?;
                 Ok((com, x, y))
@@ -232,13 +261,24 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
     /// Fills unused challenge slots so every application circuit exposes
     /// exactly [`NUM_CHALLENGE_SLOTS`] pairs in its instance.
     ///
-    /// An unused slot still has reserved wires, so it still has a commitment —
-    /// the all-zero stage, blinded. Deriving its challenge honestly keeps the
-    /// binding circuit uniform: it re-derives every slot without knowing which
-    /// the step actually used.
+    /// An unused slot is *filled*, not skipped. Its wires are reserved either
+    /// way — `configure_stage` allocates them before the body runs — and an
+    /// allocated wire is a free one: the `Coeff::Zero` it is allocated with is
+    /// the honest assignment, not a constraint. Leaving the guard unconsumed
+    /// would therefore leave `CHALLENGE_WIDTH` unconstrained wires inside a
+    /// region the stage commits, which is exactly the grinding this module's
+    /// [wire discipline](challenge_stage#wire-discipline) forbids: a prover
+    /// could vary them, and with them the commitment and its challenge.
+    ///
+    /// So padding runs the same path a used slot does — `fill_next`, then pin
+    /// every wire — differing only in that all of them are pinned to zero and
+    /// none to a caller's element. Deriving the challenge honestly also keeps
+    /// the parent's binding circuit uniform: it re-derives every slot without
+    /// knowing which the step actually used.
     fn pad_challenge_pairs<'dr, D: Driver<'dr, F = C::CircuitField>>(
-        &self,
         dr: &mut D,
+        slots: &mut dyn challenge_stage::ChallengeSlots<'dr, D, C>,
+        proof_values: DriverValue<D, ProofValues<'dr, C>>,
         pairs: &mut Vec<crate::framework_hooks::ChallengeWires<'dr, D, C::NestedCurve>>,
         inputs: &mut Vec<DriverValue<D, [C::CircuitField; crate::CHALLENGE_WIDTH]>>,
     ) -> Result<()>
@@ -247,31 +287,18 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
     {
         let allocator = &mut Standard::new();
         while pairs.len() < NUM_CHALLENGE_SLOTS {
-            let slot = pairs.len();
-            let claim_bridge = self.claim_bridge;
-            let derived = D::try_just(move || {
-                let (params, bridge_alpha, challenge_alpha) = claim_bridge.ok_or_else(|| {
-                    ragu_core::Error::InvalidWitness(
-                        "padding challenge unavailable; a proving adapter must be built with \
-                         `Adapter::proving`"
-                            .into(),
-                    )
-                })?;
-                crate::internal::challenge::staged_challenge::<C, R>(
-                    params,
-                    slot,
-                    challenge_alpha,
-                    bridge_alpha,
-                    [<C::CircuitField as ragu_arithmetic::ff::Field>::ZERO; crate::CHALLENGE_WIDTH],
-                )
-            })?;
-            let point =
-                ragu_primitives::Point::alloc(dr, derived.as_ref().map(|(point, _)| *point))?;
-            let challenge = Element::alloc(dr, allocator, derived.map(|(_, challenge)| challenge))?;
-            pairs.push(crate::framework_hooks::ChallengeWires { point, challenge });
-            inputs.push(D::just(|| {
+            let zeros = D::just(|| {
                 [<C::CircuitField as ragu_arithmetic::ff::Field>::ZERO; crate::CHALLENGE_WIDTH]
-            }));
+            });
+            let filled = slots.fill_next(dr, Maybe::clone(&proof_values), Maybe::clone(&zeros))?;
+            for wire in filled.wires.iter() {
+                Element::enforce_zero(wire, dr)?;
+            }
+            let point =
+                ragu_primitives::Point::alloc(dr, filled.derived.as_ref().map(|(p, _)| *p))?;
+            let challenge = Element::alloc(dr, allocator, filled.derived.map(|(_, c)| c))?;
+            pairs.push(crate::framework_hooks::ChallengeWires { point, challenge });
+            inputs.push(zeros);
         }
         Ok(())
     }
@@ -351,19 +378,18 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize>
 
         let (left, right, witness) = witness.cast();
 
-        let mut hooks = FrameworkHooks::with_expected(self.challenge_calls);
+        // The one place the adapter's construction-time mode and the driver's
+        // value-carrying-ness have to be reconciled. Everything downstream sees
+        // a plain driver value: a structure-only driver discards the closure, so
+        // there is no absent case to handle, and a value-carrying driver can
+        // only get here from `Adapter::proving`.
+        let proof_values = self.proof_values::<D>()?;
+
+        let mut hooks =
+            FrameworkHooks::with_expected(self.challenge_calls, Maybe::clone(&proof_values));
         let ((left, right, output), output_data, step_aux) = {
-            let ctx = match self.claim_bridge {
-                Some((params, bridge_alpha, challenge_alpha)) => StepCtx::<'_, '_, _, C>::proving(
-                    dr,
-                    &mut hooks,
-                    params,
-                    bridge_alpha,
-                    challenge_alpha,
-                ),
-                None => StepCtx::<'_, '_, _, C>::new(dr, &mut hooks),
-            };
-            let mut ctx = ctx.with_challenge_slots(&mut challenge_slots);
+            let mut ctx = StepCtx::<'_, '_, _, C>::new(dr, &mut hooks)
+                .with_challenge_slots(&mut challenge_slots);
             self.step
                 .witness::<_, HEADER_SIZE>(&mut ctx, witness, left, right)?
         };
@@ -395,8 +421,14 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize>
             ));
         }
 
-        self.pad_claim_wires(dr, &mut claim_wires)?;
-        self.pad_challenge_pairs(dr, &mut challenge_pairs, &mut challenge_inputs)?;
+        Self::pad_claim_wires(dr, Maybe::clone(&proof_values), &mut claim_wires)?;
+        Self::pad_challenge_pairs(
+            dr,
+            &mut challenge_slots,
+            proof_values,
+            &mut challenge_pairs,
+            &mut challenge_inputs,
+        )?;
 
         let mut elements = Vec::with_capacity(InstanceLen::<HEADER_SIZE>::len());
         left.write(dr, &mut elements)?;

@@ -53,7 +53,7 @@ use ragu_primitives::{
     vec::{ConstLen, FixedVec},
 };
 
-use crate::CHALLENGE_WIDTH;
+use crate::{CHALLENGE_WIDTH, framework_hooks::ProofValues};
 
 /// A challenge stage's witness: the input elements, zero-padded to
 /// [`CHALLENGE_WIDTH`].
@@ -170,7 +170,7 @@ pub(crate) trait ChallengeSlots<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::
     fn fill_next(
         &mut self,
         dr: &mut D,
-        params: Option<(&C::Params, C::ScalarField, C::CircuitField)>,
+        proof_values: DriverValue<D, ProofValues<'dr, C>>,
         inputs: DriverValue<D, [D::F; CHALLENGE_WIDTH]>,
     ) -> Result<Filled<'dr, D, C>>;
 }
@@ -210,7 +210,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> ChallengeSlots
     fn fill_next(
         &mut self,
         dr: &mut D,
-        params: Option<(&C::Params, C::ScalarField, C::CircuitField)>,
+        proof_values: DriverValue<D, ProofValues<'dr, C>>,
         inputs: DriverValue<D, [D::F; CHALLENGE_WIDTH]>,
     ) -> Result<Filled<'dr, D, C>> {
         let slot = self.next;
@@ -232,16 +232,12 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> ChallengeSlots
         self.next += 1;
 
         let derived = D::try_just(|| {
-            let (params, bridge_alpha, challenge_alpha) = params.ok_or_else(|| {
-                ragu_core::Error::Initialization(
-                    "derive_challenge requires the proving adapter".into(),
-                )
-            })?;
+            let proof_values = proof_values.take();
             crate::internal::challenge::staged_challenge::<C, R>(
-                params,
+                proof_values.params,
                 slot,
-                challenge_alpha,
-                bridge_alpha,
+                proof_values.challenge_alpha,
+                proof_values.bridge_alpha,
                 inputs.take(),
             )
         })?;

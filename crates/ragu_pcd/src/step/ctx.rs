@@ -36,15 +36,16 @@ where
     /// The underlying driver. Components called from a step body use this for
     /// allocation and constraint emission.
     pub dr: &'a mut D,
-    hooks: &'a mut FrameworkHooks<'dr, D, C::NestedCurve>,
-    /// Cycle params and the proof's shared bridge-alpha source, needed to build
-    /// a claim's bridge stage. `None` on structure-only passes, where no
-    /// witness values exist and the commitment is never computed.
-    claim_bridge: Option<(&'dr C::Params, C::ScalarField, C::CircuitField)>,
+    hooks: &'a mut FrameworkHooks<'dr, D, C>,
     /// The application circuit's reserved challenge-stage wires, lent by the
     /// adapter. `None` on the registration dry run, which has no
     /// `StageBuilder`. The concrete store is `R`-parameterized; erasing it here
     /// keeps the rank out of every `Step::witness` signature.
+    ///
+    /// An `Option` rather than a [`DriverValue`], unlike
+    /// [`FrameworkHooks::proof_values`]: the dry run and keygen both run on
+    /// structure-only drivers and differ only in whether the stages exist, so
+    /// this absence is not the driver's.
     challenge_slots: Option<&'a mut dyn ChallengeSlots<'dr, D, C>>,
 }
 
@@ -53,33 +54,10 @@ where
     D: Driver<'dr>,
     C: Cycle<CircuitField = D::F>,
 {
-    pub(crate) fn new(
-        dr: &'a mut D,
-        hooks: &'a mut FrameworkHooks<'dr, D, C::NestedCurve>,
-    ) -> Self {
+    pub(crate) fn new(dr: &'a mut D, hooks: &'a mut FrameworkHooks<'dr, D, C>) -> Self {
         Self {
             dr,
             hooks,
-            claim_bridge: None,
-            challenge_slots: None,
-        }
-    }
-
-    /// Like [`new`](Self::new), for the proving path: `params` and
-    /// `bridge_alpha` let [`witness_polynomial`](Self::witness_polynomial)
-    /// build each claim's bridge stage, whose commitment becomes that claim's
-    /// `com`.
-    pub(crate) fn proving(
-        dr: &'a mut D,
-        hooks: &'a mut FrameworkHooks<'dr, D, C::NestedCurve>,
-        params: &'dr C::Params,
-        bridge_alpha: C::ScalarField,
-        challenge_alpha: C::CircuitField,
-    ) -> Self {
-        Self {
-            dr,
-            hooks,
-            claim_bridge: Some((params, bridge_alpha, challenge_alpha)),
             challenge_slots: None,
         }
     }
@@ -110,16 +88,15 @@ where
     ) -> Result<PolyQueryHandle<'dr, D, C, R>> {
         let slot = self.hooks.next_claim_slot()?;
         let host_for_com = commitment.as_ref().map(|c| c.host());
-        let claim_bridge = self.claim_bridge;
+        let proof_values = self.hooks.proof_values();
         let com_value = D::try_just(move || {
-            let (params, bridge_alpha, _) = claim_bridge.ok_or_else(|| {
-                ragu_core::Error::Initialization(
-                    "witness_polynomial requires the proving adapter".into(),
-                )
-            })?;
-            let alpha = crate::internal::challenge::claim_bridge_alpha::<C>(bridge_alpha, slot);
+            let proof_values = proof_values.take();
+            let alpha = crate::internal::challenge::claim_bridge_alpha::<C>(
+                proof_values.bridge_alpha,
+                slot,
+            );
             crate::internal::challenge::claim_bridge_commitment::<C, R>(
-                params,
+                proof_values.params,
                 slot,
                 alpha,
                 host_for_com.take(),
@@ -241,7 +218,7 @@ where
             Ok(inputs)
         })?;
 
-        let claim_bridge = self.claim_bridge;
+        let proof_values = self.hooks.proof_values();
         let Some(slots) = self.challenge_slots.as_deref_mut() else {
             // Discovery dry run: no `StageBuilder`, so no slots to fill. Only
             // the call count is read from it.
@@ -256,7 +233,7 @@ where
                 })?,
             );
         };
-        let filled = slots.fill_next(self.dr, claim_bridge, inputs.clone())?;
+        let filled = slots.fill_next(self.dr, proof_values, inputs.clone())?;
 
         for (index, wire) in filled.wires.iter().enumerate() {
             match elements.get(index) {

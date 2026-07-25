@@ -213,7 +213,12 @@ fn test_native_registry_digest() {
     // `challenge_binding` circuit landed: the native registry gained that
     // circuit, a `PreambleFinalStaged` mask, and one more `RxIndex` component
     // (which widens the `query` and `eval` stages by one evaluation per child).
-    let expected = fp!(0x1366112639faf229a1253d6173552581306313e17f8110f3e057d09c4dc73a66);
+    // Changed again when unused challenge slots started being *filled* rather
+    // than skipped: a skipped slot left its `CHALLENGE_WIDTH` reserved wires
+    // unconstrained inside a region the stage commits, so each padded slot now
+    // pins them to zero. Only the native digest moves — application circuits
+    // are the ones with challenge stages.
+    let expected = fp!(0x3417605f0dc3ee69323a6a5cce45b3669a11841965c802df4ef9c8f8a87eb705);
 
     assert_eq!(
         app.native_registry.digest(),

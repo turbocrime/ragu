@@ -33,11 +33,11 @@
 //!   committing at most [`CHALLENGE_WIDTH`](crate::CHALLENGE_WIDTH) elements.
 //!
 //!   The derivation itself lives on [`StepCtx`](crate::step::StepCtx), not
-//!   here, because it needs the whole [`Cycle`](ragu_arithmetic::Cycle) — host
-//!   generators to commit the stage, nested generators to bridge it, and the
-//!   circuit Poseidon to hash the result — while this container is
-//!   parameterized only by the nested curve, which is all its other state
-//!   needs.
+//!   here, because it needs the rank — to build the slot's stage polynomial —
+//!   which this container deliberately does not carry, so that `R` stays out of
+//!   every `Step::witness` signature. The values it derives *from* — the cycle
+//!   parameters and the proof's blinds — are framework state, so they live here
+//!   as [`ProofValues`].
 //!
 //! ## Structure discovery
 //!
@@ -45,7 +45,7 @@
 //! structure, so it must be witness-independent. The adapter dry-runs the step
 //! body once at registration time (with an [`Empty`](ragu_core::maybe::Empty)
 //! witness, on a counting emulator) with a container created by
-//! [`new`](FrameworkHooks::new) (**discovery mode**), recording the
+//! [`discovery`](FrameworkHooks::discovery), recording the
 //! `derive_challenge` call count and the poly-query claim count. Real synthesis
 //! goes through [`with_expected`](FrameworkHooks::with_expected), which replays
 //! the discovered count as a per-call determinism guard: a body whose call
@@ -104,10 +104,11 @@
 
 use alloc::vec::Vec;
 
-use ragu_arithmetic::{CurveAffine, ff::Field};
+use ragu_arithmetic::{CurveAffine, Cycle, ff::Field};
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverValue},
+    maybe::{Maybe, MaybeKind},
 };
 use ragu_primitives::{Element, GadgetExt, Point};
 
@@ -272,8 +273,8 @@ impl_challenge_input_tuple!(A, B, C2, D2);
 /// constructs this, passes it to the step, then surfaces
 /// [`into_outputs`](Self::into_outputs) through its `Aux` for later fuse-time
 /// processing.
-pub struct FrameworkHooks<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
-    poly_query_claims: Vec<ClaimWires<'dr, D, C>>,
+pub struct FrameworkHooks<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
+    poly_query_claims: Vec<ClaimWires<'dr, D, C::NestedCurve>>,
     /// Number of polynomials witnessed so far via
     /// [`StepCtx::witness_polynomial`](crate::step::StepCtx::witness_polynomial).
     /// Assigns each claim its slot, which fixes the bridge stage — and
@@ -282,7 +283,7 @@ pub struct FrameworkHooks<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     /// The `(bridged stage commitment, challenge)` pair each
     /// [`derive_challenge`](crate::step::StepCtx::derive_challenge) call produced, in slot
     /// order.
-    challenge_pairs: Vec<ChallengeWires<'dr, D, C>>,
+    challenge_pairs: Vec<ChallengeWires<'dr, D, C::NestedCurve>>,
     /// The values each challenge stage commits, in slot order.
     challenge_inputs: Vec<DriverValue<D, [D::F; crate::CHALLENGE_WIDTH]>>,
     /// Number of [`derive_challenge`](crate::step::StepCtx::derive_challenge) calls so far.
@@ -294,7 +295,51 @@ pub struct FrameworkHooks<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     /// a per-call determinism guard. `None` in discovery mode (see the
     /// [module documentation](self)).
     expected_calls: Option<usize>,
+    /// The proof-level values the hooks commit to. See [`ProofValues`].
+    proof_values: DriverValue<D, ProofValues<'dr, C>>,
 }
+
+/// The proof-level values a hook needs to compute a witness: the cycle
+/// parameters, and the proof's two blind sources.
+///
+/// A [`DriverValue`] rather than an `Option`, because its absence is exactly
+/// the driver's absence of values — unlike [`expected_calls`], which
+/// distinguishes two passes that are *both* structure-only. Every use already
+/// sits inside a `try_just` that a structure-only driver discards, so there is
+/// no absent case to handle and no error to invent for a state that cannot
+/// arise: registration builds its adapter with `Adapter::new` and only ever
+/// witnesses it on a structure-only driver, while proving builds it with
+/// `Adapter::proving`. Those two facts meet once, in `Adapter::witness`.
+///
+/// [`expected_calls`]: FrameworkHooks::with_expected
+pub struct ProofValues<'dr, C: Cycle> {
+    pub(crate) params: &'dr C::Params,
+    pub(crate) bridge_alpha: C::ScalarField,
+    pub(crate) challenge_alpha: C::CircuitField,
+}
+
+impl<'dr, C: Cycle> ProofValues<'dr, C> {
+    pub(crate) fn new(
+        params: &'dr C::Params,
+        bridge_alpha: C::ScalarField,
+        challenge_alpha: C::CircuitField,
+    ) -> Self {
+        Self {
+            params,
+            bridge_alpha,
+            challenge_alpha,
+        }
+    }
+}
+
+// Hand-written: `derive` would demand `C: Clone`/`C: Copy`, but the fields are
+// a shared reference and two field elements, all `Copy` for every `Cycle`.
+impl<C: Cycle> Clone for ProofValues<'_, C> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<C: Cycle> Copy for ProofValues<'_, C> {}
 
 /// Aggregate of every hook's accumulated output, returned by
 /// [`FrameworkHooks::into_outputs`]. Adding a new hook means adding a field
@@ -315,13 +360,17 @@ pub struct FrameworkHookOutputs<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>
     pub challenge_inputs: Vec<DriverValue<D, [D::F; crate::CHALLENGE_WIDTH]>>,
 }
 
-impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C> {
-    /// Creates a new, empty hook container in **discovery mode**: no expected
-    /// call layout, so [`derive_challenge`](crate::step::StepCtx::derive_challenge) records
-    /// input widths without checking them. Used by the registration-time dry
-    /// run that discovers the call layout; real synthesis goes through
-    /// [`with_expected`](Self::with_expected).
-    pub fn new() -> Self {
+impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, C> {
+    /// Creates a hook container in **discovery mode**: no expected call layout,
+    /// so [`derive_challenge`](crate::step::StepCtx::derive_challenge) records
+    /// calls without checking them, and no proof to draw values from. Used by
+    /// the registration-time dry run that discovers the call layout; real
+    /// synthesis goes through [`with_expected`](Self::with_expected).
+    ///
+    /// Callable only on a structure-only driver: the dry run has no proof, and
+    /// [`MaybeKind::empty`] is a compile-time error on a value-carrying kind.
+    /// That is the intent — a discovery container must never reach synthesis.
+    pub fn discovery() -> Self {
         Self {
             poly_query_claims: Vec::new(),
             witnessed_claims: 0,
@@ -329,19 +378,38 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C>
             challenge_pairs: Vec::new(),
             challenge_inputs: Vec::new(),
             expected_calls: None,
+            proof_values: <D::MaybeKind as MaybeKind>::empty(),
         }
     }
 
-    /// Creates a hook container with the `derive_challenge` call count
-    /// discovered at registration time. Each
-    /// [`derive_challenge`](crate::step::StepCtx::derive_challenge) call is checked against it,
-    /// so a body that makes more calls than the dry run did fails at the
-    /// offending call.
-    pub fn with_expected(expected_calls: usize) -> Self {
+    /// Creates a hook container for real synthesis: the `derive_challenge` call
+    /// count discovered at registration time, and the proof-level values the
+    /// hooks commit. Each
+    /// [`derive_challenge`](crate::step::StepCtx::derive_challenge) call is
+    /// checked against the count, so a body that makes more calls than the dry
+    /// run did fails at the offending call.
+    ///
+    /// Spelled out rather than `..Self::discovery()`, which would instantiate
+    /// that method's [`MaybeKind::empty`] on a value-carrying driver.
+    pub fn with_expected(
+        expected_calls: usize,
+        proof_values: DriverValue<D, ProofValues<'dr, C>>,
+    ) -> Self {
         Self {
+            poly_query_claims: Vec::new(),
+            witnessed_claims: 0,
+            challenge_calls: 0,
+            challenge_pairs: Vec::new(),
+            challenge_inputs: Vec::new(),
             expected_calls: Some(expected_calls),
-            ..Self::new()
+            proof_values,
         }
+    }
+
+    /// The proof-level values the hooks commit to, for the hook bodies that
+    /// need them.
+    pub(crate) fn proof_values(&self) -> DriverValue<D, ProofValues<'dr, C>> {
+        Maybe::clone(&self.proof_values)
     }
 
     /// Assigns the next poly-query claim slot, in `witness_polynomial` call
@@ -386,7 +454,7 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C>
     /// re-derive the challenge from the point.
     pub(crate) fn record_challenge(
         &mut self,
-        point: Point<'dr, D, C>,
+        point: Point<'dr, D, C::NestedCurve>,
         challenge: Element<'dr, D>,
         inputs: DriverValue<D, [D::F; crate::CHALLENGE_WIDTH]>,
     ) {
@@ -426,7 +494,7 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C>
         &mut self,
         _dr: &mut D,
         slot: usize,
-        com: Point<'dr, D, C>,
+        com: Point<'dr, D, C::NestedCurve>,
         x: Element<'dr, D>,
         y: Element<'dr, D>,
         coefficients: DriverValue<D, Vec<D::F>>,
@@ -448,19 +516,13 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C>
     }
 
     /// Consumes the container and returns every hook's accumulated output.
-    pub fn into_outputs(self) -> FrameworkHookOutputs<'dr, D, C> {
+    pub fn into_outputs(self) -> FrameworkHookOutputs<'dr, D, C::NestedCurve> {
         FrameworkHookOutputs {
             poly_query_claims: self.poly_query_claims,
             challenge_calls: self.challenge_calls,
             challenge_pairs: self.challenge_pairs,
             challenge_inputs: self.challenge_inputs,
         }
-    }
-}
-
-impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> Default for FrameworkHooks<'dr, D, C> {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -481,7 +543,7 @@ mod tests {
     /// The framework caps a step body at `NUM_CHALLENGE_SLOTS` challenges.
     #[test]
     fn challenge_slots_are_capped() {
-        let mut hooks = FrameworkHooks::<Dr<'_>, NestedCurve>::new();
+        let mut hooks = FrameworkHooks::<Dr<'_>, Pasta>::discovery();
         for expected in 0..crate::NUM_CHALLENGE_SLOTS {
             assert_eq!(
                 hooks.take_challenge_slot().expect("within the cap"),
@@ -501,7 +563,10 @@ mod tests {
     /// did is rejected, rather than silently synthesizing a larger circuit.
     #[test]
     fn challenge_slots_respect_the_discovered_count() {
-        let mut hooks = FrameworkHooks::<Dr<'_>, NestedCurve>::with_expected(1);
+        let mut hooks = FrameworkHooks::<Dr<'_>, Pasta>::with_expected(
+            1,
+            <Empty as MaybeKind>::empty::<ProofValues<'_, Pasta>>(),
+        );
         hooks.take_challenge_slot().expect("the discovered call");
         let error = hooks
             .take_challenge_slot()
