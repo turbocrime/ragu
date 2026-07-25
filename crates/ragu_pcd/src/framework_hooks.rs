@@ -36,8 +36,8 @@
 //!   here, because it needs the whole [`Cycle`](ragu_arithmetic::Cycle) — host
 //!   generators to commit the stage, nested generators to bridge it, and the
 //!   circuit Poseidon to hash the result — while this container is
-//!   parameterized only by the nested curve. Folding the `Cycle` in here and
-//!   reuniting the two halves would be the tidier shape.
+//!   parameterized only by the nested curve, which is all its other state
+//!   needs.
 //!
 //! ## Structure discovery
 //!
@@ -87,8 +87,13 @@
 //! Together: the prover cannot choose a challenge independently of the inputs
 //! it committed. What remains is the framework-wide deferred PCS opening —
 //! the commitment-to-carried-polynomial link that **no** commitment in the
-//! system has yet — so the chain reaches exactly the same parity as
-//! `bridge_f` and no further. See `POLY_QUERY_SOUNDNESS.md`.
+//! system has yet, `bridge_f` and the endoscaling commitments included — so
+//! the chain reaches exactly the same parity as the framework's own bridges
+//! and no further. `Application::verify` closes it for a root proof's own
+//! claims and challenges; interior nodes inherit the framework's status quo.
+//! The acceptance gate for that work is
+//! `poly_query_com_is_not_bound_to_the_folded_polynomial` in
+//! `tests/recursive_claims.rs`.
 //!
 //! The framework collects the resulting outputs through the adapter's `Aux` for
 //! later fuse-time processing. New framework hooks (e.g. transcript threading)

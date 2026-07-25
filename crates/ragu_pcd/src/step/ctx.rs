@@ -164,19 +164,20 @@ where
     /// A claim's `com` is the commitment of that claim's **bridge stage** — a
     /// polynomial the proof carries, whose wires are the claim's host
     /// commitment, which the `loading` circuit ties to the host point the
-    /// parent folds and endoscales. That puts claims at parity with every
-    /// other cross-curve commitment in the framework (compare
-    /// `bridge_f_commitment` and `bridge_f_rx`).
-    ///
-    /// The one remaining link — a commitment to the polynomial it commits to —
-    /// is the framework-wide deferred PCS opening, which **no** commitment in
-    /// the system currently has. Until that lands, an interior claim is not
-    /// binding against a malicious prover; a **root** proof is safe, because
+    /// parent folds and endoscales. That is the framework's own idiom for
+    /// crossing the curve boundary (compare `bridge_f_commitment` and
+    /// `bridge_f_rx`, which predate poly-query), so a claim inherits exactly
+    /// its guarantees and exactly its one gap: no commitment in the system is
+    /// yet bound to the polynomial it commits to, the framework-wide deferred
+    /// PCS opening. A **root** proof's own claims are not affected —
     /// [`Application::verify`](crate::Application::verify) rebuilds the bridge
-    /// stage and compares. See `POLY_QUERY_SOUNDNESS.md`, and the executable
-    /// demonstration in `tests/recursive_claims.rs`
-    /// (`poly_query_com_is_not_bound_to_the_folded_polynomial`), which is the
-    /// gate for that work.
+    /// stage and compares.
+    ///
+    /// The full chain, and what each link rests on, is documented once in
+    /// [`framework_hooks`](crate::framework_hooks). The executable
+    /// demonstration is `poly_query_com_is_not_bound_to_the_folded_polynomial`
+    /// in `tests/recursive_claims.rs`, which is the acceptance gate for the
+    /// deferred work.
     pub fn enforce_poly_query<R: Rank>(
         &mut self,
         commitment: &PolyQueryHandle<'dr, D, C, R>,
@@ -186,7 +187,7 @@ where
         self.hooks.enforce_polynomial_query(
             self.dr,
             commitment.slot(),
-            commitment.com(),
+            commitment.commitment().clone(),
             x,
             y,
             commitment.coefficients(),

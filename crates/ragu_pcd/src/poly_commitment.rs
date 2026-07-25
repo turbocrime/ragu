@@ -136,11 +136,6 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> PolyQueryHandl
         &self.polynomial
     }
 
-    /// A clone of the commitment point (for the claim wires).
-    pub(crate) fn com(&self) -> Point<'dr, D, C::NestedCurve> {
-        self.com.clone()
-    }
-
     /// The polynomial's coefficients (little-endian), for the claim.
     pub(crate) fn coefficients(&self) -> DriverValue<D, Vec<D::F>> {
         self.polynomial

@@ -301,7 +301,7 @@ fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
             // i.e. the framework-wide deferred PCS opening, which no
             // commitment in the system has yet. So a prover can still carry a
             // bridge rx that disagrees with `com`. Invert this assertion when
-            // the nested-side PCS lands; see POLY_QUERY_SOUNDNESS.md.
+            // the nested-side PCS lands.
             assert!(
                 verified,
                 "expected the unsound status quo: a parent of a desynced-claim \

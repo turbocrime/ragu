@@ -29,7 +29,6 @@ use super::{
 use crate::{
     Header, NUM_CHALLENGE_SLOTS, NUM_POLY_QUERY_SLOTS,
     framework_hooks::{ClaimWires, FrameworkHookOutputs, FrameworkHooks, PolyQueryClaim},
-    internal::challenge::PaddingClaim,
 };
 
 /// Length of an application circuit's public instance: the three headers, then
@@ -130,13 +129,6 @@ pub(crate) struct Adapter<'params, C: Cycle, S, R: Rank, const HEADER_SIZE: usiz
     /// same dry run. Part of the circuit structure: the real synthesis must
     /// raise exactly this many (determinism guard in [`Adapter::witness`]).
     num_claims: usize,
-    /// The canonical padding claim used to fill unused poly-query slots.
-    /// `None` on adapters built for registration/keygen (structure-only, where
-    /// the value is never taken); `Some` on the proving adapter. The padding is
-    /// *witnessed* into each unused slot rather than baked as a circuit
-    /// constant, so an application circuit's identity does not depend on the
-    /// runtime generators.
-    padding: Option<PaddingClaim<C, R>>,
     /// Cycle params and the proof's shared bridge-alpha source, threaded into
     /// [`StepCtx`] so a witnessed polynomial's claim bridge — and therefore its
     /// `com` — can be built. `None` on structure-only adapters.
@@ -149,26 +141,24 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
 {
     /// Wraps `step` for registration/keygen, discovering its `derive_challenge`
     /// call count and poly-query claim count with a dry run of the witness
-    /// body (see [`discover_hook_layout`]). Param-free: the padding claim is
-    /// left unset (`None`) because keygen is structure-only and never takes its
-    /// value. Use [`proving`](Self::proving) to build the adapter that actually
-    /// proves.
+    /// body (see [`discover_hook_layout`]). Param-free: keygen is
+    /// structure-only, so the padding values are never taken and
+    /// `claim_bridge` is left unset. Use [`proving`](Self::proving) to build
+    /// the adapter that actually proves.
     pub fn new(step: S) -> Result<Self> {
         let (challenge_calls, num_claims) = discover_hook_layout::<C, S, HEADER_SIZE>(&step)?;
         Ok(Adapter {
             step,
             challenge_calls,
             num_claims,
-            padding: None,
             claim_bridge: None,
             _marker: PhantomData,
         })
     }
 
     /// Wraps `step` for proving. Identical circuit structure to
-    /// [`new`](Self::new), but additionally computes the canonical padding
-    /// claim from `params` so the unused poly-query slots can be witnessed at
-    /// proving time.
+    /// [`new`](Self::new), but carries the `params` and blinds that let the
+    /// unused poly-query and challenge slots be padded at proving time.
     pub fn proving(
         step: S,
         params: &'params C::Params,
@@ -176,7 +166,6 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
         challenge_alpha: C::CircuitField,
     ) -> Result<Self> {
         Ok(Adapter {
-            padding: Some(PaddingClaim::new(params)),
             claim_bridge: Some((params, bridge_alpha, challenge_alpha)),
             ..Self::new(step)?
         })
@@ -195,8 +184,8 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
     ///
     /// The padding is *witnessed* (like a real claim), not baked as an
     /// in-circuit constant, so an application circuit's structure never depends
-    /// on the runtime generators. The value materializes only on value-carrying
-    /// (proving) drivers, where `self.padding` is `Some`; structure-only
+    /// on the runtime generators. Its values materialize only on value-carrying
+    /// (proving) drivers, where `self.claim_bridge` is `Some`; structure-only
     /// (keygen) drivers never evaluate these closures (`Empty::try_just`
     /// discards them), so `None` is fine there.
     fn pad_claim_wires<'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -204,61 +193,37 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
         dr: &mut D,
         claim_wires: &mut Vec<ClaimWires<'dr, D, C::NestedCurve>>,
     ) -> Result<()> {
-        let padding_host = self.padding.as_ref().map(|p| p.host);
         let claim_bridge = self.claim_bridge.map(|(params, alpha, _)| (params, alpha));
-        let padding_x = self.padding.as_ref().map(|p| p.x);
-        let padding_y = self.padding.as_ref().map(|p| p.y);
         let allocator = &mut Standard::new();
         while claim_wires.len() < NUM_POLY_QUERY_SLOTS {
             // Each slot's `com` is that slot's bridge stage commitment, so the
             // padding commitment differs per slot just like a real claim's.
             let slot = claim_wires.len();
-            let com = ragu_primitives::Point::alloc(
-                dr,
-                D::try_just(move || {
-                    let (params, bridge_alpha) = claim_bridge.ok_or_else(|| {
-                        ragu_core::Error::InvalidWitness(
-                            "padding claim commitment unavailable; a proving adapter must be \
-                             built with `Adapter::proving`"
-                                .into(),
-                        )
-                    })?;
-                    let host = padding_host.ok_or_else(|| {
-                        ragu_core::Error::InvalidWitness("padding claim host unavailable".into())
-                    })?;
-                    crate::internal::challenge::claim_bridge_commitment::<C, R>(
-                        params,
-                        slot,
-                        crate::internal::challenge::claim_bridge_alpha::<C>(bridge_alpha, slot),
-                        host,
+            let padding = D::try_just(move || {
+                let (params, bridge_alpha) = claim_bridge.ok_or_else(|| {
+                    ragu_core::Error::InvalidWitness(
+                        "padding claim unavailable; a proving adapter must be built with \
+                         `Adapter::proving`"
+                            .into(),
                     )
-                })?,
-            )?;
-            let x = Element::alloc(
-                dr,
-                allocator,
-                D::try_just(move || {
-                    padding_x.ok_or_else(|| {
-                        ragu_core::Error::InvalidWitness("padding claim point unavailable".into())
-                    })
-                })?,
-            )?;
-            let y = Element::alloc(
-                dr,
-                allocator,
-                D::try_just(move || {
-                    padding_y.ok_or_else(|| {
-                        ragu_core::Error::InvalidWitness("padding claim value unavailable".into())
-                    })
-                })?,
-            )?;
-            let coefficients =
-                D::just(|| alloc::vec![<C::CircuitField as ragu_arithmetic::ff::Field>::ONE]);
+                })?;
+                let (host, x, y) = crate::internal::challenge::padding_claim::<C>(params);
+                let com = crate::internal::challenge::claim_bridge_commitment::<C, R>(
+                    params,
+                    slot,
+                    crate::internal::challenge::claim_bridge_alpha::<C>(bridge_alpha, slot),
+                    host,
+                )?;
+                Ok((com, x, y))
+            })?;
+
             claim_wires.push(ClaimWires {
-                com,
-                x,
-                y,
-                coefficients,
+                com: ragu_primitives::Point::alloc(dr, padding.as_ref().map(|(com, _, _)| *com))?,
+                x: Element::alloc(dr, allocator, padding.as_ref().map(|(_, x, _)| *x))?,
+                y: Element::alloc(dr, allocator, padding.map(|(_, _, y)| y))?,
+                coefficients: D::just(|| {
+                    alloc::vec![<C::CircuitField as ragu_arithmetic::ff::Field>::ONE]
+                }),
             });
         }
         Ok(())

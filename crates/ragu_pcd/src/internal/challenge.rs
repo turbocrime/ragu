@@ -121,29 +121,36 @@ pub(crate) fn claim_bridge_commitment<C: Cycle, R: Rank>(
     ))
 }
 
-/// The canonical padding claim used to fill unused poly-query slots (see
-/// [`NUM_POLY_QUERY_SLOTS`](crate::NUM_POLY_QUERY_SLOTS)): the constant
-/// polynomial $1$, opened at $x = 0$ to $y = 1$, with its (never-identity)
-/// host commitment and nested bridge commitment.
-pub(crate) struct PaddingClaim<C: Cycle, R: Rank> {
-    pub poly: sparse::Polynomial<C::CircuitField, R>,
-    pub host: C::HostCurve,
-    pub x: C::CircuitField,
-    pub y: C::CircuitField,
+/// The canonical padding claim for an unused poly-query slot (see
+/// [`NUM_POLY_QUERY_SLOTS`](crate::NUM_POLY_QUERY_SLOTS)): its host commitment
+/// and its opening $(x, y) = (0, 1)$.
+///
+/// A slot cannot be padded with zeros — `commit(0)` is the identity, which no
+/// [`Point`](ragu_primitives::Point) can witness — so the padding is a *real*
+/// claim that happens to be trivially true: the constant polynomial $1$, whose
+/// value at any $x$ is $1$. Nothing about it is special-cased downstream; it
+/// travels the same path as a claim the step raised.
+///
+/// The commitment needs no multi-scalar multiplication. `commit` sends the
+/// coefficient of $X^d$ to `g[d]`, so committing $1$ is exactly `g[0]` — which
+/// is also why it can never be the identity.
+///
+/// The three values are returned together because they are one claim: $y$ is
+/// [`padding_poly`] evaluated at $x$, and changing either end alone would make
+/// the claim false.
+pub(crate) fn padding_claim<C: Cycle>(
+    params: &C::Params,
+) -> (C::HostCurve, C::CircuitField, C::CircuitField) {
+    use ragu_arithmetic::FixedGenerators;
+
+    let host = C::host_generators(params).g()[0];
+    (host, C::CircuitField::ZERO, C::CircuitField::ONE)
 }
 
-impl<C: Cycle, R: Rank> PaddingClaim<C, R> {
-    pub fn new(params: &C::Params) -> Self {
-        let poly =
-            sparse::Polynomial::<C::CircuitField, R>::from_coeffs(vec![C::CircuitField::ONE]);
-        let host = poly.commit_to_affine::<C::HostCurve>(C::host_generators(params));
-        PaddingClaim {
-            poly,
-            host,
-            x: C::CircuitField::ZERO,
-            y: C::CircuitField::ONE,
-        }
-    }
+/// The padding claim's polynomial, $p(X) = 1$, for the carriers that hold whole
+/// polynomials rather than openings. Its commitment is [`padding_claim`]'s.
+pub(crate) fn padding_poly<C: Cycle, R: Rank>() -> sparse::Polynomial<C::CircuitField, R> {
+    sparse::Polynomial::from_coeffs(vec![C::CircuitField::ONE])
 }
 
 /// The stage blind for challenge `slot`'s **application-circuit** stage.

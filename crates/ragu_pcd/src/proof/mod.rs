@@ -644,7 +644,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
 
         // Poly-query claim slots: a trivial proof raises no claims, so every
         // slot holds the canonical padding claim (mirroring the adapter).
-        let padding = crate::internal::challenge::PaddingClaim::<C, R>::new(self.params);
+        let (padding_host, padding_x, padding_y) =
+            crate::internal::challenge::padding_claim::<C>(self.params);
         builder.set_application_claims(
             (0..crate::NUM_POLY_QUERY_SLOTS)
                 .map(|slot| crate::framework_hooks::PolyQueryClaim {
@@ -655,16 +656,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                             builder.bridge_alpha(),
                             slot,
                         ),
-                        padding.host,
+                        padding_host,
                     )
                     .expect("trivial padding bridge commitment"),
-                    x: padding.x,
-                    y: padding.y,
+                    x: padding_x,
+                    y: padding_y,
                     coefficients: vec![C::CircuitField::ONE],
                 })
                 .collect(),
-            vec![padding.poly.clone(); crate::NUM_POLY_QUERY_SLOTS],
-            vec![padding.host; crate::NUM_POLY_QUERY_SLOTS],
+            vec![crate::internal::challenge::padding_poly::<C, R>(); crate::NUM_POLY_QUERY_SLOTS],
+            vec![padding_host; crate::NUM_POLY_QUERY_SLOTS],
         );
         // Challenge slots: a trivial proof derives no challenges, so every slot
         // holds the all-zero stage's honest pair (mirroring the adapter's
@@ -700,7 +701,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                 .collect(),
         );
 
-        let padding_host_commitment = padding.host;
+        let padding_host_commitment = padding_host;
 
         // Native rx polynomials (all trivial ones)
         builder.set_native_application_rx(ones_host.clone());
