@@ -324,27 +324,24 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
     fn extract_claims<'dr, D: Driver<'dr, F = C::CircuitField>>(
         claim_wires: Vec<ClaimWires<'dr, D, C::NestedCurve>>,
     ) -> Result<DriverValue<D, Vec<PolyQueryClaim<C::CircuitField, C::NestedCurve>>>> {
-        collect_values::<D, _>(
-            claim_wires
-                .into_iter()
-                .map(|claim_wire| {
-                    let ClaimWires {
-                        com,
-                        x,
-                        y,
-                        coefficients,
-                    } = claim_wire;
-                    D::try_just(|| {
-                        Ok(PolyQueryClaim {
-                            com: com.value().take(),
-                            x: *x.value().take(),
-                            y: *y.value().take(),
-                            coefficients: coefficients.take(),
-                        })
-                    })
+        let mut claims = Vec::with_capacity(claim_wires.len());
+        for claim_wire in claim_wires {
+            let ClaimWires {
+                com,
+                x,
+                y,
+                coefficients,
+            } = claim_wire;
+            claims.push(D::try_just(|| {
+                Ok(PolyQueryClaim {
+                    com: com.value().take(),
+                    x: *x.value().take(),
+                    y: *y.value().take(),
+                    coefficients: coefficients.take(),
                 })
-                .collect::<Result<Vec<_>>>()?,
-        )
+            })?);
+        }
+        collect_values::<D, _>(claims)
     }
 }
 
@@ -471,19 +468,16 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize>
 
         let inputs_value = collect_values::<D, _>(challenge_inputs)?;
 
-        let challenges_value = collect_values::<D, _>(
-            challenge_pairs
-                .into_iter()
-                .map(|pair| {
-                    D::try_just(|| {
-                        Ok(crate::proof::ChallengeOpening {
-                            point: pair.point.value().take(),
-                            challenge: *pair.challenge.value().take(),
-                        })
-                    })
+        let mut openings = Vec::with_capacity(challenge_pairs.len());
+        for pair in challenge_pairs {
+            openings.push(D::try_just(|| {
+                Ok(crate::proof::ChallengeOpening {
+                    point: pair.point.value().take(),
+                    challenge: *pair.challenge.value().take(),
                 })
-                .collect::<Result<Vec<_>>>()?,
-        )?;
+            })?);
+        }
+        let challenges_value = collect_values::<D, _>(openings)?;
 
         let adapter_aux = D::try_just(|| {
             let left_header = elements[0..HEADER_SIZE]

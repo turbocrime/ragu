@@ -11,72 +11,53 @@ use ragu_circuits::{
 };
 use ragu_core::{Error, Result};
 
-use crate::internal::nested::stages::{challenge_bridge, claim_bridge, host_bridge};
+use crate::internal::nested::{
+    RxIndex,
+    stages::{challenge_bridge, claim_bridge, host_bridge},
+};
 
-/// Which family of nested bridge stages a commitment belongs to.
+/// The bridge stages whose blinds come from the proof's shared `bridge_alpha`,
+/// in the order that assigns their exponents.
 ///
-/// The two families are the same stage shape ([`host_bridge`]) on different
-/// chains, so everything below — the blind, the rx, the commitment — differs
-/// only in this discriminant and the slot.
-#[derive(Clone, Copy)]
-enum Bridge {
-    Claim,
-    Challenge,
+/// A stage's blind is `bridge_alpha^(i + 1)` for its position `i` here; the
+/// series starts at 1 because `α⁰ = 1` is no blind at all. The requirement is
+/// that no two bridge stages share a blind — deriving every exponent from a
+/// single ordering makes that true *by construction*, rather than by separate
+/// rules per family that have to be kept in agreement. It also means the layout
+/// follows the slot counts automatically.
+///
+/// Not every bridge stage is here. `preamble`, `s_prime`, `inner_error` and `f`
+/// are set by the fuse stages, which blind them with an in-circuit challenge
+/// instead — [`bridge_alpha_exponent`] panics on those.
+fn blinded_bridges() -> impl Iterator<Item = RxIndex> {
+    // The four `cached_bridge!` stages first, then the per-slot bridges, which
+    // chain through `Parent` and so cannot use that macro.
+    [
+        RxIndex::BridgeOuterError,
+        RxIndex::BridgeAB,
+        RxIndex::BridgeQuery,
+        RxIndex::BridgeEval,
+    ]
+    .into_iter()
+    .chain((0..crate::NUM_POLY_QUERY_SLOTS).map(|slot| RxIndex::BridgeClaim(slot as u32)))
+    .chain((0..crate::NUM_CHALLENGE_SLOTS).map(|slot| RxIndex::BridgeChallenge(slot as u32)))
 }
 
-impl Bridge {
-    /// The exponent of `bridge_alpha` for this family's `slot`.
-    ///
-    /// The claim slots take the first block after the four cached bridges; the
-    /// challenge slots continue the series past them, so no two bridge stages
-    /// share a blind.
-    fn alpha_exponent(self, slot: usize) -> u64 {
-        let base = match self {
-            Bridge::Claim => 5,
-            Bridge::Challenge => 5 + crate::NUM_POLY_QUERY_SLOTS,
-        };
-        (base + slot) as u64
-    }
-
-    /// Builds this family's `slot` bridge stage rx, whose wires are `host`.
-    ///
-    /// Dispatches on the slot because each slot is a distinct type with
-    /// distinct generator positions.
-    fn rx<C: Cycle, R: Rank>(
-        self,
-        slot: usize,
-        alpha: C::ScalarField,
-        host: C::HostCurve,
-    ) -> Result<sparse::Polynomial<C::ScalarField, R>> {
-        let witness = host_bridge::Witness { host };
-        match (self, slot) {
-            (Bridge::Claim, 0) => claim_bridge::Stage0::<C::HostCurve, R>::rx(alpha, &witness),
-            (Bridge::Claim, 1) => claim_bridge::Stage1::<C::HostCurve, R>::rx(alpha, &witness),
-            (Bridge::Claim, 2) => claim_bridge::Stage2::<C::HostCurve, R>::rx(alpha, &witness),
-            (Bridge::Claim, 3) => claim_bridge::Stage3::<C::HostCurve, R>::rx(alpha, &witness),
-            (Bridge::Challenge, 0) => {
-                challenge_bridge::Stage0::<C::HostCurve, R>::rx(alpha, &witness)
-            }
-            (Bridge::Challenge, 1) => {
-                challenge_bridge::Stage1::<C::HostCurve, R>::rx(alpha, &witness)
-            }
-            _ => unreachable!("slot is bounded by the family's slot count"),
-        }
-    }
+/// The exponent of `bridge_alpha` for a blinded bridge stage — its position in
+/// [`blinded_bridges`], offset past the unusable zeroth power.
+pub(crate) fn bridge_alpha_exponent(idx: RxIndex) -> u64 {
+    let position = blinded_bridges()
+        .position(|bridge| bridge == idx)
+        .unwrap_or_else(|| panic!("not blinded from bridge_alpha: {idx:?}"));
+    position as u64 + 1
 }
 
-/// The nested-curve commitment to a bridge stage — `commit(rx)` on the nested
-/// generators.
-fn bridge_commitment<C: Cycle, R: Rank>(
+/// Commits a bridge stage rx on the nested generators.
+fn commit_bridge<C: Cycle, R: Rank>(
     params: &C::Params,
-    bridge: Bridge,
-    slot: usize,
-    alpha: C::ScalarField,
-    host: C::HostCurve,
-) -> Result<C::NestedCurve> {
-    Ok(bridge
-        .rx::<C, R>(slot, alpha, host)?
-        .commit_to_affine(C::nested_generators(params)))
+    rx: sparse::Polynomial<C::ScalarField, R>,
+) -> C::NestedCurve {
+    rx.commit_to_affine(C::nested_generators(params))
 }
 
 /// The host-curve commitment to a poly-query polynomial, rejecting the
@@ -103,17 +84,27 @@ pub(crate) fn claim_bridge_alpha<C: Cycle>(
     bridge_alpha: C::ScalarField,
     slot: usize,
 ) -> C::ScalarField {
-    bridge_alpha.pow_vartime([Bridge::Claim.alpha_exponent(slot)])
+    bridge_alpha.pow_vartime([bridge_alpha_exponent(RxIndex::BridgeClaim(slot as u32))])
 }
 
 /// Builds poly-query claim `slot`'s bridge stage rx: a stage whose wires are
 /// the claim's host commitment.
+///
+/// Dispatches on the slot because each slot is a distinct type with distinct
+/// generator positions.
 pub(crate) fn claim_bridge_rx<C: Cycle, R: Rank>(
     slot: usize,
     alpha: C::ScalarField,
     host: C::HostCurve,
 ) -> Result<sparse::Polynomial<C::ScalarField, R>> {
-    Bridge::Claim.rx::<C, R>(slot, alpha, host)
+    let witness = host_bridge::Witness { host };
+    match slot {
+        0 => claim_bridge::Stage0::<C::HostCurve, R>::rx(alpha, &witness),
+        1 => claim_bridge::Stage1::<C::HostCurve, R>::rx(alpha, &witness),
+        2 => claim_bridge::Stage2::<C::HostCurve, R>::rx(alpha, &witness),
+        3 => claim_bridge::Stage3::<C::HostCurve, R>::rx(alpha, &witness),
+        _ => unreachable!("NUM_POLY_QUERY_SLOTS is 4"),
+    }
 }
 
 /// The nested-curve commitment to claim `slot`'s bridge stage — the value a
@@ -124,7 +115,10 @@ pub(crate) fn claim_bridge_commitment<C: Cycle, R: Rank>(
     alpha: C::ScalarField,
     host: C::HostCurve,
 ) -> Result<C::NestedCurve> {
-    bridge_commitment::<C, R>(params, Bridge::Claim, slot, alpha, host)
+    Ok(commit_bridge::<C, R>(
+        params,
+        claim_bridge_rx::<C, R>(slot, alpha, host)?,
+    ))
 }
 
 /// The canonical padding claim used to fill unused poly-query slots (see
@@ -171,17 +165,25 @@ pub(crate) fn challenge_bridge_alpha<C: Cycle>(
     bridge_alpha: C::ScalarField,
     slot: usize,
 ) -> C::ScalarField {
-    bridge_alpha.pow_vartime([Bridge::Challenge.alpha_exponent(slot)])
+    bridge_alpha.pow_vartime([bridge_alpha_exponent(RxIndex::BridgeChallenge(slot as u32))])
 }
 
 /// Builds challenge `slot`'s bridge stage rx: a stage whose wires are the
 /// slot's host-curve stage commitment.
+///
+/// Dispatches on the slot because each slot is a distinct type with distinct
+/// generator positions.
 pub(crate) fn challenge_bridge_rx<C: Cycle, R: Rank>(
     slot: usize,
     alpha: C::ScalarField,
     host: C::HostCurve,
 ) -> Result<sparse::Polynomial<C::ScalarField, R>> {
-    Bridge::Challenge.rx::<C, R>(slot, alpha, host)
+    let witness = host_bridge::Witness { host };
+    match slot {
+        0 => challenge_bridge::Stage0::<C::HostCurve, R>::rx(alpha, &witness),
+        1 => challenge_bridge::Stage1::<C::HostCurve, R>::rx(alpha, &witness),
+        _ => unreachable!("NUM_CHALLENGE_SLOTS is 2"),
+    }
 }
 
 /// The nested-curve commitment to challenge `slot`'s bridge stage — the point
@@ -192,7 +194,10 @@ pub(crate) fn challenge_bridge_commitment<C: Cycle, R: Rank>(
     alpha: C::ScalarField,
     host: C::HostCurve,
 ) -> Result<C::NestedCurve> {
-    bridge_commitment::<C, R>(params, Bridge::Challenge, slot, alpha, host)
+    Ok(commit_bridge::<C, R>(
+        params,
+        challenge_bridge_rx::<C, R>(slot, alpha, host)?,
+    ))
 }
 
 /// Hashes a bridged challenge-stage commitment into the challenge it derives.
@@ -255,4 +260,52 @@ pub(crate) fn staged_challenge<C: Cycle, R: Rank>(
     let challenge = challenge_from_point::<C>(params, bridged)?;
 
     Ok((bridged, challenge))
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::vec::Vec;
+
+    use super::*;
+
+    /// Pins the `bridge_alpha` exponent series.
+    ///
+    /// These blinds are prover-side — derived at proof time, never part of a
+    /// circuit — so **no registry digest covers them**. Reordering
+    /// [`blinded_bridges`] would silently change every blind from the edit
+    /// onward, and two stages colliding on one blind would be silent too. This
+    /// test is the only thing that would notice.
+    ///
+    /// Distinctness follows from the series being `1..=n`, which is what
+    /// deriving the exponent from a position in a single ordering buys.
+    #[test]
+    fn bridge_alpha_exponents_are_the_expected_series() {
+        let series: Vec<u64> = blinded_bridges().map(bridge_alpha_exponent).collect();
+        let expected: Vec<u64> = (1..=series.len() as u64).collect();
+        assert_eq!(series, expected, "exponents must be 1..=n with no gaps");
+
+        // The four cached bridges, then the claim slots, then the challenge
+        // slots. Spelled out so a reordering has to be deliberate.
+        assert_eq!(bridge_alpha_exponent(RxIndex::BridgeOuterError), 1);
+        assert_eq!(bridge_alpha_exponent(RxIndex::BridgeAB), 2);
+        assert_eq!(bridge_alpha_exponent(RxIndex::BridgeQuery), 3);
+        assert_eq!(bridge_alpha_exponent(RxIndex::BridgeEval), 4);
+        assert_eq!(bridge_alpha_exponent(RxIndex::BridgeClaim(0)), 5);
+        assert_eq!(
+            bridge_alpha_exponent(RxIndex::BridgeClaim(crate::NUM_POLY_QUERY_SLOTS as u32 - 1)),
+            4 + crate::NUM_POLY_QUERY_SLOTS as u64
+        );
+        assert_eq!(
+            bridge_alpha_exponent(RxIndex::BridgeChallenge(0)),
+            5 + crate::NUM_POLY_QUERY_SLOTS as u64
+        );
+    }
+
+    /// The bridges the fuse stages blind with an in-circuit challenge are not
+    /// on this series at all.
+    #[test]
+    #[should_panic(expected = "not blinded from bridge_alpha")]
+    fn unblinded_bridges_are_rejected() {
+        bridge_alpha_exponent(RxIndex::BridgeF);
+    }
 }

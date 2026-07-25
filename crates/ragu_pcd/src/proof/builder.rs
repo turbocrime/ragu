@@ -570,17 +570,12 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     );
 
     /// Returns the derived alpha for a cached bridge, as a distinct power of
-    /// `bridge_alpha`.
+    /// `bridge_alpha`. The exponent layout lives in
+    /// `internal::challenge::blinded_bridges`, which is what keeps every
+    /// bridge stage's blind distinct.
     fn bridge_alpha_power(&self, idx: nested::RxIndex) -> C::ScalarField {
-        let n = match idx {
-            nested::RxIndex::BridgeOuterError => 1,
-            nested::RxIndex::BridgeAB => 2,
-            nested::RxIndex::BridgeQuery => 3,
-            nested::RxIndex::BridgeEval => 4,
-            nested::RxIndex::BridgeClaim(slot) => 5 + slot as u64,
-            _ => panic!("not a cached bridge: {idx:?}"),
-        };
-        self.bridge_alpha.pow_vartime([n])
+        self.bridge_alpha
+            .pow_vartime([crate::internal::challenge::bridge_alpha_exponent(idx)])
     }
 
     cached_bridge!(

@@ -19,10 +19,11 @@
 //! earlier slot's challenge, which is exactly what Fiat–Shamir forbids.
 //!
 //! The stages chain in slot order, so slot `i`'s wires occupy a distinct,
-//! statically-known region of the trace. The types are macro-generated because
-//! the chain is expressed through the `Parent` associated type, which cannot be
-//! computed from a const generic on stable Rust — the same shape as the nested
-//! [`claim_bridge`](crate::internal::nested::stages::claim_bridge) stages.
+//! statically-known region of the trace. The chain is expressed through the
+//! `Parent` associated type, which cannot be computed from a const generic on
+//! stable Rust, so [`Stage`] takes its parent as a type parameter and each slot
+//! is an alias — the same shape as the nested
+//! [`host_bridge`](crate::internal::nested::stages::host_bridge) stages.
 //!
 //! # Wire discipline
 //!
@@ -68,48 +69,56 @@ impl<F: Field> Default for Witness<F> {
     }
 }
 
-macro_rules! challenge_stage {
-    ($name:ident, $parent:ty, $doc:expr) => {
-        #[doc = $doc]
-        #[derive(Default)]
-        pub struct $name<F, R> {
-            _marker: PhantomData<(F, R)>,
-        }
-
-        impl<F: Field, R: Rank> ragu_circuits::staging::Stage<F, R> for $name<F, R> {
-            type Parent = $parent;
-            type Witness<'source> = Witness<F>;
-            type OutputKind = Kind![F; FixedVec<Element<'_, _>, ConstLen<CHALLENGE_WIDTH>>];
-
-            fn values() -> usize {
-                CHALLENGE_WIDTH
-            }
-
-            fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
-                &self,
-                dr: &mut D,
-                witness: DriverValue<D, Self::Witness<'source>>,
-            ) -> Result<Bound<'dr, D, Self::OutputKind>>
-            where
-                Self: 'dr,
-            {
-                let allocator = &mut Standard::new();
-                let mut wires = alloc::vec::Vec::with_capacity(CHALLENGE_WIDTH);
-                for i in 0..CHALLENGE_WIDTH {
-                    let value = witness.as_ref().map(move |w| w.inputs[i]);
-                    wires.push(Element::alloc(dr, allocator, value)?);
-                }
-                FixedVec::try_from(wires)
-            }
-        }
-    };
+/// One challenge slot's stage — [`CHALLENGE_WIDTH`] committed wires — chained
+/// after `P`.
+pub struct Stage<F, R, P> {
+    _marker: PhantomData<(F, R, P)>,
 }
 
-challenge_stage!(Stage0, (), "Challenge stage for slot 0.");
-challenge_stage!(Stage1, Stage0<F, R>, "Challenge stage for slot 1.");
+impl<F, R, P> Default for Stage<F, R, P> {
+    fn default() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
+}
 
-/// Compile-time guard: the number of macro-generated stages above must match
-/// the number of challenge slots. Bump both together.
+impl<F: Field, R: Rank, P: ragu_circuits::staging::Stage<F, R>> ragu_circuits::staging::Stage<F, R>
+    for Stage<F, R, P>
+{
+    type Parent = P;
+    type Witness<'source> = Witness<F>;
+    type OutputKind = Kind![F; FixedVec<Element<'_, _>, ConstLen<CHALLENGE_WIDTH>>];
+
+    fn values() -> usize {
+        CHALLENGE_WIDTH
+    }
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'source>>,
+    ) -> Result<Bound<'dr, D, Self::OutputKind>>
+    where
+        Self: 'dr,
+    {
+        let allocator = &mut Standard::new();
+        let mut wires = alloc::vec::Vec::with_capacity(CHALLENGE_WIDTH);
+        for i in 0..CHALLENGE_WIDTH {
+            let value = witness.as_ref().map(move |w| w.inputs[i]);
+            wires.push(Element::alloc(dr, allocator, value)?);
+        }
+        FixedVec::try_from(wires)
+    }
+}
+
+/// Challenge stage for slot 0.
+pub type Stage0<F, R> = Stage<F, R, ()>;
+/// Challenge stage for slot 1.
+pub type Stage1<F, R> = Stage<F, R, Stage0<F, R>>;
+
+/// Compile-time guard: the number of aliases above must match the number of
+/// challenge slots. Bump both together.
 const _: () = assert!(crate::NUM_CHALLENGE_SLOTS == 2);
 
 /// The last stage in the chain — an application circuit's
