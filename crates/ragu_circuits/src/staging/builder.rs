@@ -132,6 +132,15 @@ pub struct StageGuard<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R>> {
     _marker: PhantomData<(&'dr (), R, S)>,
 }
 
+impl<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R>> StageGuard<'dr, D, R, S> {
+    /// Number of wires reserved for this stage, for tests that compare the
+    /// typed and induced reservation paths.
+    #[cfg(test)]
+    pub(crate) fn num_reserved(&self) -> usize {
+        self.stage_wires.len()
+    }
+}
+
 impl<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R> + 'dr> StageGuard<'dr, D, R, S> {
     /// Inject pre-allocated stage wires into the gadget produced by
     /// [`Stage::witness`], then provide the guarantee that the gadget is
@@ -196,6 +205,14 @@ pub struct InducedGuard<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R>> {
     stage: S,
     stage_wires: Vec<D::Wire>,
     _marker: PhantomData<(&'dr (), R, S)>,
+}
+
+impl<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R>> InducedGuard<'dr, D, R, S> {
+    /// See [`StageGuard::num_reserved`].
+    #[cfg(test)]
+    pub(crate) fn num_reserved(&self) -> usize {
+        self.stage_wires.len()
+    }
 }
 
 impl<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R> + 'dr> InducedGuard<'dr, D, R, S> {

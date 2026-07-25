@@ -248,6 +248,43 @@ mod tests {
         }
     }
 
+    /// The induced reservation path reserves exactly what the typed path does,
+    /// given the same geometry.
+    ///
+    /// `configure_induced` moves an invariant out of the type system: the
+    /// typed path guarantees a stage occupies the positions its mask covers,
+    /// while the induced path makes that the caller's obligation. This pins
+    /// the two paths together for the case where both are expressible, so a
+    /// change to one that does not change the other fails here.
+    #[test]
+    fn induced_reservation_matches_typed() -> Result<()> {
+        use ragu_core::{
+            drivers::emulator::{Emulator, Wireless},
+            maybe::Empty,
+        };
+
+        use crate::staging::StageBuilder;
+
+        let layout = InducedStages::new(alloc::vec![4]);
+
+        let mut typed_dr: Emulator<Wireless<Empty, Fp>> = Emulator::counter();
+        let typed = StageBuilder::<'_, '_, _, R, (), TypedFour>::new(&mut typed_dr, |_| {})
+            .add_stage::<TypedFour>()?
+            .0;
+
+        let mut induced_dr: Emulator<Wireless<Empty, Fp>> = Emulator::counter();
+        let mut builder = StageBuilder::<'_, '_, _, R, (), TypedFour>::new(&mut induced_dr, |_| {});
+        let induced = builder.configure_induced(TypedFour, layout.width(0), layout.num_gates(0))?;
+
+        assert_eq!(
+            induced.num_reserved(),
+            typed.num_reserved(),
+            "induced reservation differs from the typed path"
+        );
+
+        Ok(())
+    }
+
     #[test]
     fn geometry_matches_typed_stages() {
         let layout = InducedStages::new(alloc::vec![4, 3]);
