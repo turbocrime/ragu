@@ -324,6 +324,7 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     claim_polys: Vec<sparse::Polynomial<C::CircuitField, R>>,
     /// The claims' host-curve commitments, in slot order.
     claim_host_commitments: Vec<C::HostCurve>,
+    challenge_stage_commitments: Vec<C::HostCurve>,
 }
 
 impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
@@ -411,6 +412,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             challenge_stage_polys: Vec::new(),
             claim_polys: Vec::new(),
             claim_host_commitments: Vec::new(),
+            challenge_stage_commitments: Vec::new(),
         }
     }
 
@@ -720,6 +722,10 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             "double-set: challenge_stage_polys"
         );
         assert_eq!(polys.len(), crate::NUM_CHALLENGE_SLOTS);
+        self.challenge_stage_commitments = polys
+            .iter()
+            .map(|poly| poly.commit_to_affine::<C::HostCurve>(C::host_generators(self.params)))
+            .collect();
         self.challenge_stage_polys = polys;
     }
 
@@ -915,6 +921,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
 
             application_challenges: core::mem::take(&mut self.application_challenges),
             challenge_stage_polys: core::mem::take(&mut self.challenge_stage_polys),
+            challenge_stage_commitments: core::mem::take(&mut self.challenge_stage_commitments),
             application_claims: self
                 .application_claims
                 .iter()

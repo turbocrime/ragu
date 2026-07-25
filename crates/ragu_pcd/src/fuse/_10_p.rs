@@ -109,6 +109,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 for (poly, com) in proof.claim_polys.iter().zip(&proof.claim_host_commitments) {
                     acc.acc(poly, *com);
                 }
+                // The child's challenge-stage polynomials, in slot order.
+                // Must stay immediately after the claims: this order is what
+                // the eval stage's `Write` impl weights the `v` Horner by.
+                for (poly, com) in proof
+                    .challenge_stage_polys
+                    .iter()
+                    .zip(&proof.challenge_stage_commitments)
+                {
+                    acc.acc(poly, *com);
+                }
             }
 
             acc.acc(&s_prime.registry_wx0_poly, s_prime.registry_wx0_commitment);

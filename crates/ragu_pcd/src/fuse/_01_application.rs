@@ -130,22 +130,23 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         builder.set_left_header(left_header.into_inner());
         builder.set_right_header(right_header.into_inner());
 
-        // The challenge stages are part of the application circuit's trace:
-        // `r(X) = r'(X) + a(X) + b(X)`. `assemble` produced only `r'`, so add
-        // each stage back. They are kept separately too, because each is
-        // committed on its own — hashing that commitment is what produced the
-        // slot's challenge.
+        // The challenge stages are the application circuit's staged partial
+        // traces. `assemble` yields the final trace `r'(X)`; the stages are
+        // carried separately, each committed on its own — hashing that
+        // commitment is what produced the slot's challenge — and
+        // `native::claims::build` sums them back into the circuit's claim,
+        // exactly as it does for `compute_v` with `query` and `eval`.
         assert_eq!(challenge_inputs.len(), crate::NUM_CHALLENGE_SLOTS);
-        let mut rx = rx;
         let mut challenge_stage_polys = alloc::vec::Vec::with_capacity(challenge_inputs.len());
         for (slot, inputs) in challenge_inputs.into_iter().enumerate() {
-            let stage = crate::step::internal::challenge_stage::stage_rx::<C::CircuitField, R>(
+            challenge_stage_polys.push(crate::step::internal::challenge_stage::stage_rx::<
+                C::CircuitField,
+                R,
+            >(
                 slot,
                 challenge::challenge_stage_alpha::<C>(builder.challenge_alpha(), slot),
                 inputs,
-            )?;
-            rx.add_assign(&stage);
-            challenge_stage_polys.push(stage);
+            )?);
         }
         builder.set_challenge_stage_polys(challenge_stage_polys);
 

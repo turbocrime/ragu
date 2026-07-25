@@ -57,6 +57,13 @@ pub enum InternalCircuitIndex {
     InnerErrorFinalStaged,
     OuterErrorFinalStaged,
     EvalFinalStaged,
+    /// Well-formedness mask for an application circuit's challenge stage, by
+    /// slot. Shared by every application circuit: the stage geometry is a
+    /// framework constant, so all of them have the same one.
+    ChallengeStage(u32),
+    /// Well-formedness mask for an application circuit's final trace, given the
+    /// challenge stages that precede it.
+    ChallengeFinalStaged,
 }
 
 /// Compute the total circuit count and log2 domain size from the number of
@@ -71,7 +78,7 @@ pub const fn total_circuit_counts(num_application_steps: usize) -> (usize, u32) 
 impl InternalCircuitIndex {
     /// The number of internal circuits registered by [`register_all`],
     /// equal to the number of variants in [`InternalCircuitIndex`].
-    pub const NUM: usize = 13;
+    pub const NUM: usize = 14 + crate::NUM_CHALLENGE_SLOTS;
 
     /// All variants in canonical iteration order.
     ///
@@ -99,6 +106,12 @@ impl InternalCircuitIndex {
         push(&mut slots, &mut c, Self::InnerErrorFinalStaged);
         push(&mut slots, &mut c, Self::OuterErrorFinalStaged);
         push(&mut slots, &mut c, Self::EvalFinalStaged);
+        let mut i = 0;
+        while i < crate::NUM_CHALLENGE_SLOTS {
+            push(&mut slots, &mut c, Self::ChallengeStage(i as u32));
+            i += 1;
+        }
+        push(&mut slots, &mut c, Self::ChallengeFinalStaged);
         assert!(c == Self::NUM);
         slots
     }
@@ -133,6 +146,9 @@ pub struct InternalCircuitValues<T> {
     pub inner_error_final_staged: T,
     pub outer_error_final_staged: T,
     pub eval_final_staged: T,
+    /// One per challenge slot, in slot order.
+    pub challenge_stages: [T; crate::NUM_CHALLENGE_SLOTS],
+    pub challenge_final_staged: T,
 }
 
 impl<T> InternalCircuitValues<T> {
@@ -153,6 +169,8 @@ impl<T> InternalCircuitValues<T> {
             InnerErrorFinalStaged => &self.inner_error_final_staged,
             OuterErrorFinalStaged => &self.outer_error_final_staged,
             EvalFinalStaged => &self.eval_final_staged,
+            ChallengeStage(slot) => &self.challenge_stages[slot as usize],
+            ChallengeFinalStaged => &self.challenge_final_staged,
         }
     }
 
@@ -186,6 +204,17 @@ impl<T> InternalCircuitValues<T> {
             inner_error_final_staged: f(InnerErrorFinalStaged)?,
             outer_error_final_staged: f(OuterErrorFinalStaged)?,
             eval_final_staged: f(EvalFinalStaged)?,
+            challenge_stages: {
+                let mut slots = alloc::vec::Vec::with_capacity(crate::NUM_CHALLENGE_SLOTS);
+                for slot in 0..crate::NUM_CHALLENGE_SLOTS {
+                    slots.push(f(ChallengeStage(slot as u32))?);
+                }
+                match <[T; crate::NUM_CHALLENGE_SLOTS]>::try_from(slots) {
+                    Ok(slots) => slots,
+                    Err(_) => unreachable!("pushed exactly NUM_CHALLENGE_SLOTS values"),
+                }
+            },
+            challenge_final_staged: f(ChallengeFinalStaged)?,
         })
     }
 }
@@ -320,6 +349,12 @@ pub enum RxComponent {
     AbB,
     /// An rx polynomial component indexed by [`RxIndex`].
     Rx(RxIndex),
+    /// An application circuit's challenge-stage polynomial, by slot.
+    ///
+    /// Deliberately *not* an [`RxIndex`] variant: `RxIndex::ALL` drives the
+    /// per-child commitment walk in the `loading` circuit, and a challenge
+    /// stage's commitment rides the poly-query claims' rails instead.
+    ChallengeStage(u32),
 }
 
 /// Registers internal native circuits and masks into the provided registry.
@@ -371,6 +406,17 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
             >::final_mask()?),
             EvalFinalStaged => {
                 registry.register_bonding(stages::eval::Stage::<C, R, HEADER_SIZE>::final_mask()?)
+            }
+            ChallengeStage(slot) => registry.register_bonding(match slot {
+                0 => crate::step::internal::challenge_stage::Stage0::<C::CircuitField, R>::mask()?,
+                1 => crate::step::internal::challenge_stage::Stage1::<C::CircuitField, R>::mask()?,
+                _ => unreachable!("NUM_CHALLENGE_SLOTS is 2"),
+            }),
+            ChallengeFinalStaged => {
+                registry.register_bonding(crate::step::internal::challenge_stage::Last::<
+                    C::CircuitField,
+                    R,
+                >::final_mask()?)
             }
             Hashes1Circuit => {
                 registry.register_internal_circuit(circuits::hashes_1::Circuit::<

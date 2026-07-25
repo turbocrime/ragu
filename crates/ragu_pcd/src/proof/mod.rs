@@ -301,6 +301,10 @@ pub struct Proof<C: Cycle, R: Rank> {
     /// points the parent's endoscaling accumulation consumes; each bridges to
     /// the corresponding `application_claims` nested point.
     pub(crate) claim_host_commitments: alloc::vec::Vec<C::HostCurve>,
+    /// Host-curve commitments to
+    /// [`challenge_stage_polys`](Self::challenge_stage_polys), in slot order.
+    /// Hashing the bridged form of each is what produced that slot's challenge.
+    pub(crate) challenge_stage_commitments: alloc::vec::Vec<C::HostCurve>,
 }
 
 impl<C: Cycle, R: Rank> core::ops::Index<RxIndex> for Proof<C, R> {
@@ -330,6 +334,7 @@ impl<C: Cycle, R: Rank> core::ops::Index<RxComponent> for Proof<C, R> {
             RxComponent::AbA => &self.native_a_poly,
             RxComponent::AbB => &self.native_b_poly,
             RxComponent::Rx(idx) => &self[idx],
+            RxComponent::ChallengeStage(slot) => &self.challenge_stage_polys[slot as usize],
         }
     }
 }
@@ -484,6 +489,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             RxComponent::AbA => self.native_a_commitment.0,
             RxComponent::AbB => self.native_b_commitment.0,
             RxComponent::Rx(idx) => self.native_rx_commitment(idx),
+            RxComponent::ChallengeStage(slot) => self.challenge_stage_commitments[slot as usize],
         }
     }
 
@@ -655,6 +661,21 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
         // Challenge slots: a trivial proof derives no challenges, so every slot
         // holds the all-zero stage's honest pair (mirroring the adapter's
         // padding, so the binding circuit can re-derive every slot uniformly).
+        builder.set_challenge_stage_polys(
+            (0..crate::NUM_CHALLENGE_SLOTS)
+                .map(|slot| {
+                    crate::step::internal::challenge_stage::stage_rx::<C::CircuitField, R>(
+                        slot,
+                        crate::internal::challenge::challenge_stage_alpha::<C>(
+                            builder.challenge_alpha(),
+                            slot,
+                        ),
+                        [C::CircuitField::ZERO; crate::CHALLENGE_WIDTH],
+                    )
+                    .expect("trivial padding stage rx")
+                })
+                .collect(),
+        );
         builder.set_application_challenges(
             (0..crate::NUM_CHALLENGE_SLOTS)
                 .map(|slot| {
@@ -748,6 +769,20 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
             points.push(host_commitment);
 
             let registry_xy_commitment = builder.native_registry_xy_commitment();
+            let challenge_stage_commitments: alloc::vec::Vec<_> = (0..crate::NUM_CHALLENGE_SLOTS)
+                .map(|slot| {
+                    crate::step::internal::challenge_stage::stage_rx::<C::CircuitField, R>(
+                        slot,
+                        crate::internal::challenge::challenge_stage_alpha::<C>(
+                            builder.challenge_alpha(),
+                            slot,
+                        ),
+                        [C::CircuitField::ZERO; crate::CHALLENGE_WIDTH],
+                    )
+                    .expect("trivial padding stage rx")
+                    .commit_to_affine::<C::HostCurve>(C::host_generators(self.params))
+                })
+                .collect();
 
             // Per-child block: all per-child commitments are
             // `host_commitment` (ones_host), except registry_xy which
@@ -762,6 +797,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                 points.push(host_commitment); // P placeholder
                 for _ in 0..crate::NUM_POLY_QUERY_SLOTS {
                     points.push(padding_host_commitment); // claim slots
+                }
+                // Challenge-stage commitments, after the claims, matching the
+                // `_10_p` accumulation order.
+                for commitment in &challenge_stage_commitments {
+                    points.push(*commitment);
                 }
             }
 
@@ -809,6 +849,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                 stashed_registry_xy: registry_xy_commitment,
                 stashed_p: p_commitment,
                 stashed_claims: [padding_host_commitment; crate::NUM_POLY_QUERY_SLOTS],
+                stashed_challenge_stages: [padding_host_commitment; crate::NUM_CHALLENGE_SLOTS],
             };
             let rx = nested::stages::preamble::Stage::<C::HostCurve, R>::rx(
                 C::ScalarField::ONE,

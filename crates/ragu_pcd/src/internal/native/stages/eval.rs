@@ -67,6 +67,12 @@ pub struct ChildEvaluationsWitness<F> {
     /// child's claims: the quotient $(p_i(u) - y_i)/(u - x_i)$ enters $f(u)$
     /// and each $p_i(u)$ enters the $v$ Horner accumulation.
     pub claims: [F; NUM_POLY_QUERY_SLOTS],
+
+    /// The child's challenge-stage polynomials, each evaluated at $u$, in slot
+    /// order. Each stage is separately committed — hashing that commitment is
+    /// what produced the slot's challenge — so each is a claim the parent must
+    /// carry, exactly like a poly-query claim polynomial.
+    pub challenge_stages: [F; crate::NUM_CHALLENGE_SLOTS],
 }
 
 impl<F: PrimeField> ChildEvaluationsWitness<F> {
@@ -79,6 +85,7 @@ impl<F: PrimeField> ChildEvaluationsWitness<F> {
             registry_xy_poly: proof.native_registry_xy_poly().eval(u),
             p_poly: proof.native_p_poly().eval(u),
             claims: core::array::from_fn(|i| proof.claim_polys[i].eval(u)),
+            challenge_stages: core::array::from_fn(|i| proof.challenge_stage_polys[i].eval(u)),
         }
     }
 }
@@ -154,6 +161,10 @@ pub struct ChildEvaluations<'dr, D: Driver<'dr>> {
     /// matches the `_10_p` accumulation order.
     #[ragu(gadget)]
     pub claims: FixedVec<Element<'dr, D>, ConstLen<NUM_POLY_QUERY_SLOTS>>,
+    /// The child's challenge-stage evaluations at $u$, in slot order. Kept
+    /// after the claims, matching the `_10_p` accumulation order.
+    #[ragu(gadget)]
+    pub challenge_stages: FixedVec<Element<'dr, D>, ConstLen<{ crate::NUM_CHALLENGE_SLOTS }>>,
 }
 
 impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
@@ -178,6 +189,15 @@ impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
             p_poly: Element::alloc(dr, allocator, witness.as_ref().map(|w| w.p_poly))?,
             claims: (0..NUM_POLY_QUERY_SLOTS)
                 .map(|i| Element::alloc(dr, allocator, witness.as_ref().map(|w| w.claims[i])))
+                .try_collect_fixed()?,
+            challenge_stages: (0..crate::NUM_CHALLENGE_SLOTS)
+                .map(|i| {
+                    Element::alloc(
+                        dr,
+                        allocator,
+                        witness.as_ref().map(|w| w.challenge_stages[i]),
+                    )
+                })
                 .try_collect_fixed()?,
         })
     }
@@ -220,8 +240,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     type OutputKind = Kind![C::CircuitField; Output<'_, _>];
 
     fn values() -> usize {
-        // 2 * ChildEvaluations (15 + claim slots each) + current step elements (6)
-        2 * (15 + NUM_POLY_QUERY_SLOTS) + 6
+        // 2 * ChildEvaluations (15 + claim slots + challenge slots each)
+        //   + current step elements (6)
+        2 * (15 + NUM_POLY_QUERY_SLOTS + crate::NUM_CHALLENGE_SLOTS) + 6
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

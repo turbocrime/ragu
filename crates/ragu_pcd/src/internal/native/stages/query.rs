@@ -41,6 +41,11 @@ pub struct ChildEvaluationsWitness<F> {
     /// Rx polynomial evaluations at $xz$.
     pub rx: RxValues<F>,
 
+    /// Challenge-stage polynomial evaluations at $xz$, in slot order. The
+    /// application circuit's trace is the sum of its final trace and these, so
+    /// its revdot claim needs all of them.
+    pub challenge_stages: [F; crate::NUM_CHALLENGE_SLOTS],
+
     /// $A$ polynomial evaluation at $xz$.
     pub a_poly_at_xz: F,
 
@@ -69,6 +74,7 @@ impl<F: PrimeField> ChildEvaluationsWitness<F> {
     ) -> Self {
         ChildEvaluationsWitness {
             rx: RxValues::from_fn(|id| proof[id].eval(xz)),
+            challenge_stages: core::array::from_fn(|i| proof.challenge_stage_polys[i].eval(xz)),
             a_poly_at_xz: proof[RxComponent::AbA].eval(xz),
             b_poly_at_x: proof[RxComponent::AbB].eval(x),
             child_registry_xy_at_current_w: proof.native_registry_xy_poly().eval(w),
@@ -200,6 +206,13 @@ pub struct ChildEvaluations<'dr, D: Driver<'dr>> {
     #[ragu(gadget)]
     pub rx: RxValues<Element<'dr, D>>,
 
+    /// Challenge-stage polynomial evaluations at $xz$, in slot order.
+    #[ragu(gadget)]
+    pub challenge_stages: ragu_primitives::vec::FixedVec<
+        Element<'dr, D>,
+        ragu_primitives::vec::ConstLen<{ crate::NUM_CHALLENGE_SLOTS }>,
+    >,
+
     /// $A$ polynomial evaluation at $xz$.
     #[ragu(gadget)]
     pub a_poly_at_xz: Element<'dr, D>,
@@ -233,6 +246,18 @@ impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
         })?;
         Ok(ChildEvaluations {
             rx,
+            challenge_stages: {
+                use ragu_primitives::vec::CollectFixed;
+                (0..crate::NUM_CHALLENGE_SLOTS)
+                    .map(|i| {
+                        Element::alloc(
+                            dr,
+                            allocator,
+                            witness.as_ref().map(|w| w.challenge_stages[i]),
+                        )
+                    })
+                    .try_collect_fixed()?
+            },
             a_poly_at_xz: Element::alloc(dr, allocator, witness.as_ref().map(|w| w.a_poly_at_xz))?,
             b_poly_at_x: Element::alloc(dr, allocator, witness.as_ref().map(|w| w.b_poly_at_x))?,
             child_registry_xy_at_current_w: Element::alloc(
@@ -289,8 +314,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     type OutputKind = Kind![C::CircuitField; Output<'_, _>];
 
     fn values() -> usize {
-        // InternalCircuitIndex::NUM + registry_wxy (1) + 2 * ChildEvaluations (16 each)
-        InternalCircuitIndex::NUM + 1 + 2 * 16
+        // InternalCircuitIndex::NUM + registry_wxy (1)
+        //   + 2 * ChildEvaluations (16 + challenge slots each)
+        InternalCircuitIndex::NUM + 1 + 2 * (16 + crate::NUM_CHALLENGE_SLOTS)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

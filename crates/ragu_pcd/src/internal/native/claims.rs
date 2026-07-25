@@ -63,7 +63,7 @@ pub trait Processor<Rx, AppCircuitId> {
 
     /// Process a single-trace application circuit claim
     /// ($k(y) = \text{application\_ky}$).
-    fn circuit_claim(&mut self, app_id: AppCircuitId, rx: Rx);
+    fn circuit_claim(&mut self, app_id: AppCircuitId, rxs: impl Iterator<Item = Rx>);
 
     /// Process an internal circuit claim whose trace is the sum of the given
     /// rxs ($k(y) = \text{internal\_ky}$).
@@ -107,8 +107,12 @@ impl<'m, 'rx, F: PrimeField, R: Rank> Processor<&'rx sparse::Polynomial<F, R>, C
         self.b.push(Cow::Borrowed(b));
     }
 
-    fn circuit_claim(&mut self, circuit_id: CircuitIndex, rx: &'rx sparse::Polynomial<F, R>) {
-        self.circuit_impl(circuit_id, Cow::Borrowed(rx));
+    fn circuit_claim(
+        &mut self,
+        circuit_id: CircuitIndex,
+        rxs: impl Iterator<Item = &'rx sparse::Polynomial<F, R>>,
+    ) {
+        self.circuit_impl(circuit_id, sum_polynomials(rxs));
     }
 
     fn internal_circuit_claim(
@@ -155,9 +159,18 @@ where
         processor.raw_claim(a, b);
     }
 
-    // App circuits (interleaved per proof)
+    // App circuits (interleaved per proof). An application circuit is
+    // multi-stage — `r(X) = r'(X) + a(X) + b(X)` — so its claim sums the final
+    // trace with every challenge stage, exactly as `ComputeVCircuit` does with
+    // `Query` and `Eval`.
+    let mut app_stages: alloc::vec::Vec<_> = (0..crate::NUM_CHALLENGE_SLOTS)
+        .map(|slot| source.rx(ChallengeStage(slot as u32)))
+        .collect();
     for (app_id, rx) in source.app_circuits().zip(source.rx(Rx(Application))) {
-        processor.circuit_claim(app_id, rx);
+        let stages = app_stages
+            .iter_mut()
+            .map(|iter| iter.next().expect("one stage rx per proof"));
+        processor.circuit_claim(app_id, core::iter::once(rx).chain(stages));
     }
 
     // Internal circuits and stages in canonical order.
@@ -246,6 +259,12 @@ where
                         .chain(source.rx(Rx(Hashes2)))
                         .chain(source.rx(Rx(OuterCollapse))),
                 )?;
+            }
+            ChallengeStage(slot) => {
+                processor.bonding_claim(id, source.rx(RxComponent::ChallengeStage(slot)))?;
+            }
+            ChallengeFinalStaged => {
+                processor.bonding_claim(id, source.rx(Rx(Application)))?;
             }
             EvalFinalStaged => {
                 processor.bonding_claim(id, source.rx(Rx(ComputeV)))?;

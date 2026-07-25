@@ -24,9 +24,9 @@ use crate::{
 };
 
 /// Number of curve points in this stage: the native preamble commitment plus,
-/// per child, the 15 `_10_p` components and the stashed poly-query claim
-/// commitments.
-pub const NUM_POINTS: usize = 1 + 2 * (15 + NUM_POLY_QUERY_SLOTS);
+/// per child, the 15 `_10_p` components, the stashed poly-query claim
+/// commitments, and the stashed challenge-stage commitments.
+pub const NUM_POINTS: usize = 1 + 2 * (15 + NUM_POLY_QUERY_SLOTS + crate::NUM_CHALLENGE_SLOTS);
 
 /// Witness data for a single child proof in the preamble bridge stage.
 ///
@@ -75,6 +75,11 @@ pub struct ChildWitness<C: CurveAffine> {
     /// enter the `_10_p` accumulation); copying verifies them against the
     /// child's own eval bridge stage record.
     pub stashed_claims: [C; NUM_POLY_QUERY_SLOTS],
+    /// The child's challenge-stage host commitments, in slot order. Stashed on
+    /// the same rails as the claims — `loading` ties them to the endoscaling
+    /// point list, `copying` ties them to the child's own record — and kept
+    /// after them, matching the `_10_p` accumulation order.
+    pub stashed_challenge_stages: [C; crate::NUM_CHALLENGE_SLOTS],
 }
 
 impl<C: CurveAffine> ChildWitness<C> {
@@ -98,6 +103,9 @@ impl<C: CurveAffine> ChildWitness<C> {
             stashed_registry_xy: proof.native_registry_xy_commitment(),
             stashed_p: proof.native_p_commitment(),
             stashed_claims: core::array::from_fn(|i| proof.claim_host_commitments[i]),
+            stashed_challenge_stages: core::array::from_fn(|i| {
+                proof.challenge_stage_commitments[i]
+            }),
         }
     }
 }
@@ -166,6 +174,11 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     /// order.
     #[ragu(gadget)]
     pub stashed_claims: FixedVec<Point<'dr, D, C>, ConstLen<NUM_POLY_QUERY_SLOTS>>,
+    /// The child's challenge-stage host commitments, in slot order, kept after
+    /// the claims to match the `_10_p` accumulation order.
+    #[ragu(gadget)]
+    pub stashed_challenge_stages:
+        FixedVec<Point<'dr, D, C>, ConstLen<{ crate::NUM_CHALLENGE_SLOTS }>>,
 }
 
 impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> core::ops::Index<RxIndex>
@@ -211,6 +224,9 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> ChildOutput<'dr, D, C> {
             stashed_p: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_p))?,
             stashed_claims: (0..NUM_POLY_QUERY_SLOTS)
                 .map(|i| Point::alloc(dr, witness.as_ref().map(|w| w.stashed_claims[i])))
+                .try_collect_fixed()?,
+            stashed_challenge_stages: (0..crate::NUM_CHALLENGE_SLOTS)
+                .map(|i| Point::alloc(dr, witness.as_ref().map(|w| w.stashed_challenge_stages[i])))
                 .try_collect_fixed()?,
         })
     }
