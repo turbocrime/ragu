@@ -292,14 +292,15 @@ pub struct Proof<C: Cycle, R: Rank> {
     /// claims natively.
     pub(crate) claim_polys: alloc::vec::Vec<sparse::Polynomial<C::CircuitField, R>>,
 
+    /// Bridge stage rxs for the challenge slots, in slot order. Committing
+    /// each yields the nested point that slot's challenge is hashed from.
+    pub(crate) challenge_bridge_rxs: alloc::vec::Vec<sparse::Polynomial<C::ScalarField, R>>,
+
     /// Per-claim bridge stage rx polynomials, in slot order. Each one's wires
     /// are the corresponding claim's host commitment, and its commitment is
     /// the claim's instance-bound `com`. Carrying them is what makes `com` the
     /// commitment of a polynomial the proof actually holds — at parity with
     /// every other cross-curve commitment (e.g. `bridge_f_rx`).
-    /// Bridge stage rxs for the challenge slots, in slot order. Committing
-    /// each yields the nested point that slot's challenge is hashed from.
-    pub(crate) challenge_bridge_rxs: alloc::vec::Vec<sparse::Polynomial<C::ScalarField, R>>,
     pub(crate) claim_bridge_rxs: alloc::vec::Vec<sparse::Polynomial<C::ScalarField, R>>,
 
     /// The claims' host-curve commitments, in slot order — these are the
@@ -643,8 +644,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
 
         // Poly-query claim slots: a trivial proof raises no claims, so every
         // slot holds the canonical padding claim (mirroring the adapter).
-        let padding = crate::internal::challenge::PaddingClaim::<C, R>::new(self.params)
-            .expect("trivial padding claim");
+        let padding = crate::internal::challenge::PaddingClaim::<C, R>::new(self.params);
         builder.set_application_claims(
             (0..crate::NUM_POLY_QUERY_SLOTS)
                 .map(|slot| crate::framework_hooks::PolyQueryClaim {

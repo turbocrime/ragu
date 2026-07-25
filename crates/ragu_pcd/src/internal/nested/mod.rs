@@ -298,6 +298,7 @@ pub mod stages {
     pub mod claim_bridge;
     pub mod eval;
     pub mod f;
+    pub mod host_bridge;
     pub mod inner_error;
     pub mod outer_error;
     pub mod preamble;

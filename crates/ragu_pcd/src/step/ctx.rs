@@ -206,11 +206,20 @@ where
         )
     }
 
-    /// Derives a sound Fiat–Shamir challenge from `input`: the in-circuit
-    /// Poseidon sponge hash of the input's elements. The returned `Element`
-    /// is constrained to equal that hash, and on a value-carrying driver it
-    /// holds the real challenge value immediately, so the step body can
-    /// evaluate polynomials at it right away.
+    /// Derives a sound Fiat–Shamir challenge from `input`.
+    ///
+    /// The input's elements are pinned into this slot's challenge stage; the
+    /// challenge is the hash of that stage's commitment, bridged onto the
+    /// nested curve. Both the bridged point and the challenge are witnessed
+    /// here and written into the circuit's instance, and the parent's
+    /// `challenge_binding` circuit re-derives one from the other — so no
+    /// Poseidon permutation is
+    /// synthesized in the application circuit, and the cost does not scale with
+    /// the input's width.
+    ///
+    /// On a value-carrying driver the returned `Element` holds the real
+    /// challenge immediately, so the step body can evaluate polynomials at it
+    /// right away.
     pub fn derive_challenge<G: ChallengeInput<'dr, D>>(
         &mut self,
         input: G,
@@ -246,11 +255,7 @@ where
         })?;
 
         let claim_bridge = self.claim_bridge;
-        let filled = match self.challenge_slots.as_deref_mut() {
-            Some(slots) => slots.fill_next(self.dr, claim_bridge, inputs.clone())?,
-            None => None,
-        };
-        let Some(filled) = filled else {
+        let Some(slots) = self.challenge_slots.as_deref_mut() else {
             // Discovery dry run: no `StageBuilder`, so no slots to fill. Only
             // the call count is read from it.
             return Element::alloc(
@@ -264,6 +269,7 @@ where
                 })?,
             );
         };
+        let filled = slots.fill_next(self.dr, claim_bridge, inputs.clone())?;
 
         for (index, wire) in filled.wires.iter().enumerate() {
             match elements.get(index) {

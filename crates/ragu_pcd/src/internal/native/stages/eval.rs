@@ -34,7 +34,7 @@ use ragu_primitives::{
 };
 
 use crate::{
-    NUM_POLY_QUERY_SLOTS, Proof,
+    NUM_CHALLENGE_SLOTS, NUM_POLY_QUERY_SLOTS, Proof,
     internal::native::{RxComponent, RxValues},
 };
 
@@ -72,7 +72,7 @@ pub struct ChildEvaluationsWitness<F> {
     /// order. Each stage is separately committed — hashing that commitment is
     /// what produced the slot's challenge — so each is a claim the parent must
     /// carry, exactly like a poly-query claim polynomial.
-    pub challenge_stages: [F; crate::NUM_CHALLENGE_SLOTS],
+    pub challenge_stages: [F; NUM_CHALLENGE_SLOTS],
 }
 
 impl<F: PrimeField> ChildEvaluationsWitness<F> {
@@ -164,7 +164,7 @@ pub struct ChildEvaluations<'dr, D: Driver<'dr>> {
     /// The child's challenge-stage evaluations at $u$, in slot order. Kept
     /// after the claims, matching the `_10_p` accumulation order.
     #[ragu(gadget)]
-    pub challenge_stages: FixedVec<Element<'dr, D>, ConstLen<{ crate::NUM_CHALLENGE_SLOTS }>>,
+    pub challenge_stages: FixedVec<Element<'dr, D>, ConstLen<NUM_CHALLENGE_SLOTS>>,
 }
 
 impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
@@ -190,7 +190,7 @@ impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
             claims: (0..NUM_POLY_QUERY_SLOTS)
                 .map(|i| Element::alloc(dr, allocator, witness.as_ref().map(|w| w.claims[i])))
                 .try_collect_fixed()?,
-            challenge_stages: (0..crate::NUM_CHALLENGE_SLOTS)
+            challenge_stages: (0..NUM_CHALLENGE_SLOTS)
                 .map(|i| {
                     Element::alloc(
                         dr,
@@ -242,7 +242,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     fn values() -> usize {
         // 2 * ChildEvaluations (one evaluation per RxIndex, 4 scalars, one per
         //   claim slot, one per challenge slot) + current step elements (6)
-        2 * (super::super::RxIndex::NUM + 4 + NUM_POLY_QUERY_SLOTS + crate::NUM_CHALLENGE_SLOTS) + 6
+        2 * (super::super::RxIndex::NUM + 4 + NUM_POLY_QUERY_SLOTS + NUM_CHALLENGE_SLOTS) + 6
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

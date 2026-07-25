@@ -66,12 +66,30 @@
 //! instance-bound commitment. On a value-carrying driver the returned `Element`
 //! holds the real value immediately, so the step body can use it at once.
 //!
-//! **The binding is not yet enforced.** The `(point, challenge)` pair is bound
-//! to the child's application $k(Y)$, and the stage is committed, but no
-//! circuit re-derives `challenge = Hash(point)` yet. Until that circuit exists
-//! the challenge is a free witness against a malicious prover. This is the same
-//! deferred posture as every other commitment in the framework — see
-//! `POLY_QUERY_SOUNDNESS.md`.
+//! The binding is enforced, in four links:
+//!
+//! 1. Both halves of the `(point, challenge)` pair are written into the child's
+//!    application $k(Y)$ (by the internal `preamble` stage's `application_ky`),
+//!    binding them to its committed application rx.
+//! 2. The slot's stage polynomial is summed into the application circuit's
+//!    claim (in `native::claims`, as `ComputeVCircuit` treats `Query` and
+//!    `Eval`), folded in `_10_p`, and
+//!    mask-registered so the trace split is unique — so the stage's wires,
+//!    which `derive_challenge` pins to the caller's elements, are covered by
+//!    the circuit check.
+//! 3. `point` is the bridge image of that stage's host commitment, tied in the
+//!    `loading` circuit against the eval-stage record and in `copying` against
+//!    the child's own.
+//! 4. `challenge = Hash(point)` is re-derived per `(child, slot)` by the
+//!    internal `challenge_binding` circuit, and natively by
+//!    [`Application::verify`](crate::Application::verify) for a root proof's own
+//!    slots, which no parent has bound yet.
+//!
+//! Together: the prover cannot choose a challenge independently of the inputs
+//! it committed. What remains is the framework-wide deferred PCS opening —
+//! the commitment-to-carried-polynomial link that **no** commitment in the
+//! system has yet — so the chain reaches exactly the same parity as
+//! `bridge_f` and no further. See `POLY_QUERY_SOUNDNESS.md`.
 //!
 //! The framework collects the resulting outputs through the adapter's `Aux` for
 //! later fuse-time processing. New framework hooks (e.g. transcript threading)
@@ -109,10 +127,6 @@ pub struct PolyQueryClaim<F: Field, C: CurveAffine<Base = F>> {
     pub coefficients: Vec<F>,
 }
 
-/// The in-circuit wires of a single poly-query claim, retained so the adapter
-/// can write them into the application circuit's public instance (binding them
-/// to the circuit's $k(Y)$), alongside the witness-only coefficient values the
-/// fuse needs for the PCS folding.
 /// The in-circuit wires of a derived challenge: the bridged commitment to the
 /// slot's stage, and the challenge hashed from it. Both go into the application
 /// circuit's public instance so the parent can re-derive one from the other.
@@ -140,9 +154,9 @@ pub struct ClaimWires<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
 
 /// An input to [`derive_challenge`](crate::step::StepCtx::derive_challenge): a
 /// bundle of in-circuit data exposed as a canonical sequence of [`Element`]s.
-/// The challenge is a Poseidon sponge hash over exactly this sequence,
-/// computed *in-circuit*, so it is sound: the squeezed challenge wire is
-/// constrained to be the hash of the input's wires.
+/// Exactly this sequence is pinned into the slot's challenge stage, whose
+/// commitment the challenge is hashed from — so the challenge is bound to this
+/// input and nothing else.
 ///
 /// Implemented for [`Element`], [`Point`], and fixed-width compositions of
 /// these (tuples, arrays, and references). Deliberately **not** implemented for
@@ -153,8 +167,8 @@ pub trait ChallengeInput<'dr, D: Driver<'dr>> {
     /// produces.
     ///
     /// A compile-time constant, because the challenge derivation is circuit
-    /// structure: it fixes how many wires the sponge absorbs and therefore how
-    /// many permutations the circuit synthesizes. A runtime-length input would
+    /// structure: it fixes how many of the slot's stage wires the input
+    /// occupies, and the rest are pinned to zero. A runtime-length input would
     /// make the circuit's shape depend on its witness, which the framework
     /// forbids. This is what makes
     /// [`CHALLENGE_WIDTH`](crate::CHALLENGE_WIDTH) a compile-time bound rather
@@ -321,12 +335,8 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C>
     /// offending call.
     pub fn with_expected(expected_calls: usize) -> Self {
         Self {
-            poly_query_claims: Vec::new(),
-            witnessed_claims: 0,
-            challenge_calls: 0,
-            challenge_pairs: Vec::new(),
-            challenge_inputs: Vec::new(),
             expected_calls: Some(expected_calls),
+            ..Self::new()
         }
     }
 
@@ -433,26 +443,6 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> FrameworkHooks<'dr, D, C>
         Ok(())
     }
 
-    /// Derives a Fiat–Shamir challenge from `input`: the in-circuit Poseidon
-    /// sponge hash of the input's elements. The squeezed challenge wire is
-    /// *constrained* to be that hash, so the derivation is sound — a prover
-    /// cannot choose the challenge independently of the input — and on a
-    /// value-carrying driver the returned `Element` holds the real challenge
-    /// value immediately, so the step body can evaluate polynomials at it
-    /// right away.
-    ///
-    /// The input's width is fixed by its type
-    /// ([`ChallengeInput::ELEMENTS`]) and must not exceed
-    /// [`CHALLENGE_WIDTH`](crate::CHALLENGE_WIDTH) — a wider input fails to
-    /// *compile*, so no honest prover can be surprised by it at proving time.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::InvalidWitness`] if the body makes more calls than the
-    /// [`NUM_CHALLENGE_SLOTS`](crate::NUM_CHALLENGE_SLOTS) cap allows, or more
-    /// than the registration-time dry run made. An honest step body cannot
-    /// trip either: circuit structure must not depend on witness values, so
-    /// the dry run and the real run make identical calls.
     /// Consumes the container and returns every hook's accumulated output.
     pub fn into_outputs(self) -> FrameworkHookOutputs<'dr, D, C> {
         FrameworkHookOutputs {

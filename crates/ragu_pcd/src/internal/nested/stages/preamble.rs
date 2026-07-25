@@ -19,7 +19,7 @@ use ragu_primitives::{
 };
 
 use crate::{
-    NUM_POLY_QUERY_SLOTS, Proof,
+    NUM_CHALLENGE_SLOTS, NUM_POLY_QUERY_SLOTS, Proof,
     internal::{endoscalar::PointsStage, native::RxIndex, nested::NUM_ENDOSCALING_POINTS},
 };
 
@@ -28,7 +28,7 @@ use crate::{
 /// `registry_xy` and `p`), the stashed poly-query claim commitments, and the
 /// stashed challenge-stage commitments.
 pub const NUM_POINTS: usize =
-    1 + 2 * (RxIndex::NUM + 4 + NUM_POLY_QUERY_SLOTS + crate::NUM_CHALLENGE_SLOTS);
+    1 + 2 * (RxIndex::NUM + 4 + NUM_POLY_QUERY_SLOTS + NUM_CHALLENGE_SLOTS);
 
 /// Witness data for a single child proof in the preamble bridge stage.
 ///
@@ -83,7 +83,7 @@ pub struct ChildWitness<C: CurveAffine> {
     /// the same rails as the claims — `loading` ties them to the endoscaling
     /// point list, `copying` ties them to the child's own record — and kept
     /// after them, matching the `_10_p` accumulation order.
-    pub stashed_challenge_stages: [C; crate::NUM_CHALLENGE_SLOTS],
+    pub stashed_challenge_stages: [C; NUM_CHALLENGE_SLOTS],
 }
 
 impl<C: CurveAffine> ChildWitness<C> {
@@ -185,8 +185,7 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     /// The child's challenge-stage host commitments, in slot order, kept after
     /// the claims to match the `_10_p` accumulation order.
     #[ragu(gadget)]
-    pub stashed_challenge_stages:
-        FixedVec<Point<'dr, D, C>, ConstLen<{ crate::NUM_CHALLENGE_SLOTS }>>,
+    pub stashed_challenge_stages: FixedVec<Point<'dr, D, C>, ConstLen<NUM_CHALLENGE_SLOTS>>,
 }
 
 impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> core::ops::Index<RxIndex>
@@ -235,7 +234,7 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> ChildOutput<'dr, D, C> {
             stashed_claims: (0..NUM_POLY_QUERY_SLOTS)
                 .map(|i| Point::alloc(dr, witness.as_ref().map(|w| w.stashed_claims[i])))
                 .try_collect_fixed()?,
-            stashed_challenge_stages: (0..crate::NUM_CHALLENGE_SLOTS)
+            stashed_challenge_stages: (0..NUM_CHALLENGE_SLOTS)
                 .map(|i| Point::alloc(dr, witness.as_ref().map(|w| w.stashed_challenge_stages[i])))
                 .try_collect_fixed()?,
         })

@@ -17,7 +17,11 @@
 //! parent can fold them.
 
 use ragu_arithmetic::{CryptoRngCore, Cycle};
-use ragu_circuits::{CircuitExt, polynomials::Rank, polynomials::sparse, staging::MultiStage};
+use ragu_circuits::{
+    CircuitExt,
+    polynomials::{Rank, sparse},
+    staging::MultiStage,
+};
 use ragu_core::{Error, Result};
 
 use crate::{
@@ -82,6 +86,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // of at verification. Along the way, collect the claim polynomials
         // and host commitments the parent's PCS folding will consume.
         assert_eq!(claims.len(), crate::NUM_POLY_QUERY_SLOTS);
+        let precheck = self.claim_precheck_enabled();
         let mut claim_polys = alloc::vec::Vec::with_capacity(claims.len());
         let mut claim_host_commitments = alloc::vec::Vec::with_capacity(claims.len());
         for (slot, claim) in claims.iter().enumerate() {
@@ -111,10 +116,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 challenge::claim_bridge_alpha::<C>(builder.bridge_alpha(), slot),
                 host,
             )?;
-            #[cfg(feature = "unstable-fuzzing")]
-            let precheck = !self.skip_claim_precheck;
-            #[cfg(not(feature = "unstable-fuzzing"))]
-            let precheck = true;
             if precheck && expected != claim.com {
                 return Err(Error::InvalidWitness(
                     "poly-query claim rejected: the claimed commitment does not bind the claimed \

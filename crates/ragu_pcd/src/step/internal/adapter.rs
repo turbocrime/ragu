@@ -32,15 +32,28 @@ use crate::{
     internal::challenge::PaddingClaim,
 };
 
-/// Length of an application circuit's public instance: the three headers plus
+/// Length of an application circuit's public instance: the three headers, then
 /// the poly-query claim slots (commitment point coordinates and the $(x, y)$
-/// opening — four elements per slot).
+/// opening — four elements per slot), then the challenge slots (bridged stage
+/// commitment coordinates and the challenge — three elements per slot).
 pub struct InstanceLen<const HEADER_SIZE: usize>;
 
 impl<const HEADER_SIZE: usize> Len for InstanceLen<HEADER_SIZE> {
     fn len() -> usize {
         HEADER_SIZE * 3 + NUM_POLY_QUERY_SLOTS * 4 + NUM_CHALLENGE_SLOTS * 3
     }
+}
+
+/// Transposes a list of per-item driver values into one driver value holding
+/// the list, in order.
+///
+/// The values are taken inside a single `try_just`, so on structure-only
+/// drivers the closure never runs (`Empty::try_just` discards it) and no
+/// `take` is attempted.
+fn collect_values<'dr, D: Driver<'dr>, T: Send>(
+    values: Vec<DriverValue<D, T>>,
+) -> Result<DriverValue<D, Vec<T>>> {
+    D::try_just(move || Ok(values.into_iter().map(Maybe::take).collect()))
 }
 
 /// Discovers the hook-call counts of `step` — how many
@@ -105,9 +118,6 @@ pub(crate) struct AdapterAux<'source, C: Cycle, S: Step<C>, const HEADER_SIZE: u
     /// [`CHALLENGE_WIDTH`](crate::CHALLENGE_WIDTH). Plain field elements: the
     /// fuse holds the rank, so it builds the stage polynomials itself.
     pub challenge_inputs: Vec<[C::CircuitField; crate::CHALLENGE_WIDTH]>,
-    // Note: `derive_challenge` calls leave nothing here — the challenge is
-    // derived and constrained in-circuit (a Poseidon sponge over the input
-    // wires), so nothing needs resolving downstream.
 }
 
 pub(crate) struct Adapter<'params, C: Cycle, S, R: Rank, const HEADER_SIZE: usize> {
@@ -115,7 +125,7 @@ pub(crate) struct Adapter<'params, C: Cycle, S, R: Rank, const HEADER_SIZE: usiz
     /// The number of `derive_challenge` calls the step body makes, discovered
     /// from its witness body at construction time; see
     /// [`discover_hook_layout`]. Part of the circuit structure: each call
-    /// synthesizes a sponge over a compile-time-fixed number of wires.
+    /// consumes one of the reserved challenge stages.
     challenge_calls: usize,
     /// The number of poly-query claims the step body raises, discovered by the
     /// same dry run. Part of the circuit structure: the real synthesis must
@@ -174,7 +184,7 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
         challenge_alpha: C::CircuitField,
     ) -> Result<Self> {
         Ok(Adapter {
-            padding: Some(PaddingClaim::new(params)?),
+            padding: Some(PaddingClaim::new(params)),
             claim_bridge: Some((params, bridge_alpha, challenge_alpha)),
             ..Self::new(step)?
         })
@@ -314,30 +324,27 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
     fn extract_claims<'dr, D: Driver<'dr, F = C::CircuitField>>(
         claim_wires: Vec<ClaimWires<'dr, D, C::NestedCurve>>,
     ) -> Result<DriverValue<D, Vec<PolyQueryClaim<C::CircuitField, C::NestedCurve>>>> {
-        let mut claims_value = D::just(|| Vec::with_capacity(NUM_POLY_QUERY_SLOTS));
-        for claim_wire in claim_wires {
-            let ClaimWires {
-                com,
-                x,
-                y,
-                coefficients,
-            } = claim_wire;
-            let claim = D::try_just(|| {
-                Ok(PolyQueryClaim {
-                    com: com.value().take(),
-                    x: *x.value().take(),
-                    y: *y.value().take(),
-                    coefficients: coefficients.take(),
+        collect_values::<D, _>(
+            claim_wires
+                .into_iter()
+                .map(|claim_wire| {
+                    let ClaimWires {
+                        com,
+                        x,
+                        y,
+                        coefficients,
+                    } = claim_wire;
+                    D::try_just(|| {
+                        Ok(PolyQueryClaim {
+                            com: com.value().take(),
+                            x: *x.value().take(),
+                            y: *y.value().take(),
+                            coefficients: coefficients.take(),
+                        })
+                    })
                 })
-            })?;
-            claims_value = claims_value.and_then(|mut v| {
-                claim.map(|c| {
-                    v.push(c);
-                    v
-                })
-            });
-        }
-        Ok(claims_value)
+                .collect::<Result<Vec<_>>>()?,
+        )
     }
 }
 
@@ -462,31 +469,21 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize>
         // Extract the claim values (instances plus coefficients) for the fuse.
         let claims_value = Self::extract_claims(claim_wires)?;
 
-        let mut inputs_value = D::just(|| Vec::with_capacity(NUM_CHALLENGE_SLOTS));
-        for inputs in challenge_inputs {
-            inputs_value = inputs_value.and_then(|mut v| {
-                inputs.map(|i| {
-                    v.push(i);
-                    v
-                })
-            });
-        }
+        let inputs_value = collect_values::<D, _>(challenge_inputs)?;
 
-        let mut challenges_value = D::just(|| Vec::with_capacity(NUM_CHALLENGE_SLOTS));
-        for pair in challenge_pairs {
-            let opening = D::try_just(|| {
-                Ok(crate::proof::ChallengeOpening {
-                    point: pair.point.value().take(),
-                    challenge: *pair.challenge.value().take(),
+        let challenges_value = collect_values::<D, _>(
+            challenge_pairs
+                .into_iter()
+                .map(|pair| {
+                    D::try_just(|| {
+                        Ok(crate::proof::ChallengeOpening {
+                            point: pair.point.value().take(),
+                            challenge: *pair.challenge.value().take(),
+                        })
+                    })
                 })
-            })?;
-            challenges_value = challenges_value.and_then(|mut v| {
-                opening.map(|o| {
-                    v.push(o);
-                    v
-                })
-            });
-        }
+                .collect::<Result<Vec<_>>>()?,
+        )?;
 
         let adapter_aux = D::try_just(|| {
             let left_header = elements[0..HEADER_SIZE]
@@ -517,6 +514,7 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize>
 #[cfg(test)]
 mod tests {
     use ragu_arithmetic::ff::Field;
+    use ragu_circuits::{Circuit, staging::MultiStage};
     use ragu_core::{
         drivers::emulator::Emulator,
         gadgets::{Bound, Kind},
@@ -524,8 +522,6 @@ mod tests {
     };
     use ragu_pasta::{Fp, Pasta};
     use ragu_primitives::allocator::{Allocator, Standard};
-
-    use ragu_circuits::{Circuit, staging::MultiStage};
 
     use super::*;
     use crate::{

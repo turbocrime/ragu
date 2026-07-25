@@ -148,7 +148,12 @@ pub(crate) fn stage_rx<F: Field, R: Rank>(
 pub(crate) trait ChallengeSlots<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     /// Fills the next unused slot with `inputs`, returning its wires and the
     /// values derived from its commitment: the bridged stage commitment and the
-    /// challenge hashed from it. `None` once every slot is spent.
+    /// challenge hashed from it.
+    ///
+    /// The caller must have taken a slot from
+    /// [`FrameworkHooks::take_challenge_slot`](crate::framework_hooks::FrameworkHooks)
+    /// first, which is what bounds the slot index — so running past the last
+    /// slot is unreachable rather than an error case.
     ///
     /// The derivation lives here because it needs the rank — to build the stage
     /// polynomial — and this is the last place that knows it. Erasing the rank
@@ -158,7 +163,7 @@ pub(crate) trait ChallengeSlots<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::
         dr: &mut D,
         params: Option<(&C::Params, C::ScalarField, C::CircuitField)>,
         inputs: DriverValue<D, [D::F; CHALLENGE_WIDTH]>,
-    ) -> Result<Option<Filled<'dr, D, C>>>;
+    ) -> Result<Filled<'dr, D, C>>;
 }
 
 /// What [`ChallengeSlots::fill_next`] produces for one slot.
@@ -198,24 +203,23 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> ChallengeSlots
         dr: &mut D,
         params: Option<(&C::Params, C::ScalarField, C::CircuitField)>,
         inputs: DriverValue<D, [D::F; CHALLENGE_WIDTH]>,
-    ) -> Result<Option<Filled<'dr, D, C>>> {
+    ) -> Result<Filled<'dr, D, C>> {
         let slot = self.next;
         let witness = inputs.as_ref().map(|inputs| Witness { inputs: *inputs });
 
         // `unenforced`: the wires carry no invariant of their own. The caller
         // constrains every one of them — inputs to its elements, padding to
         // zero — immediately after this returns.
-        let wires = match slot {
-            0 => match self.slot0.take() {
-                Some(guard) => guard.unenforced(dr, witness)?,
-                None => return Ok(None),
-            },
-            1 => match self.slot1.take() {
-                Some(guard) => guard.unenforced(dr, witness)?,
-                None => return Ok(None),
-            },
-            _ => return Ok(None),
+        //
+        // Each guard is taken at most once and the slot index is bounded by
+        // `take_challenge_slot`, so neither arm below can be reached twice.
+        let taken = match slot {
+            0 => self.slot0.take().map(|guard| guard.unenforced(dr, witness)),
+            1 => self.slot1.take().map(|guard| guard.unenforced(dr, witness)),
+            _ => None,
         };
+        let wires =
+            taken.unwrap_or_else(|| unreachable!("slot is bounded by NUM_CHALLENGE_SLOTS"))?;
         self.next += 1;
 
         let derived = D::try_just(|| {
@@ -233,7 +237,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> ChallengeSlots
             )
         })?;
 
-        Ok(Some(Filled { wires, derived }))
+        Ok(Filled { wires, derived })
     }
 }
 

@@ -15,97 +15,21 @@
 //! commitment that cannot identify an individual claim.
 //!
 //! The stages chain after [`super::eval`] in slot order, so slot `i`'s wires
-//! occupy a distinct, statically-known region of the trace. The types are
-//! macro-generated because the chain is expressed through the `Parent`
-//! associated type, which cannot be computed from a const generic on stable
-//! Rust.
+//! occupy a distinct, statically-known region of the trace. The stage itself is
+//! [`host_bridge::Stage`](super::host_bridge::Stage), shared with
+//! [`super::challenge_bridge`]; only the chain differs.
 
-use core::marker::PhantomData;
+/// Bridge stage for poly-query claim slot 0.
+pub type Stage0<C, R> = super::host_bridge::Stage<C, R, super::eval::Stage<C, R>>;
+/// Bridge stage for poly-query claim slot 1.
+pub type Stage1<C, R> = super::host_bridge::Stage<C, R, Stage0<C, R>>;
+/// Bridge stage for poly-query claim slot 2.
+pub type Stage2<C, R> = super::host_bridge::Stage<C, R, Stage1<C, R>>;
+/// Bridge stage for poly-query claim slot 3.
+pub type Stage3<C, R> = super::host_bridge::Stage<C, R, Stage2<C, R>>;
 
-use ragu_arithmetic::CurveAffine;
-use ragu_circuits::polynomials::Rank;
-use ragu_core::{
-    Result,
-    drivers::{Driver, DriverValue},
-    gadgets::{Bound, Gadget, Kind},
-    maybe::Maybe,
-};
-use ragu_primitives::{Point, io::Write};
-
-/// Number of curve points in each claim-bridge stage: one host commitment.
-const NUM: usize = 1;
-
-/// Witness for a single claim slot's bridge stage: that claim's host-curve
-/// commitment.
-pub struct Witness<C: CurveAffine> {
-    pub host: C,
-}
-
-/// Prover-internal output gadget for a claim-bridge stage.
-///
-/// Stage communication data, not part of the circuit's public instance.
-#[derive(Gadget, Write)]
-pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
-    #[ragu(gadget)]
-    pub host: Point<'dr, D, C>,
-}
-
-macro_rules! claim_bridge_stage {
-    ($name:ident, $parent:ty, $doc:expr) => {
-        #[doc = $doc]
-        #[derive(Default)]
-        pub struct $name<C: CurveAffine, R> {
-            _marker: PhantomData<(C, R)>,
-        }
-
-        impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for $name<C, R> {
-            type Parent = $parent;
-            type Witness<'source> = &'source Witness<C>;
-            type OutputKind = Kind![C::Base; Output<'_, _, C>];
-
-            fn values() -> usize {
-                NUM * 2
-            }
-
-            fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
-                &self,
-                dr: &mut D,
-                witness: DriverValue<D, Self::Witness<'source>>,
-            ) -> Result<Bound<'dr, D, Self::OutputKind>>
-            where
-                Self: 'dr,
-            {
-                Ok(Output {
-                    host: Point::alloc(dr, witness.as_ref().map(|w| w.host))?,
-                })
-            }
-        }
-    };
-}
-
-claim_bridge_stage!(
-    Stage0,
-    super::eval::Stage<C, R>,
-    "Bridge stage for poly-query claim slot 0."
-);
-claim_bridge_stage!(
-    Stage1,
-    Stage0<C, R>,
-    "Bridge stage for poly-query claim slot 1."
-);
-claim_bridge_stage!(
-    Stage2,
-    Stage1<C, R>,
-    "Bridge stage for poly-query claim slot 2."
-);
-claim_bridge_stage!(
-    Stage3,
-    Stage2<C, R>,
-    "Bridge stage for poly-query claim slot 3."
-);
-
-/// Compile-time guard: the number of macro-generated stages above must match
-/// the number of claim slots. Bump both together.
+/// Compile-time guard: the number of aliases above must match the number of
+/// claim slots. Bump both together.
 const _: () = assert!(crate::NUM_POLY_QUERY_SLOTS == 4);
 
 #[cfg(test)]

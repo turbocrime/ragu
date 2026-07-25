@@ -308,6 +308,12 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     child_left_stage_rx: Option<super::ChildStageRx<C::ScalarField, R>>,
     child_right_stage_rx: Option<super::ChildStageRx<C::ScalarField, R>>,
 
+    /// The derived-challenge pairs the application circuit exposed, in slot
+    /// order, padded by the adapter to exactly
+    /// [`NUM_CHALLENGE_SLOTS`](crate::NUM_CHALLENGE_SLOTS) entries.
+    application_challenges: Vec<crate::proof::ChallengeOpening<C::NestedCurve, C::CircuitField>>,
+    /// The application circuit's challenge-stage polynomials, in slot order.
+    challenge_stage_polys: Vec<sparse::Polynomial<C::CircuitField, R>>,
     /// Per-step polynomial-query claims raised by the user's
     /// [`Step::witness`](crate::step::Step::witness) via
     /// [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query),
@@ -316,9 +322,6 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     /// pre-checked natively by fuse. The claim *instances* (com, x, y),
     /// the claim polynomials, and the host commitments are persisted in the
     /// [`Proof`] so the parent fuse can enforce the claims recursively.
-    application_challenges: Vec<crate::proof::ChallengeOpening<C::NestedCurve, C::CircuitField>>,
-    /// The application circuit's challenge-stage polynomials, in slot order.
-    challenge_stage_polys: Vec<sparse::Polynomial<C::CircuitField, R>>,
     application_claims:
         Vec<crate::framework_hooks::PolyQueryClaim<C::CircuitField, C::NestedCurve>>,
     /// The claim polynomials, in slot order (paired with
@@ -657,13 +660,13 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         crate::internal::challenge::claim_bridge_rx::<C, R>(slot, alpha, host)
     }
 
-    /// The proof's shared bridge-alpha source, so the prover-side claim bridge
-    /// (built in `StepCtx`) uses the same blind this builder will.
     /// The blind source for the application circuit's challenge stages.
     pub(crate) fn challenge_alpha(&self) -> C::CircuitField {
         self.challenge_alpha
     }
 
+    /// The proof's shared bridge-alpha source, so the prover-side claim bridge
+    /// (built in `StepCtx`) uses the same blind this builder will.
     pub(crate) fn bridge_alpha(&self) -> C::ScalarField {
         self.bridge_alpha
     }
@@ -745,11 +748,8 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         super::ChildStageRx<C::ScalarField, R>
     );
 
-    /// Sets the per-step polynomial-query claims for this fuse step (instance
-    /// tuples, claim polynomials, and host commitments, all in slot order).
-    /// May only be called once with a non-empty set.
     /// Records the application circuit's challenge-stage polynomials, in slot
-    /// order.
+    /// order, deriving their host commitments. May only be called once.
     pub(crate) fn set_challenge_stage_polys(
         &mut self,
         polys: Vec<sparse::Polynomial<C::CircuitField, R>>,
@@ -779,6 +779,9 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         self.application_challenges = challenges;
     }
 
+    /// Sets the per-step polynomial-query claims for this fuse step (instance
+    /// tuples, claim polynomials, and host commitments, all in slot order).
+    /// May only be called once.
     pub(crate) fn set_application_claims(
         &mut self,
         claims: Vec<crate::framework_hooks::PolyQueryClaim<C::CircuitField, C::NestedCurve>>,

@@ -4,9 +4,80 @@
 
 use alloc::vec;
 
-use ragu_arithmetic::{CurveAffine, Cycle};
-use ragu_circuits::polynomials::{Rank, sparse};
+use ragu_arithmetic::{CurveAffine, Cycle, ff::Field};
+use ragu_circuits::{
+    polynomials::{Rank, sparse},
+    staging::StageExt,
+};
 use ragu_core::{Error, Result};
+
+use crate::internal::nested::stages::{challenge_bridge, claim_bridge, host_bridge};
+
+/// Which family of nested bridge stages a commitment belongs to.
+///
+/// The two families are the same stage shape ([`host_bridge`]) on different
+/// chains, so everything below — the blind, the rx, the commitment — differs
+/// only in this discriminant and the slot.
+#[derive(Clone, Copy)]
+enum Bridge {
+    Claim,
+    Challenge,
+}
+
+impl Bridge {
+    /// The exponent of `bridge_alpha` for this family's `slot`.
+    ///
+    /// The claim slots take the first block after the four cached bridges; the
+    /// challenge slots continue the series past them, so no two bridge stages
+    /// share a blind.
+    fn alpha_exponent(self, slot: usize) -> u64 {
+        let base = match self {
+            Bridge::Claim => 5,
+            Bridge::Challenge => 5 + crate::NUM_POLY_QUERY_SLOTS,
+        };
+        (base + slot) as u64
+    }
+
+    /// Builds this family's `slot` bridge stage rx, whose wires are `host`.
+    ///
+    /// Dispatches on the slot because each slot is a distinct type with
+    /// distinct generator positions.
+    fn rx<C: Cycle, R: Rank>(
+        self,
+        slot: usize,
+        alpha: C::ScalarField,
+        host: C::HostCurve,
+    ) -> Result<sparse::Polynomial<C::ScalarField, R>> {
+        let witness = host_bridge::Witness { host };
+        match (self, slot) {
+            (Bridge::Claim, 0) => claim_bridge::Stage0::<C::HostCurve, R>::rx(alpha, &witness),
+            (Bridge::Claim, 1) => claim_bridge::Stage1::<C::HostCurve, R>::rx(alpha, &witness),
+            (Bridge::Claim, 2) => claim_bridge::Stage2::<C::HostCurve, R>::rx(alpha, &witness),
+            (Bridge::Claim, 3) => claim_bridge::Stage3::<C::HostCurve, R>::rx(alpha, &witness),
+            (Bridge::Challenge, 0) => {
+                challenge_bridge::Stage0::<C::HostCurve, R>::rx(alpha, &witness)
+            }
+            (Bridge::Challenge, 1) => {
+                challenge_bridge::Stage1::<C::HostCurve, R>::rx(alpha, &witness)
+            }
+            _ => unreachable!("slot is bounded by the family's slot count"),
+        }
+    }
+}
+
+/// The nested-curve commitment to a bridge stage — `commit(rx)` on the nested
+/// generators.
+fn bridge_commitment<C: Cycle, R: Rank>(
+    params: &C::Params,
+    bridge: Bridge,
+    slot: usize,
+    alpha: C::ScalarField,
+    host: C::HostCurve,
+) -> Result<C::NestedCurve> {
+    Ok(bridge
+        .rx::<C, R>(slot, alpha, host)?
+        .commit_to_affine(C::nested_generators(params)))
+}
 
 /// The host-curve commitment to a poly-query polynomial, rejecting the
 /// identity (which has no affine coordinates, so it could not be witnessed as
@@ -32,8 +103,7 @@ pub(crate) fn claim_bridge_alpha<C: Cycle>(
     bridge_alpha: C::ScalarField,
     slot: usize,
 ) -> C::ScalarField {
-    use ragu_arithmetic::ff::Field;
-    bridge_alpha.pow_vartime([(5 + slot) as u64])
+    bridge_alpha.pow_vartime([Bridge::Claim.alpha_exponent(slot)])
 }
 
 /// Builds poly-query claim `slot`'s bridge stage rx: a stage whose wires are
@@ -43,17 +113,7 @@ pub(crate) fn claim_bridge_rx<C: Cycle, R: Rank>(
     alpha: C::ScalarField,
     host: C::HostCurve,
 ) -> Result<sparse::Polynomial<C::ScalarField, R>> {
-    use ragu_circuits::staging::StageExt;
-
-    use crate::internal::nested::stages::claim_bridge as cb;
-    let witness = cb::Witness { host };
-    match slot {
-        0 => cb::Stage0::<C::HostCurve, R>::rx(alpha, &witness),
-        1 => cb::Stage1::<C::HostCurve, R>::rx(alpha, &witness),
-        2 => cb::Stage2::<C::HostCurve, R>::rx(alpha, &witness),
-        3 => cb::Stage3::<C::HostCurve, R>::rx(alpha, &witness),
-        _ => unreachable!("NUM_POLY_QUERY_SLOTS is 4"),
-    }
+    Bridge::Claim.rx::<C, R>(slot, alpha, host)
 }
 
 /// The nested-curve commitment to claim `slot`'s bridge stage — the value a
@@ -64,7 +124,7 @@ pub(crate) fn claim_bridge_commitment<C: Cycle, R: Rank>(
     alpha: C::ScalarField,
     host: C::HostCurve,
 ) -> Result<C::NestedCurve> {
-    Ok(claim_bridge_rx::<C, R>(slot, alpha, host)?.commit_to_affine(C::nested_generators(params)))
+    bridge_commitment::<C, R>(params, Bridge::Claim, slot, alpha, host)
 }
 
 /// The canonical padding claim used to fill unused poly-query slots (see
@@ -79,17 +139,16 @@ pub(crate) struct PaddingClaim<C: Cycle, R: Rank> {
 }
 
 impl<C: Cycle, R: Rank> PaddingClaim<C, R> {
-    pub fn new(params: &C::Params) -> Result<Self> {
-        use ragu_arithmetic::ff::Field;
+    pub fn new(params: &C::Params) -> Self {
         let poly =
             sparse::Polynomial::<C::CircuitField, R>::from_coeffs(vec![C::CircuitField::ONE]);
         let host = poly.commit_to_affine::<C::HostCurve>(C::host_generators(params));
-        Ok(PaddingClaim {
+        PaddingClaim {
             poly,
             host,
             x: C::CircuitField::ZERO,
             y: C::CircuitField::ONE,
-        })
+        }
     }
 }
 
@@ -102,7 +161,6 @@ pub(crate) fn challenge_stage_alpha<C: Cycle>(
     challenge_alpha: C::CircuitField,
     slot: usize,
 ) -> C::CircuitField {
-    use ragu_arithmetic::ff::Field;
     challenge_alpha.pow_vartime([(1 + slot) as u64])
 }
 
@@ -113,8 +171,7 @@ pub(crate) fn challenge_bridge_alpha<C: Cycle>(
     bridge_alpha: C::ScalarField,
     slot: usize,
 ) -> C::ScalarField {
-    use ragu_arithmetic::ff::Field;
-    bridge_alpha.pow_vartime([(5 + crate::NUM_POLY_QUERY_SLOTS + slot) as u64])
+    bridge_alpha.pow_vartime([Bridge::Challenge.alpha_exponent(slot)])
 }
 
 /// Builds challenge `slot`'s bridge stage rx: a stage whose wires are the
@@ -124,15 +181,7 @@ pub(crate) fn challenge_bridge_rx<C: Cycle, R: Rank>(
     alpha: C::ScalarField,
     host: C::HostCurve,
 ) -> Result<sparse::Polynomial<C::ScalarField, R>> {
-    use ragu_circuits::staging::StageExt;
-
-    use crate::internal::nested::stages::challenge_bridge as cb;
-    let witness = cb::Witness { host };
-    match slot {
-        0 => cb::Stage0::<C::HostCurve, R>::rx(alpha, &witness),
-        1 => cb::Stage1::<C::HostCurve, R>::rx(alpha, &witness),
-        _ => unreachable!("NUM_CHALLENGE_SLOTS is 2"),
-    }
+    Bridge::Challenge.rx::<C, R>(slot, alpha, host)
 }
 
 /// The nested-curve commitment to challenge `slot`'s bridge stage — the point
@@ -143,8 +192,7 @@ pub(crate) fn challenge_bridge_commitment<C: Cycle, R: Rank>(
     alpha: C::ScalarField,
     host: C::HostCurve,
 ) -> Result<C::NestedCurve> {
-    Ok(challenge_bridge_rx::<C, R>(slot, alpha, host)?
-        .commit_to_affine(C::nested_generators(params)))
+    bridge_commitment::<C, R>(params, Bridge::Challenge, slot, alpha, host)
 }
 
 /// Hashes a bridged challenge-stage commitment into the challenge it derives.

@@ -31,11 +31,13 @@ use ragu_core::{
 };
 use ragu_primitives::{GadgetExt as _, Point};
 
-use crate::NUM_POLY_QUERY_SLOTS;
-use crate::internal::{
-    endoscalar::{EndoscalarStage, Points, PointsStage},
-    native::RxIndex,
-    nested::{NUM_ENDOSCALING_POINTS, stages},
+use crate::{
+    NUM_POLY_QUERY_SLOTS,
+    internal::{
+        endoscalar::{EndoscalarStage, Points, PointsStage},
+        native::RxIndex,
+        nested::{NUM_ENDOSCALING_POINTS, stages},
+    },
 };
 
 /// A cursor over [`PointsStage`] inputs that enforces equality against

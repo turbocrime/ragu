@@ -9,87 +9,19 @@
 //!
 //! That is the same construction as [`super::claim_bridge`], and for the same
 //! reason: every value that has to cross the curve boundary does so as a stage
-//! commitment (see [`super::f`]).
+//! commitment (see [`super::f`]). Both families share
+//! [`host_bridge::Stage`](super::host_bridge::Stage); only the chain differs.
 //!
 //! Each slot gets its own stage, chained after the claim bridges, so slot `i`'s
 //! wires occupy a distinct, statically-known region of the trace.
 
-use core::marker::PhantomData;
+/// Bridge stage for challenge slot 0.
+pub type Stage0<C, R> = super::host_bridge::Stage<C, R, super::claim_bridge::Stage3<C, R>>;
+/// Bridge stage for challenge slot 1.
+pub type Stage1<C, R> = super::host_bridge::Stage<C, R, Stage0<C, R>>;
 
-use ragu_arithmetic::CurveAffine;
-use ragu_circuits::polynomials::Rank;
-use ragu_core::{
-    Result,
-    drivers::{Driver, DriverValue},
-    gadgets::{Bound, Gadget, Kind},
-    maybe::Maybe,
-};
-use ragu_primitives::{Point, io::Write};
-
-/// Number of curve points in each challenge-bridge stage: one host commitment.
-const NUM: usize = 1;
-
-/// Witness for a single challenge slot's bridge stage: that slot's host-curve
-/// stage commitment.
-pub struct Witness<C: CurveAffine> {
-    pub host: C,
-}
-
-/// Prover-internal output gadget for a challenge-bridge stage.
-///
-/// Stage communication data, not part of the circuit's public instance.
-#[derive(Gadget, Write)]
-pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
-    #[ragu(gadget)]
-    pub host: Point<'dr, D, C>,
-}
-
-macro_rules! challenge_bridge_stage {
-    ($name:ident, $parent:ty, $doc:expr) => {
-        #[doc = $doc]
-        #[derive(Default)]
-        pub struct $name<C: CurveAffine, R> {
-            _marker: PhantomData<(C, R)>,
-        }
-
-        impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for $name<C, R> {
-            type Parent = $parent;
-            type Witness<'source> = &'source Witness<C>;
-            type OutputKind = Kind![C::Base; Output<'_, _, C>];
-
-            fn values() -> usize {
-                NUM * 2
-            }
-
-            fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
-                &self,
-                dr: &mut D,
-                witness: DriverValue<D, Self::Witness<'source>>,
-            ) -> Result<Bound<'dr, D, Self::OutputKind>>
-            where
-                Self: 'dr,
-            {
-                Ok(Output {
-                    host: Point::alloc(dr, witness.as_ref().map(|w| w.host))?,
-                })
-            }
-        }
-    };
-}
-
-challenge_bridge_stage!(
-    Stage0,
-    super::claim_bridge::Stage3<C, R>,
-    "Bridge stage for challenge slot 0."
-);
-challenge_bridge_stage!(
-    Stage1,
-    Stage0<C, R>,
-    "Bridge stage for challenge slot 1."
-);
-
-/// Compile-time guard: the number of macro-generated stages above must match
-/// the number of challenge slots. Bump both together.
+/// Compile-time guard: the number of aliases above must match the number of
+/// challenge slots. Bump both together.
 const _: () = assert!(crate::NUM_CHALLENGE_SLOTS == 2);
 
 #[cfg(test)]

@@ -21,7 +21,8 @@ use ragu_primitives::{
 };
 
 use crate::{
-    NUM_POLY_QUERY_SLOTS, Proof, header::Header, internal::native::unified, step::internal::padded,
+    NUM_CHALLENGE_SLOTS, NUM_POLY_QUERY_SLOTS, Proof, header::Header, internal::native::unified,
+    step::internal::padded,
 };
 
 type HeaderVec<'dr, D, const HEADER_SIZE: usize> = FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>>;
@@ -122,8 +123,7 @@ pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const
     pub claims: FixedVec<ClaimInstance<'dr, D, C>, ConstLen<NUM_POLY_QUERY_SLOTS>>,
     /// The derived-challenge pairs the child's circuit exposed, in slot order.
     #[ragu(gadget)]
-    pub challenges:
-        FixedVec<ChallengeInstance<'dr, D, C>, ConstLen<{ crate::NUM_CHALLENGE_SLOTS }>>,
+    pub challenges: FixedVec<ChallengeInstance<'dr, D, C>, ConstLen<NUM_CHALLENGE_SLOTS>>,
     #[ragu(gadget)]
     pub circuit_id: Element<'dr, D>,
     #[ragu(gadget)]
@@ -270,9 +270,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
             },
             challenges: {
                 D::try_just(|| {
-                    if proof.as_ref().take().application_challenges().len()
-                        != crate::NUM_CHALLENGE_SLOTS
-                    {
+                    if proof.as_ref().take().application_challenges().len() != NUM_CHALLENGE_SLOTS {
                         return Err(Error::MalformedEncoding(
                             "proof does not carry exactly NUM_CHALLENGE_SLOTS challenge pairs"
                                 .into(),
@@ -280,7 +278,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                     }
                     Ok(())
                 })?;
-                (0..crate::NUM_CHALLENGE_SLOTS)
+                (0..NUM_CHALLENGE_SLOTS)
                     .map(|i| {
                         Ok(ChallengeInstance {
                             point: Point::alloc(
@@ -379,7 +377,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
         //             + 1 circuit_id + unified instance wires)
         2 * (3 * HEADER_SIZE
             + 4 * NUM_POLY_QUERY_SLOTS
-            + 3 * crate::NUM_CHALLENGE_SLOTS
+            + 3 * NUM_CHALLENGE_SLOTS
             + 1
             + unified::NUM_WIRES)
     }

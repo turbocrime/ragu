@@ -55,13 +55,17 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             return Ok(false);
         }
 
-        // Validate the poly-query claim vectors up front. Without this, a
-        // length mismatch would surface from the `alloc_for_verify` pipeline
-        // below as `Err(MalformedEncoding)` rather than the `Ok(false)` this
-        // method promises for a malformed proof (mirroring the header check).
+        // Validate the per-slot vectors up front. Without this, a length
+        // mismatch would surface from the `alloc_for_verify` pipeline below as
+        // `Err(MalformedEncoding)` rather than the `Ok(false)` this method
+        // promises for a malformed proof (mirroring the header check). Every
+        // slot-indexed check further down relies on these lengths.
         if pcd.proof().application_claims().len() != crate::NUM_POLY_QUERY_SLOTS
             || pcd.proof().claim_polys.len() != crate::NUM_POLY_QUERY_SLOTS
             || pcd.proof().claim_host_commitments.len() != crate::NUM_POLY_QUERY_SLOTS
+            || pcd.proof().application_challenges().len() != crate::NUM_CHALLENGE_SLOTS
+            || pcd.proof().challenge_stage_polys.len() != crate::NUM_CHALLENGE_SLOTS
+            || pcd.proof().challenge_stage_commitments.len() != crate::NUM_CHALLENGE_SLOTS
         {
             return Ok(false);
         }
@@ -136,38 +140,23 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // folded yet; the verifier checks them natively with the carried
         // claim polynomials: the claimed evaluation, the host commitment
         // binding, and the bridge to the instance-bound nested commitment.
-        let poly_query_claims = {
-            let claims = pcd.proof().application_claims();
-            let polys = &pcd.proof().claim_polys;
-            let host_coms = &pcd.proof().claim_host_commitments;
-            claims.len() == crate::NUM_POLY_QUERY_SLOTS
-                && polys.len() == crate::NUM_POLY_QUERY_SLOTS
-                && host_coms.len() == crate::NUM_POLY_QUERY_SLOTS
-                && claims
-                    .iter()
-                    .zip(polys.iter())
-                    .zip(host_coms.iter())
-                    .enumerate()
-                    .all(|(slot, ((claim, poly), host))| {
-                        let crate::ClaimOpening { com, x, y } = *claim;
-                        let bridge_alpha = pcd.proof().bridge_alpha;
-                        poly.eval(x) == y
-                            && poly
-                                .commit_to_affine::<C::HostCurve>(C::host_generators(self.params))
-                                == *host
-                            && crate::internal::challenge::claim_bridge_commitment::<C, R>(
-                                self.params,
-                                slot,
-                                crate::internal::challenge::claim_bridge_alpha::<C>(
-                                    bridge_alpha,
-                                    slot,
-                                ),
-                                *host,
-                            )
-                            .map(|bridge| bridge == com)
-                            .unwrap_or(false)
-                    })
-        };
+        let poly_query_claims = (0..crate::NUM_POLY_QUERY_SLOTS).all(|slot| {
+            let crate::ClaimOpening { com, x, y } = pcd.proof().application_claims()[slot];
+            let poly = &pcd.proof().claim_polys[slot];
+            let host = pcd.proof().claim_host_commitments[slot];
+            let alpha =
+                crate::internal::challenge::claim_bridge_alpha::<C>(pcd.proof().bridge_alpha, slot);
+
+            poly.eval(x) == y
+                && poly.commit_to_affine::<C::HostCurve>(C::host_generators(self.params)) == host
+                && crate::internal::challenge::claim_bridge_commitment::<C, R>(
+                    self.params,
+                    slot,
+                    alpha,
+                    host,
+                )
+                .is_ok_and(|bridge| bridge == com)
+        });
 
         // Check the proof's own derived challenges. Like the claims above,
         // these are bound recursively one fuse level up — by the
@@ -175,44 +164,27 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // challenge from its point — so a root proof's own challenges are
         // still unbound and the verifier rebuilds each one natively:
         // stage polynomial -> host commitment -> nested bridge -> hash.
-        //
-        // [`challenge_binding`]: crate::internal::native::circuits::challenge_binding
-        let derived_challenges = {
-            let challenges = pcd.proof().application_challenges();
-            let polys = &pcd.proof().challenge_stage_polys;
-            let host_coms = &pcd.proof().challenge_stage_commitments;
-            challenges.len() == crate::NUM_CHALLENGE_SLOTS
-                && polys.len() == crate::NUM_CHALLENGE_SLOTS
-                && host_coms.len() == crate::NUM_CHALLENGE_SLOTS
-                && challenges
-                    .iter()
-                    .zip(polys.iter())
-                    .zip(host_coms.iter())
-                    .enumerate()
-                    .all(|(slot, ((pair, poly), host))| {
-                        let crate::proof::ChallengeOpening { point, challenge } = *pair;
-                        let bridge_alpha = pcd.proof().bridge_alpha;
-                        poly.commit_to_affine::<C::HostCurve>(C::host_generators(self.params))
-                            == *host
-                            && crate::internal::challenge::challenge_bridge_commitment::<C, R>(
-                                self.params,
-                                slot,
-                                crate::internal::challenge::challenge_bridge_alpha::<C>(
-                                    bridge_alpha,
-                                    slot,
-                                ),
-                                *host,
-                            )
-                            .map(|bridge| bridge == point)
-                            .unwrap_or(false)
-                            && crate::internal::challenge::challenge_from_point::<C>(
-                                self.params,
-                                point,
-                            )
-                            .map(|derived| derived == challenge)
-                            .unwrap_or(false)
-                    })
-        };
+        let derived_challenges = (0..crate::NUM_CHALLENGE_SLOTS).all(|slot| {
+            let crate::proof::ChallengeOpening { point, challenge } =
+                pcd.proof().application_challenges()[slot];
+            let poly = &pcd.proof().challenge_stage_polys[slot];
+            let host = pcd.proof().challenge_stage_commitments[slot];
+            let alpha = crate::internal::challenge::challenge_bridge_alpha::<C>(
+                pcd.proof().bridge_alpha,
+                slot,
+            );
+
+            poly.commit_to_affine::<C::HostCurve>(C::host_generators(self.params)) == host
+                && crate::internal::challenge::challenge_bridge_commitment::<C, R>(
+                    self.params,
+                    slot,
+                    alpha,
+                    host,
+                )
+                .is_ok_and(|bridge| bridge == point)
+                && crate::internal::challenge::challenge_from_point::<C>(self.params, point)
+                    .is_ok_and(|derived| derived == challenge)
+        });
 
         // TODO: Add checks for registry_wx0_poly, registry_wx1_poly, and registry_wy_poly.
         // - registry_wx0/wx1: need child proof x challenges (x₀, x₁) which "disappear" in preamble

@@ -43,10 +43,10 @@ use header::Header;
 pub use poly_commitment::{PolyCommitment, PolyQueryHandle};
 pub use proof::{ClaimOpening, Pcd, Proof};
 use ragu_arithmetic::{CryptoRngCore, Cycle};
-use ragu_circuits::staging::MultiStage;
 use ragu_circuits::{
     polynomials::Rank,
     registry::{Registry, RegistryBuilder},
+    staging::MultiStage,
 };
 use ragu_core::{Error, Result};
 use step::{Step, internal::adapter::Adapter};
@@ -93,22 +93,24 @@ pub const NUM_POLY_QUERY_SLOTS: usize = 4;
 /// [`WitnessedPolynomial::hash_commitment`](oracle::WitnessedPolynomial::hash_commitment))
 /// and derive the challenge from that.
 ///
-/// The value is set by the Poseidon rate. The challenge is a sponge hash of the
-/// input, absorbs merely buffer, and the permutation is triggered by the squeeze
-/// (or by an absorb overflowing the `RATE = 4` buffer) — so every input of four
-/// elements or fewer, an [`Element`](ragu_primitives::Element), a
-/// [`Point`](ragu_primitives::Point), or a pair of either, costs exactly one
-/// permutation, and the fifth element costs a second. Measured in application
-/// gates: 288 for one through four elements, 576 from five.
+/// This is the width of the *stage* each slot commits. Fixing it at compile
+/// time is what lets that stage be one type chained [`NUM_CHALLENGE_SLOTS`]
+/// times, with narrower inputs zero-padded into the stage for free.
 ///
-/// Raising this constant therefore makes no existing derivation more expensive
-/// — it only admits wider inputs, at one further permutation per additional
-/// four elements.
+/// # Cost
 ///
-/// It is also the width the future per-challenge stage will commit (see
-/// `POLY_QUERY_SOUNDNESS.md`): a fixed width is what lets that stage be one
-/// const-generic type chained [`NUM_CHALLENGE_SLOTS`] times, with narrower
-/// inputs zero-padded into the stage for free.
+/// `CHALLENGE_WIDTH` wires — `CHALLENGE_WIDTH / 2` gates — per slot in every
+/// application circuit, reserved whether or not the step derives a challenge.
+///
+/// It costs **no permutations**. The challenge is not a hash of the input: it
+/// is the hash of the input stage's *commitment*, bridged onto the nested
+/// curve, so the sponge absorbs two coordinates regardless of how wide the
+/// input was. That hash is paid once per `(child, slot)` pair by the internal
+/// `challenge_binding` circuit, out of the framework's budget rather than the
+/// step's. Raising this constant therefore costs wires and nothing else.
+///
+/// The value accommodates an [`Element`](ragu_primitives::Element), a
+/// [`Point`](ragu_primitives::Point), or a pair of either without padding.
 pub const CHALLENGE_WIDTH: usize = 4;
 
 /// Number of Fiat–Shamir challenge slots a step body may use.
@@ -118,17 +120,26 @@ pub const CHALLENGE_WIDTH: usize = 4;
 /// call count must not depend on witness values (it is part of the circuit
 /// structure, checked by the adapter's determinism guard).
 ///
-/// The value matches [`NUM_POLY_QUERY_SLOTS`] because one challenge per opened
-/// polynomial is the natural ceiling: a step derives a challenge to *use* it,
-/// and the succinct way to use one is to open a committed polynomial there.
+/// Unused slots are padded, like the poly-query slots: the all-zero stage,
+/// blinded, with its challenge derived honestly. The parent's binding circuit
+/// re-derives every slot without knowing which ones the step actually used, so
+/// the padding is what keeps that circuit uniform.
 ///
-/// Cost agrees. The derivation is synthesized in the *application* circuit, on
-/// the step's own driver, so it spends the step's gate budget: one call costs
-/// **288 gates** (576 constraints) — one Poseidon permutation, and the same at
-/// any width up to [`CHALLENGE_WIDTH`] — against a budget of roughly 2048. Four
-/// calls is already over half of it. Note that this is why unused slots are
-/// *not* padded, unlike the poly-query slots: an unused claim slot is four
-/// wires, but an unused challenge slot would be a whole permutation.
+/// # Cost
+///
+/// Two places, neither of them the step's Poseidon budget:
+///
+/// * every application circuit reserves
+///   `NUM_CHALLENGE_SLOTS * CHALLENGE_WIDTH / 2` gates for the stages, whether
+///   or not it derives anything;
+/// * the recursion pays `2 * NUM_CHALLENGE_SLOTS` permutations per fuse in the
+///   internal `challenge_binding` circuit — at two slots, 1536 of its own 2048
+///   gates — plus `2 * NUM_CHALLENGE_SLOTS` endoscaling points and one bonding
+///   mask per slot on each curve.
+///
+/// So raising this constant is charged almost entirely to the framework's
+/// circuits, not to the steps that use it. Two is the smallest count that lets
+/// a step handle more than one polynomial at a time, which one would not.
 pub const NUM_CHALLENGE_SLOTS: usize = 2;
 
 /// Builder for an [`Application`] for proof-carrying data.
@@ -392,6 +403,20 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     /// Returns a reference to the native [`Registry`].
     pub fn native_registry(&self) -> &Registry<'_, C::CircuitField, R> {
         &self.native_registry
+    }
+
+    /// Whether the fuse-time poly-query pre-check runs. Always `true` outside
+    /// the `unstable-fuzzing` feature; see
+    /// [`ApplicationBuilder::skip_claim_precheck_for_testing`].
+    pub(crate) fn claim_precheck_enabled(&self) -> bool {
+        #[cfg(feature = "unstable-fuzzing")]
+        {
+            !self.skip_claim_precheck
+        }
+        #[cfg(not(feature = "unstable-fuzzing"))]
+        {
+            true
+        }
     }
 
     /// Commits to a `CircuitField` polynomial in the framework's poly-query
