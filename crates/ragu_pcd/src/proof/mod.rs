@@ -33,7 +33,7 @@ use crate::{
         },
         native::{RxComponent, RxIndex},
         nested,
-        nested::{ChildBridgeKind, NUM_ENDOSCALING_POINTS},
+        nested::{ChildBridgeKind, EndoPoints, NUM_ENDOSCALING_POINTS},
     },
 };
 
@@ -627,20 +627,19 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
     ) -> Result<C::HostCurve> {
         assert_eq!(points.len(), NUM_ENDOSCALING_POINTS);
 
-        let witness = PointsWitness::<C::HostCurve, NUM_ENDOSCALING_POINTS>::new(beta_endo, points);
+        let witness = PointsWitness::<C::HostCurve, EndoPoints>::new(beta_endo, points);
 
         let endoscalar_rx =
             <EndoscalarStage as StageExt<C::ScalarField, R>>::rx(endoscalar_alpha, beta_endo)?;
-        let points_rx = <PointsStage<C::HostCurve, NUM_ENDOSCALING_POINTS> as StageExt<
-            C::ScalarField,
-            R,
-        >>::rx(points_alpha, &witness)?;
+        let points_rx = <PointsStage<C::HostCurve, EndoPoints> as StageExt<C::ScalarField, R>>::rx(
+            points_alpha,
+            &witness,
+        )?;
 
-        let num_steps = NumStepsLen::<NUM_ENDOSCALING_POINTS>::len();
+        let num_steps = NumStepsLen::<EndoPoints>::len();
         let mut step_rxs = Vec::with_capacity(num_steps);
         for step in 0..num_steps {
-            let step_circuit =
-                EndoscalingStep::<C::HostCurve, R, NUM_ENDOSCALING_POINTS>::new(step);
+            let step_circuit = EndoscalingStep::<C::HostCurve, R, EndoPoints>::new(step);
             let staged = MultiStage::new(step_circuit);
             let step_trace = staged
                 .trace(EndoscalingStepWitness {

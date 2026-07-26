@@ -20,7 +20,7 @@ use ragu_primitives::{
 
 use crate::{
     NUM_CHALLENGE_SLOTS, NUM_POLY_SLOTS, Proof,
-    internal::{endoscalar::PointsStage, native::RxIndex, nested::NUM_ENDOSCALING_POINTS},
+    internal::{endoscalar::PointsStage, native::RxIndex, nested::EndoPoints},
 };
 
 /// Number of curve points in this stage: the native preamble commitment plus,
@@ -262,7 +262,7 @@ pub struct Stage<C: CurveAffine, R> {
 }
 
 impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R> {
-    type Parent = PointsStage<C, NUM_ENDOSCALING_POINTS>;
+    type Parent = PointsStage<C, EndoPoints>;
     type Witness<'source> = &'source Witness<C>;
     type OutputKind = Kind![C::Base; Output<'_, _, C>];
 

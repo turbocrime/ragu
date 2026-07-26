@@ -30,7 +30,7 @@ use ragu_primitives::GadgetExt as _;
 use crate::internal::{
     Side,
     endoscalar::{EndoscalarStage, PointsStage},
-    nested::{NUM_ENDOSCALING_POINTS, stages},
+    nested::{EndoPoints, stages},
 };
 
 /// Copying circuit that relates the current preamble to a child's stages.
@@ -69,7 +69,7 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         _witness: DriverValue<D, ()>,
     ) -> Result<WithAux<Bound<'dr, D, ()>, DriverValue<D, ()>>> {
         let dr = dr.skip_stage::<EndoscalarStage>()?;
-        let (points_guard, dr) = dr.add_stage::<PointsStage<C, NUM_ENDOSCALING_POINTS>>()?;
+        let (points_guard, dr) = dr.add_stage::<PointsStage<C, EndoPoints>>()?;
         let (preamble_guard, dr) = dr.add_stage::<stages::preamble::Stage<C, R>>()?;
         let (s_prime_guard, dr) = dr.add_stage::<stages::s_prime::Stage<C, R>>()?;
         let (inner_error_guard, dr) = dr.add_stage::<stages::inner_error::Stage<C, R>>()?;
