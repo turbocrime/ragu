@@ -12,7 +12,7 @@
 //!   which delegates here. Each claim carries the opened polynomial's
 //!   coefficients so the framework can fold it into the [PCS aggregation].
 //!   Every application circuit exposes exactly
-//!   [`NUM_QUERY_SLOTS`] claim slots as part
+//!   [`NUM_QUERY_SLOTS`](crate::NUM_QUERY_SLOTS) claim slots as part
 //!   of its public instance (unused slots hold the canonical padding claim),
 //!   binding the claim wires — the commitment point and the $(x, y)$ opening —
 //!   to the circuit's $k(Y)$ polynomial. The claims a proof raises are then
@@ -115,7 +115,7 @@ use ragu_primitives::{
     vec::{ConstLen, FixedVec},
 };
 
-use crate::{NUM_CHALLENGE_SLOTS, NUM_POLY_SLOTS, NUM_QUERY_SLOTS};
+use crate::NUM_CHALLENGE_SLOTS;
 
 /// A single witnessed polynomial: its commitment and its coefficients.
 ///
@@ -380,13 +380,13 @@ pub struct SlotCapacity {
 /// rather than a handful of sibling fields — and so adding a hook means adding
 /// a field here, which the compiler then forces every reader to acknowledge.
 pub struct FrameworkAux<C: Cycle, const MAX_WITNESSED_POLYS: usize, const MAX_POLY_QUERIES: usize> {
-    /// The step's witnessed polynomials, padded to exactly [`NUM_POLY_SLOTS`]
+    /// The step's witnessed polynomials, padded to exactly [`NUM_POLY_SLOTS`](crate::NUM_POLY_SLOTS)
     /// entries, in slot order — matching the instance layout the circuit
     /// committed to. Each carries its coefficients, which the fuse folds into
     /// the PCS accumulator.
     pub polys:
         FixedVec<WitnessedPoly<C::CircuitField, C::NestedCurve>, ConstLen<MAX_WITNESSED_POLYS>>,
-    /// The step's opening claims, padded to exactly [`NUM_QUERY_SLOTS`]
+    /// The step's opening claims, padded to exactly [`NUM_QUERY_SLOTS`](crate::NUM_QUERY_SLOTS)
     /// entries, in call order. Each names one of [`polys`](Self::polys). Fuse
     /// pre-checks every claim natively, persists the claim instances in the
     /// proof, and the *next* fuse enforces them recursively via the PCS
@@ -410,7 +410,7 @@ pub struct FrameworkAux<C: Cycle, const MAX_WITNESSED_POLYS: usize, const MAX_PO
 /// Summed from `ONE` rather than converted, so this needs only [`Field`] and
 /// the hook container does not have to demand [`PrimeField`] of every driver it
 /// is generic over. The indices are slot numbers, bounded by
-/// [`NUM_POLY_SLOTS`], so the loop is a handful of additions on values — no
+/// [`NUM_POLY_SLOTS`](crate::NUM_POLY_SLOTS), so the loop is a handful of additions on values — no
 /// gates, and nothing that scales.
 ///
 /// [`PrimeField`]: ragu_arithmetic::ff::PrimeField
@@ -725,7 +725,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     /// `x`.
     ///
     /// The claim wires occupy one of the application circuit's
-    /// [`NUM_QUERY_SLOTS`] instance slots,
+    /// [`NUM_QUERY_SLOTS`](crate::NUM_QUERY_SLOTS) instance slots,
     /// binding them to the circuit's $k(Y)$; the claim itself is recursively
     /// enforced at the next fuse via the PCS accumulator. The fuse that raises
     /// it additionally pre-checks it natively (see
@@ -850,22 +850,6 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     }
 }
 
-/// Discovery-mode default at the framework's default capacities; see
-/// [`FrameworkHooks::new`], including why this does not compile on a
-/// value-carrying driver.
-///
-/// An application with non-default capacities must go through
-/// [`new`](FrameworkHooks::new), which is what the adapter does — this exists
-/// for tests and for the `Default` bound, not for the proving path.
-impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Default for FrameworkHooks<'dr, D, C> {
-    fn default() -> Self {
-        Self::new(SlotCapacity {
-            max_witnessed_polys: NUM_POLY_SLOTS,
-            max_poly_queries: NUM_QUERY_SLOTS,
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use ragu_arithmetic::Cycle;
@@ -880,10 +864,25 @@ mod tests {
     type NestedCurve = <Pasta as Cycle>::NestedCurve;
     type Dr<'dr> = Emulator<Wireless<Empty, Fp>>;
 
+    /// The framework's default capacities, for tests that are not about the
+    /// capacities themselves.
+    ///
+    /// Spelled out rather than reached through a `Default` impl on
+    /// [`FrameworkHooks`]: a container built with the wrong capacities would
+    /// silently pad an application's slots to the wrong width, and the proving
+    /// path always has the real numbers to hand. Making every construction site
+    /// state them keeps the defaults from leaking in by accident.
+    fn test_capacity() -> SlotCapacity {
+        SlotCapacity {
+            max_witnessed_polys: crate::NUM_POLY_SLOTS,
+            max_poly_queries: crate::NUM_QUERY_SLOTS,
+        }
+    }
+
     /// The framework caps a step body at `NUM_CHALLENGE_SLOTS` challenges.
     #[test]
     fn challenge_slots_are_capped() {
-        let mut hooks = FrameworkHooks::<Dr<'_>, Pasta>::default();
+        let mut hooks = FrameworkHooks::<Dr<'_>, Pasta>::new(test_capacity());
         for expected in 0..crate::NUM_CHALLENGE_SLOTS {
             assert_eq!(
                 hooks.take_challenge_slot().expect("within the cap"),
@@ -909,10 +908,7 @@ mod tests {
                 claims: 0,
             },
             <Empty as MaybeKind>::empty::<ProofValues<'_, Pasta>>(),
-            SlotCapacity {
-                max_witnessed_polys: crate::NUM_POLY_SLOTS,
-                max_poly_queries: crate::NUM_QUERY_SLOTS,
-            },
+            test_capacity(),
         );
         hooks.take_challenge_slot().expect("the discovered call");
         let error = hooks
