@@ -322,10 +322,12 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     /// pre-checked natively by fuse. The claim *instances* (com, x, y),
     /// the claim polynomials, and the host commitments are persisted in the
     /// [`Proof`] so the parent fuse can enforce the claims recursively.
-    application_claims:
-        Vec<crate::framework_hooks::PolyQueryClaim<C::CircuitField, C::NestedCurve>>,
+    application_claims: Vec<crate::framework_hooks::PolyQueryClaim<C::CircuitField>>,
+    /// The nested-curve commitment the instance exposes per polynomial slot,
+    /// in slot order — one per polynomial, not one per query.
+    application_polys: Vec<C::NestedCurve>,
     /// The claim polynomials, in slot order (paired with
-    /// `application_claims`).
+    /// `application_polys`).
     claim_polys: Vec<sparse::Polynomial<C::CircuitField, R>>,
     /// The claims' host-curve commitments, in slot order.
     claim_host_commitments: Option<[C::HostCurve; crate::NUM_POLY_SLOTS]>,
@@ -415,6 +417,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             child_left_stage_rx: None,
             child_right_stage_rx: None,
             application_claims: Vec::new(),
+            application_polys: Vec::new(),
             application_challenges: Vec::new(),
             challenge_stage_polys: Vec::new(),
             claim_polys: Vec::new(),
@@ -765,25 +768,40 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         self.application_challenges = challenges;
     }
 
-    /// Sets the per-step polynomial-query claims for this fuse step (instance
-    /// tuples, claim polynomials, and host commitments, all in slot order).
-    /// May only be called once.
-    pub(crate) fn set_application_claims(
+    /// Sets the per-step **polynomials** for this fuse step: the nested-curve
+    /// commitments the instance exposes, the polynomials themselves, and their
+    /// host commitments, all in slot order. May only be called once.
+    pub(crate) fn set_application_polys(
         &mut self,
-        claims: Vec<crate::framework_hooks::PolyQueryClaim<C::CircuitField, C::NestedCurve>>,
+        coms: Vec<C::NestedCurve>,
         claim_polys: Vec<sparse::Polynomial<C::CircuitField, R>>,
         claim_host_commitments: Vec<C::HostCurve>,
+    ) {
+        assert!(
+            self.application_polys.is_empty(),
+            "double-set: application_polys"
+        );
+        assert_eq!(coms.len(), crate::NUM_POLY_SLOTS);
+        assert_eq!(claim_polys.len(), crate::NUM_POLY_SLOTS);
+        assert_eq!(claim_host_commitments.len(), crate::NUM_POLY_SLOTS);
+        self.application_polys = coms;
+        self.claim_polys = claim_polys;
+        self.claim_host_commitments = Some(core::array::from_fn(|i| claim_host_commitments[i]));
+    }
+
+    /// Sets the per-step **queries** for this fuse step, in call order. Each
+    /// names one of the polynomials [`set_application_polys`](Self::set_application_polys)
+    /// recorded. May only be called once.
+    pub(crate) fn set_application_claims(
+        &mut self,
+        claims: Vec<crate::framework_hooks::PolyQueryClaim<C::CircuitField>>,
     ) {
         assert!(
             self.application_claims.is_empty(),
             "double-set: application_claims"
         );
-        assert_eq!(claims.len(), crate::NUM_POLY_SLOTS);
-        assert_eq!(claim_polys.len(), crate::NUM_POLY_SLOTS);
-        assert_eq!(claim_host_commitments.len(), crate::NUM_POLY_SLOTS);
+        assert_eq!(claims.len(), crate::NUM_QUERY_SLOTS);
         self.application_claims = claims;
-        self.claim_polys = claim_polys;
-        self.claim_host_commitments = Some(core::array::from_fn(|i| claim_host_commitments[i]));
     }
 
     getter!(w, w, C::CircuitField);
@@ -964,11 +982,12 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
                 .application_claims
                 .iter()
                 .map(|c| super::ClaimOpening {
-                    com: c.com,
+                    poly_slot: c.poly_slot,
                     x: c.x,
                     y: c.y,
                 })
                 .collect(),
+            application_polys: self.application_polys,
             claim_polys: self.claim_polys,
             claim_host_commitments: self
                 .claim_host_commitments

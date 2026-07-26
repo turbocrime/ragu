@@ -26,19 +26,26 @@ use super::{
     challenge_stage,
 };
 use crate::{
-    Header, NUM_CHALLENGE_SLOTS, NUM_QUERY_SLOTS,
+    Header, NUM_CHALLENGE_SLOTS, NUM_POLY_SLOTS, NUM_QUERY_SLOTS,
     framework_hooks::{Alphas, FrameworkAux, FrameworkHooks, HookLayout, ProofValues},
 };
 
 /// Length of an application circuit's public instance: the three headers, then
-/// the poly-query claim slots (commitment point coordinates and the $(x, y)$
-/// opening — four elements per slot), then the challenge slots (bridged stage
-/// commitment coordinates and the challenge — three elements per slot).
+/// the polynomial slots (commitment point coordinates — two elements per slot),
+/// then the query slots (the polynomial index and the $(x, y)$ opening — three
+/// elements per slot), then the challenge slots (bridged stage commitment
+/// coordinates and the challenge — three elements per slot).
+///
+/// A polynomial's commitment appears once, in its own slot, rather than once
+/// per query that opens it. That is what makes a repeat opening cost three
+/// elements instead of a whole polynomial's worth — and it is also what makes
+/// it *sound*: a query names its polynomial by index, so there is no second
+/// copy of `com` that could disagree with the first.
 pub struct InstanceLen<const HEADER_SIZE: usize>;
 
 impl<const HEADER_SIZE: usize> Len for InstanceLen<HEADER_SIZE> {
     fn len() -> usize {
-        HEADER_SIZE * 3 + NUM_QUERY_SLOTS * 4 + NUM_CHALLENGE_SLOTS * 3
+        HEADER_SIZE * 3 + NUM_POLY_SLOTS * 2 + NUM_QUERY_SLOTS * 3 + NUM_CHALLENGE_SLOTS * 3
     }
 }
 
@@ -69,7 +76,7 @@ pub(crate) fn discover_hook_layout<C: Cycle, S: Step<C>, const HEADER_SIZE: usiz
     }
 
     let outputs = hooks.into_outputs();
-    let num_claims = outputs.poly_query_claims.len();
+    let num_claims = outputs.poly_queries.len();
     if num_claims > NUM_QUERY_SLOTS {
         return Err(ragu_core::Error::Initialization(
             "step raises more poly-query claims than NUM_QUERY_SLOTS".into(),
@@ -228,14 +235,17 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize>
         left.write(dr, &mut elements)?;
         right.write(dr, &mut elements)?;
         output.write(dr, &mut elements)?;
-        // The claim slots follow the headers in the instance: per slot, the
-        // commitment point's two coordinates, then the opening point and the
-        // claimed evaluation. This layout must match
-        // `ProofInputs::application_ky`.
-        for claim in &outputs.poly_query_claims {
-            claim.com.write(dr, &mut elements)?;
-            claim.x.write(dr, &mut elements)?;
-            claim.y.write(dr, &mut elements)?;
+        // The polynomial slots follow the headers: per slot, the commitment
+        // point's two coordinates. Then the query slots: per slot, the index of
+        // the polynomial opened, the opening point, and the claimed evaluation.
+        // This layout must match `ProofInputs::application_ky`.
+        for poly in &outputs.witnessed_polys {
+            poly.com.write(dr, &mut elements)?;
+        }
+        for query in &outputs.poly_queries {
+            query.poly_slot.write(dr, &mut elements)?;
+            query.x.write(dr, &mut elements)?;
+            query.y.write(dr, &mut elements)?;
         }
         // Then the challenge slots: per slot, the bridged stage commitment's
         // two coordinates and the challenge hashed from it. The parent's
@@ -417,8 +427,8 @@ mod tests {
     }
 
     #[test]
-    fn instance_len_covers_headers_claims_and_challenges() {
-        let slots = NUM_QUERY_SLOTS * 4 + NUM_CHALLENGE_SLOTS * 3;
+    fn instance_len_covers_headers_polys_claims_and_challenges() {
+        let slots = NUM_POLY_SLOTS * 2 + NUM_QUERY_SLOTS * 3 + NUM_CHALLENGE_SLOTS * 3;
         assert_eq!(InstanceLen::<1>::len(), 3 + slots);
         assert_eq!(InstanceLen::<4>::len(), 12 + slots);
         assert_eq!(InstanceLen::<10>::len(), 30 + slots);
@@ -442,7 +452,7 @@ mod tests {
         // Output should have 3 * HEADER_SIZE elements (left + right + output headers)
         assert_eq!(
             output.len(),
-            HEADER_SIZE * 3 + NUM_QUERY_SLOTS * 4 + NUM_CHALLENGE_SLOTS * 3
+            HEADER_SIZE * 3 + NUM_POLY_SLOTS * 2 + NUM_QUERY_SLOTS * 3 + NUM_CHALLENGE_SLOTS * 3
         );
     }
 
@@ -584,7 +594,7 @@ mod tests {
 
         assert_eq!(
             output.len(),
-            HEADER_SIZE * 3 + NUM_QUERY_SLOTS * 4 + NUM_CHALLENGE_SLOTS * 3
+            HEADER_SIZE * 3 + NUM_POLY_SLOTS * 2 + NUM_QUERY_SLOTS * 3 + NUM_CHALLENGE_SLOTS * 3
         );
     }
 }

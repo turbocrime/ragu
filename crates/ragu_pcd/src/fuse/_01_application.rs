@@ -79,6 +79,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             step_aux,
             framework:
                 FrameworkAux {
+                    polys,
                     claims,
                     challenges,
                     challenge_inputs,
@@ -96,27 +97,21 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // of at verification. Along the way, collect the claim polynomials
         // and host commitments the parent's PCS folding will consume.
         let precheck = self.claim_precheck_enabled();
-        let mut claim_polys = alloc::vec::Vec::with_capacity(claims.len());
-        let mut claim_host_commitments = alloc::vec::Vec::with_capacity(claims.len());
-        for (slot, claim) in claims.iter().enumerate() {
+        let mut claim_polys = alloc::vec::Vec::with_capacity(polys.len());
+        let mut claim_host_commitments = alloc::vec::Vec::with_capacity(polys.len());
+        for (slot, witnessed) in polys.iter().enumerate() {
             // Reject an over-capacity coefficient vector gracefully; otherwise
             // `sparse::Polynomial::from_coeffs` would panic on it.
-            if claim.coefficients.len() > R::num_coeffs() {
+            if witnessed.coefficients.len() > R::num_coeffs() {
                 return Err(Error::InvalidWitness(
                     "poly-query claim rejected: coefficient count exceeds the polynomial rank \
                      capacity"
                         .into(),
                 ));
             }
-            let poly =
-                sparse::Polynomial::<C::CircuitField, R>::from_coeffs(claim.coefficients.clone());
-            if poly.eval(claim.x) != claim.y {
-                return Err(Error::InvalidWitness(
-                    "poly-query claim rejected: the polynomial does not evaluate to the claimed \
-                     value at the claimed point"
-                        .into(),
-                ));
-            }
+            let poly = sparse::Polynomial::<C::CircuitField, R>::from_coeffs(
+                witnessed.coefficients.clone(),
+            );
             let host = challenge::host_commitment::<C, R>(self.params, &poly)?;
             let expected = challenge::claim_bridge_commitment::<C, R>(
                 self.params,
@@ -124,7 +119,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 challenge::claim_bridge_alpha::<C>(builder.bridge_alpha(), slot),
                 host,
             )?;
-            if precheck && expected != claim.com {
+            if precheck && expected != witnessed.com {
                 return Err(Error::InvalidWitness(
                     "poly-query claim rejected: the claimed commitment does not bind the claimed \
                      polynomial"
@@ -133,6 +128,32 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             }
             claim_polys.push(poly);
             claim_host_commitments.push(host);
+        }
+
+        // Then each query, against the polynomial it names. A query's slot is a
+        // constant element of the circuit, so an out-of-range index here means
+        // the hooks and the instance layout have diverged, not that a witness is
+        // bad.
+        for claim in claims.iter() {
+            let slot = claim_polys
+                .iter()
+                .enumerate()
+                .find(|(i, _)| {
+                    crate::framework_hooks::field_index::<C::CircuitField>(*i) == claim.poly_slot
+                })
+                .map(|(i, _)| i)
+                .ok_or_else(|| {
+                    Error::InvalidWitness(
+                        "poly-query claim names a polynomial slot outside the instance".into(),
+                    )
+                })?;
+            if claim_polys[slot].eval(claim.x) != claim.y {
+                return Err(Error::InvalidWitness(
+                    "poly-query claim rejected: the polynomial does not evaluate to the claimed \
+                     value at the claimed point"
+                        .into(),
+                ));
+            }
         }
 
         builder.set_circuit_id(S::INDEX.circuit_index(self.num_application_steps)?);
@@ -159,7 +180,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         builder.set_challenge_stage_polys(challenge_stage_polys);
 
         builder.set_native_application_rx(rx);
-        builder.set_application_claims(claims.into_inner(), claim_polys, claim_host_commitments);
+        builder.set_application_polys(
+            polys.iter().map(|p| p.com).collect(),
+            claim_polys,
+            claim_host_commitments,
+        );
+        builder.set_application_claims(claims.into_inner());
         builder.set_application_challenges(challenges.into_inner());
 
         Ok((left_proof, right_proof, output_data, step_aux))

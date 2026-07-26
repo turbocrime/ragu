@@ -103,12 +103,12 @@ fn test_internal_circuit_constraint_counts() {
         }};
     }
 
-    check_constraints!(Hashes1Circuit,          mul = 1444, lin = 2038);
-    check_constraints!(Hashes2Circuit,          mul = 1992, lin = 2951);
-    check_constraints!(InnerCollapseCircuit,    mul = 1869, lin = 1918);
-    check_constraints!(OuterCollapseCircuit,    mul = 1962, lin = 2894);
-    check_constraints!(ComputeVCircuit,         mul = 1426, lin = 2115);
-    check_constraints!(ChallengeBindingCircuit, mul = 1522, lin = 2379);
+    check_constraints!(Hashes1Circuit,          mul = 1452, lin = 2038);
+    check_constraints!(Hashes2Circuit,          mul = 2000, lin = 2951);
+    check_constraints!(InnerCollapseCircuit,    mul = 1877, lin = 1918);
+    check_constraints!(OuterCollapseCircuit,    mul = 1986, lin = 2926);
+    check_constraints!(ComputeVCircuit,         mul = 1434, lin = 2115);
+    check_constraints!(ChallengeBindingCircuit, mul = 1530, lin = 2379);
 }
 
 #[rustfmt::skip]
@@ -121,11 +121,11 @@ fn test_internal_stage_parameters() {
         }};
     }
 
-    check_stage!(Preamble, skip =   1, num = 338);
-    check_stage!(OuterError,  skip = 339, num = 186);
-    check_stage!(InnerError,  skip = 525, num = 399);
-    check_stage!(Query,   skip = 339, num =  29);
-    check_stage!(Eval,    skip = 368, num =  29);
+    check_stage!(Preamble, skip =   1, num = 346);
+    check_stage!(OuterError,  skip = 347, num = 186);
+    check_stage!(InnerError,  skip = 533, num = 399);
+    check_stage!(Query,   skip = 347, num =  29);
+    check_stage!(Eval,    skip = 376, num =  29);
 }
 
 /// Helper test to print current constraint counts in copy-pasteable format.
@@ -237,7 +237,7 @@ fn test_native_registry_digest() {
     // (four more per fuse, one per child per slot). Changed again when
     // `NUM_QUERY_SLOTS` went from 4 to 8 and `HEADER_SIZE` from 100 to 90
     // — both change the width of every application circuit's instance.
-    let expected = fp!(0x0478d95125d31414109cac93a97349fcadde4bfd20b2a9dd60f6407080e8f5fb);
+    let expected = fp!(0x12e7b2d0196614d924228247727666dc647b084df8baf6d7cd1b0edef02836d3);
 
     assert_eq!(
         app.native_registry.digest(),

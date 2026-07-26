@@ -140,9 +140,14 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 /// Named fields rather than a positional `(com, x, y)` tuple so downstream
 /// folding code reads `claim.x` / `claim.y` instead of `claim.1` / `claim.2`.
 #[derive(Clone, Copy, Debug)]
-pub struct ClaimOpening<Curve, F> {
-    /// The polynomial's nested-curve commitment.
-    pub com: Curve,
+pub struct ClaimOpening<F> {
+    /// Index of the polynomial opened, into the proof's
+    /// [`application_polys`](Proof::application_polys).
+    ///
+    /// The commitment lives on the polynomial, not here: several queries may
+    /// open the same polynomial, and a second copy of `com` per query could
+    /// disagree with the first.
+    pub poly_slot: F,
     /// The opening point.
     pub x: F,
     /// The claimed evaluation $p(x) = y$.
@@ -280,7 +285,10 @@ pub struct Proof<C: Cycle, R: Rank> {
     /// enforced when this proof is fused as a child: the parent folds each
     /// claim into $f(X)$ and the PCS accumulator, and its `compute_v` circuit
     /// re-derives the matching terms.
-    pub(crate) application_claims: alloc::vec::Vec<ClaimOpening<C::NestedCurve, C::CircuitField>>,
+    pub(crate) application_claims: alloc::vec::Vec<ClaimOpening<C::CircuitField>>,
+    /// The nested-curve commitment per polynomial slot, in slot order — one
+    /// per polynomial, which is what a query names by index.
+    pub(crate) application_polys: alloc::vec::Vec<C::NestedCurve>,
     /// The derived challenges the step's circuit exposes, one per
     /// [`NUM_CHALLENGE_SLOTS`](crate::NUM_CHALLENGE_SLOTS) slot, in slot order.
     pub(crate) application_challenges:
@@ -414,8 +422,17 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     /// unused slots holding the canonical padding claim. The instances are
     /// bound to the application circuit's $k(Y)$ and recursively enforced when
     /// this proof is fused as a child.
-    pub fn application_claims(&self) -> &[ClaimOpening<C::NestedCurve, C::CircuitField>] {
+    pub fn application_claims(&self) -> &[ClaimOpening<C::CircuitField>] {
         &self.application_claims
+    }
+
+    /// The nested-curve commitments to the polynomials this proof's circuit
+    /// witnessed, in slot order — always
+    /// [`NUM_POLY_SLOTS`](crate::NUM_POLY_SLOTS) entries, with unused slots
+    /// holding the canonical padding polynomial. A claim names one of these by
+    /// index; the commitment appears here once, not once per claim.
+    pub fn application_polys(&self) -> &[C::NestedCurve] {
+        &self.application_polys
     }
 
     /// The derived challenges this proof's circuit exposes, in slot order.
@@ -679,10 +696,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
         // slot holds the canonical padding claim (mirroring the adapter).
         let (padding_host, padding_x, padding_y) =
             crate::internal::challenge::padding_claim::<C>(self.params);
-        builder.set_application_claims(
+        builder.set_application_polys(
             (0..crate::NUM_POLY_SLOTS)
-                .map(|slot| crate::framework_hooks::PolyQueryClaim {
-                    com: crate::internal::challenge::claim_bridge_commitment::<C, R>(
+                .map(|slot| {
+                    crate::internal::challenge::claim_bridge_commitment::<C, R>(
                         self.params,
                         slot,
                         crate::internal::challenge::claim_bridge_alpha::<C>(
@@ -691,14 +708,21 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                         ),
                         padding_host,
                     )
-                    .expect("trivial padding bridge commitment"),
-                    x: padding_x,
-                    y: padding_y,
-                    coefficients: vec![C::CircuitField::ONE],
+                    .expect("trivial padding bridge commitment")
                 })
                 .collect(),
             vec![crate::internal::challenge::padding_poly::<C, R>(); crate::NUM_POLY_SLOTS],
             vec![padding_host; crate::NUM_POLY_SLOTS],
+        );
+        // Every query names polynomial slot 0, matching the adapter's padding.
+        builder.set_application_claims(
+            (0..crate::NUM_QUERY_SLOTS)
+                .map(|_| crate::framework_hooks::PolyQueryClaim {
+                    poly_slot: C::CircuitField::ZERO,
+                    x: padding_x,
+                    y: padding_y,
+                })
+                .collect(),
         );
         // Challenge slots: a trivial proof derives no challenges, so every slot
         // holds the all-zero stage's honest pair (mirroring the adapter's

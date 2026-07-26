@@ -21,8 +21,8 @@ use ragu_primitives::{
 };
 
 use crate::{
-    NUM_CHALLENGE_SLOTS, NUM_QUERY_SLOTS, Proof, header::Header, internal::native::unified,
-    step::internal::padded,
+    NUM_CHALLENGE_SLOTS, NUM_POLY_SLOTS, NUM_QUERY_SLOTS, Proof, header::Header,
+    internal::native::unified, step::internal::padded,
 };
 
 type HeaderVec<'dr, D, const HEADER_SIZE: usize> = FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>>;
@@ -34,13 +34,25 @@ type HeaderVec<'dr, D, const HEADER_SIZE: usize> = FixedVec<Element<'dr, D>, Con
 /// [`application_ky`](ProofInputs::application_ky) Horner binds them to the
 /// child's committed application rx.
 #[derive(Gadget, Consistent)]
-pub struct ClaimInstance<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
+pub struct ClaimInstance<'dr, D: Driver<'dr>> {
     #[ragu(gadget)]
-    pub com: Point<'dr, D, C::NestedCurve>,
+    pub poly_slot: Element<'dr, D>,
     #[ragu(gadget)]
     pub x: Element<'dr, D>,
     #[ragu(gadget)]
     pub y: Element<'dr, D>,
+}
+
+/// A single witnessed polynomial as the application circuit's instance exposes
+/// it: its nested-curve commitment. The wire layout (com.x, com.y) matches the
+/// polynomial-slot region of that instance.
+///
+/// One per polynomial, not one per query — see
+/// [`InstanceLen`](crate::step::internal::adapter::InstanceLen).
+#[derive(Gadget, Consistent)]
+pub struct PolyInstance<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
+    #[ragu(gadget)]
+    pub com: Point<'dr, D, C::NestedCurve>,
 }
 
 /// A single derived-challenge pair witnessed from a child proof: the bridged
@@ -120,7 +132,12 @@ pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const
     /// (always [`NUM_QUERY_SLOTS`] entries; unused slots hold the
     /// canonical padding claim).
     #[ragu(gadget)]
-    pub claims: FixedVec<ClaimInstance<'dr, D, C>, ConstLen<NUM_QUERY_SLOTS>>,
+    pub claims: FixedVec<ClaimInstance<'dr, D>, ConstLen<NUM_QUERY_SLOTS>>,
+    /// The polynomials this child proof witnessed, in slot order (always
+    /// [`NUM_POLY_SLOTS`] entries; unused slots hold the canonical padding
+    /// polynomial). A claim above names one of these by index.
+    #[ragu(gadget)]
+    pub polys: FixedVec<PolyInstance<'dr, D, C>, ConstLen<NUM_POLY_SLOTS>>,
     /// The derived-challenge pairs the child's circuit exposed, in slot order.
     #[ragu(gadget)]
     pub challenges: FixedVec<ChallengeInstance<'dr, D, C>, ConstLen<NUM_CHALLENGE_SLOTS>>,
@@ -169,17 +186,21 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
     /// Compute k(y) for the application circuit instance.
     ///
     /// Returns `application_ky` = k(y) for `(children.left, children.right,
-    /// output_header, claims)` — the claim slots follow the headers, matching
-    /// the instance layout the adapter writes
-    /// (`step::internal::adapter::InstanceLen`). This is what binds the
-    /// witnessed claim instances to the child's committed application rx.
+    /// output_header, polys, claims)` — the polynomial slots follow the
+    /// headers and the query slots follow those, matching the instance layout
+    /// the adapter writes (`step::internal::adapter::InstanceLen`). This is
+    /// what binds the witnessed polynomials and claim instances to the child's
+    /// committed application rx.
     pub fn application_ky(&self, dr: &mut D, y: &Element<'dr, D>) -> Result<Element<'dr, D>> {
         let mut ky = Horner::new(y);
         self.children.left.write(dr, &mut ky)?;
         self.children.right.write(dr, &mut ky)?;
         self.output_header.write(dr, &mut ky)?;
+        for poly in self.polys.iter() {
+            poly.com.write(dr, &mut ky)?;
+        }
         for claim in self.claims.iter() {
-            claim.com.write(dr, &mut ky)?;
+            claim.poly_slot.write(dr, &mut ky)?;
             claim.x.write(dr, &mut ky)?;
             claim.y.write(dr, &mut ky)?;
         }
@@ -237,6 +258,27 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                 right: alloc_header(dr, allocator, proof.as_ref().map(|p| p.right_header()))?,
             },
             output_header: alloc_header(dr, allocator, output_header.as_ref().map(|h| &h[..]))?,
+            polys: {
+                D::try_just(|| {
+                    if proof.as_ref().take().application_polys().len() != NUM_POLY_SLOTS {
+                        return Err(Error::MalformedEncoding(
+                            "proof does not carry exactly NUM_POLY_SLOTS polynomial commitments"
+                                .into(),
+                        ));
+                    }
+                    Ok(())
+                })?;
+                (0..NUM_POLY_SLOTS)
+                    .map(|i| {
+                        Ok(PolyInstance {
+                            com: Point::alloc(
+                                dr,
+                                proof.as_ref().map(|p| p.application_polys()[i]),
+                            )?,
+                        })
+                    })
+                    .try_collect_fixed()?
+            },
             claims: {
                 D::try_just(|| {
                     if proof.as_ref().take().application_claims().len() != NUM_QUERY_SLOTS {
@@ -249,9 +291,10 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                 (0..NUM_QUERY_SLOTS)
                     .map(|i| {
                         Ok(ClaimInstance {
-                            com: Point::alloc(
+                            poly_slot: Element::alloc(
                                 dr,
-                                proof.as_ref().map(|p| p.application_claims()[i].com),
+                                allocator,
+                                proof.as_ref().map(|p| p.application_claims()[i].poly_slot),
                             )?,
                             x: Element::alloc(
                                 dr,
@@ -371,11 +414,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     type OutputKind = Kind![C::CircuitField; Output<'_, _, C, HEADER_SIZE>];
 
     fn values() -> usize {
-        // 2 proofs * (3 headers * HEADER_SIZE + claim slots (4 wires each)
+        // 2 proofs * (3 headers * HEADER_SIZE + polynomial slots (2 wires each)
+        //             + query slots (3 wires each)
         //             + challenge slots (3 wires each)
         //             + 1 circuit_id + unified instance wires)
         2 * (3 * HEADER_SIZE
-            + 4 * NUM_QUERY_SLOTS
+            + 2 * NUM_POLY_SLOTS
+            + 3 * NUM_QUERY_SLOTS
             + 3 * NUM_CHALLENGE_SLOTS
             + 1
             + unified::NUM_WIRES)

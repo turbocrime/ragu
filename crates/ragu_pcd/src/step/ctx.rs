@@ -86,7 +86,7 @@ where
         &mut self,
         commitment: DriverValue<D, PolyCommitment<C, R>>,
     ) -> Result<PolyQueryHandle<'dr, D, C, R>> {
-        let slot = self.hooks.next_claim_slot()?;
+        let slot = self.hooks.next_poly_slot()?;
         let host_for_com = commitment.as_ref().map(|c| c.host());
         let proof_values = self.hooks.proof_values();
         let com_value = D::try_just(move || {
@@ -104,7 +104,10 @@ where
         })?;
         let com = Point::alloc(self.dr, com_value)?;
         let polynomial = commitment.map(PolyCommitment::into_polynomial);
-        Ok(PolyQueryHandle::new(com, polynomial, slot))
+        let handle = PolyQueryHandle::new(com, polynomial, slot);
+        self.hooks
+            .record_polynomial(handle.commitment().clone(), handle.coefficients())?;
+        Ok(handle)
     }
 
     /// Records a poly-query claim: the polynomial behind `commitment` evaluates
@@ -161,14 +164,8 @@ where
         x: Element<'dr, D>,
         y: Element<'dr, D>,
     ) -> Result<()> {
-        self.hooks.enforce_polynomial_query(
-            self.dr,
-            commitment.slot(),
-            commitment.commitment().clone(),
-            x,
-            y,
-            commitment.coefficients(),
-        )
+        self.hooks
+            .enforce_polynomial_query(self.dr, commitment.slot(), x, y)
     }
 
     /// Derives a sound Fiat–Shamir challenge from `input`.
@@ -293,28 +290,44 @@ where
         self.hooks.check_layout()?;
 
         let allocator = &mut ragu_primitives::allocator::Standard::new();
-        while self.hooks.claims_filled() < crate::NUM_QUERY_SLOTS {
+
+        // Polynomials first, so every query slot has something to name.
+        let mut padding_handle = None;
+        while self.hooks.polys_filled() < crate::NUM_POLY_SLOTS {
             let proof_values = self.hooks.proof_values();
             let padding = D::try_just(move || {
-                let (host, x, y) =
+                let (host, ..) =
                     crate::internal::challenge::padding_claim::<C>(proof_values.take().params);
-                let commitment =
-                    PolyCommitment::new(crate::internal::challenge::padding_poly::<C, R>(), host);
-                Ok((commitment, x, y))
+                Ok(PolyCommitment::new(
+                    crate::internal::challenge::padding_poly::<C, R>(),
+                    host,
+                ))
             })?;
 
             // The commitment goes through `witness_polynomial`, so the padding
             // slot's `com` is that slot's bridge-stage commitment, derived
-            // exactly as a real claim's is.
-            let handle = self.witness_polynomial::<R>(
-                padding
-                    .as_ref()
-                    .map(|(commitment, _, _)| commitment.clone()),
-            )?;
-            let x = Element::alloc(self.dr, allocator, padding.as_ref().map(|(_, x, _)| *x))?;
-            let y = Element::alloc(self.dr, allocator, padding.map(|(_, _, y)| y))?;
-            self.enforce_poly_query(&handle, x, y)?;
+            // exactly as a real polynomial's is.
+            padding_handle = Some(self.witness_polynomial::<R>(padding)?);
         }
+
+        // Then queries. A padding query opens a polynomial at $x = 0$, where the
+        // value is that polynomial's constant term — true by construction,
+        // whatever the slot holds, so no slot needs to be reserved for padding.
+        //
+        // It names the polynomial at its own index because
+        // `enforce_polynomial_query` still requires that; once the one-hot
+        // selection lands, any slot will do and slot 0 is the natural choice.
+        while self.hooks.claims_filled() < crate::NUM_QUERY_SLOTS {
+            let slot = self.hooks.claims_filled();
+            let x = Element::alloc(
+                self.dr,
+                allocator,
+                D::just(|| <D::F as ragu_arithmetic::ff::Field>::ZERO),
+            )?;
+            let y = Element::alloc(self.dr, allocator, self.hooks.poly_at_zero(slot))?;
+            self.hooks.enforce_polynomial_query(self.dr, slot, x, y)?;
+        }
+        drop(padding_handle);
 
         // A padding challenge is one derived from *nothing*: the empty input
         // has `ELEMENTS == 0`, so every stage wire falls to `derive_challenge`'s

@@ -140,15 +140,17 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // folded yet; the verifier checks them natively with the carried
         // claim polynomials: the claimed evaluation, the host commitment
         // binding, and the bridge to the instance-bound nested commitment.
-        let poly_query_claims = (0..crate::NUM_QUERY_SLOTS).all(|slot| {
-            let crate::ClaimOpening { com, x, y } = pcd.proof().application_claims()[slot];
+        // First each polynomial: its carried coefficients must commit to the
+        // host commitment the proof records, and that must bridge to the
+        // instance-bound nested commitment.
+        let poly_commitments = (0..crate::NUM_POLY_SLOTS).all(|slot| {
+            let com = pcd.proof().application_polys()[slot];
             let poly = &pcd.proof().claim_polys[slot];
             let host = pcd.proof().claim_host_commitment(slot);
             let alpha =
                 crate::internal::challenge::claim_bridge_alpha::<C>(pcd.proof().bridge_alpha, slot);
 
-            poly.eval(x) == y
-                && poly.commit_to_affine::<C::HostCurve>(C::host_generators(self.params)) == host
+            poly.commit_to_affine::<C::HostCurve>(C::host_generators(self.params)) == host
                 && crate::internal::challenge::claim_bridge_commitment::<C, R>(
                     self.params,
                     slot,
@@ -157,6 +159,21 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 )
                 .is_ok_and(|bridge| bridge == com)
         });
+
+        // Then each query, against the polynomial it names. An index outside
+        // the polynomial slots fails the check rather than panicking: it is
+        // instance data, so a malformed proof can carry anything there.
+        let poly_query_claims = poly_commitments
+            && (0..crate::NUM_QUERY_SLOTS).all(|slot| {
+                let crate::ClaimOpening { poly_slot, x, y } =
+                    pcd.proof().application_claims()[slot];
+
+                (0..crate::NUM_POLY_SLOTS)
+                    .find(|i| {
+                        crate::framework_hooks::field_index::<C::CircuitField>(*i) == poly_slot
+                    })
+                    .is_some_and(|i| pcd.proof().claim_polys[i].eval(x) == y)
+            });
 
         // Check the proof's own derived challenges. Like the claims above,
         // these are bound recursively one fuse level up — by the
