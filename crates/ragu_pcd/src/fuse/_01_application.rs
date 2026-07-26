@@ -126,6 +126,7 @@ impl<
             let host = challenge::host_commitment::<C, R>(self.params, &poly)?;
             let expected = challenge::claim_bridge_commitment::<C, R>(
                 self.params,
+                &crate::internal::nested::stages::claim_bridge::layout::<C::HostCurve, R>(),
                 slot,
                 challenge::claim_bridge_alpha::<C>(builder.bridge_alpha(), slot),
                 host,

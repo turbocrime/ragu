@@ -708,6 +708,7 @@ impl<
                 .map(|slot| {
                     crate::internal::challenge::claim_bridge_commitment::<C, R>(
                         self.params,
+                        &nested::stages::claim_bridge::layout::<C::HostCurve, R>(),
                         slot,
                         crate::internal::challenge::claim_bridge_alpha::<C>(
                             builder.bridge_alpha(),
@@ -754,6 +755,7 @@ impl<
                 .map(|slot| {
                     let (point, challenge) = crate::internal::challenge::staged_challenge::<C, R>(
                         self.params,
+                        &nested::stages::challenge_bridge::layout::<C::HostCurve, R>(),
                         slot,
                         builder.challenge_alpha(),
                         builder.bridge_alpha(),

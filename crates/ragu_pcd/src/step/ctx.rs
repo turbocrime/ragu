@@ -19,10 +19,26 @@ use ragu_core::{
 use ragu_primitives::{Element, Point};
 
 use crate::{
-    framework_hooks::{ChallengeInput, FrameworkHooks},
+    framework_hooks::{BridgeGeometry, ChallengeInput, FrameworkHooks},
     poly_commitment::{PolyCommitment, PolyQueryHandle},
     step::internal::challenge_stage::ChallengeSlots,
 };
+
+/// The claim-bridge layout, rebuilt from the anchor the framework threaded in.
+///
+/// The layout cannot ride on [`ProofValues`](crate::framework_hooks::ProofValues)
+/// directly — that type is `Copy` and a layout owns a `Vec` — and it cannot be
+/// derived from stage types here, because that would make [`StepCtx`] generic
+/// over the polynomial count, which would surface in every consumer's
+/// `Step::witness`. A uniform run is fully described by its anchor and shape,
+/// so it travels as numbers and is reassembled here.
+fn claim_layout(bridges: &BridgeGeometry) -> ragu_circuits::staging::InducedStages {
+    ragu_circuits::staging::InducedStages::uniform(
+        bridges.claim_anchor,
+        bridges.max_witnessed_polys,
+        crate::internal::nested::stages::host_bridge::WIDTH,
+    )
+}
 
 /// Framework-side state threaded through [`Step::witness`](super::Step::witness).
 /// The poly-query claim sink is exposed via
@@ -97,6 +113,7 @@ where
             );
             crate::internal::challenge::claim_bridge_commitment::<C, R>(
                 proof_values.params,
+                &claim_layout(&proof_values.bridges),
                 slot,
                 alpha,
                 host_for_com.take(),

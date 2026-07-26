@@ -541,6 +541,35 @@ pub struct ProofValues<'dr, C: Cycle> {
     pub(crate) params: &'dr C::Params,
     pub(crate) bridge_alpha: C::ScalarField,
     pub(crate) challenge_alpha: C::CircuitField,
+    /// Where the two bridge runs sit in the nested trace, and how long the
+    /// claim run is.
+    ///
+    /// The in-step path builds a claim's bridge-stage rx, and that stage's
+    /// position depends on the application's polynomial count. `StepCtx` must
+    /// not be generic over that count — it appears in every consumer's
+    /// `Step::witness` — so the geometry arrives here, as data, instead.
+    ///
+    /// Three `usize`s rather than the layouts themselves because this type is
+    /// `Copy` and a layout owns a `Vec`; a uniform run is fully described by
+    /// its anchor and shape, so the layout is rebuilt at the point of use with
+    /// [`InducedStages::uniform`](ragu_circuits::staging::InducedStages::uniform).
+    pub(crate) bridges: BridgeGeometry,
+}
+
+/// Where the nested bridge runs sit, as plain numbers.
+///
+/// Carried on [`ProofValues`] so the in-step path can rebuild a bridge run's
+/// layout without naming the stage types — which would make
+/// [`StepCtx`](crate::step::StepCtx) generic over the polynomial count, and
+/// that count would then appear in every consumer's `Step::witness`.
+#[derive(Clone, Copy, Debug)]
+pub struct BridgeGeometry {
+    /// Gate the claim-bridge run begins at.
+    pub claim_anchor: usize,
+    /// Gate the challenge-bridge run begins at.
+    pub challenge_anchor: usize,
+    /// Number of claim slots in the claim run.
+    pub max_witnessed_polys: usize,
 }
 
 impl<'dr, C: Cycle> ProofValues<'dr, C> {
@@ -548,11 +577,13 @@ impl<'dr, C: Cycle> ProofValues<'dr, C> {
         params: &'dr C::Params,
         bridge_alpha: C::ScalarField,
         challenge_alpha: C::CircuitField,
+        bridges: BridgeGeometry,
     ) -> Self {
         Self {
             params,
             bridge_alpha,
             challenge_alpha,
+            bridges,
         }
     }
 }

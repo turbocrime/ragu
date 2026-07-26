@@ -637,7 +637,12 @@ impl<'params, C: Cycle, R: Rank, const MAX_WITNESSED_POLYS: usize>
         let host = self.challenge_stage_commitments()[slot];
         let alpha =
             crate::internal::challenge::challenge_bridge_alpha::<C>(self.bridge_alpha, slot);
-        crate::internal::challenge::challenge_bridge_rx::<C, R>(slot, alpha, host)
+        crate::internal::challenge::challenge_bridge_rx::<C, R>(
+            &nested::stages::challenge_bridge::layout::<C::HostCurve, R>(),
+            slot,
+            alpha,
+            host,
+        )
     }
 
     /// Derives the bridge stage rx for poly-query claim `slot`.
@@ -653,7 +658,12 @@ impl<'params, C: Cycle, R: Rank, const MAX_WITNESSED_POLYS: usize>
     ) -> Result<sparse::Polynomial<C::ScalarField, R>> {
         let host = self.claim_host_commitments()[slot];
         let alpha = crate::internal::challenge::claim_bridge_alpha::<C>(self.bridge_alpha, slot);
-        crate::internal::challenge::claim_bridge_rx::<C, R>(slot, alpha, host)
+        crate::internal::challenge::claim_bridge_rx::<C, R>(
+            &nested::stages::claim_bridge::layout::<C::HostCurve, R>(),
+            slot,
+            alpha,
+            host,
+        )
     }
 
     /// The blind source for the application circuit's challenge stages.

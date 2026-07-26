@@ -28,7 +28,7 @@ use super::{
 use crate::{
     Header, NUM_CHALLENGE_SLOTS,
     framework_hooks::{
-        Alphas, FrameworkAux, FrameworkHooks, HookLayout, ProofValues, SlotCapacity,
+        Alphas, BridgeGeometry, FrameworkAux, FrameworkHooks, HookLayout, ProofValues, SlotCapacity,
     },
 };
 
@@ -54,6 +54,19 @@ impl<const HEADER_SIZE: usize, const MAX_WITNESSED_POLYS: usize, const MAX_POLY_
 {
     fn len() -> usize {
         HEADER_SIZE * 3 + MAX_WITNESSED_POLYS * 2 + MAX_POLY_QUERIES * 3 + NUM_CHALLENGE_SLOTS * 3
+    }
+}
+
+/// Where the nested bridge runs sit, as plain numbers the in-step path can
+/// carry. The counts are type-level here, so this is the boundary at which
+/// they become data — see [`ProofValues::bridges`].
+fn bridge_geometry<C: Cycle, R: Rank, const MAX_WITNESSED_POLYS: usize>() -> BridgeGeometry {
+    use crate::internal::nested::stages::{challenge_bridge, claim_bridge};
+
+    BridgeGeometry {
+        claim_anchor: claim_bridge::layout::<C::HostCurve, R>().anchor(),
+        challenge_anchor: challenge_bridge::layout::<C::HostCurve, R>().anchor(),
+        max_witnessed_polys: MAX_WITNESSED_POLYS,
     }
 }
 
@@ -272,7 +285,12 @@ impl<
                 )
             })?;
             let alphas = alphas.take();
-            Ok(ProofValues::new(params, alphas.bridge, alphas.challenge))
+            Ok(ProofValues::new(
+                params,
+                alphas.bridge,
+                alphas.challenge,
+                bridge_geometry::<C, R, MAX_WITNESSED_POLYS>(),
+            ))
         })?;
 
         let mut hooks = FrameworkHooks::with_expected(

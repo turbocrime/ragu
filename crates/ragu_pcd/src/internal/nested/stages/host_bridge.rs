@@ -31,6 +31,13 @@ use ragu_primitives::{
 /// Number of curve points in each bridge stage: one host commitment.
 const NUM: usize = 1;
 
+/// Wire width of a single bridge slot: one point, two coordinates.
+///
+/// Public because a run's layout can be rebuilt from its anchor plus this
+/// width, which is how bridge geometry reaches code that cannot name the stage
+/// types (see `StepCtx`).
+pub const WIDTH: usize = NUM * 2;
+
 /// Witness for a single bridge stage: the host-curve commitment it carries.
 pub struct Witness<C: CurveAffine> {
     pub host: C,
@@ -78,7 +85,7 @@ impl<C: CurveAffine, R: Rank, P: ragu_circuits::staging::Stage<C::Base, R>>
     type OutputKind = Kind![C::Base; Output<'_, _, C>];
 
     fn values() -> usize {
-        NUM * 2
+        WIDTH
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -143,7 +150,7 @@ where
     /// [`configure_induced`](ragu_circuits::staging::StageBuilder::configure_induced)
     /// rejects the pair if they disagree.
     pub fn layout() -> InducedStages {
-        InducedStages::after::<C::Base, R, P>(alloc::vec![NUM * 2; L::len()])
+        InducedStages::after::<C::Base, R, P>(alloc::vec![WIDTH; L::len()])
     }
 }
 
@@ -155,7 +162,7 @@ impl<C: CurveAffine, R: Rank, P: ragu_circuits::staging::Stage<C::Base, R>, L: L
     type OutputKind = Kind![C::Base; FixedVec<Point<'_, _, C>, L>];
 
     fn values() -> usize {
-        NUM * 2 * L::len()
+        WIDTH * L::len()
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(

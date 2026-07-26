@@ -173,6 +173,7 @@ impl<
             poly.commit_to_affine::<C::HostCurve>(C::host_generators(self.params)) == host
                 && crate::internal::challenge::claim_bridge_commitment::<C, R>(
                     self.params,
+                    &crate::internal::nested::stages::claim_bridge::layout::<C::HostCurve, R>(),
                     slot,
                     alpha,
                     host,
@@ -214,6 +215,7 @@ impl<
             poly.commit_to_affine::<C::HostCurve>(C::host_generators(self.params)) == host
                 && crate::internal::challenge::challenge_bridge_commitment::<C, R>(
                     self.params,
+                    &crate::internal::nested::stages::challenge_bridge::layout::<C::HostCurve, R>(),
                     slot,
                     alpha,
                     host,
