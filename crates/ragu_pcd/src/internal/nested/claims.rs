@@ -59,7 +59,7 @@ impl<'m, 'rx, F: PrimeField, R: Rank> Processor<&'rx sparse::Polynomial<F, R>>
         id: InternalCircuitIndex,
         rxs: impl Iterator<Item = &'rx sparse::Polynomial<F, R>>,
     ) {
-        let circuit_id = id.circuit_index();
+        let circuit_id = id.circuit_index(crate::NUM_POLY_SLOTS);
         let rx = sum_polynomials(rxs);
         self.circuit_impl(circuit_id, rx);
     }
@@ -69,7 +69,7 @@ impl<'m, 'rx, F: PrimeField, R: Rank> Processor<&'rx sparse::Polynomial<F, R>>
         id: InternalCircuitIndex,
         groups: impl Iterator<Item = impl Iterator<Item = &'rx sparse::Polynomial<F, R>>>,
     ) -> Result<()> {
-        let circuit_id = id.circuit_index();
+        let circuit_id = id.circuit_index(crate::NUM_POLY_SLOTS);
         let folded = self.fold_bonding_groups(groups);
         self.bonding_impl(circuit_id, folded);
         Ok(())
@@ -91,7 +91,7 @@ where
     S: Source<RxComponent = RxIndex>,
     P: Processor<S::Rx>,
 {
-    for &id in &InternalCircuitIndex::ALL {
+    for id in InternalCircuitIndex::all(crate::NUM_POLY_SLOTS) {
         use InternalCircuitIndex::*;
         match id {
             EndoscalingStep(step) => {
