@@ -40,7 +40,7 @@ use crate::internal::{Side, endoscalar};
 /// The endoscaling circuits process these points across
 /// [`NUM_ENDOSCALING_STEPS`] steps.
 pub const NUM_ENDOSCALING_POINTS: usize =
-    1 + 2 * (crate::internal::native::RxIndex::NUM + 4 + crate::NUM_POLY_QUERY_SLOTS) + 6;
+    1 + 2 * (crate::internal::native::RxIndex::NUM + 4 + crate::NUM_POLY_SLOTS) + 6;
 
 /// Number of endoscaling steps, derived from [`NUM_ENDOSCALING_POINTS`] via
 /// [`endoscalar::num_steps`].
@@ -89,7 +89,7 @@ impl InternalCircuitIndex {
     /// The number of internal circuits registered by [`register_all`],
     /// equal to the number of entries in [`InternalCircuitIndex::ALL`].
     pub const NUM: usize =
-        NUM_ENDOSCALING_STEPS + 14 + crate::NUM_POLY_QUERY_SLOTS + crate::NUM_CHALLENGE_SLOTS;
+        NUM_ENDOSCALING_STEPS + 14 + crate::NUM_POLY_SLOTS + crate::NUM_CHALLENGE_SLOTS;
 
     /// All variants in canonical iteration order.
     ///
@@ -124,7 +124,7 @@ impl InternalCircuitIndex {
         push(&mut slots, &mut c, Self::BridgeEval);
         {
             let mut i = 0;
-            while i < crate::NUM_POLY_QUERY_SLOTS {
+            while i < crate::NUM_POLY_SLOTS {
                 push(&mut slots, &mut c, Self::BridgeClaim(i as u32));
                 i += 1;
             }
@@ -232,7 +232,7 @@ impl RxIndex {
     /// The number of rx components in the nested field,
     /// equal to the number of entries in [`RxIndex::ALL`].
     pub const NUM: usize =
-        NUM_ENDOSCALING_STEPS + 24 + crate::NUM_POLY_QUERY_SLOTS + crate::NUM_CHALLENGE_SLOTS;
+        NUM_ENDOSCALING_STEPS + 24 + crate::NUM_POLY_SLOTS + crate::NUM_CHALLENGE_SLOTS;
 
     /// All variants in canonical order (circuits, then stages).
     ///
@@ -264,7 +264,7 @@ impl RxIndex {
         push(&mut slots, &mut c, Self::BridgeEval);
         {
             let mut i = 0;
-            while i < crate::NUM_POLY_QUERY_SLOTS {
+            while i < crate::NUM_POLY_SLOTS {
                 push(&mut slots, &mut c, Self::BridgeClaim(i as u32));
                 i += 1;
             }

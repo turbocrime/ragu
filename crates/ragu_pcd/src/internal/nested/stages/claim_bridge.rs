@@ -43,7 +43,7 @@ pub struct Slots;
 
 impl Len for Slots {
     fn len() -> usize {
-        crate::NUM_POLY_QUERY_SLOTS
+        crate::NUM_POLY_SLOTS
     }
 }
 
@@ -88,7 +88,7 @@ mod tests {
     fn layout_tiles_the_run() {
         let layout = layout::<EqAffine, R>();
 
-        assert_eq!(layout.len(), crate::NUM_POLY_QUERY_SLOTS);
+        assert_eq!(layout.len(), crate::NUM_POLY_SLOTS);
         assert_eq!(
             layout.skip_gates(0),
             <Run<EqAffine, R> as Stage<F, R>>::skip_gates(),

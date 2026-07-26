@@ -39,7 +39,7 @@ fn blinded_bridges() -> impl Iterator<Item = RxIndex> {
         RxIndex::BridgeEval,
     ]
     .into_iter()
-    .chain((0..crate::NUM_POLY_QUERY_SLOTS).map(|slot| RxIndex::BridgeClaim(slot as u32)))
+    .chain((0..crate::NUM_POLY_SLOTS).map(|slot| RxIndex::BridgeClaim(slot as u32)))
     .chain((0..crate::NUM_CHALLENGE_SLOTS).map(|slot| RxIndex::BridgeChallenge(slot as u32)))
 }
 
@@ -123,7 +123,7 @@ pub(crate) fn claim_bridge_commitment<C: Cycle, R: Rank>(
 }
 
 /// The canonical padding claim for an unused poly-query slot (see
-/// [`NUM_POLY_QUERY_SLOTS`](crate::NUM_POLY_QUERY_SLOTS)): its host commitment
+/// [`NUM_POLY_SLOTS`](crate::NUM_POLY_SLOTS)): its host commitment
 /// and its opening $(x, y) = (0, 1)$.
 ///
 /// A slot cannot be padded with zeros — `commit(0)` is the identity, which no
@@ -300,12 +300,12 @@ mod tests {
         assert_eq!(bridge_alpha_exponent(RxIndex::BridgeEval), 4);
         assert_eq!(bridge_alpha_exponent(RxIndex::BridgeClaim(0)), 5);
         assert_eq!(
-            bridge_alpha_exponent(RxIndex::BridgeClaim(crate::NUM_POLY_QUERY_SLOTS as u32 - 1)),
-            4 + crate::NUM_POLY_QUERY_SLOTS as u64
+            bridge_alpha_exponent(RxIndex::BridgeClaim(crate::NUM_POLY_SLOTS as u32 - 1)),
+            4 + crate::NUM_POLY_SLOTS as u64
         );
         assert_eq!(
             bridge_alpha_exponent(RxIndex::BridgeChallenge(0)),
-            5 + crate::NUM_POLY_QUERY_SLOTS as u64
+            5 + crate::NUM_POLY_SLOTS as u64
         );
     }
 

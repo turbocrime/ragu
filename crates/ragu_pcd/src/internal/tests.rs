@@ -43,7 +43,7 @@ where
 //
 // This is not a free test parameter. It is the widest header the framework
 // claims to support, and it is one half of a pair with
-// `NUM_POLY_QUERY_SLOTS`: both are charged to `outer_collapse`, the largest
+// `NUM_QUERY_SLOTS`: both are charged to `outer_collapse`, the largest
 // internal circuit, at roughly 13 gates per header element and 12 per slot.
 // Measured points, all against its 2048-gate bound:
 //
@@ -54,7 +54,7 @@ where
 //
 // So a slot costs about one header element. Ten elements of header bought
 // four more claim slots and still left 86 gates spare, where the previous
-// configuration had 4. See `NUM_POLY_QUERY_SLOTS` for the rest of the trade.
+// configuration had 4. See `NUM_QUERY_SLOTS` for the rest of the trade.
 pub const HEADER_SIZE: usize = 90;
 
 // Number of dummy application circuits to register before testing internal
@@ -235,7 +235,7 @@ fn test_native_registry_digest() {
     // position in the `_10_p` accumulation into the `RxIndex::ALL` block, and
     // `compute_v` gained the poly-query triple every other rx component has
     // (four more per fuse, one per child per slot). Changed again when
-    // `NUM_POLY_QUERY_SLOTS` went from 4 to 8 and `HEADER_SIZE` from 100 to 90
+    // `NUM_QUERY_SLOTS` went from 4 to 8 and `HEADER_SIZE` from 100 to 90
     // — both change the width of every application circuit's instance.
     let expected = fp!(0x0478d95125d31414109cac93a97349fcadde4bfd20b2a9dd60f6407080e8f5fb);
 
@@ -277,7 +277,7 @@ fn test_nested_registry_digest() {
     // challenge stages became `RxIndex` variants: the point count is unchanged,
     // but they moved within the per-child block, from after the poly-query
     // claims to inside the `RxIndex::ALL` run. Changed again when
-    // `NUM_POLY_QUERY_SLOTS` went from 4 to 8: four more claim-bridge masks,
+    // `NUM_QUERY_SLOTS` went from 4 to 8: four more claim-bridge masks,
     // four more stashed commitments per child, and eight more endoscaling
     // points.
     let expected = fq!(0x3d0e8bd5e0a4aa89cb6a0cb5952661b9aa9ea462d041e9e98e0b296624aefa12);

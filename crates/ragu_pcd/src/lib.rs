@@ -54,31 +54,56 @@ use step::{Step, internal::adapter::Adapter};
 // FIXME: choose a permanent domain separation tag before release.
 pub(crate) const RAGU_TAG: &[u8] = b"FIXME";
 
-/// Number of polynomial-query claim slots every application circuit exposes in
-/// its public instance.
+/// Number of **polynomials** a step may witness — the expensive half of a
+/// poly-query.
+///
+/// Each [`StepCtx::witness_polynomial`](step::StepCtx::witness_polynomial)
+/// call occupies one slot. A polynomial slot costs, per step: a bridge stage
+/// (and therefore a nested commitment), a carried polynomial, a host
+/// commitment with its multi-scalar multiplication, and one endoscaling point
+/// per child in the next fuse. The MSM is the part that matters — under the
+/// framework's cost model, committed-oracle count drives prover wall-clock
+/// while gates under the 2048-gate cap are nearly free.
+///
+/// Unused slots are filled with the canonical padding claim — the constant
+/// polynomial $1$ opened at $x = 0$ to $y = 1$ — so every application circuit
+/// has a uniform instance shape.
+///
+/// See [`NUM_QUERY_SLOTS`] for the cheap half, and
+/// [what caps them](NUM_QUERY_SLOTS#what-caps-these-and-what-they-trade-against)
+/// for the budget the two share.
+pub const NUM_POLY_SLOTS: usize = 8;
+
+/// Number of **evaluations** a step may enforce — the cheap half of a
+/// poly-query.
 ///
 /// Each [`StepCtx::enforce_poly_query`](step::StepCtx::enforce_poly_query)
 /// call occupies one slot; a step body may call it at most this many times,
 /// and the call count must not depend on witness values (it is part of the
-/// circuit structure). Unused slots are filled with the canonical padding
-/// claim — the constant polynomial $1$ opened at $x = 0$ to $y = 1$ — so
-/// every application circuit has a uniform instance shape.
+/// circuit structure). A query slot costs one entry in the application
+/// circuit's public instance, one quotient in `_08_f`, and one triple in
+/// `compute_v` — no commitment, no MSM, no endoscaling point.
 ///
 /// The slots are bound by the circuit's $k(Y)$ public-input polynomial and
 /// recursively enforced at the next fuse via the PCS $(P, u, v)$ accumulator.
 ///
-/// # What caps it, and what it trades against
+/// Kept distinct from [`NUM_POLY_SLOTS`] so that opening one polynomial at
+/// several points spends the cheap resource rather than the expensive one.
 ///
-/// Not a consumer's choice, and not the endoscaling budget — each slot does
-/// add one host commitment per child to the point list the next fuse
+/// # What caps these, and what they trade against
+///
+/// Not a consumer's choice, and not the endoscaling budget — each polynomial
+/// slot does add one host commitment per child to the point list the next fuse
 /// endoscales (see `NUM_ENDOSCALING_POINTS` in the `nested` module), but that
 /// budget has room. The binding circuit is `outer_collapse`, the largest
-/// internal circuit, which absorbs the four elements (`com.x`, `com.y`, `x`,
-/// `y`) each slot adds per child to the application $k(Y)$.
+/// internal circuit, which absorbs the elements each slot adds per child to the
+/// application $k(Y)$: `com.x` and `com.y` for a polynomial, `x` and `y` for a
+/// query.
 ///
-/// It shares that budget with `HEADER_SIZE`, at roughly 12 gates per slot
-/// against 13 per header element — so **a claim slot costs about one element
-/// of header**. Measured against `outer_collapse`'s 2048-gate bound:
+/// They share that budget with `HEADER_SIZE`, at roughly 12 gates per welded
+/// slot against 13 per header element — so **a claim slot costs about one
+/// element of header**. Measured against `outer_collapse`'s 2048-gate bound,
+/// with the two counts still equal:
 ///
 /// | slots | header | gates |
 /// | --- | --- | --- |
@@ -87,9 +112,9 @@ pub(crate) const RAGU_TAG: &[u8] = b"FIXME";
 /// | 8 | 84 | 1884 |
 /// | 8 | 60 | 1572 |
 ///
-/// The two numbers are one pair, not two knobs, and `internal::tests` pins
-/// both: `HEADER_SIZE` there is the widest header the framework claims to
-/// support, so changing either without re-measuring
+/// The numbers are one set, not independent knobs, and `internal::tests` pins
+/// them: `HEADER_SIZE` there is the widest header the framework claims to
+/// support, so changing any of them without re-measuring
 /// `test_internal_circuit_constraint_counts` fails there.
 ///
 /// An application that needs a wider header than the pinned one is not stuck
@@ -97,16 +122,7 @@ pub(crate) const RAGU_TAG: &[u8] = b"FIXME";
 /// [`finalize`](ApplicationBuilder::finalize) either fits or returns
 /// `GateBoundExceeded`. Capacity is settled at finalization, against the
 /// header that application actually configured.
-///
-/// # A slot is one query, not one polynomial
-///
-/// A step that opens the same polynomial at two points spends two slots,
-/// calling [`witness_polynomial`](step::StepCtx::witness_polynomial) once per
-/// slot — each slot's `com` is its own bridge-stage commitment, so the second
-/// query needs the second handle. The framework pays for every slot whether or
-/// not a step uses it, so an opening's marginal cost is zero until the budget
-/// is gone; what a repeat costs is one slot, exactly like any other query.
-pub const NUM_POLY_QUERY_SLOTS: usize = 8;
+pub const NUM_QUERY_SLOTS: usize = 8;
 
 /// Maximum element width of a single
 /// [`StepCtx::derive_challenge`](step::StepCtx::derive_challenge) input.

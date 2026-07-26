@@ -60,9 +60,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // `Err(MalformedEncoding)` rather than the `Ok(false)` this method
         // promises for a malformed proof (mirroring the header check). Every
         // slot-indexed check further down relies on these lengths.
-        if pcd.proof().application_claims().len() != crate::NUM_POLY_QUERY_SLOTS
-            || pcd.proof().claim_polys.len() != crate::NUM_POLY_QUERY_SLOTS
-            || pcd.proof().claim_host_commitments().len() != crate::NUM_POLY_QUERY_SLOTS
+        if pcd.proof().application_claims().len() != crate::NUM_QUERY_SLOTS
+            || pcd.proof().claim_polys.len() != crate::NUM_QUERY_SLOTS
+            || pcd.proof().claim_host_commitments().len() != crate::NUM_QUERY_SLOTS
             || pcd.proof().application_challenges().len() != crate::NUM_CHALLENGE_SLOTS
             || pcd.proof().challenge_stage_polys.len() != crate::NUM_CHALLENGE_SLOTS
             || pcd.proof().challenge_stage_commitments().len() != crate::NUM_CHALLENGE_SLOTS
@@ -140,7 +140,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // folded yet; the verifier checks them natively with the carried
         // claim polynomials: the claimed evaluation, the host commitment
         // binding, and the bridge to the instance-bound nested commitment.
-        let poly_query_claims = (0..crate::NUM_POLY_QUERY_SLOTS).all(|slot| {
+        let poly_query_claims = (0..crate::NUM_QUERY_SLOTS).all(|slot| {
             let crate::ClaimOpening { com, x, y } = pcd.proof().application_claims()[slot];
             let poly = &pcd.proof().claim_polys[slot];
             let host = pcd.proof().claim_host_commitment(slot);

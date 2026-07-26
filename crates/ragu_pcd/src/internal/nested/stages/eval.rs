@@ -16,10 +16,10 @@ use ragu_primitives::{
     vec::{CollectFixed, ConstLen, FixedVec},
 };
 
-use crate::{NUM_CHALLENGE_SLOTS, NUM_POLY_QUERY_SLOTS};
+use crate::{NUM_CHALLENGE_SLOTS, NUM_POLY_SLOTS};
 
 /// Number of curve points in this stage.
-const NUM: usize = 1 + NUM_POLY_QUERY_SLOTS + NUM_CHALLENGE_SLOTS;
+const NUM: usize = 1 + NUM_POLY_SLOTS + NUM_CHALLENGE_SLOTS;
 
 /// Witness data for this bridge stage.
 pub struct Witness<C: CurveAffine> {
@@ -28,7 +28,7 @@ pub struct Witness<C: CurveAffine> {
     /// Stashed here — in a transcript-bound bridge stage — so the *parent's*
     /// copying circuit can check its preamble's stashed claim commitments
     /// against this proof's own record of them.
-    pub claims: [C; NUM_POLY_QUERY_SLOTS],
+    pub claims: [C; NUM_POLY_SLOTS],
     /// The current step's challenge-stage host commitments, in slot order,
     /// stashed for the same reason as the claims.
     pub challenge_stages: [C; NUM_CHALLENGE_SLOTS],
@@ -44,7 +44,7 @@ pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     pub native_eval: Point<'dr, D, C>,
     /// The current step's poly-query claim host commitments, in slot order.
     #[ragu(gadget)]
-    pub claims: FixedVec<Point<'dr, D, C>, ConstLen<NUM_POLY_QUERY_SLOTS>>,
+    pub claims: FixedVec<Point<'dr, D, C>, ConstLen<NUM_POLY_SLOTS>>,
     /// The current step's challenge-stage host commitments, in slot order.
     #[ragu(gadget)]
     pub challenge_stages: FixedVec<Point<'dr, D, C>, ConstLen<NUM_CHALLENGE_SLOTS>>,
@@ -74,7 +74,7 @@ impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stag
     {
         Ok(Output {
             native_eval: Point::alloc(dr, witness.as_ref().map(|w| w.native_eval))?,
-            claims: (0..NUM_POLY_QUERY_SLOTS)
+            claims: (0..NUM_POLY_SLOTS)
                 .map(|i| Point::alloc(dr, witness.as_ref().map(|w| w.claims[i])))
                 .try_collect_fixed()?,
             challenge_stages: (0..NUM_CHALLENGE_SLOTS)

@@ -12,7 +12,7 @@
 //!   which delegates here. Each claim carries the opened polynomial's
 //!   coefficients so the framework can fold it into the [PCS aggregation].
 //!   Every application circuit exposes exactly
-//!   [`NUM_POLY_QUERY_SLOTS`] claim slots as part
+//!   [`NUM_QUERY_SLOTS`] claim slots as part
 //!   of its public instance (unused slots hold the canonical padding claim),
 //!   binding the claim wires — the commitment point and the $(x, y)$ opening —
 //!   to the circuit's $k(Y)$ polynomial. The claims a proof raises are then
@@ -115,7 +115,7 @@ use ragu_primitives::{
     vec::{ConstLen, FixedVec},
 };
 
-use crate::{NUM_CHALLENGE_SLOTS, NUM_POLY_QUERY_SLOTS};
+use crate::{NUM_CHALLENGE_SLOTS, NUM_QUERY_SLOTS};
 
 /// A single polynomial-commitment opening claim, with the polynomial it opens.
 ///
@@ -316,14 +316,14 @@ pub struct FrameworkHooks<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
 /// rather than a handful of sibling fields — and so adding a hook means adding
 /// a field here, which the compiler then forces every reader to acknowledge.
 pub struct FrameworkAux<C: Cycle> {
-    /// The step's poly-query claims, padded to exactly [`NUM_POLY_QUERY_SLOTS`]
+    /// The step's poly-query claims, padded to exactly [`NUM_QUERY_SLOTS`]
     /// entries, in slot order — matching the instance layout the circuit
     /// committed to. Each carries the opened polynomial's coefficients; fuse
     /// pre-checks every claim natively, persists the claim instances in the
     /// proof, and the *next* fuse enforces them recursively via the PCS
     /// accumulator.
     pub claims:
-        FixedVec<PolyQueryClaim<C::CircuitField, C::NestedCurve>, ConstLen<NUM_POLY_QUERY_SLOTS>>,
+        FixedVec<PolyQueryClaim<C::CircuitField, C::NestedCurve>, ConstLen<NUM_QUERY_SLOTS>>,
     /// The derived-challenge pairs the circuit exposes, padded to exactly
     /// [`NUM_CHALLENGE_SLOTS`] entries, in slot order.
     pub challenges: FixedVec<
@@ -553,7 +553,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     /// adapter's dry run), so the assignment is deterministic.
     pub(crate) fn next_claim_slot(&mut self) -> Result<usize> {
         let slot = self.witnessed_claims;
-        if slot >= crate::NUM_POLY_QUERY_SLOTS {
+        if slot >= crate::NUM_QUERY_SLOTS {
             return Err(Error::InvalidWitness(
                 "step witnessed more polynomials than there are poly-query claim slots".into(),
             ));
@@ -604,7 +604,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     /// `x`.
     ///
     /// The claim wires occupy one of the application circuit's
-    /// [`NUM_POLY_QUERY_SLOTS`] instance slots,
+    /// [`NUM_QUERY_SLOTS`] instance slots,
     /// binding them to the circuit's $k(Y)$; the claim itself is recursively
     /// enforced at the next fuse via the PCS accumulator. The fuse that raises
     /// it additionally pre-checks it natively (see
@@ -613,7 +613,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     ///
     /// The number of calls per step body is part of the circuit structure: it
     /// must not depend on witness values and must not exceed
-    /// `NUM_POLY_QUERY_SLOTS` (checked by the adapter).
+    /// `NUM_QUERY_SLOTS` (checked by the adapter).
     ///
     /// # Errors
     ///

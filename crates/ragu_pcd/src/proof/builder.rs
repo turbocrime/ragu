@@ -318,7 +318,7 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     /// [`Step::witness`](crate::step::Step::witness) via
     /// [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query),
     /// padded by the adapter to exactly
-    /// [`NUM_POLY_QUERY_SLOTS`](crate::NUM_POLY_QUERY_SLOTS) entries and
+    /// [`NUM_POLY_SLOTS`](crate::NUM_POLY_SLOTS) entries and
     /// pre-checked natively by fuse. The claim *instances* (com, x, y),
     /// the claim polynomials, and the host commitments are persisted in the
     /// [`Proof`] so the parent fuse can enforce the claims recursively.
@@ -328,7 +328,7 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     /// `application_claims`).
     claim_polys: Vec<sparse::Polynomial<C::CircuitField, R>>,
     /// The claims' host-curve commitments, in slot order.
-    claim_host_commitments: Option<[C::HostCurve; crate::NUM_POLY_QUERY_SLOTS]>,
+    claim_host_commitments: Option<[C::HostCurve; crate::NUM_POLY_SLOTS]>,
     challenge_stage_commitments: Option<[C::HostCurve; crate::NUM_CHALLENGE_SLOTS]>,
 }
 
@@ -672,7 +672,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
 
     /// The claim host commitments, for the eval bridge stage witness. Requires
     /// `set_application_claims` to have been called.
-    fn claim_host_commitments(&self) -> [C::HostCurve; crate::NUM_POLY_QUERY_SLOTS] {
+    fn claim_host_commitments(&self) -> [C::HostCurve; crate::NUM_POLY_SLOTS] {
         self.claim_host_commitments
             .expect("claim_host_commitments not set before deriving the eval bridge")
     }
@@ -778,9 +778,9 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             self.application_claims.is_empty(),
             "double-set: application_claims"
         );
-        assert_eq!(claims.len(), crate::NUM_POLY_QUERY_SLOTS);
-        assert_eq!(claim_polys.len(), crate::NUM_POLY_QUERY_SLOTS);
-        assert_eq!(claim_host_commitments.len(), crate::NUM_POLY_QUERY_SLOTS);
+        assert_eq!(claims.len(), crate::NUM_POLY_SLOTS);
+        assert_eq!(claim_polys.len(), crate::NUM_POLY_SLOTS);
+        assert_eq!(claim_host_commitments.len(), crate::NUM_POLY_SLOTS);
         self.application_claims = claims;
         self.claim_polys = claim_polys;
         self.claim_host_commitments = Some(core::array::from_fn(|i| claim_host_commitments[i]));
@@ -858,7 +858,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         let challenge_bridge_rxs = (0..crate::NUM_CHALLENGE_SLOTS)
             .map(|slot| self.challenge_bridge_rx(slot))
             .collect::<Result<Vec<_>>>()?;
-        let claim_bridge_rxs = (0..crate::NUM_POLY_QUERY_SLOTS)
+        let claim_bridge_rxs = (0..crate::NUM_POLY_SLOTS)
             .map(|slot| self.claim_bridge_rx(slot))
             .collect::<Result<alloc::vec::Vec<_>>>()?;
 

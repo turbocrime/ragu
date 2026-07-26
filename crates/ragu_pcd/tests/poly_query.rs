@@ -55,7 +55,7 @@ fn oracle_end_to_end() -> Result<()> {
     // the step's real claim occupies slot 0.
     assert_eq!(
         leaf1.proof().application_claims().len(),
-        ragu_pcd::NUM_POLY_QUERY_SLOTS
+        ragu_pcd::NUM_QUERY_SLOTS
     );
     // `com` is derived by the framework from the claim's bridge stage once the
     // slot is known, so the test cannot recompute it; the opening is what the
@@ -92,7 +92,7 @@ fn oracle_end_to_end() -> Result<()> {
     assert!(app.verify(&node, &mut rng)?);
     assert_eq!(
         node.proof().application_claims().len(),
-        ragu_pcd::NUM_POLY_QUERY_SLOTS
+        ragu_pcd::NUM_QUERY_SLOTS
     );
 
     Ok(())

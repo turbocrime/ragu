@@ -21,7 +21,7 @@ use ragu_primitives::{
 };
 
 use crate::{
-    NUM_CHALLENGE_SLOTS, NUM_POLY_QUERY_SLOTS, Proof, header::Header, internal::native::unified,
+    NUM_CHALLENGE_SLOTS, NUM_QUERY_SLOTS, Proof, header::Header, internal::native::unified,
     step::internal::padded,
 };
 
@@ -117,10 +117,10 @@ pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const
     #[ragu(gadget)]
     pub output_header: HeaderVec<'dr, D, HEADER_SIZE>,
     /// The poly-query claim instances this child proof raised, in slot order
-    /// (always [`NUM_POLY_QUERY_SLOTS`] entries; unused slots hold the
+    /// (always [`NUM_QUERY_SLOTS`] entries; unused slots hold the
     /// canonical padding claim).
     #[ragu(gadget)]
-    pub claims: FixedVec<ClaimInstance<'dr, D, C>, ConstLen<NUM_POLY_QUERY_SLOTS>>,
+    pub claims: FixedVec<ClaimInstance<'dr, D, C>, ConstLen<NUM_QUERY_SLOTS>>,
     /// The derived-challenge pairs the child's circuit exposed, in slot order.
     #[ragu(gadget)]
     pub challenges: FixedVec<ChallengeInstance<'dr, D, C>, ConstLen<NUM_CHALLENGE_SLOTS>>,
@@ -239,15 +239,14 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
             output_header: alloc_header(dr, allocator, output_header.as_ref().map(|h| &h[..]))?,
             claims: {
                 D::try_just(|| {
-                    if proof.as_ref().take().application_claims().len() != NUM_POLY_QUERY_SLOTS {
+                    if proof.as_ref().take().application_claims().len() != NUM_QUERY_SLOTS {
                         return Err(Error::MalformedEncoding(
-                            "proof does not carry exactly NUM_POLY_QUERY_SLOTS claim instances"
-                                .into(),
+                            "proof does not carry exactly NUM_QUERY_SLOTS claim instances".into(),
                         ));
                     }
                     Ok(())
                 })?;
-                (0..NUM_POLY_QUERY_SLOTS)
+                (0..NUM_QUERY_SLOTS)
                     .map(|i| {
                         Ok(ClaimInstance {
                             com: Point::alloc(
@@ -376,7 +375,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
         //             + challenge slots (3 wires each)
         //             + 1 circuit_id + unified instance wires)
         2 * (3 * HEADER_SIZE
-            + 4 * NUM_POLY_QUERY_SLOTS
+            + 4 * NUM_QUERY_SLOTS
             + 3 * NUM_CHALLENGE_SLOTS
             + 1
             + unified::NUM_WIRES)

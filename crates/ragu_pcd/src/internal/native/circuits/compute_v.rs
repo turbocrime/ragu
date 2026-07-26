@@ -649,7 +649,7 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HE
     .chain([(&eval.left, &preamble.left, &d.left), (&eval.right, &preamble.right, &d.right)]
         .into_iter()
         .flat_map(move |(child_eval, child_preamble, child_d)|
-            (0..crate::NUM_POLY_QUERY_SLOTS).map(move |i|
+            (0..crate::NUM_QUERY_SLOTS).map(move |i|
                 (&child_eval.claims[i], &child_preamble.claims[i].y, &child_d.claims[i]))))
 }
 

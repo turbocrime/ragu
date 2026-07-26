@@ -19,7 +19,7 @@ use ragu_primitives::{
 };
 
 use crate::{
-    NUM_CHALLENGE_SLOTS, NUM_POLY_QUERY_SLOTS, Proof,
+    NUM_CHALLENGE_SLOTS, NUM_POLY_SLOTS, Proof,
     internal::{endoscalar::PointsStage, native::RxIndex, nested::NUM_ENDOSCALING_POINTS},
 };
 
@@ -27,7 +27,7 @@ use crate::{
 /// per child, the `_10_p` components (one per [`RxIndex`] — challenge stages
 /// included — plus `a`, `b`, `registry_xy` and `p`) and the stashed poly-query
 /// claim commitments.
-pub const NUM_POINTS: usize = 1 + 2 * (RxIndex::NUM + 4 + NUM_POLY_QUERY_SLOTS);
+pub const NUM_POINTS: usize = 1 + 2 * (RxIndex::NUM + 4 + NUM_POLY_SLOTS);
 
 /// Witness data for a single child proof in the preamble bridge stage.
 ///
@@ -82,7 +82,7 @@ pub struct ChildWitness<C: CurveAffine> {
     /// order. Loading enforces these against the [`PointsStage`] inputs (they
     /// enter the `_10_p` accumulation); copying verifies them against the
     /// child's own eval bridge stage record.
-    pub stashed_claims: [C; NUM_POLY_QUERY_SLOTS],
+    pub stashed_claims: [C; NUM_POLY_SLOTS],
 }
 
 impl<C: CurveAffine> ChildWitness<C> {
@@ -183,7 +183,7 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     /// Stashed poly-query claim host commitments from the child, in slot
     /// order.
     #[ragu(gadget)]
-    pub stashed_claims: FixedVec<Point<'dr, D, C>, ConstLen<NUM_POLY_QUERY_SLOTS>>,
+    pub stashed_claims: FixedVec<Point<'dr, D, C>, ConstLen<NUM_POLY_SLOTS>>,
 }
 
 impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> core::ops::Index<RxIndex>
@@ -233,7 +233,7 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> ChildOutput<'dr, D, C> {
             stashed_ab_b: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_ab_b))?,
             stashed_registry_xy: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_registry_xy))?,
             stashed_p: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_p))?,
-            stashed_claims: (0..NUM_POLY_QUERY_SLOTS)
+            stashed_claims: (0..NUM_POLY_SLOTS)
                 .map(|i| Point::alloc(dr, witness.as_ref().map(|w| w.stashed_claims[i])))
                 .try_collect_fixed()?,
         })

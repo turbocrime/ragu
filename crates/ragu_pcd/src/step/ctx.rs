@@ -116,7 +116,7 @@ where
     ///
     /// This is the *succinct* claim path: the polynomial stays out of the
     /// circuit, and enforcement is **recursive**. The claim wires occupy one
-    /// of the circuit's [`NUM_POLY_QUERY_SLOTS`](crate::NUM_POLY_QUERY_SLOTS)
+    /// of the circuit's [`NUM_QUERY_SLOTS`](crate::NUM_QUERY_SLOTS)
     /// instance slots, binding them to the circuit's $k(Y)$; when the
     /// resulting proof is fused as a child, the parent folds the quotient
     /// $(p(X) - y)/(X - x)$ into $f(X)$ and the polynomial (with its host
@@ -263,7 +263,7 @@ where
     /// First the determinism guard
     /// ([`FrameworkHooks::check_layout`](crate::framework_hooks::FrameworkHooks)),
     /// then padding. Every application circuit exposes exactly
-    /// [`NUM_POLY_QUERY_SLOTS`](crate::NUM_POLY_QUERY_SLOTS) claims and
+    /// [`NUM_QUERY_SLOTS`](crate::NUM_QUERY_SLOTS) claims and
     /// [`NUM_CHALLENGE_SLOTS`](crate::NUM_CHALLENGE_SLOTS) challenge pairs,
     /// whatever the body used, so the instance shape — which the internal
     /// circuits read as a fixed-width record — never depends on the step.
@@ -293,7 +293,7 @@ where
         self.hooks.check_layout()?;
 
         let allocator = &mut ragu_primitives::allocator::Standard::new();
-        while self.hooks.claims_filled() < crate::NUM_POLY_QUERY_SLOTS {
+        while self.hooks.claims_filled() < crate::NUM_QUERY_SLOTS {
             let proof_values = self.hooks.proof_values();
             let padding = D::try_just(move || {
                 let (host, x, y) =

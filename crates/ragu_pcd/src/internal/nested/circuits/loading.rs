@@ -32,7 +32,7 @@ use ragu_core::{
 use ragu_primitives::{GadgetExt as _, Point};
 
 use crate::{
-    NUM_POLY_QUERY_SLOTS,
+    NUM_POLY_SLOTS,
     internal::{
         endoscalar::{EndoscalarStage, Points, PointsStage},
         native::RxIndex,
@@ -187,7 +187,7 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         // mirroring how `BridgeF.native_f` ties `bridge_f_commitment` above.
         assert_eq!(
             claim_bridges.len(),
-            NUM_POLY_QUERY_SLOTS,
+            NUM_POLY_SLOTS,
             "the claim-bridge run did not yield one slot per claim"
         );
         for (slot, bridge_host) in claim_bridges.iter().enumerate() {

@@ -26,7 +26,7 @@ use super::{
     challenge_stage,
 };
 use crate::{
-    Header, NUM_CHALLENGE_SLOTS, NUM_POLY_QUERY_SLOTS,
+    Header, NUM_CHALLENGE_SLOTS, NUM_QUERY_SLOTS,
     framework_hooks::{Alphas, FrameworkAux, FrameworkHooks, HookLayout, ProofValues},
 };
 
@@ -38,7 +38,7 @@ pub struct InstanceLen<const HEADER_SIZE: usize>;
 
 impl<const HEADER_SIZE: usize> Len for InstanceLen<HEADER_SIZE> {
     fn len() -> usize {
-        HEADER_SIZE * 3 + NUM_POLY_QUERY_SLOTS * 4 + NUM_CHALLENGE_SLOTS * 3
+        HEADER_SIZE * 3 + NUM_QUERY_SLOTS * 4 + NUM_CHALLENGE_SLOTS * 3
     }
 }
 
@@ -70,9 +70,9 @@ pub(crate) fn discover_hook_layout<C: Cycle, S: Step<C>, const HEADER_SIZE: usiz
 
     let outputs = hooks.into_outputs();
     let num_claims = outputs.poly_query_claims.len();
-    if num_claims > NUM_POLY_QUERY_SLOTS {
+    if num_claims > NUM_QUERY_SLOTS {
         return Err(ragu_core::Error::Initialization(
-            "step raises more poly-query claims than NUM_POLY_QUERY_SLOTS".into(),
+            "step raises more poly-query claims than NUM_QUERY_SLOTS".into(),
         ));
     }
 
@@ -418,7 +418,7 @@ mod tests {
 
     #[test]
     fn instance_len_covers_headers_claims_and_challenges() {
-        let slots = NUM_POLY_QUERY_SLOTS * 4 + NUM_CHALLENGE_SLOTS * 3;
+        let slots = NUM_QUERY_SLOTS * 4 + NUM_CHALLENGE_SLOTS * 3;
         assert_eq!(InstanceLen::<1>::len(), 3 + slots);
         assert_eq!(InstanceLen::<4>::len(), 12 + slots);
         assert_eq!(InstanceLen::<10>::len(), 30 + slots);
@@ -442,7 +442,7 @@ mod tests {
         // Output should have 3 * HEADER_SIZE elements (left + right + output headers)
         assert_eq!(
             output.len(),
-            HEADER_SIZE * 3 + NUM_POLY_QUERY_SLOTS * 4 + NUM_CHALLENGE_SLOTS * 3
+            HEADER_SIZE * 3 + NUM_QUERY_SLOTS * 4 + NUM_CHALLENGE_SLOTS * 3
         );
     }
 
@@ -584,7 +584,7 @@ mod tests {
 
         assert_eq!(
             output.len(),
-            HEADER_SIZE * 3 + NUM_POLY_QUERY_SLOTS * 4 + NUM_CHALLENGE_SLOTS * 3
+            HEADER_SIZE * 3 + NUM_QUERY_SLOTS * 4 + NUM_CHALLENGE_SLOTS * 3
         );
     }
 }

@@ -275,7 +275,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     /// $(\bar{C}_i, x_i, y_i)$ tuples the prover declared via
     /// [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query)
     /// at the fuse that produced this proof, padded to exactly
-    /// [`NUM_POLY_QUERY_SLOTS`](crate::NUM_POLY_QUERY_SLOTS) entries. They
+    /// [`NUM_POLY_SLOTS`](crate::NUM_POLY_SLOTS) entries. They
     /// are bound to the application circuit's $k(Y)$ instance and recursively
     /// enforced when this proof is fused as a child: the parent folds each
     /// claim into $f(X)$ and the PCS accumulator, and its `compute_v` circuit
@@ -410,7 +410,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     /// Returns the per-step polynomial-query claim instances
     /// $(\bar{C}_i, x_i, y_i)$ declared at the fuse step that produced this
     /// proof, in slot order — always
-    /// [`NUM_POLY_QUERY_SLOTS`](crate::NUM_POLY_QUERY_SLOTS) entries, with
+    /// [`NUM_POLY_SLOTS`](crate::NUM_POLY_SLOTS) entries, with
     /// unused slots holding the canonical padding claim. The instances are
     /// bound to the application circuit's $k(Y)$ and recursively enforced when
     /// this proof is fused as a child.
@@ -680,7 +680,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
         let (padding_host, padding_x, padding_y) =
             crate::internal::challenge::padding_claim::<C>(self.params);
         builder.set_application_claims(
-            (0..crate::NUM_POLY_QUERY_SLOTS)
+            (0..crate::NUM_POLY_SLOTS)
                 .map(|slot| crate::framework_hooks::PolyQueryClaim {
                     com: crate::internal::challenge::claim_bridge_commitment::<C, R>(
                         self.params,
@@ -697,8 +697,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                     coefficients: vec![C::CircuitField::ONE],
                 })
                 .collect(),
-            vec![crate::internal::challenge::padding_poly::<C, R>(); crate::NUM_POLY_QUERY_SLOTS],
-            vec![padding_host; crate::NUM_POLY_QUERY_SLOTS],
+            vec![crate::internal::challenge::padding_poly::<C, R>(); crate::NUM_POLY_SLOTS],
+            vec![padding_host; crate::NUM_POLY_SLOTS],
         );
         // Challenge slots: a trivial proof derives no challenges, so every slot
         // holds the all-zero stage's honest pair (mirroring the adapter's
@@ -844,7 +844,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                 points.push(host_commitment); // AbB
                 points.push(registry_xy_commitment); // RegistryXY
                 points.push(host_commitment); // P placeholder
-                for _ in 0..crate::NUM_POLY_QUERY_SLOTS {
+                for _ in 0..crate::NUM_POLY_SLOTS {
                     points.push(padding_host_commitment); // claim slots
                 }
             }
@@ -893,7 +893,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                 stashed_ab_b: host_commitment,
                 stashed_registry_xy: registry_xy_commitment,
                 stashed_p: p_commitment,
-                stashed_claims: [padding_host_commitment; crate::NUM_POLY_QUERY_SLOTS],
+                stashed_claims: [padding_host_commitment; crate::NUM_POLY_SLOTS],
                 stashed_challenge_stages: [padding_host_commitment; crate::NUM_CHALLENGE_SLOTS],
             };
             let rx = nested::stages::preamble::Stage::<C::HostCurve, R>::rx(

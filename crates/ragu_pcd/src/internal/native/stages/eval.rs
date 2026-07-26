@@ -34,7 +34,7 @@ use ragu_primitives::{
 };
 
 use crate::{
-    NUM_POLY_QUERY_SLOTS, Proof,
+    NUM_POLY_SLOTS, Proof,
     internal::native::{RxComponent, RxValues},
 };
 
@@ -66,7 +66,7 @@ pub struct ChildEvaluationsWitness<F> {
     /// in slot order. These feed the parent's recursive enforcement of the
     /// child's claims: the quotient $(p_i(u) - y_i)/(u - x_i)$ enters $f(u)$
     /// and each $p_i(u)$ enters the $v$ Horner accumulation.
-    pub claims: [F; NUM_POLY_QUERY_SLOTS],
+    pub claims: [F; NUM_POLY_SLOTS],
 }
 
 impl<F: PrimeField> ChildEvaluationsWitness<F> {
@@ -153,7 +153,7 @@ pub struct ChildEvaluations<'dr, D: Driver<'dr>> {
     /// last so the [`Write`] order (and hence the $v$ Horner weighting)
     /// matches the `_10_p` accumulation order.
     #[ragu(gadget)]
-    pub claims: FixedVec<Element<'dr, D>, ConstLen<NUM_POLY_QUERY_SLOTS>>,
+    pub claims: FixedVec<Element<'dr, D>, ConstLen<NUM_POLY_SLOTS>>,
 }
 
 impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
@@ -176,7 +176,7 @@ impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
                 witness.as_ref().map(|w| w.registry_xy_poly),
             )?,
             p_poly: Element::alloc(dr, allocator, witness.as_ref().map(|w| w.p_poly))?,
-            claims: (0..NUM_POLY_QUERY_SLOTS)
+            claims: (0..NUM_POLY_SLOTS)
                 .map(|i| Element::alloc(dr, allocator, witness.as_ref().map(|w| w.claims[i])))
                 .try_collect_fixed()?,
         })
@@ -222,7 +222,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     fn values() -> usize {
         // 2 * ChildEvaluations (one evaluation per RxIndex, 4 scalars, one per
         //   claim slot, one per challenge slot) + current step elements (6)
-        2 * (super::super::RxIndex::NUM + 4 + NUM_POLY_QUERY_SLOTS) + 6
+        2 * (super::super::RxIndex::NUM + 4 + NUM_POLY_SLOTS) + 6
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
