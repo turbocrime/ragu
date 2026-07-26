@@ -60,9 +60,17 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // `Err(MalformedEncoding)` rather than the `Ok(false)` this method
         // promises for a malformed proof (mirroring the header check). Every
         // slot-indexed check further down relies on these lengths.
+        //
+        // Note which count gates which vector: `application_claims` is indexed
+        // per *query*, while `claim_polys` and `claim_host_commitments` are
+        // indexed per *polynomial* — the loops below walk them over
+        // `NUM_POLY_SLOTS`. The two counts are equal today, so gating a
+        // poly-indexed vector on the query count would pass unnoticed; it would
+        // stop passing the moment an application configures them differently.
         if pcd.proof().application_claims().len() != crate::NUM_QUERY_SLOTS
-            || pcd.proof().claim_polys.len() != crate::NUM_QUERY_SLOTS
-            || pcd.proof().claim_host_commitments().len() != crate::NUM_QUERY_SLOTS
+            || pcd.proof().application_polys().len() != crate::NUM_POLY_SLOTS
+            || pcd.proof().claim_polys.len() != crate::NUM_POLY_SLOTS
+            || pcd.proof().claim_host_commitments().len() != crate::NUM_POLY_SLOTS
             || pcd.proof().application_challenges().len() != crate::NUM_CHALLENGE_SLOTS
             || pcd.proof().challenge_stage_polys.len() != crate::NUM_CHALLENGE_SLOTS
             || pcd.proof().challenge_stage_commitments().len() != crate::NUM_CHALLENGE_SLOTS
