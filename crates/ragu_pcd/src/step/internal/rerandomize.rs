@@ -130,16 +130,23 @@ fn test_rerandomize_consistency() {
         }
     }
 
-    let circuit_single =
-        super::adapter::Adapter::<Pasta, Rerandomize<Single>, R, HEADER_SIZE>::new(
-            Rerandomize::new(),
-            Some(Pasta::baked()),
-        )
-        .unwrap();
-    let circuit_pair = super::adapter::Adapter::<Pasta, Rerandomize<Pair>, R, HEADER_SIZE>::new(
-        Rerandomize::new(),
-        Some(Pasta::baked()),
-    )
+    let circuit_single = super::adapter::Adapter::<
+        Pasta,
+        Rerandomize<Single>,
+        R,
+        HEADER_SIZE,
+        { crate::NUM_POLY_SLOTS },
+        { crate::NUM_QUERY_SLOTS },
+    >::new(Rerandomize::new(), Some(Pasta::baked()))
+    .unwrap();
+    let circuit_pair = super::adapter::Adapter::<
+        Pasta,
+        Rerandomize<Pair>,
+        R,
+        HEADER_SIZE,
+        { crate::NUM_POLY_SLOTS },
+        { crate::NUM_QUERY_SLOTS },
+    >::new(Rerandomize::new(), Some(Pasta::baked()))
     .unwrap();
 
     let mut builder: TestRegistryBuilder<'_, _, R> = TestRegistryBuilder::new();

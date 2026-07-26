@@ -341,6 +341,35 @@ pub struct FrameworkHooks<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     expected: Option<HookLayout>,
     /// The proof-level values the hooks commit to. See [`ProofValues`].
     proof_values: DriverValue<D, ProofValues<'dr, C>>,
+    /// The application's slot capacities, as plain values.
+    ///
+    /// Deliberately *not* const generics on this type. `FrameworkHooks` is
+    /// threaded into every consumer's
+    /// [`Step::witness`](crate::step::Step::witness) through
+    /// [`StepCtx`](crate::step::StepCtx); const generics here would surface in
+    /// every step impl's signature, leaking a framework detail no step body
+    /// cares about. Everything the hooks do with these counts is a runtime
+    /// comparison or loop bound, so a field suffices.
+    ///
+    /// The one place the counts must be type-level is
+    /// [`into_values`](FrameworkHookOutputs::into_values), which builds
+    /// [`FrameworkAux`]'s fixed-width vectors — and that is called from the
+    /// adapter, which has them as const generics.
+    capacity: SlotCapacity,
+}
+
+/// How many polynomials and queries an application's steps may use.
+///
+/// The value-level face of `MAX_WITNESSED_POLYS` / `MAX_POLY_QUERIES`, for the
+/// parts of the framework that only compare against them.
+#[derive(Clone, Copy, Debug)]
+pub struct SlotCapacity {
+    /// Maximum [`witness_polynomial`](crate::step::StepCtx::witness_polynomial)
+    /// calls per step.
+    pub max_witnessed_polys: usize,
+    /// Maximum [`enforce_poly_query`](crate::step::StepCtx::enforce_poly_query)
+    /// calls per step.
+    pub max_poly_queries: usize,
 }
 
 /// Every hook's output as plain values, for the fuse.
@@ -350,18 +379,19 @@ pub struct FrameworkHooks<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
 /// step's own `Aux`, so the framework's contribution stays one named thing
 /// rather than a handful of sibling fields — and so adding a hook means adding
 /// a field here, which the compiler then forces every reader to acknowledge.
-pub struct FrameworkAux<C: Cycle> {
+pub struct FrameworkAux<C: Cycle, const MAX_WITNESSED_POLYS: usize, const MAX_POLY_QUERIES: usize> {
     /// The step's witnessed polynomials, padded to exactly [`NUM_POLY_SLOTS`]
     /// entries, in slot order — matching the instance layout the circuit
     /// committed to. Each carries its coefficients, which the fuse folds into
     /// the PCS accumulator.
-    pub polys: FixedVec<WitnessedPoly<C::CircuitField, C::NestedCurve>, ConstLen<NUM_POLY_SLOTS>>,
+    pub polys:
+        FixedVec<WitnessedPoly<C::CircuitField, C::NestedCurve>, ConstLen<MAX_WITNESSED_POLYS>>,
     /// The step's opening claims, padded to exactly [`NUM_QUERY_SLOTS`]
     /// entries, in call order. Each names one of [`polys`](Self::polys). Fuse
     /// pre-checks every claim natively, persists the claim instances in the
     /// proof, and the *next* fuse enforces them recursively via the PCS
     /// accumulator.
-    pub claims: FixedVec<PolyQueryClaim<C::CircuitField>, ConstLen<NUM_QUERY_SLOTS>>,
+    pub claims: FixedVec<PolyQueryClaim<C::CircuitField>, ConstLen<MAX_POLY_QUERIES>>,
     /// The derived-challenge pairs the circuit exposes, padded to exactly
     /// [`NUM_CHALLENGE_SLOTS`] entries, in slot order.
     pub challenges: FixedVec<
@@ -406,7 +436,9 @@ fn collect_values<'dr, D: Driver<'dr>, T: Send>(
 
 impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHookOutputs<'dr, D, C> {
     /// Reads each hook's wires back out as plain values, for the fuse.
-    pub(crate) fn into_values(self) -> Result<DriverValue<D, FrameworkAux<C>>> {
+    pub(crate) fn into_values<const MAX_WITNESSED_POLYS: usize, const MAX_POLY_QUERIES: usize>(
+        self,
+    ) -> Result<DriverValue<D, FrameworkAux<C, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>>> {
         let mut polys = Vec::with_capacity(self.witnessed_polys.len());
         for PolyWires { com, coefficients } in self.witnessed_polys {
             polys.push(D::try_just(|| {
@@ -571,7 +603,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     /// give. It is also why [`with_expected`](Self::with_expected) spells its
     /// fields out instead of delegating here — the two constructors are for the
     /// two driver kinds, and neither should compile in the other's place.
-    pub fn new() -> Self {
+    pub fn new(capacity: SlotCapacity) -> Self {
         Self {
             poly_queries: Vec::new(),
             witnessed_polys: Vec::new(),
@@ -580,6 +612,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
             challenge_inputs: Vec::new(),
             expected: None,
             proof_values: <D::MaybeKind as MaybeKind>::empty(),
+            capacity,
         }
     }
 
@@ -594,6 +627,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     pub fn with_expected(
         expected: HookLayout,
         proof_values: DriverValue<D, ProofValues<'dr, C>>,
+        capacity: SlotCapacity,
     ) -> Self {
         Self {
             poly_queries: Vec::new(),
@@ -603,7 +637,14 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
             challenge_inputs: Vec::new(),
             expected: Some(expected),
             proof_values,
+            capacity,
         }
+    }
+
+    /// The application's slot capacities, for the padding loops in
+    /// [`StepCtx::finish_slots`](crate::step::StepCtx).
+    pub(crate) fn capacity(&self) -> SlotCapacity {
+        self.capacity
     }
 
     /// The proof-level values the hooks commit to, for the hook bodies that
@@ -622,7 +663,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     /// therefore the generators, that `com` commits to.
     pub(crate) fn next_poly_slot(&self) -> Result<usize> {
         let slot = self.witnessed_polys.len();
-        if slot >= crate::NUM_POLY_SLOTS {
+        if slot >= self.capacity.max_witnessed_polys {
             return Err(Error::InvalidWitness(
                 "step witnessed more polynomials than there are polynomial slots".into(),
             ));
@@ -713,7 +754,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
         x: Element<'dr, D>,
         y: Element<'dr, D>,
     ) -> Result<()> {
-        if self.poly_queries.len() >= crate::NUM_QUERY_SLOTS {
+        if self.poly_queries.len() >= self.capacity.max_poly_queries {
             return Err(Error::InvalidWitness(
                 "step enforced more poly-queries than there are query slots".into(),
             ));
@@ -809,11 +850,19 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     }
 }
 
-/// Discovery-mode default; see [`FrameworkHooks::new`], including why this does
-/// not compile on a value-carrying driver.
+/// Discovery-mode default at the framework's default capacities; see
+/// [`FrameworkHooks::new`], including why this does not compile on a
+/// value-carrying driver.
+///
+/// An application with non-default capacities must go through
+/// [`new`](FrameworkHooks::new), which is what the adapter does — this exists
+/// for tests and for the `Default` bound, not for the proving path.
 impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Default for FrameworkHooks<'dr, D, C> {
     fn default() -> Self {
-        Self::new()
+        Self::new(SlotCapacity {
+            max_witnessed_polys: NUM_POLY_SLOTS,
+            max_poly_queries: NUM_QUERY_SLOTS,
+        })
     }
 }
 
@@ -834,7 +883,7 @@ mod tests {
     /// The framework caps a step body at `NUM_CHALLENGE_SLOTS` challenges.
     #[test]
     fn challenge_slots_are_capped() {
-        let mut hooks = FrameworkHooks::<Dr<'_>, Pasta>::new();
+        let mut hooks = FrameworkHooks::<Dr<'_>, Pasta>::default();
         for expected in 0..crate::NUM_CHALLENGE_SLOTS {
             assert_eq!(
                 hooks.take_challenge_slot().expect("within the cap"),
@@ -860,6 +909,10 @@ mod tests {
                 claims: 0,
             },
             <Empty as MaybeKind>::empty::<ProofValues<'_, Pasta>>(),
+            SlotCapacity {
+                max_witnessed_polys: crate::NUM_POLY_SLOTS,
+                max_poly_queries: crate::NUM_QUERY_SLOTS,
+            },
         );
         hooks.take_challenge_slot().expect("the discovered call");
         let error = hooks

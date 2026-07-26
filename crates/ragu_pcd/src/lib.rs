@@ -247,7 +247,8 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         // the witness body. That dry run is structure-only, so it needs no
         // cycle parameters, which is what lets registration stay eager here
         // while `finalize` remains where the parameters arrive.
-        let adapter = Adapter::<C, S, R, HEADER_SIZE>::new(step, None)?;
+        let adapter =
+            Adapter::<C, S, R, HEADER_SIZE, NUM_POLY_SLOTS, NUM_QUERY_SLOTS>::new(step, None)?;
         self.native_registry = self
             .native_registry
             .register_circuit(MultiStage::new(adapter))?;
@@ -299,13 +300,27 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         // Then, register internal steps
         self.native_registry = self
             .native_registry
-            .register_internal_step(MultiStage::new(Adapter::<C, _, R, HEADER_SIZE>::new(
+            .register_internal_step(MultiStage::new(Adapter::<
+                C,
+                _,
+                R,
+                HEADER_SIZE,
+                NUM_POLY_SLOTS,
+                NUM_QUERY_SLOTS,
+            >::new(
                 step::internal::rerandomize::Rerandomize::<()>::new(),
                 Some(params),
             )?))?;
         self.native_registry = self
             .native_registry
-            .register_internal_step(MultiStage::new(Adapter::<C, _, R, HEADER_SIZE>::new(
+            .register_internal_step(MultiStage::new(Adapter::<
+                C,
+                _,
+                R,
+                HEADER_SIZE,
+                NUM_POLY_SLOTS,
+                NUM_QUERY_SLOTS,
+            >::new(
                 step::internal::trivial::Trivial::new(),
                 Some(params),
             )?))?;
