@@ -83,11 +83,24 @@ use crate::internal::{
 ///
 /// [module-level documentation]: self
 /// [$v$]: unified::Output::v
-pub struct Circuit<C: Cycle, R, const HEADER_SIZE: usize> {
+pub struct Circuit<
+    C: Cycle,
+    R,
+    const HEADER_SIZE: usize,
+    const MAX_WITNESSED_POLYS: usize,
+    const MAX_POLY_QUERIES: usize,
+> {
     _marker: PhantomData<(C, R)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Circuit<C, R, HEADER_SIZE> {
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const MAX_WITNESSED_POLYS: usize,
+    const MAX_POLY_QUERIES: usize,
+> Circuit<C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>
+{
     pub fn new() -> MultiStage<C::CircuitField, R, Self> {
         MultiStage::new(Circuit {
             _marker: PhantomData,
@@ -103,24 +116,39 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Circuit<C, R, HEADER_SIZE> {
 /// - Evaluation component polynomials from eval stage
 ///
 /// [$v$]: unified::Output::v
-pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
+pub struct Witness<
+    'a,
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const MAX_WITNESSED_POLYS: usize,
+    const MAX_POLY_QUERIES: usize,
+> {
     /// The unified instance containing challenges and accumulated coverage.
     pub unified: unified::Instance<C>,
     /// Witness for the preamble stage (provides child proof data).
-    pub preamble_witness: &'a native_preamble::Witness<'a, C, R, HEADER_SIZE>,
+    pub preamble_witness:
+        &'a native_preamble::Witness<'a, C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>,
     /// Witness for the query stage (provides registry and polynomial evaluations).
     pub query_witness: &'a native_query::Witness<C>,
     /// Witness for the eval stage (provides evaluation component polynomials).
-    pub eval_witness: &'a native_eval::Witness<C::CircuitField>,
+    pub eval_witness: &'a native_eval::Witness<C::CircuitField, MAX_WITNESSED_POLYS>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitField, R>
-    for Circuit<C, R, HEADER_SIZE>
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const MAX_WITNESSED_POLYS: usize,
+    const MAX_POLY_QUERIES: usize,
+> MultiStageCircuit<C::CircuitField, R>
+    for Circuit<C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>
 {
-    type Last = native_eval::Stage<C, R, HEADER_SIZE>;
+    type Last = native_eval::Stage<C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>;
 
     type Instance<'source> = &'source unified::Instance<C>;
-    type Witness<'source> = Witness<'source, C, R, HEADER_SIZE>;
+    type Witness<'source> =
+        Witness<'source, C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>;
     type Output = unified::InternalOutputKind<C>;
     type Aux<'source> = unified::Instance<C>;
 
@@ -145,10 +173,27 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
     {
         // Set up multi-stage circuit pipeline: preamble -> query -> eval.
         // Each stage provides data needed for the v computation.
-        let (preamble, builder) =
-            builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
-        let (query, builder) = builder.add_stage::<native_query::Stage<C, R, HEADER_SIZE>>()?;
-        let (eval, builder) = builder.add_stage::<native_eval::Stage<C, R, HEADER_SIZE>>()?;
+        let (preamble, builder) = builder.add_stage::<native_preamble::Stage<
+            C,
+            R,
+            HEADER_SIZE,
+            MAX_WITNESSED_POLYS,
+            MAX_POLY_QUERIES,
+        >>()?;
+        let (query, builder) = builder.add_stage::<native_query::Stage<
+            C,
+            R,
+            HEADER_SIZE,
+            MAX_WITNESSED_POLYS,
+            MAX_POLY_QUERIES,
+        >>()?;
+        let (eval, builder) = builder.add_stage::<native_eval::Stage<
+            C,
+            R,
+            HEADER_SIZE,
+            MAX_WITNESSED_POLYS,
+            MAX_POLY_QUERIES,
+        >>()?;
         let dr = builder.finish();
 
         // Preamble is enforced because it contains child proof data that must
@@ -313,14 +358,26 @@ struct Denominators<'dr, D: Driver<'dr>> {
 }
 
 impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
-    fn new<C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>(
+    fn new<
+        C: Cycle<CircuitField = D::F>,
+        const HEADER_SIZE: usize,
+        const MAX_WITNESSED_POLYS: usize,
+        const MAX_POLY_QUERIES: usize,
+    >(
         dr: &mut D,
         u: &Element<'dr, D>,
         w: &Element<'dr, D>,
         x: &Element<'dr, D>,
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
-        preamble: &native_preamble::Output<'dr, D, C, HEADER_SIZE>,
+        preamble: &native_preamble::Output<
+            'dr,
+            D,
+            C,
+            HEADER_SIZE,
+            MAX_WITNESSED_POLYS,
+            MAX_POLY_QUERIES,
+        >,
     ) -> Result<Self>
     where
         D::F: ragu_arithmetic::ff::PrimeField,
@@ -619,10 +676,10 @@ fn compute_axbx<'dr, D: Driver<'dr>, P: Parameters>(
 /// [`compute_f`]: crate::Application::compute_f
 /// [$\alpha$]: unified::Output::alpha
 #[rustfmt::skip]
-fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>(
-    eval: &'a native_eval::Output<'dr, D>,
+fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize, const MAX_WITNESSED_POLYS: usize, const MAX_POLY_QUERIES: usize>(
+    eval: &'a native_eval::Output<'dr, D, MAX_WITNESSED_POLYS>,
     query: &'a native_query::Output<'dr, D>,
-    preamble: &'a native_preamble::Output<'dr, D, C, HEADER_SIZE>,
+    preamble: &'a native_preamble::Output<'dr, D, C, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>,
     d: &'a Denominators<'dr, D>,
     computed_ax: &'a Element<'dr, D>,
     computed_bx: &'a Element<'dr, D>,

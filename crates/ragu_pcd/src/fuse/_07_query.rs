@@ -71,10 +71,13 @@ impl<
             ),
         };
 
-        let rx = native::stages::query::Stage::<C, R, HEADER_SIZE>::rx(
-            C::CircuitField::random(&mut *rng),
-            &query_witness,
-        )?;
+        let rx = native::stages::query::Stage::<
+            C,
+            R,
+            HEADER_SIZE,
+            MAX_WITNESSED_POLYS,
+            MAX_POLY_QUERIES,
+        >::rx(C::CircuitField::random(&mut *rng), &query_witness)?;
 
         builder.set_native_query_rx(rx);
         builder.set_native_registry_xy_poly(registry_xy_poly);

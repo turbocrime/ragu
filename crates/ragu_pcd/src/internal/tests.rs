@@ -62,11 +62,13 @@ pub const HEADER_SIZE: usize = 90;
 // steps are present.
 const NUM_APP_STEPS: usize = 6000;
 
-type Preamble = preamble::Stage<Pasta, R, HEADER_SIZE>;
-type OuterError = outer_error::Stage<Pasta, R, HEADER_SIZE, RevdotParameters>;
-type InnerError = inner_error::Stage<Pasta, R, HEADER_SIZE, RevdotParameters>;
-type Query = query::Stage<Pasta, R, HEADER_SIZE>;
-type Eval = eval::Stage<Pasta, R, HEADER_SIZE>;
+type Preamble = preamble::Stage<Pasta, R, HEADER_SIZE, NUM_POLY_SLOTS, NUM_QUERY_SLOTS>;
+type OuterError =
+    outer_error::Stage<Pasta, R, HEADER_SIZE, NUM_POLY_SLOTS, NUM_QUERY_SLOTS, RevdotParameters>;
+type InnerError =
+    inner_error::Stage<Pasta, R, HEADER_SIZE, NUM_POLY_SLOTS, NUM_QUERY_SLOTS, RevdotParameters>;
+type Query = query::Stage<Pasta, R, HEADER_SIZE, NUM_POLY_SLOTS, NUM_QUERY_SLOTS>;
+type Eval = eval::Stage<Pasta, R, HEADER_SIZE, NUM_POLY_SLOTS, NUM_QUERY_SLOTS>;
 
 #[rustfmt::skip]
 #[test]

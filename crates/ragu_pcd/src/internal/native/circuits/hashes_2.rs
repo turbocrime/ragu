@@ -86,13 +86,28 @@ use crate::internal::{fold_revdot, transcript::Transcript};
 /// circuit.
 ///
 /// [module-level documentation]: self
-pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
+pub struct Circuit<
+    'params,
+    C: Cycle,
+    R,
+    const HEADER_SIZE: usize,
+    const MAX_WITNESSED_POLYS: usize,
+    const MAX_POLY_QUERIES: usize,
+    FP: fold_revdot::Parameters,
+> {
     params: &'params C::Params,
     _marker: PhantomData<(R, FP)>,
 }
 
-impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
-    Circuit<'params, C, R, HEADER_SIZE, FP>
+impl<
+    'params,
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const MAX_WITNESSED_POLYS: usize,
+    const MAX_POLY_QUERIES: usize,
+    FP: fold_revdot::Parameters,
+> Circuit<'params, C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES, FP>
 {
     /// Creates a new multi-stage circuit.
     ///
@@ -124,10 +139,18 @@ pub struct Witness<'a, C: Cycle, FP: fold_revdot::Parameters> {
     pub outer_error_witness: &'a native_outer_error::Witness<C, FP>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
-    MultiStageCircuit<C::CircuitField, R> for Circuit<'_, C, R, HEADER_SIZE, FP>
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const MAX_WITNESSED_POLYS: usize,
+    const MAX_POLY_QUERIES: usize,
+    FP: fold_revdot::Parameters,
+> MultiStageCircuit<C::CircuitField, R>
+    for Circuit<'_, C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES, FP>
 {
-    type Last = native_outer_error::Stage<C, R, HEADER_SIZE, FP>;
+    type Last =
+        native_outer_error::Stage<C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES, FP>;
 
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, FP>;
@@ -153,9 +176,21 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     where
         Self: 'dr,
     {
-        let builder = builder.skip_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
-        let (outer_error, builder) =
-            builder.add_stage::<native_outer_error::Stage<C, R, HEADER_SIZE, FP>>()?;
+        let builder = builder.skip_stage::<native_preamble::Stage<
+            C,
+            R,
+            HEADER_SIZE,
+            MAX_WITNESSED_POLYS,
+            MAX_POLY_QUERIES,
+        >>()?;
+        let (outer_error, builder) = builder.add_stage::<native_outer_error::Stage<
+            C,
+            R,
+            HEADER_SIZE,
+            MAX_WITNESSED_POLYS,
+            MAX_POLY_QUERIES,
+            FP,
+        >>()?;
         let dr = builder.finish();
 
         let outer_error =

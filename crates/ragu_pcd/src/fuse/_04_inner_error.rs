@@ -99,11 +99,14 @@ impl<
                     &claims_builder.b,
                 ),
             };
-        let native_rx =
-            native::stages::inner_error::Stage::<C, R, HEADER_SIZE, native::RevdotParameters>::rx(
-                C::CircuitField::random(&mut *rng),
-                &inner_error_witness,
-            )?;
+        let native_rx = native::stages::inner_error::Stage::<
+            C,
+            R,
+            HEADER_SIZE,
+            MAX_WITNESSED_POLYS,
+            MAX_POLY_QUERIES,
+            native::RevdotParameters,
+        >::rx(C::CircuitField::random(&mut *rng), &inner_error_witness)?;
 
         builder.set_native_inner_error_rx(native_rx);
 

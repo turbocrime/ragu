@@ -29,15 +29,21 @@ impl<
         s_prime: &NativeSPrime<C, R>,
         registry_wy: &RegistryWy<C, R>,
         builder: &mut ProofBuilder<'_, C, R>,
-    ) -> Result<native::stages::eval::Witness<C::CircuitField>>
+    ) -> Result<native::stages::eval::Witness<C::CircuitField, MAX_WITNESSED_POLYS>>
     where
         D: Driver<'dr, F = C::CircuitField>,
     {
         let u = *u.value().take();
 
         let eval_witness = native::stages::eval::Witness {
-            left: native::stages::eval::ChildEvaluationsWitness::from_proof(left, u),
-            right: native::stages::eval::ChildEvaluationsWitness::from_proof(right, u),
+            left:
+                native::stages::eval::ChildEvaluationsWitness::<_, MAX_WITNESSED_POLYS>::from_proof(
+                    left, u,
+                ),
+            right:
+                native::stages::eval::ChildEvaluationsWitness::<_, MAX_WITNESSED_POLYS>::from_proof(
+                    right, u,
+                ),
             current: native::stages::eval::CurrentStepWitness {
                 // TODO: the registry evaluations here could _theoretically_ be more
                 // efficient if they're computed simultaneously with assistance
@@ -51,10 +57,13 @@ impl<
                 registry_xy: builder.native_registry_xy_poly().eval(u),
             },
         };
-        let rx = native::stages::eval::Stage::<C, R, HEADER_SIZE>::rx(
-            C::CircuitField::random(&mut *rng),
-            &eval_witness,
-        )?;
+        let rx = native::stages::eval::Stage::<
+            C,
+            R,
+            HEADER_SIZE,
+            MAX_WITNESSED_POLYS,
+            MAX_POLY_QUERIES,
+        >::rx(C::CircuitField::random(&mut *rng), &eval_witness)?;
 
         builder.set_native_eval_rx(rx);
 

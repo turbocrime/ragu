@@ -21,8 +21,7 @@ use ragu_primitives::{
 };
 
 use crate::{
-    NUM_CHALLENGE_SLOTS, NUM_POLY_SLOTS, NUM_QUERY_SLOTS, Proof, header::Header,
-    internal::native::unified, step::internal::padded,
+    NUM_CHALLENGE_SLOTS, Proof, header::Header, internal::native::unified, step::internal::padded,
 };
 
 type HeaderVec<'dr, D, const HEADER_SIZE: usize> = FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>>;
@@ -68,7 +67,14 @@ pub struct ChallengeInstance<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>>
 }
 
 /// Witness data for a single child proof in the preamble stage.
-pub struct ChildWitness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
+pub struct ChildWitness<
+    'a,
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const MAX_WITNESSED_POLYS: usize,
+    const MAX_POLY_QUERIES: usize,
+> {
     /// Output header for this child proof.
     pub output_header: FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
     /// Reference to the child proof.
@@ -79,14 +85,29 @@ pub struct ChildWitness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
 ///
 /// Contains references to the left and right proofs, plus output headers
 /// computed outside the circuit.
-pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
+pub struct Witness<
+    'a,
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const MAX_WITNESSED_POLYS: usize,
+    const MAX_POLY_QUERIES: usize,
+> {
     /// Left child proof witness.
-    pub left: ChildWitness<'a, C, R, HEADER_SIZE>,
+    pub left: ChildWitness<'a, C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>,
     /// Right child proof witness.
-    pub right: ChildWitness<'a, C, R, HEADER_SIZE>,
+    pub right: ChildWitness<'a, C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>,
 }
 
-impl<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> Witness<'a, C, R, HEADER_SIZE> {
+impl<
+    'a,
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const MAX_WITNESSED_POLYS: usize,
+    const MAX_POLY_QUERIES: usize,
+> Witness<'a, C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>
+{
     /// Create a witness from child proof references and pre-computed output headers.
     pub fn new(
         left: &'a Proof<C, R>,
@@ -120,8 +141,14 @@ pub struct ChildHeaders<'dr, D: Driver<'dr>, const HEADER_SIZE: usize> {
 
 /// Processed inputs from a single child proof in the preamble stage.
 #[derive(Gadget, Consistent)]
-pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>
-{
+pub struct ProofInputs<
+    'dr,
+    D: Driver<'dr>,
+    C: Cycle<CircuitField = D::F>,
+    const HEADER_SIZE: usize,
+    const MAX_WITNESSED_POLYS: usize,
+    const MAX_POLY_QUERIES: usize,
+> {
     /// Headers this child proof claimed for its own children.
     #[ragu(gadget)]
     pub children: ChildHeaders<'dr, D, HEADER_SIZE>,
@@ -129,15 +156,15 @@ pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const
     #[ragu(gadget)]
     pub output_header: HeaderVec<'dr, D, HEADER_SIZE>,
     /// The poly-query claim instances this child proof raised, in slot order
-    /// (always [`NUM_QUERY_SLOTS`] entries; unused slots hold the
+    /// (always `MAX_POLY_QUERIES` entries; unused slots hold the
     /// canonical padding claim).
     #[ragu(gadget)]
-    pub claims: FixedVec<ClaimInstance<'dr, D>, ConstLen<NUM_QUERY_SLOTS>>,
+    pub claims: FixedVec<ClaimInstance<'dr, D>, ConstLen<MAX_POLY_QUERIES>>,
     /// The polynomials this child proof witnessed, in slot order (always
-    /// [`NUM_POLY_SLOTS`] entries; unused slots hold the canonical padding
+    /// `MAX_WITNESSED_POLYS` entries; unused slots hold the canonical padding
     /// polynomial). A claim above names one of these by index.
     #[ragu(gadget)]
-    pub polys: FixedVec<PolyInstance<'dr, D, C>, ConstLen<NUM_POLY_SLOTS>>,
+    pub polys: FixedVec<PolyInstance<'dr, D, C>, ConstLen<MAX_WITNESSED_POLYS>>,
     /// The derived-challenge pairs the child's circuit exposed, in slot order.
     #[ragu(gadget)]
     pub challenges: FixedVec<ChallengeInstance<'dr, D, C>, ConstLen<NUM_CHALLENGE_SLOTS>>,
@@ -147,8 +174,14 @@ pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const
     pub unified: unified::Output<'dr, D, C>,
 }
 
-impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usize>
-    ProofInputs<'dr, D, C, HEADER_SIZE>
+impl<
+    'dr,
+    D: Driver<'dr, F = C::CircuitField>,
+    C: Cycle,
+    const HEADER_SIZE: usize,
+    const MAX_WITNESSED_POLYS: usize,
+    const MAX_POLY_QUERIES: usize,
+> ProofInputs<'dr, D, C, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>
 {
     /// Compute unified k(y) and unified+bridged k(y) values simultaneously,
     /// sharing computation.
@@ -222,8 +255,14 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
     }
 }
 
-impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usize>
-    ProofInputs<'dr, D, C, HEADER_SIZE>
+impl<
+    'dr,
+    D: Driver<'dr, F = C::CircuitField>,
+    C: Cycle,
+    const HEADER_SIZE: usize,
+    const MAX_WITNESSED_POLYS: usize,
+    const MAX_POLY_QUERIES: usize,
+> ProofInputs<'dr, D, C, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>
 {
     /// Allocate ProofInputs from a proof reference and pre-computed output header.
     pub fn alloc<R: Rank>(
@@ -260,7 +299,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
             output_header: alloc_header(dr, allocator, output_header.as_ref().map(|h| &h[..]))?,
             polys: {
                 D::try_just(|| {
-                    if proof.as_ref().take().application_polys().len() != NUM_POLY_SLOTS {
+                    if proof.as_ref().take().application_polys().len() != MAX_WITNESSED_POLYS {
                         return Err(Error::MalformedEncoding(
                             "proof does not carry exactly NUM_POLY_SLOTS polynomial commitments"
                                 .into(),
@@ -268,7 +307,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                     }
                     Ok(())
                 })?;
-                (0..NUM_POLY_SLOTS)
+                (0..MAX_WITNESSED_POLYS)
                     .map(|i| {
                         Ok(PolyInstance {
                             com: Point::alloc(
@@ -281,14 +320,14 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
             },
             claims: {
                 D::try_just(|| {
-                    if proof.as_ref().take().application_claims().len() != NUM_QUERY_SLOTS {
+                    if proof.as_ref().take().application_claims().len() != MAX_POLY_QUERIES {
                         return Err(Error::MalformedEncoding(
                             "proof does not carry exactly NUM_QUERY_SLOTS claim instances".into(),
                         ));
                     }
                     Ok(())
                 })?;
-                (0..NUM_QUERY_SLOTS)
+                (0..MAX_POLY_QUERIES)
                     .map(|i| {
                         Ok(ClaimInstance {
                             poly_slot: Element::alloc(
@@ -379,15 +418,28 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
 /// This is stage communication data, not part of the circuit's public instance.
 /// The verifier never sees these values directly.
 #[derive(Gadget, Consistent)]
-pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize> {
+pub struct Output<
+    'dr,
+    D: Driver<'dr>,
+    C: Cycle<CircuitField = D::F>,
+    const HEADER_SIZE: usize,
+    const MAX_WITNESSED_POLYS: usize,
+    const MAX_POLY_QUERIES: usize,
+> {
     #[ragu(gadget)]
-    pub left: ProofInputs<'dr, D, C, HEADER_SIZE>,
+    pub left: ProofInputs<'dr, D, C, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>,
     #[ragu(gadget)]
-    pub right: ProofInputs<'dr, D, C, HEADER_SIZE>,
+    pub right: ProofInputs<'dr, D, C, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>,
 }
 
-impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>
-    Output<'dr, D, C, HEADER_SIZE>
+impl<
+    'dr,
+    D: Driver<'dr>,
+    C: Cycle<CircuitField = D::F>,
+    const HEADER_SIZE: usize,
+    const MAX_WITNESSED_POLYS: usize,
+    const MAX_POLY_QUERIES: usize,
+> Output<'dr, D, C, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>
 {
     /// Returns true if both child proofs are trivial proofs.
     pub fn is_base_case(
@@ -402,16 +454,29 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usiz
 }
 
 #[derive(Default)]
-pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize> {
+pub struct Stage<
+    C: Cycle,
+    R,
+    const HEADER_SIZE: usize,
+    const MAX_WITNESSED_POLYS: usize,
+    const MAX_POLY_QUERIES: usize,
+> {
     _marker: PhantomData<(C, R)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField, R>
-    for Stage<C, R, HEADER_SIZE>
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const MAX_WITNESSED_POLYS: usize,
+    const MAX_POLY_QUERIES: usize,
+> staging::Stage<C::CircuitField, R>
+    for Stage<C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>
 {
     type Parent = ();
-    type Witness<'source> = &'source Witness<'source, C, R, HEADER_SIZE>;
-    type OutputKind = Kind![C::CircuitField; Output<'_, _, C, HEADER_SIZE>];
+    type Witness<'source> =
+        &'source Witness<'source, C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>;
+    type OutputKind = Kind![C::CircuitField; Output<'_, _, C, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>];
 
     fn values() -> usize {
         // 2 proofs * (3 headers * HEADER_SIZE + polynomial slots (2 wires each)
@@ -419,8 +484,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
         //             + challenge slots (3 wires each)
         //             + 1 circuit_id + unified instance wires)
         2 * (3 * HEADER_SIZE
-            + 2 * NUM_POLY_SLOTS
-            + 3 * NUM_QUERY_SLOTS
+            + 2 * MAX_WITNESSED_POLYS
+            + 3 * MAX_POLY_QUERIES
             + 3 * NUM_CHALLENGE_SLOTS
             + 1
             + unified::NUM_WIRES)
@@ -459,6 +524,12 @@ mod tests {
 
     #[test]
     fn stage_values_matches_wire_count() {
-        assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }>::default());
+        assert_stage_values(&Stage::<
+            Pasta,
+            R,
+            { HEADER_SIZE },
+            { crate::NUM_POLY_SLOTS },
+            { crate::NUM_QUERY_SLOTS },
+        >::default());
     }
 }

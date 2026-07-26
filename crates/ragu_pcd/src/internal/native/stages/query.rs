@@ -277,14 +277,26 @@ pub struct Output<'dr, D: Driver<'dr>> {
 
 /// The query stage of the fuse witness.
 #[derive(Default)]
-pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize> {
+pub struct Stage<
+    C: Cycle,
+    R,
+    const HEADER_SIZE: usize,
+    const MAX_WITNESSED_POLYS: usize,
+    const MAX_POLY_QUERIES: usize,
+> {
     _marker: PhantomData<(C, R)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField, R>
-    for Stage<C, R, HEADER_SIZE>
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const MAX_WITNESSED_POLYS: usize,
+    const MAX_POLY_QUERIES: usize,
+> staging::Stage<C::CircuitField, R>
+    for Stage<C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>
 {
-    type Parent = super::preamble::Stage<C, R, HEADER_SIZE>;
+    type Parent = super::preamble::Stage<C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>;
     type Witness<'source> = &'source Witness<C>;
     type OutputKind = Kind![C::CircuitField; Output<'_, _>];
 
@@ -327,6 +339,12 @@ mod tests {
 
     #[test]
     fn stage_values_matches_wire_count() {
-        assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }>::default());
+        assert_stage_values(&Stage::<
+            Pasta,
+            R,
+            { HEADER_SIZE },
+            { crate::NUM_POLY_SLOTS },
+            { crate::NUM_QUERY_SLOTS },
+        >::default());
     }
 }

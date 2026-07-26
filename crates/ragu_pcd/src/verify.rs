@@ -90,8 +90,13 @@ impl<
             Emulator::emulate_wireless((pcd.proof(), pcd.data().clone(), y), |dr, witness| {
                 let (proof, data, y) = witness.cast();
                 let y = Element::alloc(dr, &mut (), y)?;
-                let proof_inputs =
-                    ProofInputs::<_, C, HEADER_SIZE>::alloc_for_verify::<R, H>(dr, proof, data)?;
+                let proof_inputs = ProofInputs::<
+                    _,
+                    C,
+                    HEADER_SIZE,
+                    MAX_WITNESSED_POLYS,
+                    MAX_POLY_QUERIES,
+                >::alloc_for_verify::<R, H>(dr, proof, data)?;
 
                 let (unified_ky, unified_bridge_ky) = proof_inputs.unified_ky_values(dr, &y)?;
                 let unified_ky = *unified_ky.value().take();

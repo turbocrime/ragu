@@ -34,13 +34,13 @@ use ragu_primitives::{
 };
 
 use crate::{
-    NUM_POLY_SLOTS, Proof,
+    Proof,
     internal::native::{RxComponent, RxValues},
 };
 
 /// Polynomial evaluations at $u$ (from the parent fuse operation) for a child
 /// proof. Supplied by the prover to construct the `eval` stage witness.
-pub struct ChildEvaluationsWitness<F> {
+pub struct ChildEvaluationsWitness<F, const MAX_WITNESSED_POLYS: usize> {
     /// All of the child proof's Rx components are evaluated at $u$.
     pub rx: RxValues<F>,
 
@@ -66,10 +66,12 @@ pub struct ChildEvaluationsWitness<F> {
     /// in slot order. These feed the parent's recursive enforcement of the
     /// child's claims: the quotient $(p_i(u) - y_i)/(u - x_i)$ enters $f(u)$
     /// and each $p_i(u)$ enters the $v$ Horner accumulation.
-    pub claims: [F; NUM_POLY_SLOTS],
+    pub claims: [F; MAX_WITNESSED_POLYS],
 }
 
-impl<F: PrimeField> ChildEvaluationsWitness<F> {
+impl<F: PrimeField, const MAX_WITNESSED_POLYS: usize>
+    ChildEvaluationsWitness<F, MAX_WITNESSED_POLYS>
+{
     /// Create child evaluations witness from a proof evaluated at point u.
     pub fn from_proof<C: Cycle<CircuitField = F>, R: Rank>(proof: &Proof<C, R>, u: F) -> Self {
         ChildEvaluationsWitness {
@@ -119,12 +121,12 @@ pub struct CurrentStepWitness<F> {
 }
 
 /// Witness for the eval stage.
-pub struct Witness<F> {
+pub struct Witness<F, const MAX_WITNESSED_POLYS: usize> {
     /// Left proof's evaluations at $u$.
-    pub left: ChildEvaluationsWitness<F>,
+    pub left: ChildEvaluationsWitness<F, MAX_WITNESSED_POLYS>,
 
     /// Right proof's evaluations at $u$.
-    pub right: ChildEvaluationsWitness<F>,
+    pub right: ChildEvaluationsWitness<F, MAX_WITNESSED_POLYS>,
 
     /// Current fuse step's evaluations at $u$.
     pub current: CurrentStepWitness<F>,
@@ -138,7 +140,7 @@ pub struct Witness<F> {
 /// of the coefficients for the weighted sum with $\beta$ via
 /// [`Horner`](ragu_circuits::horner::Horner) evaluation.
 #[derive(Gadget, Write)]
-pub struct ChildEvaluations<'dr, D: Driver<'dr>> {
+pub struct ChildEvaluations<'dr, D: Driver<'dr>, const MAX_WITNESSED_POLYS: usize> {
     #[ragu(gadget)]
     pub rx: RxValues<Element<'dr, D>>,
     #[ragu(gadget)]
@@ -153,15 +155,17 @@ pub struct ChildEvaluations<'dr, D: Driver<'dr>> {
     /// last so the [`Write`] order (and hence the $v$ Horner weighting)
     /// matches the `_10_p` accumulation order.
     #[ragu(gadget)]
-    pub claims: FixedVec<Element<'dr, D>, ConstLen<NUM_POLY_SLOTS>>,
+    pub claims: FixedVec<Element<'dr, D>, ConstLen<MAX_WITNESSED_POLYS>>,
 }
 
-impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
+impl<'dr, D: Driver<'dr>, const MAX_WITNESSED_POLYS: usize>
+    ChildEvaluations<'dr, D, MAX_WITNESSED_POLYS>
+{
     /// Allocate child evaluations from pre-computed witness values.
     pub fn alloc<A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
-        witness: DriverValue<D, &ChildEvaluationsWitness<D::F>>,
+        witness: DriverValue<D, &ChildEvaluationsWitness<D::F, MAX_WITNESSED_POLYS>>,
     ) -> Result<Self> {
         let rx = RxValues::try_from_fn(|id| {
             Element::alloc(dr, allocator, witness.as_ref().map(|w| *w.rx.get(id)))
@@ -176,7 +180,7 @@ impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
                 witness.as_ref().map(|w| w.registry_xy_poly),
             )?,
             p_poly: Element::alloc(dr, allocator, witness.as_ref().map(|w| w.p_poly))?,
-            claims: (0..NUM_POLY_SLOTS)
+            claims: (0..MAX_WITNESSED_POLYS)
                 .map(|i| Element::alloc(dr, allocator, witness.as_ref().map(|w| w.claims[i])))
                 .try_collect_fixed()?,
         })
@@ -187,11 +191,11 @@ impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
 ///
 /// This is stage communication data, not part of the circuit's public instance.
 #[derive(Gadget, Write)]
-pub struct Output<'dr, D: Driver<'dr>> {
+pub struct Output<'dr, D: Driver<'dr>, const MAX_WITNESSED_POLYS: usize> {
     #[ragu(gadget)]
-    pub left: ChildEvaluations<'dr, D>,
+    pub left: ChildEvaluations<'dr, D, MAX_WITNESSED_POLYS>,
     #[ragu(gadget)]
-    pub right: ChildEvaluations<'dr, D>,
+    pub right: ChildEvaluations<'dr, D, MAX_WITNESSED_POLYS>,
     #[ragu(gadget)]
     pub registry_wx0: Element<'dr, D>,
     #[ragu(gadget)]
@@ -208,21 +212,33 @@ pub struct Output<'dr, D: Driver<'dr>> {
 
 /// The eval stage of the fuse witness.
 #[derive(Default)]
-pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize> {
+pub struct Stage<
+    C: Cycle,
+    R,
+    const HEADER_SIZE: usize,
+    const MAX_WITNESSED_POLYS: usize,
+    const MAX_POLY_QUERIES: usize,
+> {
     _marker: PhantomData<(C, R)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField, R>
-    for Stage<C, R, HEADER_SIZE>
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const MAX_WITNESSED_POLYS: usize,
+    const MAX_POLY_QUERIES: usize,
+> staging::Stage<C::CircuitField, R>
+    for Stage<C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>
 {
-    type Parent = super::query::Stage<C, R, HEADER_SIZE>;
-    type Witness<'source> = &'source Witness<C::CircuitField>;
-    type OutputKind = Kind![C::CircuitField; Output<'_, _>];
+    type Parent = super::query::Stage<C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>;
+    type Witness<'source> = &'source Witness<C::CircuitField, MAX_WITNESSED_POLYS>;
+    type OutputKind = Kind![C::CircuitField; Output<'_, _, MAX_WITNESSED_POLYS>];
 
     fn values() -> usize {
         // 2 * ChildEvaluations (one evaluation per RxIndex, 4 scalars, one per
         //   claim slot, one per challenge slot) + current step elements (6)
-        2 * (super::super::RxIndex::NUM + 4 + NUM_POLY_SLOTS) + 6
+        2 * (super::super::RxIndex::NUM + 4 + MAX_WITNESSED_POLYS) + 6
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -280,6 +296,12 @@ mod tests {
 
     #[test]
     fn stage_values_matches_wire_count() {
-        assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }>::default());
+        assert_stage_values(&Stage::<
+            Pasta,
+            R,
+            { HEADER_SIZE },
+            { crate::NUM_POLY_SLOTS },
+            { crate::NUM_QUERY_SLOTS },
+        >::default());
     }
 }

@@ -83,12 +83,27 @@ use super::super::{
 /// performed by this circuit.
 ///
 /// [module-level documentation]: self
-pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize> {
+pub struct Circuit<
+    'params,
+    C: Cycle,
+    R,
+    const HEADER_SIZE: usize,
+    const MAX_WITNESSED_POLYS: usize,
+    const MAX_POLY_QUERIES: usize,
+> {
     params: &'params C::Params,
     _marker: PhantomData<(R,)>,
 }
 
-impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> Circuit<'params, C, R, HEADER_SIZE> {
+impl<
+    'params,
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const MAX_WITNESSED_POLYS: usize,
+    const MAX_POLY_QUERIES: usize,
+> Circuit<'params, C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>
+{
     /// Creates a new multi-stage circuit.
     ///
     /// # Parameters
@@ -103,23 +118,38 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> Circuit<'params, C, R
 }
 
 /// Witness data for the challenge binding circuit.
-pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
+pub struct Witness<
+    'a,
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const MAX_WITNESSED_POLYS: usize,
+    const MAX_POLY_QUERIES: usize,
+> {
     /// The unified instance, threaded through the internal circuits.
     pub unified: unified::Instance<C>,
 
     /// Witness for the [`preamble`] stage (unenforced).
     ///
     /// Provides each child's `(point, challenge)` pairs.
-    pub preamble_witness: &'a preamble::Witness<'a, C, R, HEADER_SIZE>,
+    pub preamble_witness:
+        &'a preamble::Witness<'a, C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitField, R>
-    for Circuit<'_, C, R, HEADER_SIZE>
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const MAX_WITNESSED_POLYS: usize,
+    const MAX_POLY_QUERIES: usize,
+> MultiStageCircuit<C::CircuitField, R>
+    for Circuit<'_, C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>
 {
-    type Last = preamble::Stage<C, R, HEADER_SIZE>;
+    type Last = preamble::Stage<C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>;
 
     type Instance<'source> = &'source unified::Instance<C>;
-    type Witness<'source> = Witness<'source, C, R, HEADER_SIZE>;
+    type Witness<'source> =
+        Witness<'source, C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>;
     type Output = unified::InternalOutputKind<C>;
     type Aux<'source> = unified::Instance<C>;
 
@@ -142,7 +172,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
     where
         Self: 'dr,
     {
-        let (preamble, builder) = builder.add_stage::<preamble::Stage<C, R, HEADER_SIZE>>()?;
+        let (preamble, builder) = builder.add_stage::<preamble::Stage<
+            C,
+            R,
+            HEADER_SIZE,
+            MAX_WITNESSED_POLYS,
+            MAX_POLY_QUERIES,
+        >>()?;
         let dr = builder.finish();
 
         let preamble = preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;

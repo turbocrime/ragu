@@ -27,7 +27,16 @@ impl<
         left: &'a Proof<C, R>,
         right: &'a Proof<C, R>,
         builder: &mut ProofBuilder<'_, C, R>,
-    ) -> Result<native::stages::preamble::Witness<'a, C, R, HEADER_SIZE>> {
+    ) -> Result<
+        native::stages::preamble::Witness<
+            'a,
+            C,
+            R,
+            HEADER_SIZE,
+            MAX_WITNESSED_POLYS,
+            MAX_POLY_QUERIES,
+        >,
+    > {
         let preamble_witness = self.compute_native_preamble(rng, left, right, builder)?;
         self.compute_bridge_preamble(rng, left, right, builder)?;
         Ok(preamble_witness)
@@ -39,7 +48,16 @@ impl<
         left: &'a Proof<C, R>,
         right: &'a Proof<C, R>,
         builder: &mut ProofBuilder<'_, C, R>,
-    ) -> Result<native::stages::preamble::Witness<'a, C, R, HEADER_SIZE>> {
+    ) -> Result<
+        native::stages::preamble::Witness<
+            'a,
+            C,
+            R,
+            HEADER_SIZE,
+            MAX_WITNESSED_POLYS,
+            MAX_POLY_QUERIES,
+        >,
+    > {
         let preamble_witness = native::stages::preamble::Witness::new(
             left,
             right,
@@ -47,10 +65,13 @@ impl<
             builder.right_header(),
         )?;
 
-        let rx = native::stages::preamble::Stage::<C, R, HEADER_SIZE>::rx(
-            C::CircuitField::random(&mut *rng),
-            &preamble_witness,
-        )?;
+        let rx = native::stages::preamble::Stage::<
+            C,
+            R,
+            HEADER_SIZE,
+            MAX_WITNESSED_POLYS,
+            MAX_POLY_QUERIES,
+        >::rx(C::CircuitField::random(&mut *rng), &preamble_witness)?;
 
         builder.set_native_preamble_rx(rx);
 

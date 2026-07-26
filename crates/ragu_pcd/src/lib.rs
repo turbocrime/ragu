@@ -312,11 +312,13 @@ impl<
             internal::native::total_circuit_counts(self.num_application_steps);
 
         // First, register internal circuits and masks
-        self.native_registry = internal::native::register_all::<C, R, HEADER_SIZE>(
-            self.native_registry,
-            params,
-            log2_circuits,
-        )?;
+        self.native_registry = internal::native::register_all::<
+            C,
+            R,
+            HEADER_SIZE,
+            MAX_WITNESSED_POLYS,
+            MAX_POLY_QUERIES,
+        >(self.native_registry, params, log2_circuits)?;
 
         // Then, register internal steps
         self.native_registry = self
