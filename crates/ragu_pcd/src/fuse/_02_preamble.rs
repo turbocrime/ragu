@@ -26,7 +26,7 @@ impl<
         rng: &mut RNG,
         left: &'a Proof<C, R>,
         right: &'a Proof<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, MAX_WITNESSED_POLYS>,
     ) -> Result<
         native::stages::preamble::Witness<
             'a,
@@ -47,7 +47,7 @@ impl<
         rng: &mut RNG,
         left: &'a Proof<C, R>,
         right: &'a Proof<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, MAX_WITNESSED_POLYS>,
     ) -> Result<
         native::stages::preamble::Witness<
             'a,
@@ -83,7 +83,7 @@ impl<
         rng: &mut RNG,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, MAX_WITNESSED_POLYS>,
     ) -> Result<()> {
         let bridge_rx = nested::stages::preamble::Stage::<C::HostCurve, R>::rx(
             C::ScalarField::random(&mut *rng),

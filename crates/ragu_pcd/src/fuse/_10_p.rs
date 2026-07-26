@@ -64,7 +64,7 @@ impl<
         s_prime: &NativeSPrime<C, R>,
         registry_wy: &RegistryWy<C, R>,
         f: &NativeF<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, MAX_WITNESSED_POLYS>,
     ) -> Result<()>
     where
         D: Driver<'dr, F = C::CircuitField>,

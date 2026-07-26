@@ -37,7 +37,7 @@ impl<
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
         source: &FuseProofSource<'rx, C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, MAX_WITNESSED_POLYS>,
     ) -> Result<(
         native::stages::inner_error::Witness<C, native::RevdotParameters>,
         FuseBuilder<'_, 'rx, C::CircuitField, R>,
@@ -56,7 +56,7 @@ impl<
         &self,
         rng: &mut RNG,
         registry_wy: &RegistryWy<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, MAX_WITNESSED_POLYS>,
     ) -> Result<()> {
         let bridge_rx = nested::stages::inner_error::Stage::<C::HostCurve, R>::rx(
             C::ScalarField::random(&mut *rng),
@@ -77,7 +77,7 @@ impl<
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
         source: &FuseProofSource<'rx, C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, MAX_WITNESSED_POLYS>,
     ) -> Result<(
         native::stages::inner_error::Witness<C, native::RevdotParameters>,
         FuseBuilder<'_, 'rx, C::CircuitField, R>,

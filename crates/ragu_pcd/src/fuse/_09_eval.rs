@@ -28,7 +28,7 @@ impl<
         right: &Proof<C, R>,
         s_prime: &NativeSPrime<C, R>,
         registry_wy: &RegistryWy<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, MAX_WITNESSED_POLYS>,
     ) -> Result<native::stages::eval::Witness<C::CircuitField, MAX_WITNESSED_POLYS>>
     where
         D: Driver<'dr, F = C::CircuitField>,

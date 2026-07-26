@@ -206,7 +206,7 @@ macro_rules! cached_bridge {
 /// Native commitment caches are computed lazily from polynomials on first
 /// access. Special commitments (`a`, `b`, `p`) must be provided explicitly
 /// because they are computed via non-standard techniques.
-pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
+pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, const MAX_WITNESSED_POLYS: usize> {
     params: &'params C::Params,
 
     /// Shared alpha source for the four cached bridge commitments.
@@ -334,7 +334,9 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     challenge_stage_commitments: Option<[C::HostCurve; crate::NUM_CHALLENGE_SLOTS]>,
 }
 
-impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
+impl<'params, C: Cycle, R: Rank, const MAX_WITNESSED_POLYS: usize>
+    ProofBuilder<'params, C, R, MAX_WITNESSED_POLYS>
+{
     /// Create a new empty builder with the given `bridge_alpha` source for
     /// deriving cached bridge polynomial alphas.
     pub(crate) fn new(
