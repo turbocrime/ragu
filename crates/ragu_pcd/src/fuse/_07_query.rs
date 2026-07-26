@@ -16,7 +16,14 @@ use ragu_primitives::Element;
 use super::RegistryWy;
 use crate::{Application, Proof, internal::native, proof::ProofBuilder};
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const MAX_WITNESSED_POLYS: usize,
+    const MAX_POLY_QUERIES: usize,
+> Application<'_, C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>
+{
     pub(super) fn compute_query<'dr, D, RNG: CryptoRngCore>(
         &self,
         rng: &mut RNG,

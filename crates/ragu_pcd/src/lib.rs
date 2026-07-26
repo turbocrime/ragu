@@ -189,7 +189,14 @@ pub const CHALLENGE_WIDTH: usize = 4;
 pub const NUM_CHALLENGE_SLOTS: usize = 2;
 
 /// Builder for an [`Application`] for proof-carrying data.
-pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
+pub struct ApplicationBuilder<
+    'params,
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const MAX_WITNESSED_POLYS: usize = NUM_POLY_SLOTS,
+    const MAX_POLY_QUERIES: usize = NUM_QUERY_SLOTS,
+> {
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
     num_application_steps: usize,
@@ -198,18 +205,30 @@ pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, const HEADER_SIZE: usi
     #[cfg(feature = "unstable-fuzzing")]
     skip_claim_precheck: bool,
     _marker: PhantomData<[(); HEADER_SIZE]>,
+    _slots: PhantomData<([(); MAX_WITNESSED_POLYS], [(); MAX_POLY_QUERIES])>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Default
-    for ApplicationBuilder<'_, C, R, HEADER_SIZE>
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const MAX_WITNESSED_POLYS: usize,
+    const MAX_POLY_QUERIES: usize,
+> Default for ApplicationBuilder<'_, C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
-    ApplicationBuilder<'params, C, R, HEADER_SIZE>
+impl<
+    'params,
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const MAX_WITNESSED_POLYS: usize,
+    const MAX_POLY_QUERIES: usize,
+> ApplicationBuilder<'params, C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>
 {
     /// Create an empty [`ApplicationBuilder`] for proof-carrying data. The
     /// cycle's runtime parameters are not needed until
@@ -223,6 +242,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             #[cfg(feature = "unstable-fuzzing")]
             skip_claim_precheck: false,
             _marker: PhantomData,
+            _slots: PhantomData,
         }
     }
 
@@ -247,8 +267,9 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         // the witness body. That dry run is structure-only, so it needs no
         // cycle parameters, which is what lets registration stay eager here
         // while `finalize` remains where the parameters arrive.
-        let adapter =
-            Adapter::<C, S, R, HEADER_SIZE, NUM_POLY_SLOTS, NUM_QUERY_SLOTS>::new(step, None)?;
+        let adapter = Adapter::<C, S, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>::new(
+            step, None,
+        )?;
         self.native_registry = self
             .native_registry
             .register_circuit(MultiStage::new(adapter))?;
@@ -348,6 +369,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             #[cfg(feature = "unstable-fuzzing")]
             skip_claim_precheck: self.skip_claim_precheck,
             _marker: PhantomData,
+            _slots: PhantomData,
         })
     }
 
@@ -383,7 +405,14 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
 }
 
 /// The recursion context that is used to create and verify proof-carrying data.
-pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
+pub struct Application<
+    'params,
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const MAX_WITNESSED_POLYS: usize = NUM_POLY_SLOTS,
+    const MAX_POLY_QUERIES: usize = NUM_QUERY_SLOTS,
+> {
     native_registry: Registry<'params, C::CircuitField, R>,
     nested_registry: Registry<'params, C::ScalarField, R>,
     params: &'params C::Params,
@@ -395,9 +424,17 @@ pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     #[cfg(feature = "unstable-fuzzing")]
     pub(crate) skip_claim_precheck: bool,
     _marker: PhantomData<[(); HEADER_SIZE]>,
+    _slots: PhantomData<([(); MAX_WITNESSED_POLYS], [(); MAX_POLY_QUERIES])>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const MAX_WITNESSED_POLYS: usize,
+    const MAX_POLY_QUERIES: usize,
+> Application<'_, C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>
+{
     /// Seed a new computation by running a step with trivial inputs.
     ///
     /// This is the entry point for creating leaf nodes in a PCD tree.

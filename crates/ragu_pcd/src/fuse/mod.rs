@@ -46,7 +46,14 @@ struct NativeSPrime<C: Cycle, R: Rank> {
     registry_wx1_commitment: C::HostCurve,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const MAX_WITNESSED_POLYS: usize,
+    const MAX_POLY_QUERIES: usize,
+> Application<'_, C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>
+{
     /// Fuse two [`Pcd`] into one using a provided [`Step`].
     ///
     /// The provided `step` must have been previously registered with this

@@ -25,7 +25,7 @@ use ragu_circuits::{
 use ragu_core::{Error, Result};
 
 use crate::{
-    Application, Header, NUM_POLY_SLOTS, NUM_QUERY_SLOTS, Pcd, Proof,
+    Application, Header, Pcd, Proof,
     framework_hooks::{Alphas, FrameworkAux},
     internal::challenge,
     proof::ProofBuilder,
@@ -35,7 +35,14 @@ use crate::{
     },
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const MAX_WITNESSED_POLYS: usize,
+    const MAX_POLY_QUERIES: usize,
+> Application<'_, C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>
+{
     pub(super) fn compute_application_proof<'source, RNG: CryptoRngCore, S: Step<C>>(
         &self,
         rng: &mut RNG,
@@ -57,8 +64,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             S,
             R,
             HEADER_SIZE,
-            NUM_POLY_SLOTS,
-            NUM_QUERY_SLOTS,
+            MAX_WITNESSED_POLYS,
+            MAX_POLY_QUERIES,
         >::new(step, Some(self.params))?)
         .trace((
             Alphas {
