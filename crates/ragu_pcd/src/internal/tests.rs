@@ -107,7 +107,7 @@ fn test_internal_circuit_constraint_counts() {
     check_constraints!(Hashes2Circuit,          mul = 2000, lin = 2951);
     check_constraints!(InnerCollapseCircuit,    mul = 1877, lin = 1918);
     check_constraints!(OuterCollapseCircuit,    mul = 1986, lin = 2926);
-    check_constraints!(ComputeVCircuit,         mul = 1434, lin = 2115);
+    check_constraints!(ComputeVCircuit,         mul = 1695, lin = 2787);
     check_constraints!(ChallengeBindingCircuit, mul = 1530, lin = 2379);
 }
 
@@ -237,7 +237,7 @@ fn test_native_registry_digest() {
     // (four more per fuse, one per child per slot). Changed again when
     // `NUM_QUERY_SLOTS` went from 4 to 8 and `HEADER_SIZE` from 100 to 90
     // — both change the width of every application circuit's instance.
-    let expected = fp!(0x12e7b2d0196614d924228247727666dc647b084df8baf6d7cd1b0edef02836d3);
+    let expected = fp!(0x35282de658728d23fdaa8e191f5fc36aacd415c531af9168e9708cbf26a9eb5b);
 
     assert_eq!(
         app.native_registry.digest(),

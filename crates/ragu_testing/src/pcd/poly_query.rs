@@ -169,6 +169,19 @@ impl<C: Cycle, R: Rank> Step<C> for CommitAndOpen<'_, C, R> {
         // (4) Enforce the evaluation as a poly-query claim.
         ctx.enforce_poly_query(&handle, z, y)?;
 
+        // (5) Open the *same* polynomial a second time, at x = 0. This is the
+        // cheap direction: a repeat opening spends one query slot and no
+        // polynomial slot — no second `witness_polynomial`, so no second bridge
+        // stage, commitment, MSM or endoscaling point. Exercising it here means
+        // every test in this fixture's suite covers it end to end.
+        let zero = Element::alloc(ctx.dr, allocator, D::just(|| C::CircuitField::ZERO))?;
+        let at_zero_value = handle
+            .polynomial()
+            .as_ref()
+            .map(|p| p.eval(C::CircuitField::ZERO));
+        let at_zero = Element::alloc(ctx.dr, allocator, at_zero_value)?;
+        ctx.enforce_poly_query(&handle, zero, at_zero)?;
+
         // Output digest binds the commitment.
         let mut sponge = Sponge::new(ctx.dr, self.poseidon_params);
         handle.commitment().write(ctx.dr, &mut sponge)?;

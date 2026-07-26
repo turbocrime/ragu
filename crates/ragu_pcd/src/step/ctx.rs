@@ -134,10 +134,14 @@ where
     /// That pre-check carries no soundness weight (it runs on the prover);
     /// enforcement never relies on prover behavior.
     ///
-    /// Claims must be raised in the order their polynomials were witnessed —
-    /// the handle's slot fixes which bridge stage its `com` commits to, and
-    /// that must be the instance slot the claim occupies. Interleaving them out
-    /// of order fails with `InvalidWitness`.
+    /// Claims may be raised in any order, and the **same handle may be used
+    /// more than once**: a query names its polynomial by index rather than by
+    /// position, so opening one polynomial at several points costs one
+    /// [`NUM_QUERY_SLOTS`](crate::NUM_QUERY_SLOTS) slot each and no additional
+    /// [`NUM_POLY_SLOTS`](crate::NUM_POLY_SLOTS) slot — no second bridge stage,
+    /// no second commitment, no second MSM, no extra endoscaling point. That is
+    /// the cheap direction to grow in; witnessing another polynomial is the
+    /// expensive one.
     ///
     /// # Soundness status
     ///
@@ -314,11 +318,10 @@ where
         // value is that polynomial's constant term — true by construction,
         // whatever the slot holds, so no slot needs to be reserved for padding.
         //
-        // It names the polynomial at its own index because
-        // `enforce_polynomial_query` still requires that; once the one-hot
-        // selection lands, any slot will do and slot 0 is the natural choice.
+        // Slot 0 serves every padding query: the one-hot in `compute_v` reaches
+        // any polynomial equally, so no slot has to be reserved for padding.
         while self.hooks.claims_filled() < crate::NUM_QUERY_SLOTS {
-            let slot = self.hooks.claims_filled();
+            let slot = 0;
             let x = Element::alloc(
                 self.dr,
                 allocator,

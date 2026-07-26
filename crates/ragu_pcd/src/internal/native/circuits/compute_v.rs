@@ -215,6 +215,32 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
                 let u = unified_output.u.read(dr, allocator)?;
                 let denominators =
                     Denominators::new(dr, &u, &w, x.element(), &y, z.element(), &preamble)?;
+                // Resolve each query's polynomial before the accumulation: a
+                // query names its polynomial by index, and turning an index
+                // into an evaluation costs constraints, so it happens here
+                // rather than inside the query list (which only assembles
+                // references).
+                let selected = {
+                    let mut per_child = Vec::with_capacity(2);
+                    for (child_eval, child_preamble) in
+                        [(&eval.left, &preamble.left), (&eval.right, &preamble.right)]
+                    {
+                        let mut slots = Vec::with_capacity(crate::NUM_QUERY_SLOTS);
+                        for claim in child_preamble.claims.iter() {
+                            slots.push(select_claim(
+                                dr,
+                                allocator,
+                                &child_eval.claims,
+                                &claim.poly_slot,
+                            )?);
+                        }
+                        per_child.push(slots);
+                    }
+                    let right = per_child.pop().expect("two children");
+                    let left = per_child.pop().expect("two children");
+                    [left, right]
+                };
+
                 let mut horner = Horner::new(&alpha);
                 for (pu, v, denominator) in poly_queries(
                     &eval,
@@ -223,6 +249,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
                     &denominators,
                     &computed_ax,
                     &computed_bx,
+                    &selected,
                 ) {
                     pu.sub(dr, v).mul(dr, denominator)?.write(dr, &mut horner)?;
                 }
@@ -599,6 +626,7 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HE
     d: &'a Denominators<'dr, D>,
     computed_ax: &'a Element<'dr, D>,
     computed_bx: &'a Element<'dr, D>,
+    selected: &'a [Vec<Element<'dr, D>>; 2],
 ) -> impl Iterator<Item = (&'a Element<'dr, D>, &'a Element<'dr, D>, &'a Element<'dr, D>)> {
     [
         // Check p(u) = v for each child proof.
@@ -646,11 +674,71 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HE
     // Child poly-query claims: p_i(u), the claimed y_i (bound via the
     // preamble's claim instances), and (u - x_i)^{-1}, per child per slot.
     // Trailing block, matching `compute_f`.
-    .chain([(&eval.left, &preamble.left, &d.left), (&eval.right, &preamble.right, &d.right)]
+    .chain([(&selected[0], &preamble.left, &d.left), (&selected[1], &preamble.right, &d.right)]
         .into_iter()
-        .flat_map(move |(child_eval, child_preamble, child_d)|
+        .flat_map(move |(child_selected, child_preamble, child_d)|
             (0..crate::NUM_QUERY_SLOTS).map(move |i|
-                (&child_eval.claims[i], &child_preamble.claims[i].y, &child_d.claims[i]))))
+                (&child_selected[i], &child_preamble.claims[i].y, &child_d.claims[i]))))
+}
+
+/// Selects `claims[poly_slot]` through a one-hot witnessed in this circuit.
+///
+/// A query names its polynomial by index, so the parent has to turn that index
+/// into the right evaluation without indexing — circuit structure cannot depend
+/// on a witnessed value. The one-hot is the standard way, and it is bound by
+/// three constraints, none of which may be dropped:
+///
+/// * each entry is boolean (`b(b - 1) = 0`),
+/// * the entries sum to one, and
+/// * `Σ j·b_j` equals the instance-bound `poly_slot`.
+///
+/// The first two together force exactly one entry to be set; the third forces
+/// *which*. Without booleanity the first two are underdetermined for more than
+/// two slots — a prover could spread weight across several entries and blend
+/// their evaluations freely — so the cheap-looking version of this is unsound.
+fn select_claim<'dr, D: Driver<'dr>, A: ragu_primitives::allocator::Allocator<'dr, D>>(
+    dr: &mut D,
+    allocator: &mut A,
+    claims: &[Element<'dr, D>],
+    poly_slot: &Element<'dr, D>,
+) -> Result<Element<'dr, D>> {
+    use ragu_arithmetic::{Coeff, ff::Field};
+
+    let one = Element::one();
+    let mut bits = Vec::with_capacity(crate::NUM_POLY_SLOTS);
+    for j in 0..crate::NUM_POLY_SLOTS {
+        let target = crate::framework_hooks::field_index::<D::F>(j);
+        let value = poly_slot.value().map(|slot| {
+            if *slot == target {
+                D::F::ONE
+            } else {
+                D::F::ZERO
+            }
+        });
+        bits.push(Element::alloc(dr, allocator, value)?);
+    }
+
+    let mut sum = Element::zero(dr);
+    let mut weighted = Element::zero(dr);
+    let mut selected = Element::zero(dr);
+    for (j, bit) in bits.iter().enumerate() {
+        // Booleanity.
+        bit.sub(dr, &one).mul(dr, bit)?.enforce_zero(dr)?;
+
+        sum = sum.add(dr, bit);
+        let scaled = bit.scale(
+            dr,
+            Coeff::Arbitrary(crate::framework_hooks::field_index::<D::F>(j)),
+        );
+        weighted = weighted.add(dr, &scaled);
+        let term = bit.mul(dr, &claims[j])?;
+        selected = selected.add(dr, &term);
+    }
+
+    sum.sub(dr, &one).enforce_zero(dr)?;
+    weighted.sub(dr, poly_slot).enforce_zero(dr)?;
+
+    Ok(selected)
 }
 
 /// Batch inverter for computing denominators.

@@ -165,12 +165,27 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         }
 
         // Child poly-query claims: the quotient (p_i(X) - y_i)/(X - x_i) for
-        // each child proof's claim slot, in slot order. This recursively
+        // each child proof's query slot, in slot order. This recursively
         // enforces the claims the children raised via `enforce_poly_query`.
         // Must remain the trailing block, matching `poly_queries`.
+        //
+        // A query names its polynomial by index, so the quotient is taken
+        // against the polynomial it names — not the one at the query's own
+        // position. `compute_v` reaches the same polynomial through a one-hot
+        // on the same index; the two must agree or the circuit cannot open.
         for proof in [left, right] {
-            for (poly, claim) in proof.claim_polys.iter().zip(&proof.application_claims) {
-                iters.push(factor_iter(poly.iter_coeffs(), claim.x));
+            for claim in &proof.application_claims {
+                let slot = (0..crate::NUM_POLY_SLOTS)
+                    .find(|i| {
+                        crate::framework_hooks::field_index::<C::CircuitField>(*i)
+                            == claim.poly_slot
+                    })
+                    .ok_or_else(|| {
+                        ragu_core::Error::InvalidWitness(
+                            "poly-query claim names a polynomial slot outside the instance".into(),
+                        )
+                    })?;
+                iters.push(factor_iter(proof.claim_polys[slot].iter_coeffs(), claim.x));
             }
         }
 

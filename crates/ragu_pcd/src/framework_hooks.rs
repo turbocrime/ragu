@@ -723,21 +723,6 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
                 "poly-query names a polynomial slot that was never witnessed".into(),
             ));
         }
-        // TEMPORARY: the data model and the instance layout are split, but the
-        // *selection* is not — `compute_v::poly_queries` still pairs query `i`
-        // with `eval.claims[i]` positionally, and `_08_f` does the same for the
-        // quotient. Until those learn to select through the one-hot on
-        // `poly_slot`, a query that names any other polynomial would be checked
-        // against the wrong evaluation. Rejecting it here keeps this checkpoint
-        // unable to accept anything the pre-split code would not, at the cost of
-        // not yet delivering cheap repeats. Remove together with the one-hot.
-        if poly_slot != self.poly_queries.len() {
-            return Err(Error::InvalidWitness(
-                "poly-query claims must currently be enforced in the order their polynomials \
-                 were witnessed; the one-hot selection in `compute_v` is not built yet"
-                    .into(),
-            ));
-        }
         self.poly_queries.push(QueryWires {
             poly_slot: Element::constant(dr, field_index::<D::F>(poly_slot)),
             x,
