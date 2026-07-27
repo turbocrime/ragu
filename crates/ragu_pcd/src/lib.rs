@@ -35,7 +35,7 @@ mod proof;
 pub mod step;
 mod verify;
 
-use alloc::collections::BTreeMap;
+use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
 use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 
 use header::Header;
@@ -49,8 +49,10 @@ use ragu_circuits::{
 };
 use ragu_core::{Error, Result};
 
-use crate::framework_hooks::HookLayout;
-use step::{Step, internal::adapter::Adapter};
+use step::{
+    Step,
+    internal::adapter::{Adapter, PendingStep},
+};
 
 /// Domain separation tag for Ragu PCD protocol.
 // FIXME: choose a permanent domain separation tag before release.
@@ -195,15 +197,15 @@ pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, const HEADER_SIZE: usi
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
     num_application_steps: usize,
-    /// The slot capacity this application needs: the pointwise maximum of every
-    /// registered step's discovered hook-call counts.
+    /// Application step adapters constructed at [`register`](Self::register)
+    /// but not yet handed to the registry.
     ///
-    /// Accumulated as steps register rather than fixed by a framework constant,
-    /// so an application pays for the slots its steps actually use. The three
-    /// counts are maximised independently — an application that opens one
-    /// polynomial at many points gets one polynomial slot and many claim slots,
-    /// which is the shape that makes a repeat opening cheap.
-    capacity: HookLayout,
+    /// Hand-over measures a circuit — the registry synthesizes it and freezes
+    /// its shape — and a step circuit's padded shape depends on the maximum
+    /// slot counts over every registered step. That maximum is settled only
+    /// when registration closes, so hand-over waits for
+    /// [`finalize`](Self::finalize).
+    held_steps: Vec<Box<dyn PendingStep<'params, C, R> + 'params>>,
     header_map: BTreeMap<header::Suffix, TypeId>,
     /// Test-only: see [`ApplicationBuilder::skip_claim_precheck_for_testing`].
     #[cfg(feature = "unstable-fuzzing")]
@@ -230,7 +232,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             native_registry: RegistryBuilder::new(),
             nested_registry: RegistryBuilder::new(),
             num_application_steps: 0,
-            capacity: HookLayout::default(),
+            held_steps: Vec::new(),
             header_map: BTreeMap::new(),
             #[cfg(feature = "unstable-fuzzing")]
             skip_claim_precheck: false,
@@ -257,20 +259,15 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         // Building the adapter discovers the step's hook-call layout — its
         // `derive_challenge` and `enforce_poly_query` counts — by dry-running
         // the witness body. That dry run is structure-only, so it needs no
-        // cycle parameters, which is what lets registration stay eager here
-        // while `finalize` remains where the parameters arrive.
+        // cycle parameters, which is what lets adapter construction stay eager
+        // here while `finalize` remains where the parameters arrive.
+        //
+        // The adapter is held rather than registered: hand-over to the
+        // registry would freeze the circuit's shape now, and its shape is not
+        // knowable until every step has registered (see
+        // [`PendingStep`](step::internal::adapter::PendingStep)).
         let adapter = Adapter::<C, S, R, HEADER_SIZE>::new(step, None)?;
-
-        // Widen the application's capacity to cover this step. Folding the
-        // maximum here — rather than reading a framework constant — is what lets
-        // an application pay for the slots its steps actually use, and lets the
-        // polynomial and claim counts differ: a step that opens one polynomial
-        // at many points widens `claims` without widening `polys`.
-        self.capacity = self.capacity.max_with(adapter.layout());
-
-        self.native_registry = self
-            .native_registry
-            .register_circuit(MultiStage::new(adapter))?;
+        self.held_steps.push(Box::new(adapter));
         self.num_application_steps += 1;
 
         Ok(self)
@@ -302,8 +299,17 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         mut self,
         params: &'params C::Params,
     ) -> Result<Application<'params, C, R, HEADER_SIZE>> {
+        // Registration is closed, so the held application step adapters can be
+        // handed to the registry: their circuits are measured now, with every
+        // step known. Registry indexing is by category, not hand-over order,
+        // so registering them here rather than in `register` changes nothing
+        // downstream.
+        for held in self.held_steps.drain(..) {
+            self.native_registry = held.register(self.native_registry)?;
+        }
+
         // Build the native registry:
-        // 1. Application circuits (already registered)
+        // 1. Application circuits (registered just above)
         // 2. Internal circuits and masks
         // 3. Internal steps
         let (total_circuits, log2_circuits) =
