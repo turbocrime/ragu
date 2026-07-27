@@ -461,12 +461,68 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHookOutputs<'d
 /// Discovered by the registration-time dry run and replayed at synthesis: a
 /// body whose calls diverge from it would synthesize a circuit other than the
 /// one that was registered.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct HookLayout {
+    /// What [`derive_challenge`](crate::step::StepCtx::derive_challenge)
+    /// requires.
+    pub challenge: ChallengeLayout,
+    /// What [`enforce_poly_query`](crate::step::StepCtx::enforce_poly_query)
+    /// requires.
+    pub poly_query: PolyQueryLayout,
+}
+
+/// What the challenge-derivation hook requires of a step's circuit.
+///
+/// Kept apart from [`PolyQueryLayout`] because the two are independent
+/// framework hooks: challenge derivation provides sound Fiat–Shamir, poly-query
+/// provides recursive opening enforcement, and neither implies the other. They
+/// share only the registration dry run that discovers them, which is an
+/// implementation convenience rather than a relationship between the features.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ChallengeLayout {
     /// [`derive_challenge`](crate::step::StepCtx::derive_challenge) calls.
-    pub challenge_calls: usize,
-    /// [`enforce_poly_query`](crate::step::StepCtx::enforce_poly_query) claims.
+    pub calls: usize,
+}
+
+/// What the poly-query hook requires of a step's circuit.
+///
+/// Two counts, not one, and that separation is the point of the mechanism.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PolyQueryLayout {
+    /// [`witness_polynomial`](crate::step::StepCtx::witness_polynomial) calls —
+    /// the expensive count. Each costs a bridge stage with its own commitment,
+    /// plus two endoscaling points (one per child) in the next fuse.
+    pub polys: usize,
+    /// [`enforce_poly_query`](crate::step::StepCtx::enforce_poly_query) claims —
+    /// the cheap count. One instance entry, one quotient in `_08_f`, one triple
+    /// in `compute_v`; no commitment, no MSM, no endoscaling point.
+    ///
+    /// Tracked separately from [`polys`](Self::polys) because a claim names its
+    /// polynomial by index, so several claims may share one commitment.
+    /// Collapsing them into one number would tax every additional claim at the
+    /// polynomial rate, which is the opposite of what this mechanism is for.
     pub claims: usize,
+}
+
+impl HookLayout {
+    /// The pointwise maximum of two layouts.
+    ///
+    /// How an application's slot capacity is settled: fold this over every
+    /// registered step and the result is the smallest shape that fits them all.
+    /// Every count is maximised independently, so an application that opens one
+    /// polynomial at many points gets one polynomial slot and many claim slots
+    /// rather than the larger of the two in both.
+    pub fn max_with(self, other: Self) -> Self {
+        Self {
+            challenge: ChallengeLayout {
+                calls: self.challenge.calls.max(other.challenge.calls),
+            },
+            poly_query: PolyQueryLayout {
+                polys: self.poly_query.polys.max(other.poly_query.polys),
+                claims: self.poly_query.claims.max(other.poly_query.claims),
+            },
+        }
+    }
 }
 
 /// The proof's two blind sources, as the step circuit's witness carries them.
@@ -650,7 +706,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
                 "step derived more challenges than there are challenge slots".into(),
             ));
         }
-        if let Some(expected) = self.expected.map(|l| l.challenge_calls)
+        if let Some(expected) = self.expected.map(|l| l.challenge.calls)
             && self.challenge_calls >= expected
         {
             return Err(Error::InvalidWitness(
@@ -779,14 +835,14 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     /// body's count.
     pub(crate) fn check_layout(&mut self) -> Result<()> {
         if let Some(expected) = self.expected.take() {
-            if self.challenge_calls != expected.challenge_calls {
+            if self.challenge_calls != expected.challenge.calls {
                 return Err(Error::InvalidWitness(
                     "derive_challenge called fewer times than the discovered call count; \
                      circuit structure must not depend on witness values"
                         .into(),
                 ));
             }
-            if self.poly_queries.len() != expected.claims {
+            if self.poly_queries.len() != expected.poly_query.claims {
                 return Err(Error::InvalidWitness(
                     "enforce_poly_query call count diverged from the discovered claim count; \
                      circuit structure must not depend on witness values"
@@ -856,8 +912,8 @@ mod tests {
     fn challenge_slots_respect_the_discovered_count() {
         let mut hooks = FrameworkHooks::<Dr<'_>, Pasta>::with_expected(
             HookLayout {
-                challenge_calls: 1,
-                claims: 0,
+                challenge: ChallengeLayout { calls: 1 },
+                poly_query: PolyQueryLayout::default(),
             },
             <Empty as MaybeKind>::empty::<ProofValues<'_, Pasta>>(),
         );

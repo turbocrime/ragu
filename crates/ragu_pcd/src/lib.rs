@@ -48,6 +48,8 @@ use ragu_circuits::{
     staging::MultiStage,
 };
 use ragu_core::{Error, Result};
+
+use crate::framework_hooks::HookLayout;
 use step::{Step, internal::adapter::Adapter};
 
 /// Domain separation tag for Ragu PCD protocol.
@@ -193,6 +195,15 @@ pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, const HEADER_SIZE: usi
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
     num_application_steps: usize,
+    /// The slot capacity this application needs: the pointwise maximum of every
+    /// registered step's discovered hook-call counts.
+    ///
+    /// Accumulated as steps register rather than fixed by a framework constant,
+    /// so an application pays for the slots its steps actually use. The three
+    /// counts are maximised independently — an application that opens one
+    /// polynomial at many points gets one polynomial slot and many claim slots,
+    /// which is the shape that makes a repeat opening cheap.
+    capacity: HookLayout,
     header_map: BTreeMap<header::Suffix, TypeId>,
     /// Test-only: see [`ApplicationBuilder::skip_claim_precheck_for_testing`].
     #[cfg(feature = "unstable-fuzzing")]
@@ -219,6 +230,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             native_registry: RegistryBuilder::new(),
             nested_registry: RegistryBuilder::new(),
             num_application_steps: 0,
+            capacity: HookLayout::default(),
             header_map: BTreeMap::new(),
             #[cfg(feature = "unstable-fuzzing")]
             skip_claim_precheck: false,
@@ -248,6 +260,14 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         // cycle parameters, which is what lets registration stay eager here
         // while `finalize` remains where the parameters arrive.
         let adapter = Adapter::<C, S, R, HEADER_SIZE>::new(step, None)?;
+
+        // Widen the application's capacity to cover this step. Folding the
+        // maximum here — rather than reading a framework constant — is what lets
+        // an application pay for the slots its steps actually use, and lets the
+        // polynomial and claim counts differ: a step that opens one polynomial
+        // at many points widens `claims` without widening `polys`.
+        self.capacity = self.capacity.max_with(adapter.layout());
+
         self.native_registry = self
             .native_registry
             .register_circuit(MultiStage::new(adapter))?;

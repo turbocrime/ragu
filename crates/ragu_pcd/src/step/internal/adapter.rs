@@ -27,7 +27,10 @@ use super::{
 };
 use crate::{
     Header, NUM_CHALLENGE_SLOTS, NUM_POLY_SLOTS, NUM_QUERY_SLOTS,
-    framework_hooks::{Alphas, FrameworkAux, FrameworkHooks, HookLayout, ProofValues},
+    framework_hooks::{
+        Alphas, ChallengeLayout, FrameworkAux, FrameworkHooks, HookLayout, PolyQueryLayout,
+        ProofValues,
+    },
 };
 
 /// Length of an application circuit's public instance: the three headers, then
@@ -76,16 +79,21 @@ pub(crate) fn discover_hook_layout<C: Cycle, S: Step<C>, const HEADER_SIZE: usiz
     }
 
     let outputs = hooks.into_outputs();
-    let num_claims = outputs.poly_queries.len();
-    if num_claims > NUM_QUERY_SLOTS {
-        return Err(ragu_core::Error::Initialization(
-            "step raises more poly-query claims than NUM_QUERY_SLOTS".into(),
-        ));
-    }
 
+    // No cap is applied here. The counts a step needs *are* its requirement;
+    // the application's capacity is the maximum over its registered steps,
+    // settled in `ApplicationBuilder::finalize` where the gate budget is known.
+    // Checking against a framework constant here would reject a step the
+    // application could afford, and would charge every other step for slots it
+    // does not use.
     Ok(HookLayout {
-        challenge_calls: outputs.challenge_calls,
-        claims: num_claims,
+        challenge: ChallengeLayout {
+            calls: outputs.challenge_calls,
+        },
+        poly_query: PolyQueryLayout {
+            polys: outputs.witnessed_polys.len(),
+            claims: outputs.poly_queries.len(),
+        },
     })
 }
 
@@ -147,7 +155,16 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
     /// step body makes.
     #[cfg(test)]
     pub fn challenge_calls(&self) -> usize {
-        self.layout.challenge_calls
+        self.layout.challenge.calls
+    }
+
+    /// The hook-call counts discovered from this step's body.
+    ///
+    /// [`ApplicationBuilder::register`](crate::ApplicationBuilder::register)
+    /// folds these across every registered step to size the application's
+    /// slots, so no framework constant has to guess them.
+    pub(crate) fn layout(&self) -> HookLayout {
+        self.layout
     }
 }
 
