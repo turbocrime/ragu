@@ -5,10 +5,7 @@
 use alloc::vec;
 
 use ragu_arithmetic::{CurveAffine, Cycle, ff::Field};
-use ragu_circuits::{
-    polynomials::{Rank, sparse},
-    staging::StageExt,
-};
+use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{Error, Result};
 
 use crate::internal::nested::{
@@ -179,19 +176,20 @@ pub(crate) fn challenge_bridge_alpha<C: Cycle>(
 /// Builds challenge `slot`'s bridge stage rx: a stage whose wires are the
 /// slot's host-curve stage commitment.
 ///
-/// Dispatches on the slot because each slot is a distinct type with distinct
-/// generator positions.
+/// Reads the slot's position off the run's layout rather than dispatching on
+/// it, matching [`claim_bridge_rx`].
 pub(crate) fn challenge_bridge_rx<C: Cycle, R: Rank>(
     slot: usize,
     alpha: C::ScalarField,
     host: C::HostCurve,
 ) -> Result<sparse::Polynomial<C::ScalarField, R>> {
     let witness = host_bridge::Witness { host };
-    match slot {
-        0 => challenge_bridge::Stage0::<C::HostCurve, R>::rx(alpha, &witness),
-        1 => challenge_bridge::Stage1::<C::HostCurve, R>::rx(alpha, &witness),
-        _ => unreachable!("NUM_CHALLENGE_SLOTS is 2"),
-    }
+    challenge_bridge::layout::<C::HostCurve, R>().rx_configured(
+        slot,
+        alpha,
+        &challenge_bridge::Slot::<C::HostCurve, R>::default(),
+        &witness,
+    )
 }
 
 /// The nested-curve commitment to challenge `slot`'s bridge stage — the point
