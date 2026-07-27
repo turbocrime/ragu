@@ -13,30 +13,14 @@ use crate::{
     proof::ProofBuilder,
 };
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const MAX_WITNESSED_POLYS: usize,
-    const MAX_POLY_QUERIES: usize,
-> Application<'_, C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>
-{
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
     pub(super) fn compute_preamble<'a, RNG: CryptoRngCore>(
         &self,
         rng: &mut RNG,
         left: &'a Proof<C, R>,
         right: &'a Proof<C, R>,
-        builder: &mut ProofBuilder<'_, C, R, MAX_WITNESSED_POLYS>,
-    ) -> Result<
-        native::stages::preamble::Witness<
-            'a,
-            C,
-            R,
-            HEADER_SIZE,
-            MAX_WITNESSED_POLYS,
-            MAX_POLY_QUERIES,
-        >,
-    > {
+        builder: &mut ProofBuilder<'_, C, R>,
+    ) -> Result<native::stages::preamble::Witness<'a, C, R, HEADER_SIZE>> {
         let preamble_witness = self.compute_native_preamble(rng, left, right, builder)?;
         self.compute_bridge_preamble(rng, left, right, builder)?;
         Ok(preamble_witness)
@@ -47,17 +31,8 @@ impl<
         rng: &mut RNG,
         left: &'a Proof<C, R>,
         right: &'a Proof<C, R>,
-        builder: &mut ProofBuilder<'_, C, R, MAX_WITNESSED_POLYS>,
-    ) -> Result<
-        native::stages::preamble::Witness<
-            'a,
-            C,
-            R,
-            HEADER_SIZE,
-            MAX_WITNESSED_POLYS,
-            MAX_POLY_QUERIES,
-        >,
-    > {
+        builder: &mut ProofBuilder<'_, C, R>,
+    ) -> Result<native::stages::preamble::Witness<'a, C, R, HEADER_SIZE>> {
         let preamble_witness = native::stages::preamble::Witness::new(
             left,
             right,
@@ -65,13 +40,10 @@ impl<
             builder.right_header(),
         )?;
 
-        let rx = native::stages::preamble::Stage::<
-            C,
-            R,
-            HEADER_SIZE,
-            MAX_WITNESSED_POLYS,
-            MAX_POLY_QUERIES,
-        >::rx(C::CircuitField::random(&mut *rng), &preamble_witness)?;
+        let rx = native::stages::preamble::Stage::<C, R, HEADER_SIZE>::rx(
+            C::CircuitField::random(&mut *rng),
+            &preamble_witness,
+        )?;
 
         builder.set_native_preamble_rx(rx);
 
@@ -83,7 +55,7 @@ impl<
         rng: &mut RNG,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
-        builder: &mut ProofBuilder<'_, C, R, MAX_WITNESSED_POLYS>,
+        builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<()> {
         let bridge_rx = nested::stages::preamble::Stage::<C::HostCurve, R>::rx(
             C::ScalarField::random(&mut *rng),

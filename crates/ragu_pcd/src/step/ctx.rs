@@ -19,26 +19,10 @@ use ragu_core::{
 use ragu_primitives::{Element, Point};
 
 use crate::{
-    framework_hooks::{BridgeGeometry, ChallengeInput, FrameworkHooks},
+    framework_hooks::{ChallengeInput, FrameworkHooks},
     poly_commitment::{PolyCommitment, PolyQueryHandle},
     step::internal::challenge_stage::ChallengeSlots,
 };
-
-/// The claim-bridge layout, rebuilt from the anchor the framework threaded in.
-///
-/// The layout cannot ride on [`ProofValues`](crate::framework_hooks::ProofValues)
-/// directly — that type is `Copy` and a layout owns a `Vec` — and it cannot be
-/// derived from stage types here, because that would make [`StepCtx`] generic
-/// over the polynomial count, which would surface in every consumer's
-/// `Step::witness`. A uniform run is fully described by its anchor and shape,
-/// so it travels as numbers and is reassembled here.
-fn claim_layout(bridges: &BridgeGeometry) -> ragu_circuits::staging::InducedStages {
-    ragu_circuits::staging::InducedStages::uniform(
-        bridges.claim_anchor,
-        bridges.max_witnessed_polys,
-        crate::internal::nested::stages::host_bridge::WIDTH,
-    )
-}
 
 /// Framework-side state threaded through [`Step::witness`](super::Step::witness).
 /// The poly-query claim sink is exposed via
@@ -113,7 +97,6 @@ where
             );
             crate::internal::challenge::claim_bridge_commitment::<C, R>(
                 proof_values.params,
-                &claim_layout(&proof_values.bridges),
                 slot,
                 alpha,
                 host_for_com.take(),
@@ -311,11 +294,10 @@ where
         self.hooks.check_layout()?;
 
         let allocator = &mut ragu_primitives::allocator::Standard::new();
-        let capacity = self.hooks.capacity();
 
         // Polynomials first, so every query slot has something to name.
         let mut padding_handle = None;
-        while self.hooks.polys_filled() < capacity.max_witnessed_polys {
+        while self.hooks.polys_filled() < crate::NUM_POLY_SLOTS {
             let proof_values = self.hooks.proof_values();
             let padding = D::try_just(move || {
                 let (host, ..) =
@@ -338,7 +320,7 @@ where
         //
         // Slot 0 serves every padding query: the one-hot in `compute_v` reaches
         // any polynomial equally, so no slot has to be reserved for padding.
-        while self.hooks.claims_filled() < capacity.max_poly_queries {
+        while self.hooks.claims_filled() < crate::NUM_QUERY_SLOTS {
             let slot = 0;
             let x = Element::alloc(
                 self.dr,

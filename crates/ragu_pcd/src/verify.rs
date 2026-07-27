@@ -20,14 +20,7 @@ use crate::{
     },
 };
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const MAX_WITNESSED_POLYS: usize,
-    const MAX_POLY_QUERIES: usize,
-> Application<'_, C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>
-{
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
     /// Verifies some [`Pcd`] for the provided [`Header`].
     ///
     /// Returns `Ok(true)` if all verification checks pass, `Ok(false)` if
@@ -90,13 +83,8 @@ impl<
             Emulator::emulate_wireless((pcd.proof(), pcd.data().clone(), y), |dr, witness| {
                 let (proof, data, y) = witness.cast();
                 let y = Element::alloc(dr, &mut (), y)?;
-                let proof_inputs = ProofInputs::<
-                    _,
-                    C,
-                    HEADER_SIZE,
-                    MAX_WITNESSED_POLYS,
-                    MAX_POLY_QUERIES,
-                >::alloc_for_verify::<R, H>(dr, proof, data)?;
+                let proof_inputs =
+                    ProofInputs::<_, C, HEADER_SIZE>::alloc_for_verify::<R, H>(dr, proof, data)?;
 
                 let (unified_ky, unified_bridge_ky) = proof_inputs.unified_ky_values(dr, &y)?;
                 let unified_ky = *unified_ky.value().take();
@@ -173,7 +161,6 @@ impl<
             poly.commit_to_affine::<C::HostCurve>(C::host_generators(self.params)) == host
                 && crate::internal::challenge::claim_bridge_commitment::<C, R>(
                     self.params,
-                    &crate::internal::nested::stages::claim_bridge::layout::<C::HostCurve, R>(),
                     slot,
                     alpha,
                     host,
@@ -215,7 +202,6 @@ impl<
             poly.commit_to_affine::<C::HostCurve>(C::host_generators(self.params)) == host
                 && crate::internal::challenge::challenge_bridge_commitment::<C, R>(
                     self.params,
-                    &crate::internal::nested::stages::challenge_bridge::layout::<C::HostCurve, R>(),
                     slot,
                     alpha,
                     host,

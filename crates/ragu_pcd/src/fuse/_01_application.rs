@@ -35,14 +35,7 @@ use crate::{
     },
 };
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const MAX_WITNESSED_POLYS: usize,
-    const MAX_POLY_QUERIES: usize,
-> Application<'_, C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>
-{
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
     pub(super) fn compute_application_proof<'source, RNG: CryptoRngCore, S: Step<C>>(
         &self,
         rng: &mut RNG,
@@ -50,7 +43,7 @@ impl<
         witness: S::Witness<'source>,
         left: Pcd<C, R, S::Left>,
         right: Pcd<C, R, S::Right>,
-        builder: &mut ProofBuilder<'_, C, R, MAX_WITNESSED_POLYS>,
+        builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<(
         Proof<C, R>,
         Proof<C, R>,
@@ -59,14 +52,10 @@ impl<
     )> {
         let (left_proof, left_data) = left.into_parts();
         let (right_proof, right_data) = right.into_parts();
-        let (trace, aux) = MultiStage::new(Adapter::<
-            C,
-            S,
-            R,
-            HEADER_SIZE,
-            MAX_WITNESSED_POLYS,
-            MAX_POLY_QUERIES,
-        >::new(step, Some(self.params))?)
+        let (trace, aux) = MultiStage::new(Adapter::<C, S, R, HEADER_SIZE>::new(
+            step,
+            Some(self.params),
+        )?)
         .trace((
             Alphas {
                 bridge: builder.bridge_alpha(),
@@ -126,7 +115,6 @@ impl<
             let host = challenge::host_commitment::<C, R>(self.params, &poly)?;
             let expected = challenge::claim_bridge_commitment::<C, R>(
                 self.params,
-                &crate::internal::nested::stages::claim_bridge::layout::<C::HostCurve, R>(),
                 slot,
                 challenge::claim_bridge_alpha::<C>(builder.bridge_alpha(), slot),
                 host,

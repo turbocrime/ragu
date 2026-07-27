@@ -206,7 +206,7 @@ macro_rules! cached_bridge {
 /// Native commitment caches are computed lazily from polynomials on first
 /// access. Special commitments (`a`, `b`, `p`) must be provided explicitly
 /// because they are computed via non-standard techniques.
-pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, const MAX_WITNESSED_POLYS: usize> {
+pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     params: &'params C::Params,
 
     /// Shared alpha source for the four cached bridge commitments.
@@ -334,9 +334,7 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, const MAX_WITNESSED_P
     challenge_stage_commitments: Option<[C::HostCurve; crate::NUM_CHALLENGE_SLOTS]>,
 }
 
-impl<'params, C: Cycle, R: Rank, const MAX_WITNESSED_POLYS: usize>
-    ProofBuilder<'params, C, R, MAX_WITNESSED_POLYS>
-{
+impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     /// Create a new empty builder with the given `bridge_alpha` source for
     /// deriving cached bridge polynomial alphas.
     pub(crate) fn new(
@@ -637,12 +635,7 @@ impl<'params, C: Cycle, R: Rank, const MAX_WITNESSED_POLYS: usize>
         let host = self.challenge_stage_commitments()[slot];
         let alpha =
             crate::internal::challenge::challenge_bridge_alpha::<C>(self.bridge_alpha, slot);
-        crate::internal::challenge::challenge_bridge_rx::<C, R>(
-            &nested::stages::challenge_bridge::layout::<C::HostCurve, R>(),
-            slot,
-            alpha,
-            host,
-        )
+        crate::internal::challenge::challenge_bridge_rx::<C, R>(slot, alpha, host)
     }
 
     /// Derives the bridge stage rx for poly-query claim `slot`.
@@ -658,12 +651,7 @@ impl<'params, C: Cycle, R: Rank, const MAX_WITNESSED_POLYS: usize>
     ) -> Result<sparse::Polynomial<C::ScalarField, R>> {
         let host = self.claim_host_commitments()[slot];
         let alpha = crate::internal::challenge::claim_bridge_alpha::<C>(self.bridge_alpha, slot);
-        crate::internal::challenge::claim_bridge_rx::<C, R>(
-            &nested::stages::claim_bridge::layout::<C::HostCurve, R>(),
-            slot,
-            alpha,
-            host,
-        )
+        crate::internal::challenge::claim_bridge_rx::<C, R>(slot, alpha, host)
     }
 
     /// The blind source for the application circuit's challenge stages.

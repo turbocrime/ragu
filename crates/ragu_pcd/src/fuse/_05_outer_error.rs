@@ -30,25 +30,11 @@ use crate::{
 
 type NativeNumGroups = <native::RevdotParameters as fold_revdot::Parameters>::NumGroups;
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const MAX_WITNESSED_POLYS: usize,
-    const MAX_POLY_QUERIES: usize,
-> Application<'_, C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>
-{
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
     pub(super) fn outer_error_terms<'dr, 'rx, D, RNG: CryptoRngCore>(
         &self,
         rng: &mut RNG,
-        preamble_witness: &native::stages::preamble::Witness<
-            '_,
-            C,
-            R,
-            HEADER_SIZE,
-            MAX_WITNESSED_POLYS,
-            MAX_POLY_QUERIES,
-        >,
+        preamble_witness: &native::stages::preamble::Witness<'_, C, R, HEADER_SIZE>,
         inner_error_witness: &native::stages::inner_error::Witness<C, native::RevdotParameters>,
         claims: FuseBuilder<'_, 'rx, C::CircuitField, R>,
         y: &Element<'dr, D>,
@@ -58,7 +44,7 @@ impl<
             C::CircuitField,
             ragu_primitives::poseidon::PoseidonStateLen<C::CircuitField, C::CircuitPoseidon>,
         >,
-        builder: &mut ProofBuilder<'_, C, R, MAX_WITNESSED_POLYS>,
+        builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<(
         native::stages::outer_error::Witness<C, native::RevdotParameters>,
         FixedVec<TrackedPoly<'rx, FoldKey, C::CircuitField, R>, NativeNumGroups>,
@@ -88,14 +74,8 @@ impl<
                 let (preamble_witness, inner_error_terms, y, mu, nu) = witness.cast();
                 let allocator = &mut ();
 
-                let preamble = native::stages::preamble::Stage::<
-                    C,
-                    R,
-                    HEADER_SIZE,
-                    MAX_WITNESSED_POLYS,
-                    MAX_POLY_QUERIES,
-                >::default()
-                .witness(dr, preamble_witness.as_ref().map(|w| *w))?;
+                let preamble = native::stages::preamble::Stage::<C, R, HEADER_SIZE>::default()
+                    .witness(dr, preamble_witness.as_ref().map(|w| *w))?;
 
                 let y = Element::alloc(dr, allocator, y)?;
                 let (left_unified_ky, left_unified_bridge_ky) =
@@ -175,16 +155,13 @@ impl<
         &self,
         rng: &mut RNG,
         outer_error_witness: &native::stages::outer_error::Witness<C, native::RevdotParameters>,
-        builder: &mut ProofBuilder<'_, C, R, MAX_WITNESSED_POLYS>,
+        builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<()> {
-        let rx = native::stages::outer_error::Stage::<
-            C,
-            R,
-            HEADER_SIZE,
-            MAX_WITNESSED_POLYS,
-            MAX_POLY_QUERIES,
-            native::RevdotParameters,
-        >::rx(C::CircuitField::random(&mut *rng), outer_error_witness)?;
+        let rx =
+            native::stages::outer_error::Stage::<C, R, HEADER_SIZE, native::RevdotParameters>::rx(
+                C::CircuitField::random(&mut *rng),
+                outer_error_witness,
+            )?;
 
         builder.set_native_outer_error_rx(rx);
 

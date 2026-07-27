@@ -7,7 +7,7 @@ use alloc::vec;
 use ragu_arithmetic::{CurveAffine, Cycle, ff::Field};
 use ragu_circuits::{
     polynomials::{Rank, sparse},
-    staging::InducedStages,
+    staging::StageExt,
 };
 use ragu_core::{Error, Result};
 
@@ -95,13 +95,12 @@ pub(crate) fn claim_bridge_alpha<C: Cycle>(
 /// dispatching. That is what lets the slot count be an application parameter:
 /// there is nothing here to widen when it changes.
 pub(crate) fn claim_bridge_rx<C: Cycle, R: Rank>(
-    layout: &InducedStages,
     slot: usize,
     alpha: C::ScalarField,
     host: C::HostCurve,
 ) -> Result<sparse::Polynomial<C::ScalarField, R>> {
     let witness = host_bridge::Witness { host };
-    layout.rx_configured(
+    claim_bridge::layout::<C::HostCurve, R>().rx_configured(
         slot,
         alpha,
         &claim_bridge::Slot::<C::HostCurve, R>::default(),
@@ -113,14 +112,13 @@ pub(crate) fn claim_bridge_rx<C: Cycle, R: Rank>(
 /// claim carries as its `com`.
 pub(crate) fn claim_bridge_commitment<C: Cycle, R: Rank>(
     params: &C::Params,
-    layout: &InducedStages,
     slot: usize,
     alpha: C::ScalarField,
     host: C::HostCurve,
 ) -> Result<C::NestedCurve> {
     Ok(commit_bridge::<C, R>(
         params,
-        claim_bridge_rx::<C, R>(layout, slot, alpha, host)?,
+        claim_bridge_rx::<C, R>(slot, alpha, host)?,
     ))
 }
 
@@ -181,35 +179,32 @@ pub(crate) fn challenge_bridge_alpha<C: Cycle>(
 /// Builds challenge `slot`'s bridge stage rx: a stage whose wires are the
 /// slot's host-curve stage commitment.
 ///
-/// Reads the slot's position off the run's layout rather than dispatching on
-/// it, matching [`claim_bridge_rx`].
+/// Dispatches on the slot because each slot is a distinct type with distinct
+/// generator positions.
 pub(crate) fn challenge_bridge_rx<C: Cycle, R: Rank>(
-    layout: &InducedStages,
     slot: usize,
     alpha: C::ScalarField,
     host: C::HostCurve,
 ) -> Result<sparse::Polynomial<C::ScalarField, R>> {
     let witness = host_bridge::Witness { host };
-    layout.rx_configured(
-        slot,
-        alpha,
-        &challenge_bridge::Slot::<C::HostCurve, R>::default(),
-        &witness,
-    )
+    match slot {
+        0 => challenge_bridge::Stage0::<C::HostCurve, R>::rx(alpha, &witness),
+        1 => challenge_bridge::Stage1::<C::HostCurve, R>::rx(alpha, &witness),
+        _ => unreachable!("NUM_CHALLENGE_SLOTS is 2"),
+    }
 }
 
 /// The nested-curve commitment to challenge `slot`'s bridge stage — the point
 /// the native side witnesses and hashes into the challenge.
 pub(crate) fn challenge_bridge_commitment<C: Cycle, R: Rank>(
     params: &C::Params,
-    layout: &InducedStages,
     slot: usize,
     alpha: C::ScalarField,
     host: C::HostCurve,
 ) -> Result<C::NestedCurve> {
     Ok(commit_bridge::<C, R>(
         params,
-        challenge_bridge_rx::<C, R>(layout, slot, alpha, host)?,
+        challenge_bridge_rx::<C, R>(slot, alpha, host)?,
     ))
 }
 
@@ -245,7 +240,6 @@ pub(crate) fn challenge_from_point<C: Cycle>(
 /// the bridge is for.
 pub(crate) fn staged_challenge<C: Cycle, R: Rank>(
     params: &C::Params,
-    layout: &InducedStages,
     slot: usize,
     challenge_alpha: C::CircuitField,
     bridge_alpha: C::ScalarField,
@@ -266,7 +260,6 @@ pub(crate) fn staged_challenge<C: Cycle, R: Rank>(
     }
     let bridged = challenge_bridge_commitment::<C, R>(
         params,
-        layout,
         slot,
         challenge_bridge_alpha::<C>(bridge_alpha, slot),
         host,

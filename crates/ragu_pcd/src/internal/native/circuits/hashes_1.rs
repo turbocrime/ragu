@@ -109,14 +109,7 @@ use crate::{
 /// Other internal circuits use only the [`unified::Output`] to avoid the
 /// overhead of witnessing headers in circuits that do not require them.
 #[derive(Gadget, Write)]
-pub struct Output<
-    'dr,
-    D: Driver<'dr>,
-    C: Cycle<CircuitField = D::F>,
-    const HEADER_SIZE: usize,
-    const MAX_WITNESSED_POLYS: usize,
-    const MAX_POLY_QUERIES: usize,
-> {
+pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize> {
     /// The unified instance shared across internal circuits.
     #[ragu(gadget)]
     pub unified: unified::Output<'dr, D, C>,
@@ -134,29 +127,14 @@ pub struct Output<
 /// circuit.
 ///
 /// [module-level documentation]: self
-pub struct Circuit<
-    'params,
-    C: Cycle,
-    R,
-    const HEADER_SIZE: usize,
-    const MAX_WITNESSED_POLYS: usize,
-    const MAX_POLY_QUERIES: usize,
-    FP: fold_revdot::Parameters,
-> {
+pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
     params: &'params C::Params,
     log2_circuits: u32,
     _marker: PhantomData<(R, FP)>,
 }
 
-impl<
-    'params,
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const MAX_WITNESSED_POLYS: usize,
-    const MAX_POLY_QUERIES: usize,
-    FP: fold_revdot::Parameters,
-> Circuit<'params, C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES, FP>
+impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
+    Circuit<'params, C, R, HEADER_SIZE, FP>
 {
     /// Creates a new multi-stage circuit.
     ///
@@ -181,15 +159,7 @@ impl<
 ///
 /// Combines the unified instance with stage witnesses needed to perform the
 /// Fiat-Shamir derivations and transcript-state verification.
-pub struct Witness<
-    'a,
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const MAX_WITNESSED_POLYS: usize,
-    const MAX_POLY_QUERIES: usize,
-    FP: fold_revdot::Parameters,
-> {
+pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
     /// The unified instance containing expected challenge values and
     /// accumulated coverage from prior circuits.
     pub unified: unified::Instance<C>,
@@ -199,8 +169,7 @@ pub struct Witness<
     ///
     /// Provides output headers (included in this circuit's instance) and
     /// circuit IDs for the root-of-unity check.
-    pub preamble_witness:
-        &'a native_preamble::Witness<'a, C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>,
+    pub preamble_witness: &'a native_preamble::Witness<'a, C, R, HEADER_SIZE>,
 
     /// Witness for the [`outer_error`](super::super::stages::outer_error) stage
     /// (unenforced).
@@ -210,23 +179,14 @@ pub struct Witness<
     pub outer_error_witness: &'a native_outer_error::Witness<C, FP>,
 }
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const MAX_WITNESSED_POLYS: usize,
-    const MAX_POLY_QUERIES: usize,
-    FP: fold_revdot::Parameters,
-> MultiStageCircuit<C::CircuitField, R>
-    for Circuit<'_, C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES, FP>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
+    MultiStageCircuit<C::CircuitField, R> for Circuit<'_, C, R, HEADER_SIZE, FP>
 {
-    type Last =
-        native_outer_error::Stage<C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES, FP>;
+    type Last = native_outer_error::Stage<C, R, HEADER_SIZE, FP>;
 
     type Instance<'source> = &'source unified::Instance<C>;
-    type Witness<'source> =
-        Witness<'source, C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES, FP>;
-    type Output = Kind![C::CircuitField; WithSuffix<'_, _, Output<'_, _, C, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>>];
+    type Witness<'source> = Witness<'source, C, R, HEADER_SIZE, FP>;
+    type Output = Kind![C::CircuitField; WithSuffix<'_, _, Output<'_, _, C, HEADER_SIZE>>];
     type Aux<'source> = unified::Instance<C>;
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -248,21 +208,10 @@ impl<
     where
         Self: 'dr,
     {
-        let (preamble, builder) = builder.add_stage::<native_preamble::Stage<
-            C,
-            R,
-            HEADER_SIZE,
-            MAX_WITNESSED_POLYS,
-            MAX_POLY_QUERIES,
-        >>()?;
-        let (outer_error, builder) = builder.add_stage::<native_outer_error::Stage<
-            C,
-            R,
-            HEADER_SIZE,
-            MAX_WITNESSED_POLYS,
-            MAX_POLY_QUERIES,
-            FP,
-        >>()?;
+        let (preamble, builder) =
+            builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
+        let (outer_error, builder) =
+            builder.add_stage::<native_outer_error::Stage<C, R, HEADER_SIZE, FP>>()?;
         let dr = builder.finish();
 
         let preamble = preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;

@@ -235,11 +235,6 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> ChallengeSlots
             let proof_values = proof_values.take();
             crate::internal::challenge::staged_challenge::<C, R>(
                 proof_values.params,
-                &ragu_circuits::staging::InducedStages::uniform(
-                    proof_values.bridges.challenge_anchor,
-                    crate::NUM_CHALLENGE_SLOTS,
-                    crate::internal::nested::stages::host_bridge::WIDTH,
-                ),
                 slot,
                 proof_values.challenge_alpha,
                 proof_values.bridge_alpha,

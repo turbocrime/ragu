@@ -104,35 +104,6 @@ impl InducedStages {
         }
     }
 
-    /// Creates a layout for a run of `count` slots, each `width` wires wide,
-    /// beginning at gate `skip_gates`.
-    ///
-    /// The type-free counterpart of [`after`](Self::after), for callers that
-    /// have the anchor as a number rather than as the stage that produced it.
-    ///
-    /// That happens where geometry has to travel as *data*. A layout owns a
-    /// `Vec`, so it cannot ride along in a `Copy` context; a uniform run is
-    /// fully described by these three numbers, so the anchor travels instead
-    /// and the layout is rebuilt where it is needed. The alternative — naming
-    /// the anchoring stage type — would force the count into the type of
-    /// whatever is carrying it, which is exactly what value-level geometry
-    /// exists to avoid.
-    ///
-    /// Prefer [`after`](Self::after) when the anchoring stage is nameable: it
-    /// keeps the typed chain as the single source of truth for the anchor.
-    pub fn uniform(skip_gates: usize, count: usize, width: usize) -> Self {
-        Self {
-            skip_gates,
-            widths: alloc::vec![width; count],
-        }
-    }
-
-    /// The gate this layout's run begins at — its anchor in the surrounding
-    /// typed chain, as [`uniform`](Self::uniform) would take it.
-    pub fn anchor(&self) -> usize {
-        self.skip_gates
-    }
-
     /// Returns the number of stages in this layout.
     pub fn len(&self) -> usize {
         self.widths.len()
@@ -484,21 +455,6 @@ mod tests {
             <TypedThree as Stage<Fp, R>>::skip_gates(),
             "an anchored run does not start where the next typed stage would"
         );
-    }
-
-    /// Rebuilding a uniform run from its anchor reproduces the layout exactly.
-    ///
-    /// This is what lets geometry travel as a number through `Copy` contexts
-    /// that cannot hold the layout itself: the anchor plus the slot shape is
-    /// the whole of the information.
-    #[test]
-    fn uniform_round_trips_through_its_anchor() {
-        let typed = InducedStages::after::<Fp, R, TypedFour>(alloc::vec![2, 2, 2]);
-        let rebuilt = InducedStages::uniform(typed.anchor(), 3, 2);
-
-        assert_eq!(typed, rebuilt, "a uniform run did not survive its anchor");
-        assert_eq!(rebuilt.skip_gates(2), typed.skip_gates(2));
-        assert_eq!(rebuilt.final_skip_gates(), typed.final_skip_gates());
     }
 
     #[test]

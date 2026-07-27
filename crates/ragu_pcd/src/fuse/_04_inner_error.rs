@@ -22,14 +22,7 @@ use crate::{
     proof::ProofBuilder,
 };
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const MAX_WITNESSED_POLYS: usize,
-    const MAX_POLY_QUERIES: usize,
-> Application<'_, C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>
-{
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
     pub(super) fn inner_error_terms<'dr, 'rx, D, RNG: CryptoRngCore>(
         &self,
         rng: &mut RNG,
@@ -37,7 +30,7 @@ impl<
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
         source: &FuseProofSource<'rx, C, R>,
-        builder: &mut ProofBuilder<'_, C, R, MAX_WITNESSED_POLYS>,
+        builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<(
         native::stages::inner_error::Witness<C, native::RevdotParameters>,
         FuseBuilder<'_, 'rx, C::CircuitField, R>,
@@ -56,7 +49,7 @@ impl<
         &self,
         rng: &mut RNG,
         registry_wy: &RegistryWy<C, R>,
-        builder: &mut ProofBuilder<'_, C, R, MAX_WITNESSED_POLYS>,
+        builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<()> {
         let bridge_rx = nested::stages::inner_error::Stage::<C::HostCurve, R>::rx(
             C::ScalarField::random(&mut *rng),
@@ -77,7 +70,7 @@ impl<
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
         source: &FuseProofSource<'rx, C, R>,
-        builder: &mut ProofBuilder<'_, C, R, MAX_WITNESSED_POLYS>,
+        builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<(
         native::stages::inner_error::Witness<C, native::RevdotParameters>,
         FuseBuilder<'_, 'rx, C::CircuitField, R>,
@@ -99,14 +92,11 @@ impl<
                     &claims_builder.b,
                 ),
             };
-        let native_rx = native::stages::inner_error::Stage::<
-            C,
-            R,
-            HEADER_SIZE,
-            MAX_WITNESSED_POLYS,
-            MAX_POLY_QUERIES,
-            native::RevdotParameters,
-        >::rx(C::CircuitField::random(&mut *rng), &inner_error_witness)?;
+        let native_rx =
+            native::stages::inner_error::Stage::<C, R, HEADER_SIZE, native::RevdotParameters>::rx(
+                C::CircuitField::random(&mut *rng),
+                &inner_error_witness,
+            )?;
 
         builder.set_native_inner_error_rx(native_rx);
 

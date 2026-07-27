@@ -29,14 +29,7 @@ use crate::{
     proof::ProofBuilder,
 };
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const MAX_WITNESSED_POLYS: usize,
-    const MAX_POLY_QUERIES: usize,
-> Application<'_, C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>
-{
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
     pub(super) fn compute_f<'dr, D, RNG: CryptoRngCore>(
         &self,
         rng: &mut RNG,
@@ -47,7 +40,7 @@ impl<
         alpha: &Element<'dr, D>,
         s_prime: &NativeSPrime<C, R>,
         registry_wy: &RegistryWy<C, R>,
-        builder: &mut ProofBuilder<'_, C, R, MAX_WITNESSED_POLYS>,
+        builder: &mut ProofBuilder<'_, C, R>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
     ) -> Result<NativeF<C, R>>
@@ -78,7 +71,7 @@ impl<
         &self,
         rng: &mut RNG,
         native: &NativeF<C, R>,
-        builder: &mut ProofBuilder<'_, C, R, MAX_WITNESSED_POLYS>,
+        builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<()> {
         let bridge_rx = nested::stages::f::Stage::<C::HostCurve, R>::rx(
             C::ScalarField::random(&mut *rng),
@@ -100,7 +93,7 @@ impl<
         alpha: &Element<'dr, D>,
         s_prime: &NativeSPrime<C, R>,
         registry_wy: &RegistryWy<C, R>,
-        builder: &ProofBuilder<'_, C, R, MAX_WITNESSED_POLYS>,
+        builder: &ProofBuilder<'_, C, R>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
     ) -> Result<NativeF<C, R>>

@@ -374,10 +374,11 @@ pub fn register_all<'params, C: Cycle, R: Rank>(
             BridgeEval => {
                 registry.register_bonding(stages::eval::Stage::<C::HostCurve, R>::mask()?)
             }
-            BridgeChallenge(slot) => registry.register_bonding(
-                stages::challenge_bridge::layout::<C::HostCurve, R>()
-                    .mask::<C::ScalarField, R>(slot as usize)?,
-            ),
+            BridgeChallenge(slot) => registry.register_bonding(match slot {
+                0 => stages::challenge_bridge::Stage0::<C::HostCurve, R>::mask()?,
+                1 => stages::challenge_bridge::Stage1::<C::HostCurve, R>::mask()?,
+                _ => unreachable!("NUM_CHALLENGE_SLOTS is 2"),
+            }),
             BridgeClaim(slot) => registry.register_bonding(
                 stages::claim_bridge::layout::<C::HostCurve, R>()
                     .mask::<C::ScalarField, R>(slot as usize)?,

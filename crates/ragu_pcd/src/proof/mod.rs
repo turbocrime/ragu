@@ -605,14 +605,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     }
 }
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const MAX_WITNESSED_POLYS: usize,
-    const MAX_POLY_QUERIES: usize,
-> crate::Application<'_, C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>
-{
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, HEADER_SIZE> {
     /// Runs endoscaling over the host-curve commitments that feed
     /// `PointsStage`, in the order `compute_p` (`_10_p.rs`)
     /// accumulates them. Writes `nested_endoscalar_rx`,
@@ -630,7 +623,7 @@ impl<
         points: &[C::HostCurve],
         endoscalar_alpha: C::ScalarField,
         points_alpha: C::ScalarField,
-        builder: &mut ProofBuilder<'_, C, R, MAX_WITNESSED_POLYS>,
+        builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<C::HostCurve> {
         assert_eq!(points.len(), NUM_ENDOSCALING_POINTS);
 
@@ -708,7 +701,6 @@ impl<
                 .map(|slot| {
                     crate::internal::challenge::claim_bridge_commitment::<C, R>(
                         self.params,
-                        &nested::stages::claim_bridge::layout::<C::HostCurve, R>(),
                         slot,
                         crate::internal::challenge::claim_bridge_alpha::<C>(
                             builder.bridge_alpha(),
@@ -755,7 +747,6 @@ impl<
                 .map(|slot| {
                     let (point, challenge) = crate::internal::challenge::staged_challenge::<C, R>(
                         self.params,
-                        &nested::stages::challenge_bridge::layout::<C::HostCurve, R>(),
                         slot,
                         builder.challenge_alpha(),
                         builder.bridge_alpha(),

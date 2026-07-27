@@ -26,10 +26,8 @@ use super::{
     challenge_stage,
 };
 use crate::{
-    Header, NUM_CHALLENGE_SLOTS,
-    framework_hooks::{
-        Alphas, BridgeGeometry, FrameworkAux, FrameworkHooks, HookLayout, ProofValues, SlotCapacity,
-    },
+    Header, NUM_CHALLENGE_SLOTS, NUM_POLY_SLOTS, NUM_QUERY_SLOTS,
+    framework_hooks::{Alphas, FrameworkAux, FrameworkHooks, HookLayout, ProofValues},
 };
 
 /// Length of an application circuit's public instance: the three headers, then
@@ -43,40 +41,11 @@ use crate::{
 /// elements instead of a whole polynomial's worth — and it is also what makes
 /// it *sound*: a query names its polynomial by index, so there is no second
 /// copy of `com` that could disagree with the first.
-pub struct InstanceLen<
-    const HEADER_SIZE: usize,
-    const MAX_WITNESSED_POLYS: usize,
-    const MAX_POLY_QUERIES: usize,
->;
+pub struct InstanceLen<const HEADER_SIZE: usize>;
 
-impl<const HEADER_SIZE: usize, const MAX_WITNESSED_POLYS: usize, const MAX_POLY_QUERIES: usize> Len
-    for InstanceLen<HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>
-{
+impl<const HEADER_SIZE: usize> Len for InstanceLen<HEADER_SIZE> {
     fn len() -> usize {
-        HEADER_SIZE * 3 + MAX_WITNESSED_POLYS * 2 + MAX_POLY_QUERIES * 3 + NUM_CHALLENGE_SLOTS * 3
-    }
-}
-
-/// Where the nested bridge runs sit, as plain numbers the in-step path can
-/// carry. The counts are type-level here, so this is the boundary at which
-/// they become data — see [`ProofValues::bridges`].
-fn bridge_geometry<C: Cycle, R: Rank, const MAX_WITNESSED_POLYS: usize>() -> BridgeGeometry {
-    use crate::internal::nested::stages::{challenge_bridge, claim_bridge};
-
-    BridgeGeometry {
-        claim_anchor: claim_bridge::layout::<C::HostCurve, R>().anchor(),
-        challenge_anchor: challenge_bridge::layout::<C::HostCurve, R>().anchor(),
-        max_witnessed_polys: MAX_WITNESSED_POLYS,
-    }
-}
-
-/// The application's slot capacities as a value, for the hooks — which compare
-/// against them at runtime rather than carrying them in their type. See
-/// [`SlotCapacity`].
-fn capacity<const MAX_WITNESSED_POLYS: usize, const MAX_POLY_QUERIES: usize>() -> SlotCapacity {
-    SlotCapacity {
-        max_witnessed_polys: MAX_WITNESSED_POLYS,
-        max_poly_queries: MAX_POLY_QUERIES,
+        HEADER_SIZE * 3 + NUM_POLY_SLOTS * 2 + NUM_QUERY_SLOTS * 3 + NUM_CHALLENGE_SLOTS * 3
     }
 }
 
@@ -96,18 +65,11 @@ fn capacity<const MAX_WITNESSED_POLYS: usize, const MAX_POLY_QUERIES: usize>() -
 /// time by the determinism guard in [`StepCtx::derive_challenge`].)
 ///
 /// [`ChallengeInput::ELEMENTS`]: crate::framework_hooks::ChallengeInput::ELEMENTS
-pub(crate) fn discover_hook_layout<
-    C: Cycle,
-    S: Step<C>,
-    const HEADER_SIZE: usize,
-    const MAX_WITNESSED_POLYS: usize,
-    const MAX_POLY_QUERIES: usize,
->(
+pub(crate) fn discover_hook_layout<C: Cycle, S: Step<C>, const HEADER_SIZE: usize>(
     step: &S,
 ) -> Result<HookLayout> {
     let mut dr: Emulator<Wireless<Empty, C::CircuitField>> = Emulator::counter();
-    let mut hooks =
-        FrameworkHooks::<_, C>::new(capacity::<MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>());
+    let mut hooks = FrameworkHooks::<_, C>::new();
     {
         let mut ctx = StepCtx::<'_, '_, _, C>::new(&mut dr, &mut hooks);
         step.witness::<_, HEADER_SIZE>(&mut ctx, Empty, Empty, Empty)?;
@@ -115,9 +77,9 @@ pub(crate) fn discover_hook_layout<
 
     let outputs = hooks.into_outputs();
     let num_claims = outputs.poly_queries.len();
-    if num_claims > MAX_POLY_QUERIES {
+    if num_claims > NUM_QUERY_SLOTS {
         return Err(ragu_core::Error::Initialization(
-            "step raises more poly-query claims than MAX_POLY_QUERIES".into(),
+            "step raises more poly-query claims than NUM_QUERY_SLOTS".into(),
         ));
     }
 
@@ -131,32 +93,17 @@ pub(crate) fn discover_hook_layout<
 /// output data carried by the resulting PCD, the inner step's own aux, and the
 /// polynomial-query claims raised by the step (checked and recorded by fuse —
 /// see [`FrameworkHooks`]).
-pub(crate) struct AdapterAux<
-    'source,
-    C: Cycle,
-    S: Step<C>,
-    const HEADER_SIZE: usize,
-    const MAX_WITNESSED_POLYS: usize,
-    const MAX_POLY_QUERIES: usize,
-> {
+pub(crate) struct AdapterAux<'source, C: Cycle, S: Step<C>, const HEADER_SIZE: usize> {
     pub left_header: FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
     pub right_header: FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
     pub output_data: <S::Output as Header<C::CircuitField>>::Data,
     pub step_aux: S::Aux<'source>,
     /// Every framework hook's output, as one named group beside the step's own
     /// aux. See [`FrameworkAux`].
-    pub framework: FrameworkAux<C, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>,
+    pub framework: FrameworkAux<C>,
 }
 
-pub(crate) struct Adapter<
-    'params,
-    C: Cycle,
-    S,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const MAX_WITNESSED_POLYS: usize,
-    const MAX_POLY_QUERIES: usize,
-> {
+pub(crate) struct Adapter<'params, C: Cycle, S, R: Rank, const HEADER_SIZE: usize> {
     step: S,
     /// The hook-call counts discovered from the step's witness body at
     /// construction time; see [`discover_hook_layout`]. Part of the circuit
@@ -176,15 +123,8 @@ pub(crate) struct Adapter<
     _marker: PhantomData<(C, R)>,
 }
 
-impl<
-    'params,
-    C: Cycle,
-    S: Step<C>,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const MAX_WITNESSED_POLYS: usize,
-    const MAX_POLY_QUERIES: usize,
-> Adapter<'params, C, S, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>
+impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
+    Adapter<'params, C, S, R, HEADER_SIZE>
 {
     /// Wraps `step` for registration/keygen, discovering its `derive_challenge`
     /// call count and poly-query claim count with a dry run of the witness
@@ -194,10 +134,7 @@ impl<
     /// before the cycle parameters exist and needs only the circuit's
     /// structure; see the field's documentation.
     pub fn new(step: S, params: Option<&'params C::Params>) -> Result<Self> {
-        let layout =
-            discover_hook_layout::<C, S, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>(
-                &step,
-            )?;
+        let layout = discover_hook_layout::<C, S, HEADER_SIZE>(&step)?;
         Ok(Adapter {
             step,
             layout,
@@ -214,15 +151,8 @@ impl<
     }
 }
 
-impl<
-    C: Cycle,
-    S: Step<C> + Send + Sync,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const MAX_WITNESSED_POLYS: usize,
-    const MAX_POLY_QUERIES: usize,
-> MultiStageCircuit<C::CircuitField, R>
-    for Adapter<'_, C, S, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>
+impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize>
+    MultiStageCircuit<C::CircuitField, R> for Adapter<'_, C, S, R, HEADER_SIZE>
 {
     /// An application circuit's stages are its challenge slots: one committed
     /// partial trace per `derive_challenge` call, so each challenge can be
@@ -239,9 +169,8 @@ impl<
         <S::Right as Header<C::CircuitField>>::Data,
         S::Witness<'source>,
     );
-    type Output = Kind![C::CircuitField; FixedVec<Element<'_, _>, InstanceLen<HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>>];
-    type Aux<'source> =
-        AdapterAux<'source, C, S, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>;
+    type Output = Kind![C::CircuitField; FixedVec<Element<'_, _>, InstanceLen<HEADER_SIZE>>];
+    type Aux<'source> = AdapterAux<'source, C, S, HEADER_SIZE>;
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
@@ -285,19 +214,10 @@ impl<
                 )
             })?;
             let alphas = alphas.take();
-            Ok(ProofValues::new(
-                params,
-                alphas.bridge,
-                alphas.challenge,
-                bridge_geometry::<C, R, MAX_WITNESSED_POLYS>(),
-            ))
+            Ok(ProofValues::new(params, alphas.bridge, alphas.challenge))
         })?;
 
-        let mut hooks = FrameworkHooks::with_expected(
-            self.layout,
-            Maybe::clone(&proof_values),
-            capacity::<MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>(),
-        );
+        let mut hooks = FrameworkHooks::with_expected(self.layout, Maybe::clone(&proof_values));
         let ((left, right, output), output_data, step_aux) = {
             let mut ctx = StepCtx::<'_, '_, _, C>::new(dr, &mut hooks)
                 .with_challenge_slots(&mut challenge_slots);
@@ -311,11 +231,7 @@ impl<
         };
         let outputs = hooks.into_outputs();
 
-        let mut elements = Vec::with_capacity(InstanceLen::<
-            HEADER_SIZE,
-            MAX_WITNESSED_POLYS,
-            MAX_POLY_QUERIES,
-        >::len());
+        let mut elements = Vec::with_capacity(InstanceLen::<HEADER_SIZE>::len());
         left.write(dr, &mut elements)?;
         right.write(dr, &mut elements)?;
         output.write(dr, &mut elements)?;
@@ -340,7 +256,7 @@ impl<
         }
 
         // Read every hook's wires back out as values for the fuse.
-        let framework = outputs.into_values::<MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>()?;
+        let framework = outputs.into_values()?;
 
         let adapter_aux = D::try_just(|| {
             let left_header = elements[0..HEADER_SIZE]
@@ -512,20 +428,10 @@ mod tests {
 
     #[test]
     fn instance_len_covers_headers_polys_claims_and_challenges() {
-        let slots =
-            crate::NUM_POLY_SLOTS * 2 + crate::NUM_QUERY_SLOTS * 3 + NUM_CHALLENGE_SLOTS * 3;
-        assert_eq!(
-            InstanceLen::<1, { crate::NUM_POLY_SLOTS }, { crate::NUM_QUERY_SLOTS }>::len(),
-            3 + slots
-        );
-        assert_eq!(
-            InstanceLen::<4, { crate::NUM_POLY_SLOTS }, { crate::NUM_QUERY_SLOTS }>::len(),
-            12 + slots
-        );
-        assert_eq!(
-            InstanceLen::<10, { crate::NUM_POLY_SLOTS }, { crate::NUM_QUERY_SLOTS }>::len(),
-            30 + slots
-        );
+        let slots = NUM_POLY_SLOTS * 2 + NUM_QUERY_SLOTS * 3 + NUM_CHALLENGE_SLOTS * 3;
+        assert_eq!(InstanceLen::<1>::len(), 3 + slots);
+        assert_eq!(InstanceLen::<4>::len(), 12 + slots);
+        assert_eq!(InstanceLen::<10>::len(), 30 + slots);
     }
 
     #[test]
@@ -533,15 +439,9 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        let adapter = Adapter::<
-            Pasta,
-            TestStep,
-            TestR,
-            HEADER_SIZE,
-            { crate::NUM_POLY_SLOTS },
-            { crate::NUM_QUERY_SLOTS },
-        >::new(TestStep, Some(Pasta::baked()))
-        .expect("adapter construction should succeed");
+        let adapter =
+            Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, Some(Pasta::baked()))
+                .expect("adapter construction should succeed");
         let witness = Always::maybe_just(|| (test_alphas(), Fp::from(10u64), Fp::from(20u64), ()));
 
         let output = MultiStage::new(adapter)
@@ -552,10 +452,7 @@ mod tests {
         // Output should have 3 * HEADER_SIZE elements (left + right + output headers)
         assert_eq!(
             output.len(),
-            HEADER_SIZE * 3
-                + crate::NUM_POLY_SLOTS * 2
-                + crate::NUM_QUERY_SLOTS * 3
-                + NUM_CHALLENGE_SLOTS * 3
+            HEADER_SIZE * 3 + NUM_POLY_SLOTS * 2 + NUM_QUERY_SLOTS * 3 + NUM_CHALLENGE_SLOTS * 3
         );
     }
 
@@ -564,15 +461,9 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        let adapter = Adapter::<
-            Pasta,
-            TestStep,
-            TestR,
-            HEADER_SIZE,
-            { crate::NUM_POLY_SLOTS },
-            { crate::NUM_QUERY_SLOTS },
-        >::new(TestStep, Some(Pasta::baked()))
-        .expect("adapter construction should succeed");
+        let adapter =
+            Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, Some(Pasta::baked()))
+                .expect("adapter construction should succeed");
         let witness = Always::maybe_just(|| (test_alphas(), Fp::from(10u64), Fp::from(20u64), ()));
 
         let aux = MultiStage::new(adapter)
@@ -599,29 +490,19 @@ mod tests {
     /// A step without `derive_challenge` calls discovers no calls.
     #[test]
     fn discovery_finds_no_calls_for_plain_step() {
-        let adapter = Adapter::<
-            Pasta,
-            TestStep,
-            TestR,
-            HEADER_SIZE,
-            { crate::NUM_POLY_SLOTS },
-            { crate::NUM_QUERY_SLOTS },
-        >::new(TestStep, Some(Pasta::baked()))
-        .expect("discovery should succeed");
+        let adapter =
+            Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, Some(Pasta::baked()))
+                .expect("discovery should succeed");
         assert_eq!(adapter.challenge_calls(), 0);
     }
 
     /// The dry run counts each `derive_challenge` call.
     #[test]
     fn discovery_finds_challenge_call() {
-        let adapter = Adapter::<
-            Pasta,
+        let adapter = Adapter::<Pasta, ChallengeStep, TestR, HEADER_SIZE>::new(
             ChallengeStep,
-            TestR,
-            HEADER_SIZE,
-            { crate::NUM_POLY_SLOTS },
-            { crate::NUM_QUERY_SLOTS },
-        >::new(ChallengeStep, Some(Pasta::baked()))
+            Some(Pasta::baked()),
+        )
         .expect("discovery should succeed");
         assert_eq!(adapter.challenge_calls(), 1);
     }
@@ -678,14 +559,10 @@ mod tests {
             }
         }
 
-        let error = Adapter::<
-            Pasta,
+        let error = Adapter::<Pasta, TooManyChallenges, TestR, HEADER_SIZE>::new(
             TooManyChallenges,
-            TestR,
-            HEADER_SIZE,
-            { crate::NUM_POLY_SLOTS },
-            { crate::NUM_QUERY_SLOTS },
-        >::new(TooManyChallenges, Some(Pasta::baked()))
+            Some(Pasta::baked()),
+        )
         .err()
         .expect("the challenge slot cap should reject this step");
         assert!(
@@ -704,14 +581,10 @@ mod tests {
         let mut dr: Emulator<Wireless<Empty, Fp>> = Emulator::counter();
         let dr = &mut dr;
 
-        let adapter = Adapter::<
-            Pasta,
+        let adapter = Adapter::<Pasta, ChallengeStep, TestR, HEADER_SIZE>::new(
             ChallengeStep,
-            TestR,
-            HEADER_SIZE,
-            { crate::NUM_POLY_SLOTS },
-            { crate::NUM_QUERY_SLOTS },
-        >::new(ChallengeStep, Some(Pasta::baked()))
+            Some(Pasta::baked()),
+        )
         .expect("discovery should succeed");
 
         let output = MultiStage::new(adapter)
@@ -721,10 +594,7 @@ mod tests {
 
         assert_eq!(
             output.len(),
-            HEADER_SIZE * 3
-                + crate::NUM_POLY_SLOTS * 2
-                + crate::NUM_QUERY_SLOTS * 3
-                + NUM_CHALLENGE_SLOTS * 3
+            HEADER_SIZE * 3 + NUM_POLY_SLOTS * 2 + NUM_QUERY_SLOTS * 3 + NUM_CHALLENGE_SLOTS * 3
         );
     }
 }

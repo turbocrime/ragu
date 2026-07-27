@@ -105,28 +105,14 @@ pub struct Output<
 
 /// The outer error stage (layer 2) of the fuse witness.
 #[derive(Default)]
-pub struct Stage<
-    C: Cycle,
-    R,
-    const HEADER_SIZE: usize,
-    const MAX_WITNESSED_POLYS: usize,
-    const MAX_POLY_QUERIES: usize,
-    FP: fold_revdot::Parameters,
-> {
+pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
     _marker: PhantomData<(C, R, FP)>,
 }
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const MAX_WITNESSED_POLYS: usize,
-    const MAX_POLY_QUERIES: usize,
-    FP: fold_revdot::Parameters,
-> staging::Stage<C::CircuitField, R>
-    for Stage<C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES, FP>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
+    staging::Stage<C::CircuitField, R> for Stage<C, R, HEADER_SIZE, FP>
 {
-    type Parent = super::preamble::Stage<C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>;
+    type Parent = super::preamble::Stage<C, R, HEADER_SIZE>;
     type Witness<'source> = &'source Witness<C, FP>;
     type OutputKind = Kind![C::CircuitField; Output<'_, _, FP, C::CircuitPoseidon>];
 
@@ -209,13 +195,6 @@ mod tests {
 
     #[test]
     fn stage_values_matches_wire_count() {
-        assert_stage_values(&Stage::<
-            Pasta,
-            R,
-            { HEADER_SIZE },
-            { crate::NUM_POLY_SLOTS },
-            { crate::NUM_QUERY_SLOTS },
-            RevdotParameters,
-        >::default());
+        assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }, RevdotParameters>::default());
     }
 }

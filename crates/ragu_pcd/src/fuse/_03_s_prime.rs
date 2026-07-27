@@ -10,21 +10,14 @@ use ragu_core::Result;
 use super::NativeSPrime;
 use crate::{Application, Proof, internal::nested, proof::ProofBuilder};
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const MAX_WITNESSED_POLYS: usize,
-    const MAX_POLY_QUERIES: usize,
-> Application<'_, C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>
-{
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
     pub(super) fn compute_s_prime<RNG: CryptoRngCore>(
         &self,
         rng: &mut RNG,
         native_registry: &RegistryAt<'_, C::CircuitField, R>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
-        builder: &mut ProofBuilder<'_, C, R, MAX_WITNESSED_POLYS>,
+        builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<NativeSPrime<C, R>> {
         let native = self.compute_native_s_prime(native_registry, left, right)?;
         self.compute_bridge_s_prime(rng, &native, builder)?;
@@ -35,7 +28,7 @@ impl<
         &self,
         rng: &mut RNG,
         native: &NativeSPrime<C, R>,
-        builder: &mut ProofBuilder<'_, C, R, MAX_WITNESSED_POLYS>,
+        builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<()> {
         let bridge_rx = nested::stages::s_prime::Stage::<C::HostCurve, R>::rx(
             C::ScalarField::random(&mut *rng),

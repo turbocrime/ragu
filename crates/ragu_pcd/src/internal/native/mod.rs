@@ -399,14 +399,7 @@ pub enum RxComponent {
 ///
 /// Does not register internal steps (rerandomize, trivial); those are
 /// registered by the caller after this function returns.
-pub fn register_all<
-    'params,
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const MAX_WITNESSED_POLYS: usize,
-    const MAX_POLY_QUERIES: usize,
->(
+pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
     mut registry: RegistryBuilder<'params, C::CircuitField, R>,
     params: &'params C::Params,
     log2_circuits: u32,
@@ -416,73 +409,46 @@ pub fn register_all<
     for &id in &InternalCircuitIndex::ALL {
         use InternalCircuitIndex::*;
         registry = match id {
-            PreambleStage => registry.register_bonding(stages::preamble::Stage::<
-                C,
-                R,
-                HEADER_SIZE,
-                MAX_WITNESSED_POLYS,
-                MAX_POLY_QUERIES,
-            >::mask()?),
+            PreambleStage => {
+                registry.register_bonding(stages::preamble::Stage::<C, R, HEADER_SIZE>::mask()?)
+            }
             InnerErrorStage => registry.register_bonding(stages::inner_error::Stage::<
                 C,
                 R,
                 HEADER_SIZE,
-                MAX_WITNESSED_POLYS,
-                MAX_POLY_QUERIES,
                 RevdotParameters,
             >::mask()?),
             OuterErrorStage => registry.register_bonding(stages::outer_error::Stage::<
                 C,
                 R,
                 HEADER_SIZE,
-                MAX_WITNESSED_POLYS,
-                MAX_POLY_QUERIES,
                 RevdotParameters,
             >::mask()?),
-            QueryStage => registry.register_bonding(stages::query::Stage::<
-                C,
-                R,
-                HEADER_SIZE,
-                MAX_WITNESSED_POLYS,
-                MAX_POLY_QUERIES,
-            >::mask()?),
-            EvalStage => registry.register_bonding(stages::eval::Stage::<
-                C,
-                R,
-                HEADER_SIZE,
-                MAX_WITNESSED_POLYS,
-                MAX_POLY_QUERIES,
-            >::mask()?),
-            PreambleFinalStaged => registry.register_bonding(stages::preamble::Stage::<
-                C,
-                R,
-                HEADER_SIZE,
-                MAX_WITNESSED_POLYS,
-                MAX_POLY_QUERIES,
-            >::final_mask()?),
+            QueryStage => {
+                registry.register_bonding(stages::query::Stage::<C, R, HEADER_SIZE>::mask()?)
+            }
+            EvalStage => {
+                registry.register_bonding(stages::eval::Stage::<C, R, HEADER_SIZE>::mask()?)
+            }
+            PreambleFinalStaged => {
+                registry
+                    .register_bonding(stages::preamble::Stage::<C, R, HEADER_SIZE>::final_mask()?)
+            }
             InnerErrorFinalStaged => registry.register_bonding(stages::inner_error::Stage::<
                 C,
                 R,
                 HEADER_SIZE,
-                MAX_WITNESSED_POLYS,
-                MAX_POLY_QUERIES,
                 RevdotParameters,
             >::final_mask()?),
             OuterErrorFinalStaged => registry.register_bonding(stages::outer_error::Stage::<
                 C,
                 R,
                 HEADER_SIZE,
-                MAX_WITNESSED_POLYS,
-                MAX_POLY_QUERIES,
                 RevdotParameters,
             >::final_mask()?),
-            EvalFinalStaged => registry.register_bonding(stages::eval::Stage::<
-                C,
-                R,
-                HEADER_SIZE,
-                MAX_WITNESSED_POLYS,
-                MAX_POLY_QUERIES,
-            >::final_mask()?),
+            EvalFinalStaged => {
+                registry.register_bonding(stages::eval::Stage::<C, R, HEADER_SIZE>::final_mask()?)
+            }
             ChallengeStage(slot) => registry.register_bonding(match slot {
                 0 => crate::step::internal::challenge_stage::Stage0::<C::CircuitField, R>::mask()?,
                 1 => crate::step::internal::challenge_stage::Stage1::<C::CircuitField, R>::mask()?,
@@ -499,8 +465,6 @@ pub fn register_all<
                     C,
                     R,
                     HEADER_SIZE,
-                    MAX_WITNESSED_POLYS,
-                    MAX_POLY_QUERIES,
                     RevdotParameters,
                 >::new(params, log2_circuits))?
             }
@@ -508,8 +472,6 @@ pub fn register_all<
                 C,
                 R,
                 HEADER_SIZE,
-                MAX_WITNESSED_POLYS,
-                MAX_POLY_QUERIES,
                 RevdotParameters,
             >::new(params))?,
             InnerCollapseCircuit => {
@@ -517,8 +479,6 @@ pub fn register_all<
                     C,
                     R,
                     HEADER_SIZE,
-                    MAX_WITNESSED_POLYS,
-                    MAX_POLY_QUERIES,
                     RevdotParameters,
                 >::new())?
             }
@@ -527,8 +487,6 @@ pub fn register_all<
                     C,
                     R,
                     HEADER_SIZE,
-                    MAX_WITNESSED_POLYS,
-                    MAX_POLY_QUERIES,
                     RevdotParameters,
                 >::new())?
             }
@@ -537,8 +495,6 @@ pub fn register_all<
                     C,
                     R,
                     HEADER_SIZE,
-                    MAX_WITNESSED_POLYS,
-                    MAX_POLY_QUERIES,
                 >::new())?
             }
             ChallengeBindingCircuit => {
@@ -546,8 +502,6 @@ pub fn register_all<
                     C,
                     R,
                     HEADER_SIZE,
-                    MAX_WITNESSED_POLYS,
-                    MAX_POLY_QUERIES,
                 >::new(params))?
             }
         };

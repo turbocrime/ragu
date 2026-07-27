@@ -16,14 +16,7 @@ use ragu_primitives::Element;
 use super::RegistryWy;
 use crate::{Application, Proof, internal::native, proof::ProofBuilder};
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const MAX_WITNESSED_POLYS: usize,
-    const MAX_POLY_QUERIES: usize,
-> Application<'_, C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>
-{
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
     pub(super) fn compute_query<'dr, D, RNG: CryptoRngCore>(
         &self,
         rng: &mut RNG,
@@ -34,7 +27,7 @@ impl<
         registry_wy: &RegistryWy<C, R>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
-        builder: &mut ProofBuilder<'_, C, R, MAX_WITNESSED_POLYS>,
+        builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<native::stages::query::Witness<C>>
     where
         D: Driver<'dr, F = C::CircuitField>,
@@ -71,13 +64,10 @@ impl<
             ),
         };
 
-        let rx = native::stages::query::Stage::<
-            C,
-            R,
-            HEADER_SIZE,
-            MAX_WITNESSED_POLYS,
-            MAX_POLY_QUERIES,
-        >::rx(C::CircuitField::random(&mut *rng), &query_witness)?;
+        let rx = native::stages::query::Stage::<C, R, HEADER_SIZE>::rx(
+            C::CircuitField::random(&mut *rng),
+            &query_witness,
+        )?;
 
         builder.set_native_query_rx(rx);
         builder.set_native_registry_xy_poly(registry_xy_poly);

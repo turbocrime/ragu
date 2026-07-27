@@ -43,14 +43,7 @@ use crate::{
 
 type NativeNumGroups = <native::RevdotParameters as fold_revdot::Parameters>::NumGroups;
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const MAX_WITNESSED_POLYS: usize,
-    const MAX_POLY_QUERIES: usize,
-> Application<'_, C, R, HEADER_SIZE, MAX_WITNESSED_POLYS, MAX_POLY_QUERIES>
-{
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
     pub(super) fn compute_ab<'dr, D>(
         &self,
         a: FixedVec<TrackedPoly<'_, FoldKey, C::CircuitField, R>, NativeNumGroups>,
@@ -58,7 +51,7 @@ impl<
         source: &FuseProofSource<'_, C, R>,
         mu_prime: &Element<'dr, D>,
         nu_prime: &Element<'dr, D>,
-        builder: &mut ProofBuilder<'_, C, R, MAX_WITNESSED_POLYS>,
+        builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<()>
     where
         D: Driver<'dr, F = C::CircuitField>,
@@ -75,7 +68,7 @@ impl<
         source: &FuseProofSource<'_, C, R>,
         mu_prime: &Element<'dr, D>,
         nu_prime: &Element<'dr, D>,
-        builder: &mut ProofBuilder<'_, C, R, MAX_WITNESSED_POLYS>,
+        builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<()>
     where
         D: Driver<'dr, F = C::CircuitField>,
