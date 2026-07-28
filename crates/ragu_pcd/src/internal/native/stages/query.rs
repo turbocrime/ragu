@@ -281,6 +281,16 @@ pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize> {
     _marker: PhantomData<(C, R)>,
 }
 
+/// This stage's wire width for a recursion with `num_challenges` challenge
+/// slots; the value-level source of the typed
+/// [`values()`](staging::Stage::values).
+pub fn num_values(num_challenges: usize) -> usize {
+    // InternalCircuitIndex::num + registry_wxy (1)
+    //   + 2 * ChildEvaluations (one rx evaluation per RxIndex, one per
+    //     challenge slot, and 5 scalars)
+    InternalCircuitIndex::num(num_challenges) + 1 + 2 * (RxIndex::num(num_challenges) + 5)
+}
+
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField, R>
     for Stage<C, R, HEADER_SIZE>
 {
@@ -289,10 +299,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     type OutputKind = Kind![C::CircuitField; Output<'_, _>];
 
     fn values() -> usize {
-        // InternalCircuitIndex::NUM + registry_wxy (1)
-        //   + 2 * ChildEvaluations (one rx evaluation per RxIndex, one per
-        //     challenge slot, and 5 scalars)
-        InternalCircuitIndex::NUM + 1 + 2 * (RxIndex::NUM + 5)
+        num_values(crate::NUM_CHALLENGE_SLOTS)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

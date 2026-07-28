@@ -342,6 +342,71 @@ fn print_registry_digests() {
     );
 }
 
+/// The value-level chain layouts describe exactly the geometry the typed
+/// `Parent` chains do — every stage's start gate, gate span, and each chain
+/// prefix's final-trace start. The masks `register_all` cuts from the layouts
+/// are functions of precisely these numbers, so this equality is what keeps
+/// them identical to the typed masks they replaced.
+#[test]
+fn native_chain_layouts_tile_typed_chain() {
+    use ragu_circuits::staging::{Stage, StageExt};
+    use ragu_pasta::Pasta;
+
+    use crate::internal::native::{RevdotParameters, chain_layouts, stages};
+
+    type Preamble = stages::preamble::Stage<Pasta, R, HEADER_SIZE>;
+    type Query = stages::query::Stage<Pasta, R, HEADER_SIZE>;
+    type Eval = stages::eval::Stage<Pasta, R, HEADER_SIZE>;
+    type Outer = stages::outer_error::Stage<Pasta, R, HEADER_SIZE, RevdotParameters>;
+    type Inner = stages::inner_error::Stage<Pasta, R, HEADER_SIZE, RevdotParameters>;
+    type F = <Pasta as ragu_arithmetic::Cycle>::CircuitField;
+
+    let (query_chain, error_chain) = chain_layouts::<Pasta, R, HEADER_SIZE>(
+        crate::NUM_POLY_SLOTS,
+        crate::NUM_QUERY_SLOTS,
+        crate::NUM_CHALLENGE_SLOTS,
+    );
+
+    for (chain, skips, nums) in [
+        (
+            &query_chain,
+            [
+                <Preamble as Stage<F, R>>::skip_gates(),
+                <Query as Stage<F, R>>::skip_gates(),
+                <Eval as Stage<F, R>>::skip_gates(),
+            ],
+            [
+                <Preamble as StageExt<F, R>>::num_gates(),
+                <Query as StageExt<F, R>>::num_gates(),
+                <Eval as StageExt<F, R>>::num_gates(),
+            ],
+        ),
+        (
+            &error_chain,
+            [
+                <Preamble as Stage<F, R>>::skip_gates(),
+                <Outer as Stage<F, R>>::skip_gates(),
+                <Inner as Stage<F, R>>::skip_gates(),
+            ],
+            [
+                <Preamble as StageExt<F, R>>::num_gates(),
+                <Outer as StageExt<F, R>>::num_gates(),
+                <Inner as StageExt<F, R>>::num_gates(),
+            ],
+        ),
+    ] {
+        for (stage, (skip, num)) in skips.iter().zip(nums.iter()).enumerate() {
+            assert_eq!(chain.skip_gates(stage), *skip, "stage {stage} start");
+            assert_eq!(chain.num_gates(stage), *num, "stage {stage} span");
+            assert_eq!(
+                chain.skip_gates(stage + 1),
+                skip + num,
+                "final trace after stage {stage}"
+            );
+        }
+    }
+}
+
 #[test]
 fn test_internal_circuit_index_all_exhaustive() {
     let mut collected = alloc::vec::Vec::new();

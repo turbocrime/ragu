@@ -6,7 +6,6 @@ use ragu_arithmetic::Cycle;
 use ragu_circuits::{
     polynomials::Rank,
     registry::{CircuitIndex, RegistryBuilder},
-    staging::StageExt,
 };
 use ragu_core::Result;
 use ragu_primitives::vec::ConstLen;
@@ -82,6 +81,44 @@ pub const fn total_circuit_counts(
         + InternalCircuitIndex::num(num_challenges);
     let log2_circuits = total_circuits.next_power_of_two().trailing_zeros();
     (total_circuits, log2_circuits)
+}
+
+/// The native fuse stage chains' value-level geometry for children of the
+/// given shape.
+///
+/// The typed chain diverges after the shared preamble prefix: the **query
+/// chain** is preamble → query → eval, the **error chain** is preamble →
+/// outer_error → inner_error. Each returned layout describes one chain, with
+/// every real stage as one slot, so masks and rx positions can be computed
+/// from values — the same mechanism the challenge-stage run uses. The widths
+/// come from each stage's `num_values` (count-dependent stages) or its typed
+/// `values()` (count-free stages), so the layouts agree with the typed chain
+/// by construction; `native_chain_layouts_tile_typed_chain` pins it.
+///
+/// Returns `(query_chain, error_chain)`.
+pub fn chain_layouts<C: Cycle, R: Rank, const HEADER_SIZE: usize>(
+    num_polys: usize,
+    num_queries: usize,
+    num_challenges: usize,
+) -> (
+    ragu_circuits::staging::InducedStages,
+    ragu_circuits::staging::InducedStages,
+) {
+    use ragu_circuits::staging::InducedStages;
+
+    let preamble_w =
+        stages::preamble::num_values(HEADER_SIZE, num_polys, num_queries, num_challenges);
+    let query_w = stages::query::num_values(num_challenges);
+    let eval_w = stages::eval::num_values(num_polys, num_challenges);
+    let outer_w = <stages::outer_error::Stage<C, R, HEADER_SIZE, RevdotParameters> as
+        ragu_circuits::staging::Stage<C::CircuitField, R>>::values();
+    let inner_w = <stages::inner_error::Stage<C, R, HEADER_SIZE, RevdotParameters> as
+        ragu_circuits::staging::Stage<C::CircuitField, R>>::values();
+
+    (
+        InducedStages::new(alloc::vec![preamble_w, query_w, eval_w]),
+        InducedStages::new(alloc::vec![preamble_w, outer_w, inner_w]),
+    )
 }
 
 impl InternalCircuitIndex {
@@ -456,8 +493,9 @@ pub enum RxComponent {
 
 /// Registers internal native circuits and masks into the provided registry.
 ///
-/// `num_challenges` is the challenge-slot count the recursion is built for; it
-/// drives the per-slot entries of the registration list.
+/// The slot counts are the shape the recursion is built for: they drive the
+/// per-slot entries of the registration list and the stage-chain geometry the
+/// masks are cut from.
 ///
 /// Does not register internal steps (rerandomize, trivial); those are
 /// registered by the caller after this function returns.
@@ -465,52 +503,38 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
     mut registry: RegistryBuilder<'params, C::CircuitField, R>,
     params: &'params C::Params,
     log2_circuits: u32,
+    num_polys: usize,
+    num_queries: usize,
     num_challenges: usize,
 ) -> Result<RegistryBuilder<'params, C::CircuitField, R>> {
     let initial_internal_circuits = registry.num_internal_circuits();
 
+    let (query_chain, error_chain) =
+        chain_layouts::<C, R, HEADER_SIZE>(num_polys, num_queries, num_challenges);
+
     for id in InternalCircuitIndex::all(num_challenges) {
         use InternalCircuitIndex::*;
         registry = match id {
-            PreambleStage => {
-                registry.register_bonding(stages::preamble::Stage::<C, R, HEADER_SIZE>::mask()?)
+            PreambleStage => registry.register_bonding(query_chain.mask::<C::CircuitField, R>(0)?),
+            InnerErrorStage => {
+                registry.register_bonding(error_chain.mask::<C::CircuitField, R>(2)?)
             }
-            InnerErrorStage => registry.register_bonding(stages::inner_error::Stage::<
-                C,
-                R,
-                HEADER_SIZE,
-                RevdotParameters,
-            >::mask()?),
-            OuterErrorStage => registry.register_bonding(stages::outer_error::Stage::<
-                C,
-                R,
-                HEADER_SIZE,
-                RevdotParameters,
-            >::mask()?),
-            QueryStage => {
-                registry.register_bonding(stages::query::Stage::<C, R, HEADER_SIZE>::mask()?)
+            OuterErrorStage => {
+                registry.register_bonding(error_chain.mask::<C::CircuitField, R>(1)?)
             }
-            EvalStage => {
-                registry.register_bonding(stages::eval::Stage::<C, R, HEADER_SIZE>::mask()?)
-            }
+            QueryStage => registry.register_bonding(query_chain.mask::<C::CircuitField, R>(1)?),
+            EvalStage => registry.register_bonding(query_chain.mask::<C::CircuitField, R>(2)?),
             PreambleFinalStaged => {
-                registry
-                    .register_bonding(stages::preamble::Stage::<C, R, HEADER_SIZE>::final_mask()?)
+                registry.register_bonding(query_chain.final_mask_through::<C::CircuitField, R>(0)?)
             }
-            InnerErrorFinalStaged => registry.register_bonding(stages::inner_error::Stage::<
-                C,
-                R,
-                HEADER_SIZE,
-                RevdotParameters,
-            >::final_mask()?),
-            OuterErrorFinalStaged => registry.register_bonding(stages::outer_error::Stage::<
-                C,
-                R,
-                HEADER_SIZE,
-                RevdotParameters,
-            >::final_mask()?),
+            InnerErrorFinalStaged => {
+                registry.register_bonding(error_chain.final_mask_through::<C::CircuitField, R>(2)?)
+            }
+            OuterErrorFinalStaged => {
+                registry.register_bonding(error_chain.final_mask_through::<C::CircuitField, R>(1)?)
+            }
             EvalFinalStaged => {
-                registry.register_bonding(stages::eval::Stage::<C, R, HEADER_SIZE>::final_mask()?)
+                registry.register_bonding(query_chain.final_mask_through::<C::CircuitField, R>(2)?)
             }
             ChallengeStage(slot) => registry.register_bonding(
                 crate::step::internal::challenge_stage::layout()

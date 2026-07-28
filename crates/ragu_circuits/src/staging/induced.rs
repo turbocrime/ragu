@@ -179,6 +179,26 @@ impl InducedStages {
         )?)))
     }
 
+    /// Creates the well-formedness mask for the final trace of a circuit whose
+    /// last stage is the given stage of this layout — [`final_mask`]
+    /// (Self::final_mask) for a chain that stops partway through: several
+    /// chains may share a prefix of stages and diverge after it, and each
+    /// prefix's final trace starts right after its last stage.
+    ///
+    /// `final_mask_through(self.len() - 1)` is `final_mask()`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `stage >= self.len()`.
+    pub fn final_mask_through<'a, F: Field, R: Rank>(
+        &self,
+        stage: usize,
+    ) -> Result<BondingObject<'a, F, R>> {
+        Ok(BondingObject::new(Box::new(StageMask::<R>::new_final(
+            self.skip_gates(stage + 1),
+        )?)))
+    }
+
     /// Computes the (partial) $r(X)$ polynomial for the given stage from its
     /// slot values; the value-level mirror of
     /// [`StageExt::rx_configured`](super::StageExt::rx_configured).

@@ -422,6 +422,26 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usiz
     }
 }
 
+/// This stage's wire width for children of the given shape; the value-level
+/// source of the typed [`values()`](staging::Stage::values).
+pub fn num_values(
+    header_size: usize,
+    num_polys: usize,
+    num_queries: usize,
+    num_challenges: usize,
+) -> usize {
+    // 2 proofs * (3 headers * HEADER_SIZE + polynomial slots (2 wires each)
+    //             + query slots (3 wires each)
+    //             + challenge slots (3 wires each)
+    //             + 1 circuit_id + unified instance wires)
+    2 * (3 * header_size
+        + 2 * num_polys
+        + 3 * num_queries
+        + 3 * num_challenges
+        + 1
+        + unified::NUM_WIRES)
+}
+
 pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize> {
     /// Number of polynomial slots each child carries.
     num_polys: usize,
@@ -451,16 +471,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     type OutputKind = Kind![C::CircuitField; Output<'_, _, C, HEADER_SIZE>];
 
     fn values() -> usize {
-        // 2 proofs * (3 headers * HEADER_SIZE + polynomial slots (2 wires each)
-        //             + query slots (3 wires each)
-        //             + challenge slots (3 wires each)
-        //             + 1 circuit_id + unified instance wires)
-        2 * (3 * HEADER_SIZE
-            + 2 * NUM_POLY_SLOTS
-            + 3 * NUM_QUERY_SLOTS
-            + 3 * NUM_CHALLENGE_SLOTS
-            + 1
-            + unified::NUM_WIRES)
+        num_values(
+            HEADER_SIZE,
+            NUM_POLY_SLOTS,
+            NUM_QUERY_SLOTS,
+            NUM_CHALLENGE_SLOTS,
+        )
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
