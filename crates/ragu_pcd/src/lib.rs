@@ -96,11 +96,26 @@ pub(crate) const RAGU_TAG: &[u8] = b"FIXME";
 /// `(child, slot)`, out of the framework's budget rather than the step's. It is
 /// declared rather than discovered because it is a budget the application
 /// chooses to spend, not a fact about any step's body.
+///
+/// `POLYS` is how many polynomials any one step may witness. Declared for the
+/// same reason: a polynomial slot is the expensive axis — a bridge stage, a
+/// commitment, an MSM, and an endoscaling point per child — so how many an
+/// application is willing to pay for is its choice, not something to be learned
+/// by running its steps.
+///
+/// Claim slots are neither declared here nor folded from the steps: they are
+/// whatever space is left under the framework's gate bound
+/// ([`Rank::n()`](ragu_circuits::polynomials::Rank::n)). A claim costs one
+/// instance triple, one `_08_f` quotient and one `compute_v` triple, and claim
+/// slots and header elements are terms in the same $k(Y)$ Horner loop — so a
+/// smaller header simply leaves room for more claims before
+/// [`GateBoundExceeded`](ragu_core::Error::GateBoundExceeded) trips.
 pub struct ApplicationBuilder<
     'params,
     C: Cycle,
     R: Rank,
     const HEADER_SIZE: usize,
+    const POLYS: usize,
     const CHALLENGE_PERMUTATIONS: usize,
 > {
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,
@@ -122,16 +137,27 @@ pub struct ApplicationBuilder<
     _marker: PhantomData<[(); HEADER_SIZE]>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const CHALLENGE_PERMUTATIONS: usize> Default
-    for ApplicationBuilder<'_, C, R, HEADER_SIZE, CHALLENGE_PERMUTATIONS>
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CHALLENGE_PERMUTATIONS: usize,
+> Default for ApplicationBuilder<'_, C, R, HEADER_SIZE, POLYS, CHALLENGE_PERMUTATIONS>
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, const CHALLENGE_PERMUTATIONS: usize>
-    ApplicationBuilder<'params, C, R, HEADER_SIZE, CHALLENGE_PERMUTATIONS>
+impl<
+    'params,
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CHALLENGE_PERMUTATIONS: usize,
+> ApplicationBuilder<'params, C, R, HEADER_SIZE, POLYS, CHALLENGE_PERMUTATIONS>
 {
     /// Create an empty [`ApplicationBuilder`] for proof-carrying data. The
     /// cycle's runtime parameters are not needed until
@@ -252,12 +278,18 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, const CHALLENGE_PERMU
             .reduce(framework_hooks::HookLayout::max_with)
             .expect("the internal steps are always registered");
 
-        // The challenge input width is the one axis that is *declared*, not
-        // discovered: it is a budget the application chooses to spend in
-        // `challenge_binding`, not a fact about any step's body. Every layout
-        // folded above already carries it, since discovery was handed the same
-        // width; this is belt-and-braces for the empty-application case.
+        // Two axes are *declared*, not discovered, because they are budgets the
+        // application chooses to spend rather than facts about any step's body:
+        // the challenge input width, and the polynomial slot count. Declaring
+        // them means every application circuit is built for them whether or not
+        // a given step uses them — which is what "cost per step is constant"
+        // asks for.
+        //
+        // The fold above still runs, and `Adapter::with_capacity` still checks
+        // each step against the result, so a step needing more polynomials than
+        // the application declared is rejected with both numbers in hand.
         capacity.challenge.points = Self::challenge_points();
+        capacity.poly_query.polys = POLYS;
 
         // The held application step adapters can be handed to the registry:
         // their circuits are measured now, with every step known. Registry

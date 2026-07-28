@@ -97,7 +97,7 @@ const NUM_APP_STEPS: usize = 6000;
 fn test_internal_circuit_constraint_counts() {
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 1>::new()
+    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 0, 1>::new()
         .register_dummy_circuits(NUM_APP_STEPS)
         .unwrap()
         .finalize(pasta)
@@ -210,7 +210,7 @@ fn print_internal_stage_parameters() {
 fn test_native_registry_digest() {
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 1>::new()
+    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 0, 1>::new()
         .register_dummy_circuits(NUM_APP_STEPS)
         .unwrap()
         .finalize(pasta)
@@ -272,7 +272,7 @@ fn test_native_registry_digest() {
 fn test_nested_registry_digest() {
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 1>::new()
+    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 0, 1>::new()
         .register_dummy_circuits(NUM_APP_STEPS)
         .unwrap()
         .finalize(pasta)
@@ -330,7 +330,7 @@ fn print_registry_digests() {
 
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 1>::new()
+    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 0, 1>::new()
         .register_dummy_circuits(NUM_APP_STEPS)
         .unwrap()
         .finalize(pasta)
@@ -564,12 +564,14 @@ mod capacity_is_per_application {
     #[test]
     fn a_light_application_pays_less_than_a_heavy_one() {
         let pasta = Pasta::baked();
-        let light = ApplicationBuilder::<Pasta, R, HS, 1>::new()
+        // The declared polynomial capacity is the difference between these two
+        // applications: `Light` witnesses none, `Heavy` witnesses two.
+        let light = ApplicationBuilder::<Pasta, R, HS, 0, 1>::new()
             .register(Light)
             .unwrap()
             .finalize(pasta)
             .unwrap();
-        let heavy = ApplicationBuilder::<Pasta, R, HS, 1>::new()
+        let heavy = ApplicationBuilder::<Pasta, R, HS, 2, 1>::new()
             .register(Heavy)
             .unwrap()
             .finalize(pasta)
