@@ -36,13 +36,28 @@ use crate::internal::{
 /// Copying circuit that relates the current preamble to a child's stages.
 pub struct Circuit<C: CurveAffine, R: Rank> {
     side: Side,
+    /// The walked *child's* own shape — this circuit traverses the child's
+    /// trace, so its geometry is the child's triple, grandchildren included.
+    child: crate::framework_hooks::HookLayout,
+    /// The child's left child's shape.
+    child_left: crate::framework_hooks::HookLayout,
+    /// The child's right child's shape.
+    child_right: crate::framework_hooks::HookLayout,
     _marker: PhantomData<(C, R)>,
 }
 
 impl<C: CurveAffine, R: Rank> Circuit<C, R> {
-    pub fn new(side: Side) -> Self {
+    pub fn new(
+        side: Side,
+        child: crate::framework_hooks::HookLayout,
+        child_left: crate::framework_hooks::HookLayout,
+        child_right: crate::framework_hooks::HookLayout,
+    ) -> Self {
         Self {
             side,
+            child,
+            child_left,
+            child_right,
             _marker: PhantomData,
         }
     }
@@ -68,16 +83,28 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         dr: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
         _witness: DriverValue<D, ()>,
     ) -> Result<WithAux<Bound<'dr, D, ()>, DriverValue<D, ()>>> {
+        let num_points =
+            crate::internal::nested::num_endoscaling_points(self.child_left, self.child_right);
+
         let dr = dr.skip_stage::<EndoscalarStage>()?;
-        let (points_guard, dr) = dr.add_stage::<PointsStage<C>>()?;
-        let (preamble_guard, dr) = dr.add_stage::<stages::preamble::Stage<C, R>>()?;
+        let (points_guard, dr) = dr.configure_stage_sized(
+            PointsStage::<C>::with_num_points(num_points),
+            crate::internal::endoscalar::points_stage_num_values(num_points),
+        )?;
+        let (preamble_guard, dr) = dr.configure_stage_sized(
+            stages::preamble::Stage::<C, R>::with_shapes(self.child_left, self.child_right),
+            stages::preamble::num_values(self.child_left, self.child_right),
+        )?;
         let (s_prime_guard, dr) = dr.add_stage::<stages::s_prime::Stage<C, R>>()?;
         let (inner_error_guard, dr) = dr.add_stage::<stages::inner_error::Stage<C, R>>()?;
         let (outer_error_guard, dr) = dr.add_stage::<stages::outer_error::Stage<C, R>>()?;
         let (ab_guard, dr) = dr.add_stage::<stages::ab::Stage<C, R>>()?;
         let (query_guard, dr) = dr.add_stage::<stages::query::Stage<C, R>>()?;
         let dr = dr.skip_stage::<stages::f::Stage<C, R>>()?;
-        let (eval_guard, dr) = dr.add_stage::<stages::eval::Stage<C, R>>()?;
+        let (eval_guard, dr) = dr.configure_stage_sized(
+            stages::eval::Stage::<C, R>::with_shape(self.child),
+            stages::eval::num_values(self.child),
+        )?;
         let dr = dr.finish();
 
         // Load stage gadgets. Witness values are never accessed — the circuit

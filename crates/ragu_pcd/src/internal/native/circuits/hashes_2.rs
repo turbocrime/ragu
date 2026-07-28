@@ -88,6 +88,10 @@ use crate::internal::{fold_revdot, transcript::Transcript};
 /// [module-level documentation]: self
 pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
     params: &'params C::Params,
+    /// The left child's shape.
+    left: crate::framework_hooks::HookLayout,
+    /// The right child's shape.
+    right: crate::framework_hooks::HookLayout,
     _marker: PhantomData<(R, FP)>,
 }
 
@@ -99,9 +103,15 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Para
     /// # Parameters
     ///
     /// - `params`: Curve cycle parameters providing Poseidon configuration.
-    pub fn new(params: &'params C::Params) -> MultiStage<C::CircuitField, R, Self> {
+    pub fn new(
+        params: &'params C::Params,
+        left: crate::framework_hooks::HookLayout,
+        right: crate::framework_hooks::HookLayout,
+    ) -> MultiStage<C::CircuitField, R, Self> {
         MultiStage::new(Circuit {
             params,
+            left,
+            right,
             _marker: PhantomData,
         })
     }
@@ -153,7 +163,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     where
         Self: 'dr,
     {
-        let builder = builder.skip_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
+        let builder = builder.skip_stage_sized(
+            native_preamble::Stage::<C, R, HEADER_SIZE>::with_shapes(self.left, self.right),
+            native_preamble::num_values(HEADER_SIZE, self.left, self.right),
+        )?;
         let (outer_error, builder) =
             builder.add_stage::<native_outer_error::Stage<C, R, HEADER_SIZE, FP>>()?;
         let dr = builder.finish();

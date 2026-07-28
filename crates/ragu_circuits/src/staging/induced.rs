@@ -86,6 +86,17 @@ impl InducedStages {
         }
     }
 
+    /// Creates a layout anchored at an explicit start gate (including the
+    /// SYSTEM gate) — for a run whose position comes from a value-level chain
+    /// rather than a typed stage. The value-anchored sibling of
+    /// [`after`](Self::after), for the same reason
+    /// `configure_induced_sized` exists beside `configure_induced`: when the
+    /// stages before the run have value-level widths, no type knows where the
+    /// run begins.
+    pub fn anchored(skip_gates: usize, widths: Vec<usize>) -> Self {
+        Self { skip_gates, widths }
+    }
+
     /// Creates a layout for a run that begins immediately after the typed
     /// stage `S` — the run's slots subdivide the span of the stage that
     /// *follows* `S`.

@@ -83,6 +83,10 @@ use crate::internal::fold_revdot;
 ///
 /// [module-level documentation]: self
 pub struct Circuit<C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
+    /// The left child's shape.
+    left: crate::framework_hooks::HookLayout,
+    /// The right child's shape.
+    right: crate::framework_hooks::HookLayout,
     _marker: PhantomData<(C, R, FP)>,
 }
 
@@ -90,8 +94,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     Circuit<C, R, HEADER_SIZE, FP>
 {
     /// Creates a new multi-stage circuit for layer 2 revdot verification.
-    pub fn new() -> MultiStage<C::CircuitField, R, Self> {
+    pub fn new(
+        left: crate::framework_hooks::HookLayout,
+        right: crate::framework_hooks::HookLayout,
+    ) -> MultiStage<C::CircuitField, R, Self> {
         MultiStage::new(Circuit {
+            left,
+            right,
             _marker: PhantomData,
         })
     }
@@ -151,7 +160,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     where
         Self: 'dr,
     {
-        let (preamble, builder) = builder.add_stage::<preamble::Stage<C, R, HEADER_SIZE>>()?;
+        let (preamble, builder) = builder.configure_stage_sized(
+            preamble::Stage::<C, R, HEADER_SIZE>::with_shapes(self.left, self.right),
+            preamble::num_values(HEADER_SIZE, self.left, self.right),
+        )?;
         let (outer_error, builder) =
             builder.add_stage::<outer_error::Stage<C, R, HEADER_SIZE, FP>>()?;
         let dr = builder.finish();

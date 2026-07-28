@@ -84,12 +84,25 @@ use crate::internal::{
 /// [module-level documentation]: self
 /// [$v$]: unified::Output::v
 pub struct Circuit<C: Cycle, R, const HEADER_SIZE: usize> {
+    /// Size of the recursion's internal-circuit list, in challenge slots.
+    mask_challenges: usize,
+    /// The left child's shape.
+    left: crate::framework_hooks::HookLayout,
+    /// The right child's shape.
+    right: crate::framework_hooks::HookLayout,
     _marker: PhantomData<(C, R)>,
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Circuit<C, R, HEADER_SIZE> {
-    pub fn new() -> MultiStage<C::CircuitField, R, Self> {
+    pub fn new(
+        mask_challenges: usize,
+        left: crate::framework_hooks::HookLayout,
+        right: crate::framework_hooks::HookLayout,
+    ) -> MultiStage<C::CircuitField, R, Self> {
         MultiStage::new(Circuit {
+            mask_challenges,
+            left,
+            right,
             _marker: PhantomData,
         })
     }
@@ -145,10 +158,26 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
     {
         // Set up multi-stage circuit pipeline: preamble -> query -> eval.
         // Each stage provides data needed for the v computation.
-        let (preamble, builder) =
-            builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
-        let (query, builder) = builder.add_stage::<native_query::Stage<C, R, HEADER_SIZE>>()?;
-        let (eval, builder) = builder.add_stage::<native_eval::Stage<C, R, HEADER_SIZE>>()?;
+        let (preamble, builder) = builder.configure_stage_sized(
+            native_preamble::Stage::<C, R, HEADER_SIZE>::with_shapes(self.left, self.right),
+            native_preamble::num_values(HEADER_SIZE, self.left, self.right),
+        )?;
+        let (query, builder) = builder.configure_stage_sized(
+            native_query::Stage::<C, R, HEADER_SIZE>::with_shapes(
+                self.mask_challenges,
+                self.left,
+                self.right,
+            ),
+            native_query::num_values(
+                super::super::InternalCircuitIndex::num(self.mask_challenges),
+                self.left,
+                self.right,
+            ),
+        )?;
+        let (eval, builder) = builder.configure_stage_sized(
+            native_eval::Stage::<C, R, HEADER_SIZE>::with_shapes(self.left, self.right),
+            native_eval::num_values(self.left, self.right),
+        )?;
         let dr = builder.finish();
 
         // Preamble is enforced because it contains child proof data that must
@@ -213,8 +242,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
             let fu = {
                 let alpha = unified_output.alpha.read(dr, allocator)?;
                 let u = unified_output.u.read(dr, allocator)?;
-                let denominators =
-                    Denominators::new(dr, &u, &w, x.element(), &y, z.element(), &preamble)?;
+                let denominators = Denominators::new(
+                    dr,
+                    &u,
+                    &w,
+                    x.element(),
+                    &y,
+                    z.element(),
+                    &preamble,
+                    self.mask_challenges,
+                )?;
                 // Resolve each query's polynomial before the accumulation: a
                 // query names its polynomial by index, and turning an index
                 // into an evaluation costs constraints, so it happens here
@@ -321,6 +358,7 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
         preamble: &native_preamble::Output<'dr, D, C, HEADER_SIZE>,
+        mask_challenges: usize,
     ) -> Result<Self>
     where
         D::F: ragu_arithmetic::ff::PrimeField,
@@ -355,9 +393,7 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
             .collect::<Result<Vec<_>>>()?;
 
         let circuit_indices =
-            InternalCircuitValues::try_from_fn(crate::NUM_CHALLENGE_SLOTS, |id| {
-                inverter.add_circuit(dr, id)
-            })?;
+            InternalCircuitValues::try_from_fn(mask_challenges, |id| inverter.add_circuit(dr, id))?;
 
         let inverted = inverter.invert(dr)?;
 
@@ -382,7 +418,7 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
                 y: inverted[challenges_y].clone(),
                 xz: inverted[challenges_xz].clone(),
             },
-            internal: InternalCircuitValues::from_fn(crate::NUM_CHALLENGE_SLOTS, |id| {
+            internal: InternalCircuitValues::from_fn(mask_challenges, |id| {
                 inverted[*circuit_indices.get(id)].clone()
             }),
         })

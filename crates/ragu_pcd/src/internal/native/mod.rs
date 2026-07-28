@@ -562,21 +562,25 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
                     R,
                     HEADER_SIZE,
                     RevdotParameters,
-                >::new(params, log2_circuits))?
+                >::new(
+                    params, log2_circuits, capacity, capacity
+                ))?
             }
             Hashes2Circuit => registry.register_internal_circuit(circuits::hashes_2::Circuit::<
                 C,
                 R,
                 HEADER_SIZE,
                 RevdotParameters,
-            >::new(params))?,
+            >::new(
+                params, capacity, capacity
+            ))?,
             InnerCollapseCircuit => {
                 registry.register_internal_circuit(circuits::inner_collapse::Circuit::<
                     C,
                     R,
                     HEADER_SIZE,
                     RevdotParameters,
-                >::new())?
+                >::new(capacity, capacity))?
             }
             OuterCollapseCircuit => {
                 registry.register_internal_circuit(circuits::outer_collapse::Circuit::<
@@ -584,21 +588,25 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
                     R,
                     HEADER_SIZE,
                     RevdotParameters,
-                >::new())?
+                >::new(capacity, capacity))?
             }
             ComputeVCircuit => {
                 registry.register_internal_circuit(circuits::compute_v::Circuit::<
                     C,
                     R,
                     HEADER_SIZE,
-                >::new())?
+                >::new(
+                    num_challenges, capacity, capacity
+                ))?
             }
             ChallengeBindingCircuit => {
                 registry.register_internal_circuit(circuits::challenge_binding::Circuit::<
                     C,
                     R,
                     HEADER_SIZE,
-                >::new(params))?
+                >::new(
+                    params, capacity, capacity
+                ))?
             }
         };
     }

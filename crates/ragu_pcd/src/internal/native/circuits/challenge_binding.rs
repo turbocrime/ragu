@@ -85,6 +85,10 @@ use super::super::{
 /// [module-level documentation]: self
 pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize> {
     params: &'params C::Params,
+    /// The left child's shape.
+    left: crate::framework_hooks::HookLayout,
+    /// The right child's shape.
+    right: crate::framework_hooks::HookLayout,
     _marker: PhantomData<(R,)>,
 }
 
@@ -94,9 +98,15 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> Circuit<'params, C, R
     /// # Parameters
     ///
     /// - `params`: Curve cycle parameters providing Poseidon configuration.
-    pub fn new(params: &'params C::Params) -> MultiStage<C::CircuitField, R, Self> {
+    pub fn new(
+        params: &'params C::Params,
+        left: crate::framework_hooks::HookLayout,
+        right: crate::framework_hooks::HookLayout,
+    ) -> MultiStage<C::CircuitField, R, Self> {
         MultiStage::new(Circuit {
             params,
+            left,
+            right,
             _marker: PhantomData,
         })
     }
@@ -142,7 +152,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
     where
         Self: 'dr,
     {
-        let (preamble, builder) = builder.add_stage::<preamble::Stage<C, R, HEADER_SIZE>>()?;
+        let (preamble, builder) = builder.configure_stage_sized(
+            preamble::Stage::<C, R, HEADER_SIZE>::with_shapes(self.left, self.right),
+            preamble::num_values(HEADER_SIZE, self.left, self.right),
+        )?;
         let dr = builder.finish();
 
         let preamble = preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;

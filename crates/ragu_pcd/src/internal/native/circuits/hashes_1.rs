@@ -130,6 +130,10 @@ pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEAD
 pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
     params: &'params C::Params,
     log2_circuits: u32,
+    /// The left child's shape.
+    left: crate::framework_hooks::HookLayout,
+    /// The right child's shape.
+    right: crate::framework_hooks::HookLayout,
     _marker: PhantomData<(R, FP)>,
 }
 
@@ -146,10 +150,14 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Para
     pub fn new(
         params: &'params C::Params,
         log2_circuits: u32,
+        left: crate::framework_hooks::HookLayout,
+        right: crate::framework_hooks::HookLayout,
     ) -> MultiStage<C::CircuitField, R, Self> {
         MultiStage::new(Circuit {
             params,
             log2_circuits,
+            left,
+            right,
             _marker: PhantomData,
         })
     }
@@ -208,8 +216,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     where
         Self: 'dr,
     {
-        let (preamble, builder) =
-            builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
+        let (preamble, builder) = builder.configure_stage_sized(
+            native_preamble::Stage::<C, R, HEADER_SIZE>::with_shapes(self.left, self.right),
+            native_preamble::num_values(HEADER_SIZE, self.left, self.right),
+        )?;
         let (outer_error, builder) =
             builder.add_stage::<native_outer_error::Stage<C, R, HEADER_SIZE, FP>>()?;
         let dr = builder.finish();

@@ -68,12 +68,25 @@ impl<'pts, 'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> Walker<'pts, 'dr, D
 
 /// Loading circuit that loads the entire nested stage hierarchy.
 pub struct Circuit<C: CurveAffine, R: Rank> {
+    /// The current step's own shape (its bridge runs and eval stashes).
+    own: crate::framework_hooks::HookLayout,
+    /// The left child's shape.
+    left: crate::framework_hooks::HookLayout,
+    /// The right child's shape.
+    right: crate::framework_hooks::HookLayout,
     _marker: PhantomData<(C, R)>,
 }
 
 impl<C: CurveAffine, R: Rank> Circuit<C, R> {
-    pub fn new() -> Self {
+    pub fn new(
+        own: crate::framework_hooks::HookLayout,
+        left: crate::framework_hooks::HookLayout,
+        right: crate::framework_hooks::HookLayout,
+    ) -> Self {
         Self {
+            own,
+            left,
+            right,
             _marker: PhantomData,
         }
     }
@@ -99,24 +112,41 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         dr: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
         _witness: DriverValue<D, ()>,
     ) -> Result<WithAux<Bound<'dr, D, ()>, DriverValue<D, ()>>> {
+        let num_points = crate::internal::nested::num_endoscaling_points(self.left, self.right);
+        let claim_layout =
+            crate::internal::nested::claim_run_layout::<C, R>(self.own, self.left, self.right);
+        let challenge_layout =
+            crate::internal::nested::challenge_run_layout::<C, R>(self.own, self.left, self.right);
+
         let dr = dr.skip_stage::<EndoscalarStage>()?;
-        let (points_guard, dr) = dr.add_stage::<PointsStage<C>>()?;
-        let (preamble_guard, dr) = dr.add_stage::<stages::preamble::Stage<C, R>>()?;
+        let (points_guard, dr) = dr.configure_stage_sized(
+            PointsStage::<C>::with_num_points(num_points),
+            crate::internal::endoscalar::points_stage_num_values(num_points),
+        )?;
+        let (preamble_guard, dr) = dr.configure_stage_sized(
+            stages::preamble::Stage::<C, R>::with_shapes(self.left, self.right),
+            stages::preamble::num_values(self.left, self.right),
+        )?;
         let (s_prime_guard, dr) = dr.add_stage::<stages::s_prime::Stage<C, R>>()?;
         let (inner_error_guard, dr) = dr.add_stage::<stages::inner_error::Stage<C, R>>()?;
         let dr = dr.skip_stage::<stages::outer_error::Stage<C, R>>()?;
         let (ab_guard, dr) = dr.add_stage::<stages::ab::Stage<C, R>>()?;
         let (query_guard, dr) = dr.add_stage::<stages::query::Stage<C, R>>()?;
         let (f_guard, dr) = dr.add_stage::<stages::f::Stage<C, R>>()?;
-        let (eval_guard, dr) = dr.add_stage::<stages::eval::Stage<C, R>>()?;
-        let (claim_guards, dr) = dr.configure_induced::<stages::claim_bridge::Run<C, R>, _>(
+        let (eval_guard, dr) = dr.configure_stage_sized(
+            stages::eval::Stage::<C, R>::with_shape(self.own),
+            stages::eval::num_values(self.own),
+        )?;
+        let (claim_guards, dr) = dr.configure_induced_sized::<stages::claim_bridge::Run<C, R>, _>(
             stages::claim_bridge::Slot::<C, R>::default(),
-            &stages::claim_bridge::layout::<C, R>(),
+            &claim_layout,
+            claim_layout.skip_gates(0),
         )?;
         let (challenge_guards, dr) = dr
-            .configure_induced::<stages::challenge_bridge::Run<C, R>, _>(
+            .configure_induced_sized::<stages::challenge_bridge::Run<C, R>, _>(
                 stages::challenge_bridge::Slot::<C, R>::default(),
-                &stages::challenge_bridge::layout::<C, R>(),
+                &challenge_layout,
+                challenge_layout.skip_gates(0),
             )?;
         let dr = dr.finish();
 

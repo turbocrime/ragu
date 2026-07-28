@@ -425,7 +425,7 @@ fn nested_chain_layout_tiles_typed_chain() {
     type F = <Pasta as ragu_arithmetic::Cycle>::ScalarField;
 
     let padded = crate::framework_hooks::HookLayout::padded();
-    let chain = chain_layout::<Pasta, R>(padded, padded, padded);
+    let chain = chain_layout::<Host, R>(padded, padded, padded);
 
     let expected: [(usize, usize); 10] = [
         (

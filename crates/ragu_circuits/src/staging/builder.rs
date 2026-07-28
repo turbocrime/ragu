@@ -553,6 +553,18 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
         let (_, builder) = self.add_stage::<Next>()?;
         Ok(builder)
     }
+
+    /// As [`skip_stage`](Self::skip_stage), with the stage's slot count
+    /// supplied as a value — the skipping twin of
+    /// [`configure_stage_sized`](Self::configure_stage_sized).
+    pub fn skip_stage_sized<Next: Stage<D::F, R, Parent = Current> + 'dr>(
+        self,
+        stage: Next,
+        num_slots: usize,
+    ) -> Result<StageBuilder<'a, 'dr, D, R, Next, Target>> {
+        let (_, builder) = self.configure_stage_sized(stage, num_slots)?;
+        Ok(builder)
+    }
 }
 
 impl<'a, 'dr, D: Driver<'dr>, R: Rank, Finished: Stage<D::F, R>>

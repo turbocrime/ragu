@@ -89,7 +89,7 @@ const NUM_ENDOSCALING_STEPS: usize = endoscalar::num_steps(NUM_ENDOSCALING_POINT
 /// `num_values` (count-dependent stages) or its typed `values()` (count-free
 /// stages), so the layout agrees with the typed chain by construction;
 /// `nested_chain_layout_tiles_typed_chain` pins it.
-pub fn chain_layout<C: Cycle, R: Rank>(
+pub fn chain_layout<HC: ragu_arithmetic::CurveAffine, R: Rank>(
     own: crate::framework_hooks::HookLayout,
     left: crate::framework_hooks::HookLayout,
     right: crate::framework_hooks::HookLayout,
@@ -97,17 +97,44 @@ pub fn chain_layout<C: Cycle, R: Rank>(
     use ragu_circuits::staging::{InducedStages, Stage};
 
     InducedStages::new(alloc::vec![
-        <endoscalar::EndoscalarStage as Stage<C::ScalarField, R>>::values(),
+        <endoscalar::EndoscalarStage as Stage<HC::Base, R>>::values(),
         endoscalar::points_stage_num_values(num_endoscaling_points(left, right)),
         stages::preamble::num_values(left, right),
-        <stages::s_prime::Stage<C::HostCurve, R> as Stage<C::ScalarField, R>>::values(),
-        <stages::inner_error::Stage<C::HostCurve, R> as Stage<C::ScalarField, R>>::values(),
-        <stages::outer_error::Stage<C::HostCurve, R> as Stage<C::ScalarField, R>>::values(),
-        <stages::ab::Stage<C::HostCurve, R> as Stage<C::ScalarField, R>>::values(),
-        <stages::query::Stage<C::HostCurve, R> as Stage<C::ScalarField, R>>::values(),
-        <stages::f::Stage<C::HostCurve, R> as Stage<C::ScalarField, R>>::values(),
+        <stages::s_prime::Stage<HC, R> as Stage<HC::Base, R>>::values(),
+        <stages::inner_error::Stage<HC, R> as Stage<HC::Base, R>>::values(),
+        <stages::outer_error::Stage<HC, R> as Stage<HC::Base, R>>::values(),
+        <stages::ab::Stage<HC, R> as Stage<HC::Base, R>>::values(),
+        <stages::query::Stage<HC, R> as Stage<HC::Base, R>>::values(),
+        <stages::f::Stage<HC, R> as Stage<HC::Base, R>>::values(),
         stages::eval::num_values(own),
     ])
+}
+
+/// The claim-bridge run's layout for a step of shape `own` fusing children of
+/// shapes `left` and `right`: one two-wire slot per witnessed polynomial,
+/// anchored right after the chain [`chain_layout`] describes.
+pub fn claim_run_layout<HC: ragu_arithmetic::CurveAffine, R: Rank>(
+    own: crate::framework_hooks::HookLayout,
+    left: crate::framework_hooks::HookLayout,
+    right: crate::framework_hooks::HookLayout,
+) -> ragu_circuits::staging::InducedStages {
+    ragu_circuits::staging::InducedStages::anchored(
+        chain_layout::<HC, R>(own, left, right).final_skip_gates(),
+        alloc::vec![2; own.poly_query.polys],
+    )
+}
+
+/// The challenge-bridge run's layout, following the claim run: one two-wire
+/// slot per derived challenge.
+pub fn challenge_run_layout<HC: ragu_arithmetic::CurveAffine, R: Rank>(
+    own: crate::framework_hooks::HookLayout,
+    left: crate::framework_hooks::HookLayout,
+    right: crate::framework_hooks::HookLayout,
+) -> ragu_circuits::staging::InducedStages {
+    ragu_circuits::staging::InducedStages::anchored(
+        claim_run_layout::<HC, R>(own, left, right).final_skip_gates(),
+        alloc::vec![2; own.challenge.calls],
+    )
 }
 
 /// Index of internal nested circuits registered into the registry.
@@ -385,7 +412,7 @@ pub fn register_all<'params, C: Cycle, R: Rank>(
 ) -> Result<RegistryBuilder<'params, C::ScalarField, R>> {
     let initial_internal_circuits = registry.num_internal_circuits();
 
-    let chain = chain_layout::<C, R>(
+    let chain = chain_layout::<C::HostCurve, R>(
         crate::framework_hooks::HookLayout::padded(),
         crate::framework_hooks::HookLayout::padded(),
         crate::framework_hooks::HookLayout::padded(),
@@ -430,11 +457,20 @@ pub fn register_all<'params, C: Cycle, R: Rank>(
                     .mask::<C::ScalarField, R>(slot as usize)?,
             ),
             Loading => {
-                let circuit = circuits::loading::Circuit::<C::HostCurve, R>::new();
+                let circuit = circuits::loading::Circuit::<C::HostCurve, R>::new(
+                    crate::framework_hooks::HookLayout::padded(),
+                    crate::framework_hooks::HookLayout::padded(),
+                    crate::framework_hooks::HookLayout::padded(),
+                );
                 registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?)
             }
             Copying(side) => {
-                let circuit = circuits::copying::Circuit::<C::HostCurve, R>::new(side);
+                let circuit = circuits::copying::Circuit::<C::HostCurve, R>::new(
+                    side,
+                    crate::framework_hooks::HookLayout::padded(),
+                    crate::framework_hooks::HookLayout::padded(),
+                    crate::framework_hooks::HookLayout::padded(),
+                );
                 registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?)
             }
         };
