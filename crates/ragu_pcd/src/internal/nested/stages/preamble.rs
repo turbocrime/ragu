@@ -2,6 +2,7 @@
 //!
 //! Collects child proof commitments for cross-curve accumulation.
 
+use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use ragu_arithmetic::{CurveAffine, Cycle};
@@ -12,22 +13,25 @@ use ragu_core::{
     gadgets::{Bound, Gadget, Kind},
     maybe::Maybe,
 };
-use ragu_primitives::{
-    Point,
-    io::Write,
-    vec::{CollectFixed, ConstLen, FixedVec},
-};
+use ragu_primitives::{Point, io::Write};
 
 use crate::{
     NUM_CHALLENGE_SLOTS, NUM_POLY_SLOTS, Proof,
     internal::{endoscalar::PointsStage, native::RxIndex, nested::EndoPoints},
+    slot_vec::SlotVec,
 };
 
-/// Number of curve points in this stage: the native preamble commitment plus,
-/// per child, the `_10_p` components (one per [`RxIndex`] — challenge stages
-/// included — plus `a`, `b`, `registry_xy` and `p`) and the stashed poly-query
-/// claim commitments.
-pub const NUM_POINTS: usize = 1 + 2 * (RxIndex::NUM + 4 + NUM_POLY_SLOTS);
+/// Number of curve points in this stage for children carrying `num_polys`
+/// poly-query claim slots each: the native preamble commitment plus, per
+/// child, the `_10_p` components (one per [`RxIndex`] — challenge stages
+/// included — plus `a`, `b`, `registry_xy` and `p`) and the stashed
+/// poly-query claim commitments.
+pub const fn num_points(num_polys: usize) -> usize {
+    1 + 2 * (RxIndex::NUM + 4 + num_polys)
+}
+
+/// [`num_points`] at the crate's fixed slot capacity.
+pub const NUM_POINTS: usize = num_points(NUM_POLY_SLOTS);
 
 /// Witness data for a single child proof in the preamble bridge stage.
 ///
@@ -68,8 +72,9 @@ pub struct ChildWitness<C: CurveAffine> {
     /// The child's challenge-stage host commitments, in slot order. These are
     /// [`RxIndex::ChallengeStage`] components, so they sit with the rest of the
     /// rx block — `loading` ties them to the endoscaling point list, `copying`
-    /// ties them to the child's own record.
-    pub stashed_challenge_stages: [C; NUM_CHALLENGE_SLOTS],
+    /// ties them to the child's own record. Must contain exactly the stage's
+    /// challenge-slot count; the stage body indexes it up to that count.
+    pub stashed_challenge_stages: Vec<C>,
     /// Stashed `a` commitment from the child's AB bridge stage.
     pub stashed_ab_a: C,
     /// Stashed `b` commitment from the child's AB bridge stage.
@@ -81,8 +86,9 @@ pub struct ChildWitness<C: CurveAffine> {
     /// Stashed poly-query claim host commitments from the child, in slot
     /// order. Loading enforces these against the [`PointsStage`] inputs (they
     /// enter the `_10_p` accumulation); copying verifies them against the
-    /// child's own eval bridge stage record.
-    pub stashed_claims: [C; NUM_POLY_SLOTS],
+    /// child's own eval bridge stage record. Length disciplined like
+    /// `stashed_challenge_stages`, at the stage's poly-slot count.
+    pub stashed_claims: Vec<C>,
 }
 
 impl<C: CurveAffine> ChildWitness<C> {
@@ -102,14 +108,16 @@ impl<C: CurveAffine> ChildWitness<C> {
             stashed_outer_error: proof.native_rx_commitment(RxIndex::OuterError),
             stashed_query: proof.native_rx_commitment(RxIndex::Query),
             stashed_eval: proof.native_rx_commitment(RxIndex::Eval),
-            stashed_challenge_stages: core::array::from_fn(|i| {
-                proof.native_rx_commitment(RxIndex::ChallengeStage(i as u32))
-            }),
+            stashed_challenge_stages: (0..NUM_CHALLENGE_SLOTS)
+                .map(|i| proof.native_rx_commitment(RxIndex::ChallengeStage(i as u32)))
+                .collect(),
             stashed_ab_a: proof.native_commitment(RxComponent::AbA),
             stashed_ab_b: proof.native_commitment(RxComponent::AbB),
             stashed_registry_xy: proof.native_registry_xy_commitment(),
             stashed_p: proof.native_p_commitment(),
-            stashed_claims: core::array::from_fn(|i| proof.claim_host_commitment(i)),
+            stashed_claims: (0..NUM_POLY_SLOTS)
+                .map(|i| proof.claim_host_commitment(i))
+                .collect(),
         }
     }
 }
@@ -167,7 +175,7 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     pub stashed_eval: Point<'dr, D, C>,
     /// The child's challenge-stage host commitments, in slot order.
     #[ragu(gadget)]
-    pub stashed_challenge_stages: FixedVec<Point<'dr, D, C>, ConstLen<NUM_CHALLENGE_SLOTS>>,
+    pub stashed_challenge_stages: SlotVec<Point<'dr, D, C>>,
     /// Stashed `a` commitment from the child's AB bridge stage.
     #[ragu(gadget)]
     pub stashed_ab_a: Point<'dr, D, C>,
@@ -183,7 +191,7 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     /// Stashed poly-query claim host commitments from the child, in slot
     /// order.
     #[ragu(gadget)]
-    pub stashed_claims: FixedVec<Point<'dr, D, C>, ConstLen<NUM_POLY_SLOTS>>,
+    pub stashed_claims: SlotVec<Point<'dr, D, C>>,
 }
 
 impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> core::ops::Index<RxIndex>
@@ -212,7 +220,12 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> core::ops::Index<RxIndex>
 }
 
 impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> ChildOutput<'dr, D, C> {
-    fn alloc(dr: &mut D, witness: DriverValue<D, &ChildWitness<C>>) -> Result<Self> {
+    fn alloc(
+        dr: &mut D,
+        witness: DriverValue<D, &ChildWitness<C>>,
+        num_polys: usize,
+        num_challenges: usize,
+    ) -> Result<Self> {
         Ok(ChildOutput {
             application: Point::alloc(dr, witness.as_ref().map(|w| w.application))?,
             hashes_1: Point::alloc(dr, witness.as_ref().map(|w| w.hashes_1))?,
@@ -226,16 +239,16 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> ChildOutput<'dr, D, C> {
             stashed_outer_error: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_outer_error))?,
             stashed_query: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_query))?,
             stashed_eval: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_eval))?,
-            stashed_challenge_stages: (0..NUM_CHALLENGE_SLOTS)
+            stashed_challenge_stages: (0..num_challenges)
                 .map(|i| Point::alloc(dr, witness.as_ref().map(|w| w.stashed_challenge_stages[i])))
-                .try_collect_fixed()?,
+                .collect::<Result<_>>()?,
             stashed_ab_a: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_ab_a))?,
             stashed_ab_b: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_ab_b))?,
             stashed_registry_xy: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_registry_xy))?,
             stashed_p: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_p))?,
-            stashed_claims: (0..NUM_POLY_SLOTS)
+            stashed_claims: (0..num_polys)
                 .map(|i| Point::alloc(dr, witness.as_ref().map(|w| w.stashed_claims[i])))
-                .try_collect_fixed()?,
+                .collect::<Result<_>>()?,
         })
     }
 }
@@ -256,9 +269,22 @@ pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     pub right: ChildOutput<'dr, D, C>,
 }
 
-#[derive(Default)]
 pub struct Stage<C: CurveAffine, R> {
+    /// Number of poly-query claim slots each child carries.
+    num_polys: usize,
+    /// Number of challenge-stage slots each child carries.
+    num_challenges: usize,
     _marker: PhantomData<(C, R)>,
+}
+
+impl<C: CurveAffine, R> Default for Stage<C, R> {
+    fn default() -> Self {
+        Stage {
+            num_polys: NUM_POLY_SLOTS,
+            num_challenges: NUM_CHALLENGE_SLOTS,
+            _marker: PhantomData,
+        }
+    }
 }
 
 impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R> {
@@ -280,8 +306,18 @@ impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stag
     {
         Ok(Output {
             native_preamble: Point::alloc(dr, witness.as_ref().map(|w| w.native_preamble))?,
-            left: ChildOutput::alloc(dr, witness.as_ref().map(|w| &w.left))?,
-            right: ChildOutput::alloc(dr, witness.as_ref().map(|w| &w.right))?,
+            left: ChildOutput::alloc(
+                dr,
+                witness.as_ref().map(|w| &w.left),
+                self.num_polys,
+                self.num_challenges,
+            )?,
+            right: ChildOutput::alloc(
+                dr,
+                witness.as_ref().map(|w| &w.right),
+                self.num_polys,
+                self.num_challenges,
+            )?,
         })
     }
 }

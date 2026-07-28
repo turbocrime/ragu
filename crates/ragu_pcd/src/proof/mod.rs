@@ -917,8 +917,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                 stashed_ab_b: host_commitment,
                 stashed_registry_xy: registry_xy_commitment,
                 stashed_p: p_commitment,
-                stashed_claims: [padding_host_commitment; crate::NUM_POLY_SLOTS],
-                stashed_challenge_stages: [padding_host_commitment; crate::NUM_CHALLENGE_SLOTS],
+                stashed_claims: alloc::vec![padding_host_commitment; crate::NUM_POLY_SLOTS],
+                stashed_challenge_stages: alloc::vec![
+                    padding_host_commitment;
+                    crate::NUM_CHALLENGE_SLOTS
+                ],
             };
             let rx = nested::stages::preamble::Stage::<C::HostCurve, R>::rx(
                 C::ScalarField::ONE,
