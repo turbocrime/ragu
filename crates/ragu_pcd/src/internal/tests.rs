@@ -524,3 +524,179 @@ fn test_rx_index_all_exhaustive() {
     });
     assert_eq!(collected.as_slice(), RxIndex::ALL);
 }
+
+/// The branch's acceptance gate: a light application's recursion is
+/// **measurably smaller** than a heavy one's.
+///
+/// Two applications, identical but for what their single step does. The light
+/// one witnesses nothing and derives nothing; the heavy one witnesses two
+/// polynomials, opens one of them twice, and derives a challenge. Every
+/// internal circuit the heavy application registers must be strictly larger,
+/// because its capacity is discovered from that step rather than fixed by the
+/// framework — which is the whole point of the exercise.
+///
+/// A framework constant would make these two identical.
+mod capacity_is_per_application {
+    use ragu_arithmetic::ff::Field;
+    use ragu_core::{
+        drivers::{Driver, DriverValue},
+        gadgets::{Bound, Kind},
+        maybe::Maybe,
+    };
+    use ragu_pasta::{Fp, Pasta};
+    use ragu_primitives::{
+        Element,
+        allocator::{Allocator, Standard},
+    };
+
+    use super::*;
+    use crate::{
+        header::{Header, Suffix},
+        step::{Encoded, Index, Step, StepCtx},
+    };
+
+    const HS: usize = 4;
+
+    struct H;
+
+    impl Header<Fp> for H {
+        const SUFFIX: Suffix = Suffix::new(50);
+        type Data = Fp;
+        type Output = Kind![Fp; Element<'_, _>];
+
+        fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+            dr: &mut D,
+            allocator: &mut A,
+            witness: DriverValue<D, Self::Data>,
+        ) -> Result<Bound<'dr, D, Self::Output>> {
+            Element::alloc(dr, allocator, witness)
+        }
+    }
+
+    /// A step that uses no framework hooks at all.
+    struct Light;
+
+    /// A step that witnesses two polynomials, opens one of them twice, and
+    /// derives a challenge.
+    struct Heavy;
+
+    macro_rules! step {
+        ($ty:ty, |$ctx:ident| $hooks:block) => {
+            impl Step<Pasta> for $ty {
+                const INDEX: Index = Index::new(0);
+                type Witness<'source> = ();
+                type Aux<'source> = ();
+                type Left = H;
+                type Right = H;
+                type Output = H;
+
+                fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const N: usize>(
+                    &self,
+                    $ctx: &mut StepCtx<'_, 'dr, D, Pasta>,
+                    _: DriverValue<D, ()>,
+                    left: DriverValue<D, Fp>,
+                    right: DriverValue<D, Fp>,
+                ) -> Result<(
+                    (
+                        Encoded<'dr, D, Self::Left, N>,
+                        Encoded<'dr, D, Self::Right, N>,
+                        Encoded<'dr, D, Self::Output, N>,
+                    ),
+                    DriverValue<D, Fp>,
+                    DriverValue<D, ()>,
+                )> {
+                    let allocator = &mut Standard::new();
+                    let l = Element::alloc($ctx.dr, allocator, left)?;
+                    let r = Element::alloc($ctx.dr, allocator, right)?;
+                    $hooks
+                    let out = l.add($ctx.dr, &r);
+                    let out_val = Maybe::map(out.value(), |v| *v);
+                    Ok((
+                        (
+                            Encoded::from_gadget(l),
+                            Encoded::from_gadget(r),
+                            Encoded::from_gadget(out),
+                        ),
+                        out_val,
+                        D::unit(),
+                    ))
+                }
+            }
+        };
+    }
+
+    step!(Light, |ctx| {
+        let _ = &ctx;
+    });
+
+    step!(Heavy, |ctx| {
+        // Discovery runs on a structure-only driver, so what matters here is
+        // the hook calls, not the values they carry.
+        let commitment = D::try_just(|| {
+            Err::<crate::poly_commitment::PolyCommitment<Pasta, R>, _>(Error::InvalidWitness(
+                "the capacity test never builds a proof".into(),
+            ))
+        })?;
+        let handle = ctx.witness_polynomial::<R>(Maybe::clone(&commitment))?;
+        let other = ctx.witness_polynomial::<R>(commitment)?;
+        let zero = Element::alloc(ctx.dr, &mut Standard::new(), D::just(|| Fp::ZERO))?;
+        // One polynomial opened twice, the other once: three claims over two
+        // polynomials, which is the split this branch exists for.
+        ctx.enforce_poly_query(&handle, zero.clone(), zero.clone())?;
+        ctx.enforce_poly_query(&handle, zero.clone(), zero.clone())?;
+        ctx.enforce_poly_query(&other, zero.clone(), zero)?;
+        ctx.derive_challenge(&[handle.commitment().clone()])?;
+    });
+
+    fn gates(app: &Application<'_, Pasta, R, HS>, id: InternalCircuitIndex) -> usize {
+        app.native_registry.constraint_counts(id.circuit_index()).0
+    }
+
+    #[test]
+    fn a_light_application_pays_less_than_a_heavy_one() {
+        let pasta = Pasta::baked();
+        let light = ApplicationBuilder::<Pasta, R, HS>::new()
+            .register(Light)
+            .unwrap()
+            .finalize(pasta)
+            .unwrap();
+        let heavy = ApplicationBuilder::<Pasta, R, HS>::new()
+            .register(Heavy)
+            .unwrap()
+            .finalize(pasta)
+            .unwrap();
+
+        // The capacities are what the steps do, discovered, not declared.
+        assert_eq!(light.capacity(), framework_hooks::HookLayout::default());
+        assert_eq!(heavy.capacity().poly_query.polys, 2);
+        assert_eq!(heavy.capacity().poly_query.claims, 3);
+        assert_eq!(heavy.capacity().challenge.calls, 1);
+
+        // Every internal circuit that reads a child's slots is strictly
+        // smaller in the light application. Under a framework constant these
+        // would be equal — that equality is exactly what this branch removed.
+        for id in [
+            InternalCircuitIndex::Hashes1Circuit,
+            InternalCircuitIndex::OuterCollapseCircuit,
+            InternalCircuitIndex::ComputeVCircuit,
+            InternalCircuitIndex::ChallengeBindingCircuit,
+        ] {
+            assert!(
+                gates(&light, id) < gates(&heavy, id),
+                "{id:?}: light {} is not smaller than heavy {}",
+                gates(&light, id),
+                gates(&heavy, id),
+            );
+        }
+
+        // And the saving is real, not a rounding difference: a step that
+        // derives no challenge pays nothing at all to bind one.
+        assert!(
+            gates(&light, InternalCircuitIndex::ChallengeBindingCircuit) * 2
+                < gates(&heavy, InternalCircuitIndex::ChallengeBindingCircuit),
+            "light {} vs heavy {}",
+            gates(&light, InternalCircuitIndex::ChallengeBindingCircuit),
+            gates(&heavy, InternalCircuitIndex::ChallengeBindingCircuit),
+        );
+    }
+}
