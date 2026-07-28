@@ -225,7 +225,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
                     for (child_eval, child_preamble) in
                         [(&eval.left, &preamble.left), (&eval.right, &preamble.right)]
                     {
-                        let mut slots = Vec::with_capacity(crate::NUM_QUERY_SLOTS);
+                        let mut slots = Vec::with_capacity(child_preamble.claims.len());
                         for claim in child_preamble.claims.iter() {
                             slots.push(select_claim(
                                 dr,
@@ -677,7 +677,7 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HE
     .chain([(&selected[0], &preamble.left, &d.left), (&selected[1], &preamble.right, &d.right)]
         .into_iter()
         .flat_map(move |(child_selected, child_preamble, child_d)|
-            (0..crate::NUM_QUERY_SLOTS).map(move |i|
+            (0..child_preamble.claims.len()).map(move |i|
                 (&child_selected[i], &child_preamble.claims[i].y, &child_d.claims[i]))))
 }
 
@@ -705,8 +705,8 @@ fn select_claim<'dr, D: Driver<'dr>, A: ragu_primitives::allocator::Allocator<'d
     use ragu_arithmetic::{Coeff, ff::Field};
 
     let one = Element::one();
-    let mut bits = Vec::with_capacity(crate::NUM_POLY_SLOTS);
-    for j in 0..crate::NUM_POLY_SLOTS {
+    let mut bits = Vec::with_capacity(claims.len());
+    for j in 0..claims.len() {
         let target = crate::framework_hooks::field_index::<D::F>(j);
         let value = poly_slot.value().map(|slot| {
             if *slot == target {

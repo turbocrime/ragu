@@ -31,13 +31,10 @@ use ragu_core::{
 };
 use ragu_primitives::{GadgetExt as _, Point};
 
-use crate::{
-    NUM_POLY_SLOTS,
-    internal::{
-        endoscalar::{EndoscalarStage, Points, PointsStage},
-        native::RxIndex,
-        nested::{EndoPoints, stages},
-    },
+use crate::internal::{
+    endoscalar::{EndoscalarStage, Points, PointsStage},
+    native::RxIndex,
+    nested::{EndoPoints, stages},
 };
 
 /// A cursor over [`PointsStage`] inputs that enforces equality against
@@ -190,7 +187,7 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         // mirroring how `BridgeF.native_f` ties `bridge_f_commitment` above.
         assert_eq!(
             claim_bridges.len(),
-            NUM_POLY_SLOTS,
+            eval.claims.len(),
             "the claim-bridge run did not yield one slot per claim"
         );
         for (slot, bridge_host) in claim_bridges.iter().enumerate() {
@@ -204,7 +201,7 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         // witness.
         assert_eq!(
             challenge_bridges.len(),
-            crate::NUM_CHALLENGE_SLOTS,
+            eval.challenge_stages.len(),
             "the challenge-bridge run did not yield one slot per challenge"
         );
         for (slot, bridge_host) in challenge_bridges.iter().enumerate() {
