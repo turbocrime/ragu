@@ -314,13 +314,14 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         // 2. Internal circuits and masks
         // 3. Internal steps
         let (total_circuits, log2_circuits) =
-            internal::native::total_circuit_counts(self.num_application_steps);
+            internal::native::total_circuit_counts(self.num_application_steps, NUM_CHALLENGE_SLOTS);
 
         // First, register internal circuits and masks
         self.native_registry = internal::native::register_all::<C, R, HEADER_SIZE>(
             self.native_registry,
             params,
             log2_circuits,
+            NUM_CHALLENGE_SLOTS,
         )?;
 
         // Then, register internal steps

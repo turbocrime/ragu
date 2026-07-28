@@ -349,6 +349,11 @@ fn test_internal_circuit_index_all_exhaustive() {
         collected.push(id);
     });
     assert_eq!(collected.as_slice(), InternalCircuitIndex::ALL);
+    // The value-level list at the crate's slot count is the const list.
+    assert_eq!(
+        InternalCircuitIndex::all(crate::NUM_CHALLENGE_SLOTS).as_slice(),
+        InternalCircuitIndex::ALL
+    );
 }
 
 #[test]
@@ -358,4 +363,9 @@ fn test_rx_index_all_exhaustive() {
         collected.push(id);
     });
     assert_eq!(collected.as_slice(), RxIndex::ALL);
+    // The value-level list at the crate's slot count is the const list.
+    assert_eq!(
+        RxIndex::all(crate::NUM_CHALLENGE_SLOTS).as_slice(),
+        RxIndex::ALL
+    );
 }

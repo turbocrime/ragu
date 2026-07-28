@@ -72,18 +72,57 @@ pub enum InternalCircuitIndex {
 }
 
 /// Compute the total circuit count and log2 domain size from the number of
-/// application-defined steps.
-pub const fn total_circuit_counts(num_application_steps: usize) -> (usize, u32) {
-    let total_circuits =
-        num_application_steps + step::NUM_INTERNAL_STEPS + InternalCircuitIndex::NUM;
+/// application-defined steps and the number of challenge slots.
+pub const fn total_circuit_counts(
+    num_application_steps: usize,
+    num_challenges: usize,
+) -> (usize, u32) {
+    let total_circuits = num_application_steps
+        + step::NUM_INTERNAL_STEPS
+        + InternalCircuitIndex::num(num_challenges);
     let log2_circuits = total_circuits.next_power_of_two().trailing_zeros();
     (total_circuits, log2_circuits)
 }
 
 impl InternalCircuitIndex {
+    /// The number of internal circuits registered by [`register_all`] for a
+    /// given challenge-slot count; the value-level source of [`NUM`](Self::NUM).
+    pub const fn num(num_challenges: usize) -> usize {
+        16 + num_challenges
+    }
+
     /// The number of internal circuits registered by [`register_all`],
     /// equal to the number of variants in [`InternalCircuitIndex`].
-    pub const NUM: usize = 16 + crate::NUM_CHALLENGE_SLOTS;
+    pub const NUM: usize = Self::num(crate::NUM_CHALLENGE_SLOTS);
+
+    /// All variants for a given challenge-slot count, in canonical iteration
+    /// order; the value-level source of [`ALL`](Self::ALL). The order must
+    /// match the registry finalization concatenation order, exactly as
+    /// documented on [`ALL`](Self::ALL).
+    pub fn all(num_challenges: usize) -> Vec<Self> {
+        use InternalCircuitIndex::*;
+        let mut all = alloc::vec![
+            Hashes1Circuit,
+            Hashes2Circuit,
+            InnerCollapseCircuit,
+            OuterCollapseCircuit,
+            ComputeVCircuit,
+            ChallengeBindingCircuit,
+            PreambleStage,
+            InnerErrorStage,
+            OuterErrorStage,
+            QueryStage,
+            EvalStage,
+            PreambleFinalStaged,
+            InnerErrorFinalStaged,
+            OuterErrorFinalStaged,
+            EvalFinalStaged,
+        ];
+        all.extend((0..num_challenges).map(|i| ChallengeStage(i as u32)));
+        all.push(ChallengeFinalStaged);
+        assert_eq!(all.len(), Self::num(num_challenges));
+        all
+    }
 
     /// All variants in canonical iteration order.
     ///
@@ -256,8 +295,38 @@ pub enum RxIndex {
 }
 
 impl RxIndex {
+    /// The number of rx polynomial components for a given challenge-slot
+    /// count; the value-level source of [`NUM`](Self::NUM).
+    pub const fn num(num_challenges: usize) -> usize {
+        12 + num_challenges
+    }
+
     /// The number of rx polynomial components.
-    pub const NUM: usize = 12 + crate::NUM_CHALLENGE_SLOTS;
+    pub const NUM: usize = Self::num(crate::NUM_CHALLENGE_SLOTS);
+
+    /// All variants for a given challenge-slot count, in canonical order; the
+    /// value-level source of [`ALL`](Self::ALL), with the same order
+    /// obligations.
+    pub fn all(num_challenges: usize) -> Vec<Self> {
+        use RxIndex::*;
+        let mut all = alloc::vec![
+            Application,
+            Hashes1,
+            Hashes2,
+            InnerCollapse,
+            OuterCollapse,
+            ComputeV,
+            ChallengeBinding,
+            Preamble,
+            InnerError,
+            OuterError,
+            Query,
+            Eval,
+        ];
+        all.extend((0..num_challenges).map(|i| ChallengeStage(i as u32)));
+        assert_eq!(all.len(), Self::num(num_challenges));
+        all
+    }
 
     /// All variants in canonical order.
     ///
@@ -387,16 +456,20 @@ pub enum RxComponent {
 
 /// Registers internal native circuits and masks into the provided registry.
 ///
+/// `num_challenges` is the challenge-slot count the recursion is built for; it
+/// drives the per-slot entries of the registration list.
+///
 /// Does not register internal steps (rerandomize, trivial); those are
 /// registered by the caller after this function returns.
 pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
     mut registry: RegistryBuilder<'params, C::CircuitField, R>,
     params: &'params C::Params,
     log2_circuits: u32,
+    num_challenges: usize,
 ) -> Result<RegistryBuilder<'params, C::CircuitField, R>> {
     let initial_internal_circuits = registry.num_internal_circuits();
 
-    for &id in &InternalCircuitIndex::ALL {
+    for id in InternalCircuitIndex::all(num_challenges) {
         use InternalCircuitIndex::*;
         registry = match id {
             PreambleStage => {
@@ -496,7 +569,7 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
 
     assert_eq!(
         registry.num_internal_circuits(),
-        initial_internal_circuits + InternalCircuitIndex::NUM,
+        initial_internal_circuits + InternalCircuitIndex::num(num_challenges),
         "internal circuit count mismatch"
     );
 
