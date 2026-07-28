@@ -4,7 +4,7 @@
 //! instance and trace polynomials used in the fuse step.
 
 use ragu_arithmetic::{CryptoRngCore, Cycle, ff::Field};
-use ragu_circuits::{polynomials::Rank, staging::StageExt};
+use ragu_circuits::polynomials::Rank;
 use ragu_core::Result;
 
 use crate::{
@@ -40,12 +40,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             builder.right_header(),
         )?;
 
-        let rx = StageExt::<C::CircuitField, R>::rx_configured(
+        let (query_chain, _) = self.native_chain_layouts();
+        let rx = query_chain.rx_configured(
+            0,
+            C::CircuitField::random(&mut *rng),
             &native::stages::preamble::Stage::<C, R, HEADER_SIZE>::with_shapes(
                 self.capacity(),
                 self.capacity(),
             ),
-            C::CircuitField::random(&mut *rng),
             &preamble_witness,
         )?;
 
@@ -61,12 +63,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         right: &Proof<C, R>,
         builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<()> {
-        let bridge_rx = StageExt::<C::ScalarField, R>::rx_configured(
+        let bridge_rx = self.nested_chain_layout().rx_configured(
+            2,
+            C::ScalarField::random(&mut *rng),
             &nested::stages::preamble::Stage::<C::HostCurve, R>::with_shapes(
                 self.capacity(),
                 self.capacity(),
             ),
-            C::ScalarField::random(&mut *rng),
             &nested::stages::preamble::Witness {
                 native_preamble: builder.native_preamble_commitment(),
                 left: nested::stages::preamble::ChildWitness::from_proof(left),

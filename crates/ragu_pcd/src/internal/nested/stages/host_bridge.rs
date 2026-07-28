@@ -13,7 +13,7 @@
 use core::marker::PhantomData;
 
 use ragu_arithmetic::CurveAffine;
-use ragu_circuits::{polynomials::Rank, staging::InducedStages};
+use ragu_circuits::polynomials::Rank;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
@@ -100,7 +100,8 @@ impl<C: CurveAffine, R: Rank, P: ragu_circuits::staging::Stage<C::Base, R>>
 /// aliases — but it does not have to be. `Run` is the family's single entry in
 /// the typed hierarchy: one ordinary [`Stage`](ragu_circuits::staging::Stage)
 /// covering every slot's wires, with
-/// [`InducedStages`] saying where the slot boundaries fall inside it.
+/// [`InducedStages`](ragu_circuits::staging::InducedStages) saying where the
+/// slot boundaries fall inside it.
 ///
 /// This is exact rather than approximate. Each slot is [`NUM`] points, so
 /// `2 * NUM` wires, so a whole number of gates with nothing wasted to padding;
@@ -123,25 +124,6 @@ impl<C, R, P, L> Default for Run<C, R, P, L> {
         Self {
             _marker: PhantomData,
         }
-    }
-}
-
-impl<C, R, P, L> Run<C, R, P, L>
-where
-    C: CurveAffine,
-    R: Rank,
-    P: ragu_circuits::staging::Stage<C::Base, R>,
-    L: Len,
-{
-    /// The layout subdividing this run into its slots, anchored at the gate the
-    /// run begins on.
-    ///
-    /// This is the only place the run's geometry is described twice — once as
-    /// `Run`'s own `values()`, once as the slot widths here — and
-    /// [`configure_induced`](ragu_circuits::staging::StageBuilder::configure_induced)
-    /// rejects the pair if they disagree.
-    pub fn layout() -> InducedStages {
-        InducedStages::after::<C::Base, R, P>(alloc::vec![NUM * 2; L::len()])
     }
 }
 

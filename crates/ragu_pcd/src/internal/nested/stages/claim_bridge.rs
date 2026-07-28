@@ -32,17 +32,19 @@ use ragu_primitives::vec::Len;
 
 use super::host_bridge;
 
-/// The number of poly-query claim slots, as a type.
+/// The claim-slot count for the *typed* [`Run`] only.
 ///
-/// [`Len`] is how the framework carries a length that is known at compile time
-/// but is not a literal — the same escape hatch `FixedVec` uses. Making the
-/// count an application parameter means changing what this returns, not
-/// rewriting the stage hierarchy.
+/// A `Stage`'s associated `values()` takes no arguments, so the run has to
+/// name some length there. The real one is the application's poly capacity,
+/// which every construction takes as a value through [`layout`]; this is only
+/// what the typed self-consistency check measures against.
 pub struct Slots;
 
 impl Len for Slots {
     fn len() -> usize {
-        crate::NUM_POLY_SLOTS
+        crate::framework_hooks::HookLayout::typed_placeholder()
+            .poly_query
+            .polys
     }
 }
 
@@ -57,8 +59,10 @@ pub type Run<C, R> = host_bridge::Run<C, R, super::eval::Stage<C, R>, Slots>;
 pub type Slot<C, R> = host_bridge::Stage<C, R, ()>;
 
 /// The layout subdividing [`Run`] into one slot per claim.
-pub fn layout<C: CurveAffine, R: Rank>() -> InducedStages {
-    Run::<C, R>::layout()
+pub fn layout<C: CurveAffine, R: Rank>(
+    capacity: crate::framework_hooks::HookLayout,
+) -> InducedStages {
+    crate::internal::nested::claim_run_layout::<C, R>(capacity, capacity, capacity)
 }
 
 #[cfg(test)]
@@ -78,16 +82,18 @@ mod tests {
         assert_stage_values(&Run::<EqAffine, R>::default());
     }
 
-    /// The layout tiles the run exactly: one slot per claim, starting where the
-    /// run starts and ending where it ends.
+    /// The layout tiles the run exactly at the placeholder shape: one slot per
+    /// claim, starting where the run starts and ending where it ends.
     ///
-    /// `configure_induced` enforces this at reservation time too, but pinning
-    /// it here says which of the two descriptions moved when it breaks.
+    /// Only the placeholder shape can be checked against the typed run, since
+    /// that is the shape the typed side names. Real geometry is checked where
+    /// it is used, by `configure_induced_sized` against the chain layout.
     #[test]
     fn layout_tiles_the_run() {
-        let layout = layout::<EqAffine, R>();
+        let placeholder = crate::framework_hooks::HookLayout::typed_placeholder();
+        let layout = layout::<EqAffine, R>(placeholder);
 
-        assert_eq!(layout.len(), crate::NUM_POLY_SLOTS);
+        assert_eq!(layout.len(), placeholder.poly_query.polys);
         assert_eq!(
             layout.skip_gates(0),
             <Run<EqAffine, R> as Stage<F, R>>::skip_gates(),

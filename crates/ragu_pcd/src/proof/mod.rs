@@ -279,7 +279,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     /// $(\bar{C}_i, x_i, y_i)$ tuples the prover declared via
     /// [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query)
     /// at the fuse that produced this proof, padded to exactly
-    /// [`NUM_POLY_SLOTS`](crate::NUM_POLY_SLOTS) entries. They
+    /// the application's poly capacity. They
     /// are bound to the application circuit's $k(Y)$ instance and recursively
     /// enforced when this proof is fused as a child: the parent folds each
     /// claim into $f(X)$ and the PCS accumulator, and its `compute_v` circuit
@@ -289,7 +289,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     /// per polynomial, which is what a query names by index.
     pub(crate) application_polys: alloc::vec::Vec<C::NestedCurve>,
     /// The derived challenges the step's circuit exposes, one per
-    /// [`NUM_CHALLENGE_SLOTS`](crate::NUM_CHALLENGE_SLOTS) slot, in slot order.
+    /// challenge slot the application's capacity provides, in slot order.
     pub(crate) application_challenges:
         alloc::vec::Vec<ChallengeOpening<C::NestedCurve, C::CircuitField>>,
 
@@ -406,7 +406,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     /// Returns the per-step polynomial-query claim instances
     /// $(\bar{C}_i, x_i, y_i)$ declared at the fuse step that produced this
     /// proof, in slot order — always
-    /// [`NUM_POLY_SLOTS`](crate::NUM_POLY_SLOTS) entries, with
+    /// the application's poly capacity, with
     /// unused slots holding the canonical padding claim. The instances are
     /// bound to the application circuit's $k(Y)$ and recursively enforced when
     /// this proof is fused as a child.
@@ -416,7 +416,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 
     /// The nested-curve commitments to the polynomials this proof's circuit
     /// witnessed, in slot order — always
-    /// [`NUM_POLY_SLOTS`](crate::NUM_POLY_SLOTS) entries, with unused slots
+    /// the application's poly capacity, with unused slots
     /// holding the canonical padding polynomial. A claim names one of these by
     /// index; the commitment appears here once, not once per claim.
     pub fn application_polys(&self) -> &[C::NestedCurve] {
@@ -606,14 +606,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
 
         let witness = PointsWitness::<C::HostCurve>::new(beta_endo, points);
 
+        // Placed through the value-level chain, not `StageExt::rx`, whose
+        // `Default` is the typed placeholder: a stage's width and position
+        // follow the application's capacity.
+        let chain = self.nested_chain_layout();
         let endoscalar_rx =
-            <EndoscalarStage as StageExt<C::ScalarField, R>>::rx(endoscalar_alpha, beta_endo)?;
-        // Sized explicitly rather than through `StageExt::rx`, whose `Default`
-        // is the typed placeholder: this stage's width follows the
-        // application's capacity.
-        let points_rx = StageExt::<C::ScalarField, R>::rx_configured(
-            &PointsStage::<C::HostCurve>::with_num_points(num_points),
+            chain.rx_configured(0, endoscalar_alpha, &EndoscalarStage, beta_endo)?;
+        let points_rx = chain.rx_configured(
+            1,
             points_alpha,
+            &PointsStage::<C::HostCurve>::with_num_points(num_points),
             &witness,
         )?;
 
@@ -692,6 +694,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                             slot,
                         ),
                         padding_host,
+                        self.capacity(),
                     )
                     .expect("trivial padding bridge commitment")
                 })
@@ -758,38 +761,50 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
         // p_commitment for ChildWitness.p), then native_p_poly.
         let nested_gen = C::nested_generators(self.params);
         {
-            let rx = nested::stages::s_prime::Stage::<C::HostCurve, R>::rx(
-                C::ScalarField::ONE,
-                &nested::stages::s_prime::Witness {
-                    registry_wx0: host_commitment,
-                    registry_wx1: host_commitment,
-                    stashed_preamble: host_commitment,
-                },
-            )
-            .expect("trivial s_prime rx");
+            let rx = self
+                .nested_chain_layout()
+                .rx_configured(
+                    3,
+                    C::ScalarField::ONE,
+                    &nested::stages::s_prime::Stage::<C::HostCurve, R>::default(),
+                    &nested::stages::s_prime::Witness {
+                        registry_wx0: host_commitment,
+                        registry_wx1: host_commitment,
+                        stashed_preamble: host_commitment,
+                    },
+                )
+                .expect("trivial s_prime rx");
             let commitment = rx.commit_to_affine(nested_gen);
             builder.set_bridge_s_prime_rx(rx, commitment);
         }
         {
-            let rx = nested::stages::inner_error::Stage::<C::HostCurve, R>::rx(
-                C::ScalarField::ONE,
-                &nested::stages::inner_error::Witness {
-                    native_inner_error: host_commitment,
-                    registry_wy: host_commitment,
-                },
-            )
-            .expect("trivial inner_error rx");
+            let rx = self
+                .nested_chain_layout()
+                .rx_configured(
+                    4,
+                    C::ScalarField::ONE,
+                    &nested::stages::inner_error::Stage::<C::HostCurve, R>::default(),
+                    &nested::stages::inner_error::Witness {
+                        native_inner_error: host_commitment,
+                        registry_wy: host_commitment,
+                    },
+                )
+                .expect("trivial inner_error rx");
             let commitment = rx.commit_to_affine(nested_gen);
             builder.set_bridge_inner_error_rx(rx, commitment);
         }
         {
-            let rx = nested::stages::f::Stage::<C::HostCurve, R>::rx(
-                C::ScalarField::ONE,
-                &nested::stages::f::Witness {
-                    native_f: host_commitment,
-                },
-            )
-            .expect("trivial f rx");
+            let rx = self
+                .nested_chain_layout()
+                .rx_configured(
+                    8,
+                    C::ScalarField::ONE,
+                    &nested::stages::f::Stage::<C::HostCurve, R>::default(),
+                    &nested::stages::f::Witness {
+                        native_f: host_commitment,
+                    },
+                )
+                .expect("trivial f rx");
             let commitment = rx.commit_to_affine(nested_gen);
             builder.set_bridge_f_rx(rx, commitment);
         }

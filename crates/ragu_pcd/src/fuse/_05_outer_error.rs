@@ -9,7 +9,7 @@
 use ragu_arithmetic::{CryptoRngCore, Cycle, ff::Field};
 use ragu_circuits::{
     polynomials::{Rank, sparse},
-    staging::{Stage as StageTrait, StageExt},
+    staging::Stage as StageTrait,
 };
 use ragu_core::{
     Result,
@@ -160,11 +160,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         outer_error_witness: &native::stages::outer_error::Witness<C, native::RevdotParameters>,
         builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<()> {
-        let rx =
-            native::stages::outer_error::Stage::<C, R, HEADER_SIZE, native::RevdotParameters>::rx(
-                C::CircuitField::random(&mut *rng),
-                outer_error_witness,
-            )?;
+        let rx = self.native_chain_layouts().1.rx_configured(
+            1,
+            C::CircuitField::random(&mut *rng),
+            &native::stages::outer_error::Stage::<C, R, HEADER_SIZE, native::RevdotParameters>::default(),
+            outer_error_witness,
+        )?;
 
         builder.set_native_outer_error_rx(rx);
 

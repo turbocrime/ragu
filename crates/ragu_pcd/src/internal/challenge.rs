@@ -99,9 +99,10 @@ pub(crate) fn claim_bridge_rx<C: Cycle, R: Rank>(
     slot: usize,
     alpha: C::ScalarField,
     host: C::HostCurve,
+    capacity: crate::framework_hooks::HookLayout,
 ) -> Result<sparse::Polynomial<C::ScalarField, R>> {
     let witness = host_bridge::Witness { host };
-    claim_bridge::layout::<C::HostCurve, R>().rx_configured(
+    claim_bridge::layout::<C::HostCurve, R>(capacity).rx_configured(
         slot,
         alpha,
         &claim_bridge::Slot::<C::HostCurve, R>::default(),
@@ -116,10 +117,11 @@ pub(crate) fn claim_bridge_commitment<C: Cycle, R: Rank>(
     slot: usize,
     alpha: C::ScalarField,
     host: C::HostCurve,
+    capacity: crate::framework_hooks::HookLayout,
 ) -> Result<C::NestedCurve> {
     Ok(commit_bridge::<C, R>(
         params,
-        claim_bridge_rx::<C, R>(slot, alpha, host)?,
+        claim_bridge_rx::<C, R>(slot, alpha, host, capacity)?,
     ))
 }
 

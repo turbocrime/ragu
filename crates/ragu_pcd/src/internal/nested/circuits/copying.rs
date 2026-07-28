@@ -83,27 +83,45 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         dr: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
         _witness: DriverValue<D, ()>,
     ) -> Result<WithAux<Bound<'dr, D, ()>, DriverValue<D, ()>>> {
+        // Every stage is placed from the child's value-level chain, including
+        // the shape-free ones: a stage's position depends on how wide the
+        // stages before it are, so once any of them follows a shape, none of
+        // the typed positions after it are right.
+        let chain = crate::internal::nested::chain_layout::<C, R>(
+            self.child,
+            self.child_left,
+            self.child_right,
+        );
         let num_points =
             crate::internal::nested::num_endoscaling_points(self.child_left, self.child_right);
 
-        let dr = dr.skip_stage::<EndoscalarStage>()?;
+        let dr = dr.skip_stage_sized(EndoscalarStage, chain.width(0))?;
         let (points_guard, dr) = dr.configure_stage_sized(
             PointsStage::<C>::with_num_points(num_points),
-            crate::internal::endoscalar::points_stage_num_values(num_points),
+            chain.width(1),
         )?;
         let (preamble_guard, dr) = dr.configure_stage_sized(
             stages::preamble::Stage::<C, R>::with_shapes(self.child_left, self.child_right),
-            stages::preamble::num_values(self.child_left, self.child_right),
+            chain.width(2),
         )?;
-        let (s_prime_guard, dr) = dr.add_stage::<stages::s_prime::Stage<C, R>>()?;
-        let (inner_error_guard, dr) = dr.add_stage::<stages::inner_error::Stage<C, R>>()?;
-        let (outer_error_guard, dr) = dr.add_stage::<stages::outer_error::Stage<C, R>>()?;
-        let (ab_guard, dr) = dr.add_stage::<stages::ab::Stage<C, R>>()?;
-        let (query_guard, dr) = dr.add_stage::<stages::query::Stage<C, R>>()?;
-        let dr = dr.skip_stage::<stages::f::Stage<C, R>>()?;
+        let (s_prime_guard, dr) =
+            dr.configure_stage_sized(stages::s_prime::Stage::<C, R>::default(), chain.width(3))?;
+        let (inner_error_guard, dr) = dr.configure_stage_sized(
+            stages::inner_error::Stage::<C, R>::default(),
+            chain.width(4),
+        )?;
+        let (outer_error_guard, dr) = dr.configure_stage_sized(
+            stages::outer_error::Stage::<C, R>::default(),
+            chain.width(5),
+        )?;
+        let (ab_guard, dr) =
+            dr.configure_stage_sized(stages::ab::Stage::<C, R>::default(), chain.width(6))?;
+        let (query_guard, dr) =
+            dr.configure_stage_sized(stages::query::Stage::<C, R>::default(), chain.width(7))?;
+        let dr = dr.skip_stage_sized(stages::f::Stage::<C, R>::default(), chain.width(8))?;
         let (eval_guard, dr) = dr.configure_stage_sized(
             stages::eval::Stage::<C, R>::with_shape(self.child),
-            stages::eval::num_values(self.child),
+            chain.width(9),
         )?;
         let dr = dr.finish();
 

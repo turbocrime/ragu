@@ -65,6 +65,7 @@ where
         let slot = self.hooks.next_poly_slot()?;
         let host_for_com = commitment.as_ref().map(|c| c.host());
         let proof_values = self.hooks.proof_values();
+        let capacity = self.hooks.capacity();
         let com_value = D::try_just(move || {
             let proof_values = proof_values.take();
             let alpha = crate::internal::challenge::claim_bridge_alpha::<C>(
@@ -76,6 +77,7 @@ where
                 slot,
                 alpha,
                 host_for_com.take(),
+                capacity,
             )
         })?;
         let com = Point::alloc(self.dr, com_value)?;
@@ -95,8 +97,7 @@ where
     ///
     /// This is the *succinct* claim path: the polynomial stays out of the
     /// circuit, and enforcement is **recursive**. The claim wires occupy one
-    /// of the circuit's [`NUM_QUERY_SLOTS`](crate::NUM_QUERY_SLOTS)
-    /// instance slots, binding them to the circuit's $k(Y)$; when the
+    /// of the circuit's claim instance slots, binding them to the circuit's $k(Y)$; when the
     /// resulting proof is fused as a child, the parent folds the quotient
     /// $(p(X) - y)/(X - x)$ into $f(X)$ and the polynomial (with its host
     /// commitment) into the PCS $(P, u, v)$ accumulator, and its `compute_v`
@@ -113,8 +114,7 @@ where
     /// Claims may be raised in any order, and the **same handle may be used
     /// more than once**: a query names its polynomial by index rather than by
     /// position, so opening one polynomial at several points costs one
-    /// [`NUM_QUERY_SLOTS`](crate::NUM_QUERY_SLOTS) slot each and no additional
-    /// [`NUM_POLY_SLOTS`](crate::NUM_POLY_SLOTS) slot — no second bridge stage,
+    /// claim slot each and no additional polynomial slot — no second bridge stage,
     /// no second commitment, no second MSM, no extra endoscaling point. That is
     /// the cheap direction to grow in; witnessing another polynomial is the
     /// expensive one.

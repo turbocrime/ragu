@@ -116,24 +116,37 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         let claim_layout =
             crate::internal::nested::claim_run_layout::<C, R>(self.own, self.left, self.right);
 
-        let dr = dr.skip_stage::<EndoscalarStage>()?;
+        // As in `copying`: every position comes from the value-level chain.
+        let chain = crate::internal::nested::chain_layout::<C, R>(self.own, self.left, self.right);
+
+        let dr = dr.skip_stage_sized(EndoscalarStage, chain.width(0))?;
         let (points_guard, dr) = dr.configure_stage_sized(
             PointsStage::<C>::with_num_points(num_points),
-            crate::internal::endoscalar::points_stage_num_values(num_points),
+            chain.width(1),
         )?;
         let (preamble_guard, dr) = dr.configure_stage_sized(
             stages::preamble::Stage::<C, R>::with_shapes(self.left, self.right),
-            stages::preamble::num_values(self.left, self.right),
+            chain.width(2),
         )?;
-        let (s_prime_guard, dr) = dr.add_stage::<stages::s_prime::Stage<C, R>>()?;
-        let (inner_error_guard, dr) = dr.add_stage::<stages::inner_error::Stage<C, R>>()?;
-        let dr = dr.skip_stage::<stages::outer_error::Stage<C, R>>()?;
-        let (ab_guard, dr) = dr.add_stage::<stages::ab::Stage<C, R>>()?;
-        let (query_guard, dr) = dr.add_stage::<stages::query::Stage<C, R>>()?;
-        let (f_guard, dr) = dr.add_stage::<stages::f::Stage<C, R>>()?;
+        let (s_prime_guard, dr) =
+            dr.configure_stage_sized(stages::s_prime::Stage::<C, R>::default(), chain.width(3))?;
+        let (inner_error_guard, dr) = dr.configure_stage_sized(
+            stages::inner_error::Stage::<C, R>::default(),
+            chain.width(4),
+        )?;
+        let dr = dr.skip_stage_sized(
+            stages::outer_error::Stage::<C, R>::default(),
+            chain.width(5),
+        )?;
+        let (ab_guard, dr) =
+            dr.configure_stage_sized(stages::ab::Stage::<C, R>::default(), chain.width(6))?;
+        let (query_guard, dr) =
+            dr.configure_stage_sized(stages::query::Stage::<C, R>::default(), chain.width(7))?;
+        let (f_guard, dr) =
+            dr.configure_stage_sized(stages::f::Stage::<C, R>::default(), chain.width(8))?;
         let (eval_guard, dr) = dr.configure_stage_sized(
             stages::eval::Stage::<C, R>::with_shape(self.own),
-            stages::eval::num_values(self.own),
+            chain.width(9),
         )?;
         let (claim_guards, dr) = dr.configure_induced_sized::<stages::claim_bridge::Run<C, R>, _>(
             stages::claim_bridge::Slot::<C, R>::default(),

@@ -168,6 +168,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     slot,
                     alpha,
                     host,
+                    capacity,
                 )
                 .is_ok_and(|bridge| bridge == com)
         });

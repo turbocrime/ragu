@@ -103,12 +103,12 @@ fn test_internal_circuit_constraint_counts() {
         }};
     }
 
-    check_constraints!(Hashes1Circuit,          mul = 1456, lin = 2038);
-    check_constraints!(Hashes2Circuit,          mul = 2004, lin = 2951);
-    check_constraints!(InnerCollapseCircuit,    mul = 1881, lin = 1918);
-    check_constraints!(OuterCollapseCircuit,    mul = 1998, lin = 2942);
-    check_constraints!(ComputeVCircuit,         mul = 1681, lin = 2767);
-    check_constraints!(ChallengeBindingCircuit, mul = 1534, lin = 2379);
+    check_constraints!(Hashes1Circuit,          mul = 1406, lin = 2038);
+    check_constraints!(Hashes2Circuit,          mul = 1954, lin = 2951);
+    check_constraints!(InnerCollapseCircuit,    mul = 1831, lin = 1918);
+    check_constraints!(OuterCollapseCircuit,    mul = 1848, lin = 2742);
+    check_constraints!(ComputeVCircuit,         mul = 1226, lin = 1799);
+    check_constraints!(ChallengeBindingCircuit, mul = 332, lin = 71);
 }
 
 #[rustfmt::skip]
@@ -246,7 +246,16 @@ fn test_native_registry_digest() {
     // carries `2 * CHALLENGE_POINTS_PER_CALL + 1` elements where it carried
     // three, so the preamble stage and its readers widen by two per slot per
     // child.
-    let expected = fp!(0x0f3b036060e5e3181188837878d16068a29f0bc19b686cdd477d895d2069bd0d);
+    //
+    // Changed again — and now **per application** — when the slot capacity
+    // became the discovered maximum over the registered steps rather than a
+    // framework constant. This digest is *this test application's*: its dummy
+    // steps witness no polynomials, raise no claims and derive no challenges,
+    // so every slot-dependent width collapses. `challenge_binding` in
+    // particular falls from 1534 gates to 332, because an application that
+    // never derives a challenge has nothing to bind. Another application's
+    // digest will differ, which is the point.
+    let expected = fp!(0x2a61c5deef3faeacc2fc54372f7c63ad3e66419338eb5bb673aabf898633a13b);
 
     assert_eq!(
         app.native_registry.digest(),
@@ -297,7 +306,12 @@ fn test_nested_registry_digest() {
     // challenge bridge to the last claim bridge, the eval and preamble bridges
     // no longer stash challenge-stage commitments, and the endoscaling point
     // list shrank by `2 * NUM_CHALLENGE_SLOTS` per child.
-    let expected = fq!(0x074469777e333bb7d9fccb1cb4fd7032dfb174655682398a9acc956e34b4de27);
+    //
+    // Changed again when the slot capacity became per-application: this test
+    // application's steps use no slots, so the claim-bridge run is empty, the
+    // eval and preamble bridges carry no stashed claims, and the endoscaling
+    // point list loses a point per slot per child. See the native digest.
+    let expected = fq!(0x3dc08609fc0492d25731f1c7a1c0850349a753c54b3e9b393a7cd9eac58ccf2c);
 
     assert_eq!(
         app.nested_registry.digest(),

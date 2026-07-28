@@ -9,6 +9,30 @@
 //! - [`step::Step`] — the trait that defines computation nodes (transitions).
 //! - [`header::Header`] — the trait that defines succinct state representations.
 //! - [`Proof`] / [`Pcd`] — the proof and proof-carrying-data structures.
+//!
+//! # Slot capacities are discovered, not declared
+//!
+//! How many polynomials a step may witness, how many openings it may enforce
+//! and how many challenges it may derive are **not** framework constants.
+//! [`finalize`](ApplicationBuilder::finalize) discovers each registered step's
+//! counts and takes their pointwise maximum; that maximum is the application's
+//! capacity, and every application circuit exposes exactly it.
+//!
+//! The capacity is uniform within one application because the internal
+//! circuits read a child's instance as a fixed-width record and any step's
+//! proof may be any fuse's child — but it is *per application*, so a step's
+//! cost falls on the application that registers it rather than on every
+//! application the framework will ever host. An application whose steps open
+//! two polynomials pays for two.
+//!
+//! What the capacity trades against is [`HEADER_SIZE`]: a claim slot adds
+//! three elements to the child's $k(Y)$ and a header element adds one, both
+//! absorbed by `outer_collapse` at roughly the same per-element rate. There is
+//! no capacity arithmetic anywhere — an application is simply built, and if a
+//! combination does not fit, `finalize` returns
+//! [`GateBoundExceeded`](ragu_core::Error::GateBoundExceeded).
+//!
+//! [`HEADER_SIZE`]: Application
 
 #![no_std]
 #![allow(clippy::type_complexity, clippy::too_many_arguments)]
@@ -59,76 +83,6 @@ use step::{
 // FIXME: choose a permanent domain separation tag before release.
 pub(crate) const RAGU_TAG: &[u8] = b"FIXME";
 
-/// Number of **polynomials** a step may witness — the expensive half of a
-/// poly-query.
-///
-/// Each [`StepCtx::witness_polynomial`](step::StepCtx::witness_polynomial)
-/// call occupies one slot. A polynomial slot costs, per step: a bridge stage
-/// (and therefore a nested commitment), a carried polynomial, a host
-/// commitment with its multi-scalar multiplication, and one endoscaling point
-/// per child in the next fuse. The MSM is the part that matters — under the
-/// framework's cost model, committed-oracle count drives prover wall-clock
-/// while gates under the 2048-gate cap are nearly free.
-///
-/// Unused slots are filled with the canonical padding claim — the constant
-/// polynomial $1$ opened at $x = 0$ to $y = 1$ — so every application circuit
-/// has a uniform instance shape.
-///
-/// See [`NUM_QUERY_SLOTS`] for the cheap half, and
-/// [what caps them](NUM_QUERY_SLOTS#what-caps-these-and-what-they-trade-against)
-/// for the budget the two share.
-pub const NUM_POLY_SLOTS: usize = 8;
-
-/// Number of **evaluations** a step may enforce — the cheap half of a
-/// poly-query.
-///
-/// Each [`StepCtx::enforce_poly_query`](step::StepCtx::enforce_poly_query)
-/// call occupies one slot; a step body may call it at most this many times,
-/// and the call count must not depend on witness values (it is part of the
-/// circuit structure). A query slot costs one entry in the application
-/// circuit's public instance, one quotient in `_08_f`, and one triple in
-/// `compute_v` — no commitment, no MSM, no endoscaling point.
-///
-/// The slots are bound by the circuit's $k(Y)$ public-input polynomial and
-/// recursively enforced at the next fuse via the PCS $(P, u, v)$ accumulator.
-///
-/// Kept distinct from [`NUM_POLY_SLOTS`] so that opening one polynomial at
-/// several points spends the cheap resource rather than the expensive one.
-///
-/// # What caps these, and what they trade against
-///
-/// Not a consumer's choice, and not the endoscaling budget — each polynomial
-/// slot does add one host commitment per child to the point list the next fuse
-/// endoscales (see `NUM_ENDOSCALING_POINTS` in the `nested` module), but that
-/// budget has room. The binding circuit is `outer_collapse`, the largest
-/// internal circuit, which absorbs the elements each slot adds per child to the
-/// application $k(Y)$: `com.x` and `com.y` for a polynomial, `x` and `y` for a
-/// query.
-///
-/// They share that budget with `HEADER_SIZE`, at roughly 12 gates per welded
-/// slot against 13 per header element — so **a claim slot costs about one
-/// element of header**. Measured against `outer_collapse`'s 2048-gate bound,
-/// with the two counts still equal:
-///
-/// | slots | header | gates |
-/// | --- | --- | --- |
-/// | 4 | 100 | 2044 |
-/// | 8 | 90 | 1962 |
-/// | 8 | 84 | 1884 |
-/// | 8 | 60 | 1572 |
-///
-/// The numbers are one set, not independent knobs, and `internal::tests` pins
-/// them: `HEADER_SIZE` there is the widest header the framework claims to
-/// support, so changing any of them without re-measuring
-/// `test_internal_circuit_constraint_counts` fails there.
-///
-/// An application that needs a wider header than the pinned one is not stuck
-/// with a compile-time compromise: it picks its own `HEADER_SIZE`, and
-/// [`finalize`](ApplicationBuilder::finalize) either fits or returns
-/// `GateBoundExceeded`. Capacity is settled at finalization, against the
-/// header that application actually configured.
-pub const NUM_QUERY_SLOTS: usize = 8;
-
 /// Number of **points** a single
 /// [`StepCtx::derive_challenge`](step::StepCtx::derive_challenge) call absorbs.
 ///
@@ -151,31 +105,6 @@ pub const NUM_QUERY_SLOTS: usize = 8;
 /// `⌈2 · CHALLENGE_POINTS_PER_CALL / 4⌉` permutations per `(child, slot)` in
 /// that circuit — the sole cost of raising it, and the reason it is small.
 pub const CHALLENGE_POINTS_PER_CALL: usize = 2;
-
-/// Number of Fiat–Shamir challenge slots a step body may use.
-///
-/// Each [`StepCtx::derive_challenge`](step::StepCtx::derive_challenge) call
-/// occupies one slot; a step body may call it at most this many times, and the
-/// call count must not depend on witness values (it is part of the circuit
-/// structure, checked by the adapter's determinism guard).
-///
-/// Unused slots are padded, like the poly-query slots: a challenge honestly
-/// derived from the sentinel points. The parent's binding circuit re-derives
-/// every slot without knowing which ones the step actually used, so the padding
-/// is what keeps that circuit uniform.
-///
-/// # Cost
-///
-/// Not the step's Poseidon budget, and not its gates beyond instance wires. The
-/// recursion pays, per fuse, in the internal `challenge_binding` circuit:
-/// `2 · NUM_CHALLENGE_SLOTS · ⌈2 · CHALLENGE_POINTS_PER_CALL / 4⌉`
-/// permutations — at two slots and two points, 1536 of its own 2048 gates —
-/// plus one bonding mask per slot on each curve.
-///
-/// So raising this constant is charged to the framework's circuits, not to the
-/// steps that use it. Two is the smallest count that lets a step handle more
-/// than one polynomial at a time, which one would not.
-pub const NUM_CHALLENGE_SLOTS: usize = 2;
 
 /// Builder for an [`Application`] for proof-carrying data.
 pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
@@ -306,22 +235,14 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         // because the internal circuits read a child's instance as a
         // fixed-width record and any step's proof may be any fuse's child.
         //
-        // This *wants* to be the pointwise maximum over the plans just
-        // collected — `step_plans.iter().copied().reduce(max_with)` — and
-        // every geometry below already takes it as a value, so that one line
-        // is the whole switch. What still blocks it is
-        // [`RevdotParameters`](internal::native::RevdotParameters): the
-        // two-layer revdot fold is a fixed 19x7 of *types*, sized for the
-        // claim count these constants produce. Shrinking the capacity changes
-        // how many revdot claims the collapse circuits fold, so the groups
-        // shift and the folded claims stop verifying — measured, not assumed:
-        // at (polys 8, claims 8, calls 0) the nested claims pass and the
-        // native ones fail; at (1, 1, 1) both fail; at these constants
-        // everything passes.
-        //
-        // So the fold parameters have to follow the capacity as values before
-        // the maximum can be fed here. That is the next commit.
-        let capacity = framework_hooks::HookLayout::typed_placeholder();
+        // **Discovered, never declared**: an application whose steps open two
+        // polynomials pays for two, and the cost of a heavy step falls on the
+        // application that registers it rather than on the framework.
+        let capacity = step_plans
+            .iter()
+            .copied()
+            .reduce(framework_hooks::HookLayout::max_with)
+            .expect("the internal steps are always registered");
 
         // The held application step adapters can be handed to the registry:
         // their circuits are measured now, with every step known. Registry
@@ -470,6 +391,38 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     /// circuit's instance has, and every proof's slot lists.
     pub(crate) fn capacity(&self) -> framework_hooks::HookLayout {
         self.capacity
+    }
+
+    /// The nested bridge chain's value-level geometry at this application's
+    /// capacity. See [`native_chain_layouts`](Self::native_chain_layouts) for
+    /// why a stage's position cannot come from its type.
+    pub(crate) fn nested_chain_layout(&self) -> ragu_circuits::staging::InducedStages {
+        internal::nested::chain_layout::<C::HostCurve, R>(
+            self.capacity,
+            self.capacity,
+            self.capacity,
+        )
+    }
+
+    /// The native fuse chains' value-level geometry at this application's
+    /// capacity — `(query_chain, error_chain)`.
+    ///
+    /// Every native stage rx a fuse builds is placed through these rather than
+    /// through the typed `Stage::skip_gates()`, which derives its offsets from
+    /// `values()` and so from the placeholder shape. Where a stage sits
+    /// depends on how wide the stages before it are, and that is a property of
+    /// the application, not of a Rust type.
+    pub(crate) fn native_chain_layouts(
+        &self,
+    ) -> (
+        ragu_circuits::staging::InducedStages,
+        ragu_circuits::staging::InducedStages,
+    ) {
+        internal::native::chain_layouts::<C, R, HEADER_SIZE>(
+            internal::native::InternalCircuitIndex::NUM,
+            self.capacity,
+            self.capacity,
+        )
     }
 
     #[allow(dead_code)] // the per-step consumer arrives with per-step exactness

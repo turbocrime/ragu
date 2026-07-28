@@ -95,7 +95,7 @@ fn test_rerandomize_consistency() {
     // The per-claim bridge stages sit at the end of the nested stage chain, so
     // padding a claim slot builds a stage rx that needs a rank fitting
     // `skip_gates + num_gates`. `TestRank` (n = 32) is too small at
-    // `NUM_POLY_SLOTS` slots; production rank is unaffected.
+    // the application's poly slots; production rank is unaffected.
     type R = polynomials::ProductionRank;
 
     struct Single;

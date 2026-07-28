@@ -119,6 +119,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 slot,
                 challenge::claim_bridge_alpha::<C>(builder.bridge_alpha(), slot),
                 host,
+                self.capacity(),
             )?;
             if precheck && expected != witnessed.com {
                 return Err(Error::InvalidWitness(

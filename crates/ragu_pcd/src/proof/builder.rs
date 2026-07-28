@@ -13,7 +13,6 @@ use ragu_arithmetic::{Cycle, ff::Field};
 use ragu_circuits::{
     polynomials::{Rank, sparse},
     registry::CircuitIndex,
-    staging::StageExt,
 };
 use ragu_core::Result;
 
@@ -176,13 +175,19 @@ macro_rules! explicit_commitment_getter {
 /// `self` is used (avoiding macro hygiene issues with `self` in token trees).
 macro_rules! cached_bridge {
     ($rx:ident, $commitment:ident,
-     $idx:expr, $stage:ident, { $($wit_field:ident : $getter:ident()),* }) => {
+     $idx:expr, $pos:expr, $stage:ident, { $($wit_field:ident : $getter:ident()),* }) => {
         pub(crate) fn $rx(&self) -> Result<&sparse::Polynomial<C::ScalarField, R>> {
             if let Some(rx) = self.$rx.get() {
                 return Ok(rx);
             }
-            let rx = nested::stages::$stage::Stage::<C::HostCurve, R>::rx(
+            // Placed through the value-level chain, not the typed
+            // `Stage::skip_gates()`: where a bridge sits depends on how wide
+            // the stages before it are, which follows the application's
+            // capacity.
+            let rx = self.nested_chain().rx_configured(
+                $pos,
                 self.bridge_alpha_power($idx),
+                &nested::stages::$stage::Stage::<C::HostCurve, R>::default(),
                 &nested::stages::$stage::Witness {
                     $($wit_field: self.$getter()),*
                 },
@@ -308,13 +313,13 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
 
     /// The derived-challenge pairs the application circuit exposed, in slot
     /// order, padded by the adapter to exactly
-    /// [`NUM_CHALLENGE_SLOTS`](crate::NUM_CHALLENGE_SLOTS) entries.
+    /// the application's challenge capacity.
     application_challenges: Vec<crate::proof::ChallengeOpening<C::NestedCurve, C::CircuitField>>,
     /// Per-step polynomial-query claims raised by the user's
     /// [`Step::witness`](crate::step::Step::witness) via
     /// [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query),
     /// padded by the adapter to exactly
-    /// [`NUM_POLY_SLOTS`](crate::NUM_POLY_SLOTS) entries and
+    /// the application's poly capacity and
     /// pre-checked natively by fuse. The claim *instances* (com, x, y),
     /// the claim polynomials, and the host commitments are persisted in the
     /// [`Proof`] so the parent fuse can enforce the claims recursively.
@@ -586,6 +591,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         bridge_outer_error_rx,
         bridge_outer_error_commitment,
         nested::RxIndex::BridgeOuterError,
+        5,
         outer_error,
         { native_outer_error: native_outer_error_commitment() }
     );
@@ -594,6 +600,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         bridge_ab_rx,
         bridge_ab_commitment,
         nested::RxIndex::BridgeAB,
+        6,
         ab,
         { a: native_a_commitment(), b: native_b_commitment() }
     );
@@ -602,9 +609,16 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         bridge_query_rx,
         bridge_query_commitment,
         nested::RxIndex::BridgeQuery,
+        7,
         query,
         { native_query: native_query_commitment(), registry_xy: native_registry_xy_commitment() }
     );
+
+    /// The nested bridge chain's value-level geometry at this proof's
+    /// capacity. Every bridge rx is placed through it.
+    fn nested_chain(&self) -> ragu_circuits::staging::InducedStages {
+        nested::chain_layout::<C::HostCurve, R>(self.capacity, self.capacity, self.capacity)
+    }
 
     /// The eval bridge, written out rather than through [`cached_bridge!`]:
     /// its stage is shaped by the application's claim capacity, and the macro
@@ -614,9 +628,10 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         if let Some(rx) = self.bridge_eval_rx.get() {
             return Ok(rx);
         }
-        let rx = StageExt::<C::ScalarField, R>::rx_configured(
-            &nested::stages::eval::Stage::<C::HostCurve, R>::with_shape(self.capacity),
+        let rx = self.nested_chain().rx_configured(
+            9,
             self.bridge_alpha_power(nested::RxIndex::BridgeEval),
+            &nested::stages::eval::Stage::<C::HostCurve, R>::with_shape(self.capacity),
             &nested::stages::eval::Witness {
                 native_eval: self.native_eval_commitment(),
                 claims: self.claim_host_commitments(),
@@ -645,7 +660,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     ) -> Result<sparse::Polynomial<C::ScalarField, R>> {
         let host = self.claim_host_commitments()[slot];
         let alpha = crate::internal::challenge::claim_bridge_alpha::<C>(self.bridge_alpha, slot);
-        crate::internal::challenge::claim_bridge_rx::<C, R>(slot, alpha, host)
+        crate::internal::challenge::claim_bridge_rx::<C, R>(slot, alpha, host, self.capacity)
     }
 
     /// The proof's shared bridge-alpha source, so the prover-side claim bridge

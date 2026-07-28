@@ -8,7 +8,7 @@
 //! restriction.
 
 use ragu_arithmetic::{CryptoRngCore, Cycle, ff::Field};
-use ragu_circuits::{polynomials::Rank, registry::RegistryAt, staging::StageExt};
+use ragu_circuits::{polynomials::Rank, registry::RegistryAt};
 use ragu_core::{Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::Element;
 
@@ -51,8 +51,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         registry_wy: &RegistryWy<C, R>,
         builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<()> {
-        let bridge_rx = nested::stages::inner_error::Stage::<C::HostCurve, R>::rx(
+        let bridge_rx = self.nested_chain_layout().rx_configured(
+            4,
             C::ScalarField::random(&mut *rng),
+            &nested::stages::inner_error::Stage::<C::HostCurve, R>::default(),
             &nested::stages::inner_error::Witness {
                 native_inner_error: builder.native_inner_error_commitment(),
                 registry_wy: registry_wy.commitment,
@@ -93,8 +95,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 ),
             };
         let native_rx =
-            native::stages::inner_error::Stage::<C, R, HEADER_SIZE, native::RevdotParameters>::rx(
+            self.native_chain_layouts().1.rx_configured(
+                2,
                 C::CircuitField::random(&mut *rng),
+                &native::stages::inner_error::Stage::<
+                    C,
+                    R,
+                    HEADER_SIZE,
+                    native::RevdotParameters,
+                >::default(),
                 &inner_error_witness,
             )?;
 

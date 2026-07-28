@@ -15,7 +15,7 @@
 //! - For each, absorb every input point into a fresh sponge and squeeze.
 //! - Enforce that the squeezed value equals the recorded challenge.
 //!
-//! With [`NUM_CHALLENGE_SLOTS`] slots, two children, and
+//! With the application's challenge slots, two children, and
 //! [`CHALLENGE_POINTS_PER_CALL`](crate::CHALLENGE_POINTS_PER_CALL) points per
 //! slot, that is
 //! $2 \cdot \text{slots} \cdot \lceil 2 \cdot \text{points} / \text{RATE} \rceil$
@@ -55,7 +55,6 @@
 //! [`StepCtx::derive_challenge`]: crate::step::StepCtx::derive_challenge
 //! [`preamble`]: super::super::stages::preamble
 //! [`compute_v`]: super::compute_v
-//! [`NUM_CHALLENGE_SLOTS`]: crate::NUM_CHALLENGE_SLOTS
 
 use core::marker::PhantomData;
 

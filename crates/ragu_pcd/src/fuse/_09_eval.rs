@@ -5,7 +5,7 @@
 //! $f(u)$ is derived from the aforementioned evaluations.
 
 use ragu_arithmetic::{CryptoRngCore, Cycle, ff::Field};
-use ragu_circuits::{polynomials::Rank, staging::StageExt};
+use ragu_circuits::polynomials::Rank;
 use ragu_core::{Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::Element;
 
@@ -44,12 +44,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 registry_xy: builder.native_registry_xy_poly().eval(u),
             },
         };
-        let rx = StageExt::<C::CircuitField, R>::rx_configured(
+        let (query_chain, _) = self.native_chain_layouts();
+        let rx = query_chain.rx_configured(
+            2,
+            C::CircuitField::random(&mut *rng),
             &native::stages::eval::Stage::<C, R, HEADER_SIZE>::with_shapes(
                 self.capacity(),
                 self.capacity(),
             ),
-            C::CircuitField::random(&mut *rng),
             &eval_witness,
         )?;
 

@@ -51,12 +51,13 @@ fn oracle_end_to_end() -> Result<()> {
         },
     )?;
     assert!(app.verify(&leaf1, &mut rng)?);
-    // All claim slots are present (unused slots hold the padding claim);
-    // the step's real claim occupies slot 0.
-    assert_eq!(
-        leaf1.proof().application_claims().len(),
-        ragu_pcd::NUM_QUERY_SLOTS
-    );
+    // Every claim slot the application has is present. The count is the
+    // application's *discovered* capacity, not a framework constant: this
+    // step opens one polynomial at two points, so the capacity is two claims
+    // over one polynomial — which is the whole point of splitting the two
+    // counts, and is now what the recursion is sized for.
+    assert_eq!(leaf1.proof().application_claims().len(), 2);
+    assert_eq!(leaf1.proof().application_polys().len(), 1);
     // `com` is derived by the framework from the claim's bridge stage once the
     // slot is known, so the test cannot recompute it; the opening is what the
     // claim asserts.
@@ -103,10 +104,10 @@ fn oracle_end_to_end() -> Result<()> {
         leaf2,
     )?;
     assert!(app.verify(&node, &mut rng)?);
-    assert_eq!(
-        node.proof().application_claims().len(),
-        ragu_pcd::NUM_QUERY_SLOTS
-    );
+    // The fusing step raises no claims of its own, so its proof carries the
+    // application's capacity in padding claims — the uniform instance shape
+    // every internal circuit reads.
+    assert_eq!(node.proof().application_claims().len(), 2);
 
     Ok(())
 }
