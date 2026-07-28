@@ -256,15 +256,13 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         // 1. Application circuits (registered just above)
         // 2. Internal circuits and masks
         // 3. Internal steps
-        // The shape space the registry builds internal circuits over: the one
-        // settled capacity, since every application circuit exposes it.
-        let variant_space = internal::VariantSpace::from_plans(&[capacity]);
-        let native_index = internal::native::NativeIndexSpace::new(variant_space.clone());
-        let nested_index = internal::nested::NestedIndexSpace::new(variant_space.clone());
+        // Internal circuits are built for the one settled capacity, since
+        // every application circuit exposes exactly it.
+        let nested_index = internal::nested::NestedIndexSpace::new(capacity);
 
         let (total_circuits, log2_circuits) = internal::native::total_circuit_counts(
             self.num_application_steps,
-            native_index.num_internal(),
+            internal::native::InternalCircuitIndex::NUM,
         );
 
         // First, register internal circuits and masks
@@ -272,7 +270,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             self.native_registry,
             params,
             log2_circuits,
-            &native_index,
+            capacity,
         )?;
 
         // Then, register internal steps
@@ -303,7 +301,6 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             nested_registry: self.nested_registry.finalize()?,
             params,
             num_application_steps: self.num_application_steps,
-            native_index,
             nested_index,
             step_plans,
             capacity,
@@ -351,12 +348,9 @@ pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     nested_registry: Registry<'params, C::ScalarField, R>,
     params: &'params C::Params,
     num_application_steps: usize,
-    /// The native internal-circuit index space this application's registry
-    /// was built over. Every variant lookup — fuse, verify, claims — resolves
-    /// through this.
-    native_index: internal::native::NativeIndexSpace,
-    /// The nested twin of [`native_index`](Self::native_index).
-    #[allow(dead_code)] // the flip's consumer-switch commit takes this up
+    /// The nested internal-circuit index space this application's registry
+    /// was built over, laid out at [`capacity`](Self::capacity).
+    #[allow(dead_code)] // the nested-side consumer switch takes this up
     nested_index: internal::nested::NestedIndexSpace,
     /// Every step's discovered plan, in circuit-index order within the step
     /// block: internal steps (rerandomize, trivial) first, then application
@@ -431,7 +425,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         index: ragu_circuits::registry::CircuitIndex,
     ) -> Option<framework_hooks::HookLayout> {
         usize::from(index)
-            .checked_sub(self.native_index.num_internal())
+            .checked_sub(internal::native::InternalCircuitIndex::NUM)
             .and_then(|i| self.step_plans.get(i))
             .copied()
     }

@@ -63,7 +63,7 @@ pub enum InternalCircuitIndex {
 
 /// Compute the total circuit count and log2 domain size from the number of
 /// application-defined steps and the number of internal circuits and masks
-/// (from [`NativeIndexSpace::num_internal`]).
+/// (i.e. [`InternalCircuitIndex::NUM`]).
 pub fn total_circuit_counts(
     num_application_steps: usize,
     num_internal_circuits: usize,
@@ -110,83 +110,6 @@ pub fn chain_layouts<C: Cycle, R: Rank, const HEADER_SIZE: usize>(
         InducedStages::new(alloc::vec![preamble_w, query_w, eval_w]),
         InducedStages::new(alloc::vec![preamble_w, outer_w, inner_w]),
     )
-}
-
-/// The native internal-circuit index space for a variant registry: the
-/// [`VariantSpace`](crate::internal::VariantSpace)'s canonical enumeration
-/// laid out in registry order.
-///
-/// Layout (matching `RegistryBuilder::finalize()`'s circuits-before-bondings
-/// concatenation): per (own, left, right) shape triple, the six internal
-/// circuits in [`InternalCircuitIndex::ALL`] order; then per triple, the nine
-/// stage and final-trace masks.
-#[derive(Clone, Debug)]
-pub(crate) struct NativeIndexSpace {
-    space: crate::internal::VariantSpace,
-}
-
-/// The six triple-keyed circuit categories, in [`InternalCircuitIndex::ALL`]
-/// order.
-const TRIPLE_CIRCUITS: [InternalCircuitIndex; 6] = [
-    InternalCircuitIndex::Hashes1Circuit,
-    InternalCircuitIndex::Hashes2Circuit,
-    InternalCircuitIndex::InnerCollapseCircuit,
-    InternalCircuitIndex::OuterCollapseCircuit,
-    InternalCircuitIndex::ComputeVCircuit,
-    InternalCircuitIndex::ChallengeBindingCircuit,
-];
-
-/// The nine triple-keyed mask categories, in [`InternalCircuitIndex::ALL`]
-/// order.
-const TRIPLE_MASKS: [InternalCircuitIndex; 9] = [
-    InternalCircuitIndex::PreambleStage,
-    InternalCircuitIndex::InnerErrorStage,
-    InternalCircuitIndex::OuterErrorStage,
-    InternalCircuitIndex::QueryStage,
-    InternalCircuitIndex::EvalStage,
-    InternalCircuitIndex::PreambleFinalStaged,
-    InternalCircuitIndex::InnerErrorFinalStaged,
-    InternalCircuitIndex::OuterErrorFinalStaged,
-    InternalCircuitIndex::EvalFinalStaged,
-];
-
-#[allow(dead_code)] // the flip's consumer-switch commit takes these up
-impl NativeIndexSpace {
-    pub(crate) fn new(space: crate::internal::VariantSpace) -> Self {
-        Self { space }
-    }
-
-    pub(crate) fn space(&self) -> &crate::internal::VariantSpace {
-        &self.space
-    }
-
-    /// The total number of native internal circuits and masks.
-    pub(crate) fn num_internal(&self) -> usize {
-        self.space.num_triples() * (TRIPLE_CIRCUITS.len() + TRIPLE_MASKS.len())
-    }
-
-    /// Registry index of a triple-keyed circuit or mask category's variant.
-    ///
-    /// # Panics
-    ///
-    /// Panics for shapes outside the space.
-    pub(crate) fn circuit_index(
-        &self,
-        category: InternalCircuitIndex,
-        own: crate::framework_hooks::HookLayout,
-        left: crate::framework_hooks::HookLayout,
-        right: crate::framework_hooks::HookLayout,
-    ) -> CircuitIndex {
-        let triple = self.space.triple_index(own, left, right);
-        if let Some(pos) = TRIPLE_CIRCUITS.iter().position(|&c| c == category) {
-            return CircuitIndex::new(triple * TRIPLE_CIRCUITS.len() + pos);
-        }
-        let circuits_end = self.space.num_triples() * TRIPLE_CIRCUITS.len();
-        if let Some(pos) = TRIPLE_MASKS.iter().position(|&c| c == category) {
-            return CircuitIndex::new(circuits_end + triple * TRIPLE_MASKS.len() + pos);
-        }
-        unreachable!("every category is triple-keyed");
-    }
 }
 
 impl InternalCircuitIndex {
@@ -457,10 +380,12 @@ pub enum RxComponent {
     Rx(RxIndex),
 }
 
-/// Registers internal native circuits and masks into the provided registry:
-/// one variant of every triple-keyed circuit and mask per (own, left, right)
-/// shape triple in the index space — in exactly the order
-/// [`NativeIndexSpace`] resolves indices.
+/// Registers internal native circuits and masks into the provided registry,
+/// in exactly [`InternalCircuitIndex::ALL`] order.
+///
+/// Every circuit here is built for the application's settled `capacity`: the
+/// slot shape every one of its steps exposes, children included. That is why
+/// there is one of each rather than a family keyed by child shape.
 ///
 /// Does not register internal steps (rerandomize, trivial); those are
 /// registered by the caller after this function returns.
@@ -468,14 +393,14 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
     mut registry: RegistryBuilder<'params, C::CircuitField, R>,
     params: &'params C::Params,
     log2_circuits: u32,
-    index_space: &NativeIndexSpace,
+    capacity: crate::framework_hooks::HookLayout,
 ) -> Result<RegistryBuilder<'params, C::CircuitField, R>> {
     let initial_internal_circuits = registry.num_internal_circuits();
-    let space = index_space.space();
+    let (left, right) = (capacity, capacity);
 
     // Circuits first, then masks - matching RegistryBuilder::finalize()'s
-    // concatenation order and NativeIndexSpace's layout.
-    for (_own, left, right) in space.triples() {
+    // concatenation order and `InternalCircuitIndex::ALL`.
+    {
         registry = registry.register_internal_circuit(circuits::hashes_1::Circuit::<
             C,
             R,
@@ -513,7 +438,7 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
         >::new(params, left, right))?;
     }
 
-    for (_own, left, right) in space.triples() {
+    {
         let (query_chain, error_chain) =
             chain_layouts::<C, R, HEADER_SIZE>(InternalCircuitIndex::NUM, left, right);
         // Stage masks, then final-trace masks, in TRIPLE_MASKS order.
@@ -534,7 +459,7 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
 
     assert_eq!(
         registry.num_internal_circuits(),
-        initial_internal_circuits + index_space.num_internal(),
+        initial_internal_circuits + InternalCircuitIndex::NUM,
         "internal circuit count mismatch"
     );
 
