@@ -71,14 +71,13 @@ pub enum InternalCircuitIndex {
 }
 
 /// Compute the total circuit count and log2 domain size from the number of
-/// application-defined steps and the number of challenge slots.
-pub const fn total_circuit_counts(
+/// application-defined steps and the number of internal circuits and masks
+/// (from [`NativeIndexSpace::num_internal`]).
+pub fn total_circuit_counts(
     num_application_steps: usize,
-    num_challenges: usize,
+    num_internal_circuits: usize,
 ) -> (usize, u32) {
-    let total_circuits = num_application_steps
-        + step::NUM_INTERNAL_STEPS
-        + InternalCircuitIndex::num(num_challenges);
+    let total_circuits = num_application_steps + step::NUM_INTERNAL_STEPS + num_internal_circuits;
     let log2_circuits = total_circuits.next_power_of_two().trailing_zeros();
     (total_circuits, log2_circuits)
 }
@@ -122,6 +121,116 @@ pub fn chain_layouts<C: Cycle, R: Rank, const HEADER_SIZE: usize>(
     )
 }
 
+/// The native internal-circuit index space for a variant registry: the
+/// [`VariantSpace`](crate::internal::VariantSpace)'s canonical enumeration
+/// laid out in registry order.
+///
+/// Layout (matching `RegistryBuilder::finalize()`'s circuits-before-bondings
+/// concatenation): per (own, left, right) shape triple, the six internal
+/// circuits in [`InternalCircuitIndex::ALL`] order; then per triple, the nine
+/// stage and final-trace masks; then the shared per-slot challenge masks up
+/// to the largest challenge count; then one challenge final-trace mask per
+/// distinct challenge count. The `own` component enters because compute_v's
+/// registry block covers the current step's own challenge masks and the
+/// query stage's fixed-registry width is `16 + own.challenge.calls`.
+#[derive(Clone, Debug)]
+pub(crate) struct NativeIndexSpace {
+    space: crate::internal::VariantSpace,
+}
+
+/// The six triple-keyed circuit categories, in [`InternalCircuitIndex::ALL`]
+/// order.
+const TRIPLE_CIRCUITS: [InternalCircuitIndex; 6] = [
+    InternalCircuitIndex::Hashes1Circuit,
+    InternalCircuitIndex::Hashes2Circuit,
+    InternalCircuitIndex::InnerCollapseCircuit,
+    InternalCircuitIndex::OuterCollapseCircuit,
+    InternalCircuitIndex::ComputeVCircuit,
+    InternalCircuitIndex::ChallengeBindingCircuit,
+];
+
+/// The nine triple-keyed mask categories, in [`InternalCircuitIndex::ALL`]
+/// order.
+const TRIPLE_MASKS: [InternalCircuitIndex; 9] = [
+    InternalCircuitIndex::PreambleStage,
+    InternalCircuitIndex::InnerErrorStage,
+    InternalCircuitIndex::OuterErrorStage,
+    InternalCircuitIndex::QueryStage,
+    InternalCircuitIndex::EvalStage,
+    InternalCircuitIndex::PreambleFinalStaged,
+    InternalCircuitIndex::InnerErrorFinalStaged,
+    InternalCircuitIndex::OuterErrorFinalStaged,
+    InternalCircuitIndex::EvalFinalStaged,
+];
+
+#[allow(dead_code)] // the flip's consumer-switch commit takes these up
+impl NativeIndexSpace {
+    pub(crate) fn new(space: crate::internal::VariantSpace) -> Self {
+        Self { space }
+    }
+
+    pub(crate) fn space(&self) -> &crate::internal::VariantSpace {
+        &self.space
+    }
+
+    /// The total number of native internal circuits and masks.
+    pub(crate) fn num_internal(&self) -> usize {
+        self.space.num_triples() * (TRIPLE_CIRCUITS.len() + TRIPLE_MASKS.len())
+            + self.space.max_challenges()
+            + self.space.distinct_challenges().len()
+    }
+
+    /// Registry index of a triple-keyed circuit or mask category's variant.
+    ///
+    /// # Panics
+    ///
+    /// Panics for the challenge-mask categories (use
+    /// [`challenge_stage_index`](Self::challenge_stage_index) /
+    /// [`challenge_final_index`](Self::challenge_final_index)) or for shapes
+    /// outside the space.
+    pub(crate) fn circuit_index(
+        &self,
+        category: InternalCircuitIndex,
+        own: crate::framework_hooks::HookLayout,
+        left: crate::framework_hooks::HookLayout,
+        right: crate::framework_hooks::HookLayout,
+    ) -> CircuitIndex {
+        let triple = self.space.triple_index(own, left, right);
+        if let Some(pos) = TRIPLE_CIRCUITS.iter().position(|&c| c == category) {
+            return CircuitIndex::new(triple * TRIPLE_CIRCUITS.len() + pos);
+        }
+        let circuits_end = self.space.num_triples() * TRIPLE_CIRCUITS.len();
+        if let Some(pos) = TRIPLE_MASKS.iter().position(|&c| c == category) {
+            return CircuitIndex::new(circuits_end + triple * TRIPLE_MASKS.len() + pos);
+        }
+        unreachable!("challenge-mask categories are not triple-keyed");
+    }
+
+    /// Registry index of the shared challenge-stage mask for `slot`.
+    pub(crate) fn challenge_stage_index(&self, slot: usize) -> CircuitIndex {
+        assert!(slot < self.space.max_challenges());
+        CircuitIndex::new(
+            self.space.num_triples() * (TRIPLE_CIRCUITS.len() + TRIPLE_MASKS.len()) + slot,
+        )
+    }
+
+    /// Registry index of the final-trace mask for a step with `own_challenges`
+    /// challenge stages.
+    pub(crate) fn challenge_final_index(&self, own_challenges: usize) -> CircuitIndex {
+        let pos = self
+            .space
+            .distinct_challenges()
+            .iter()
+            .position(|&c| c == own_challenges)
+            .expect("challenge count was registered");
+        CircuitIndex::new(
+            self.space.num_triples() * (TRIPLE_CIRCUITS.len() + TRIPLE_MASKS.len())
+                + self.space.max_challenges()
+                + pos,
+        )
+    }
+}
+
 impl InternalCircuitIndex {
     /// The number of internal circuits registered by [`register_all`] for a
     /// given challenge-slot count; the value-level source of [`NUM`](Self::NUM).
@@ -137,6 +246,7 @@ impl InternalCircuitIndex {
     /// order; the value-level source of [`ALL`](Self::ALL). The order must
     /// match the registry finalization concatenation order, exactly as
     /// documented on [`ALL`](Self::ALL).
+    #[allow(dead_code)] // superseded by NativeIndexSpace; dies with the flip
     pub fn all(num_challenges: usize) -> Vec<Self> {
         use InternalCircuitIndex::*;
         let mut all = alloc::vec![
@@ -500,12 +610,11 @@ pub enum RxComponent {
     Rx(RxIndex),
 }
 
-/// Registers internal native circuits and masks into the provided registry.
-///
-/// `capacity` is the shape the recursion is built for: it drives the per-slot
-/// entries of the registration list and the stage-chain geometry the masks
-/// are cut from. While slot padding exists it doubles as both children's
-/// shape.
+/// Registers internal native circuits and masks into the provided registry:
+/// one variant of every triple-keyed circuit and mask per (own, left, right)
+/// shape triple in the index space, then the shared challenge-slot masks and
+/// the per-count final-trace masks — in exactly the order
+/// [`NativeIndexSpace`] resolves indices.
 ///
 /// Does not register internal steps (rerandomize, trivial); those are
 /// registered by the caller after this function returns.
@@ -513,107 +622,93 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
     mut registry: RegistryBuilder<'params, C::CircuitField, R>,
     params: &'params C::Params,
     log2_circuits: u32,
-    capacity: crate::framework_hooks::HookLayout,
+    index_space: &NativeIndexSpace,
 ) -> Result<RegistryBuilder<'params, C::CircuitField, R>> {
     let initial_internal_circuits = registry.num_internal_circuits();
+    let space = index_space.space();
 
-    let num_challenges = capacity.challenge.calls;
-    let (query_chain, error_chain) = chain_layouts::<C, R, HEADER_SIZE>(
-        InternalCircuitIndex::num(num_challenges),
-        capacity,
-        capacity,
-    );
+    // Circuits first, then masks - matching RegistryBuilder::finalize()'s
+    // concatenation order and NativeIndexSpace's layout.
+    for (own, left, right) in space.triples() {
+        registry = registry.register_internal_circuit(circuits::hashes_1::Circuit::<
+            C,
+            R,
+            HEADER_SIZE,
+            RevdotParameters,
+        >::new(
+            params, log2_circuits, left, right
+        ))?;
+        registry = registry.register_internal_circuit(circuits::hashes_2::Circuit::<
+            C,
+            R,
+            HEADER_SIZE,
+            RevdotParameters,
+        >::new(params, left, right))?;
+        registry = registry.register_internal_circuit(circuits::inner_collapse::Circuit::<
+            C,
+            R,
+            HEADER_SIZE,
+            RevdotParameters,
+        >::new(left, right))?;
+        registry = registry.register_internal_circuit(circuits::outer_collapse::Circuit::<
+            C,
+            R,
+            HEADER_SIZE,
+            RevdotParameters,
+        >::new(left, right))?;
+        registry = registry.register_internal_circuit(circuits::compute_v::Circuit::<
+            C,
+            R,
+            HEADER_SIZE,
+        >::new(
+            own.challenge.calls, left, right
+        ))?;
+        registry = registry.register_internal_circuit(circuits::challenge_binding::Circuit::<
+            C,
+            R,
+            HEADER_SIZE,
+        >::new(params, left, right))?;
+    }
 
-    for id in InternalCircuitIndex::all(num_challenges) {
-        use InternalCircuitIndex::*;
-        registry = match id {
-            PreambleStage => registry.register_bonding(query_chain.mask::<C::CircuitField, R>(0)?),
-            InnerErrorStage => {
-                registry.register_bonding(error_chain.mask::<C::CircuitField, R>(2)?)
-            }
-            OuterErrorStage => {
-                registry.register_bonding(error_chain.mask::<C::CircuitField, R>(1)?)
-            }
-            QueryStage => registry.register_bonding(query_chain.mask::<C::CircuitField, R>(1)?),
-            EvalStage => registry.register_bonding(query_chain.mask::<C::CircuitField, R>(2)?),
-            PreambleFinalStaged => {
-                registry.register_bonding(query_chain.final_mask_through::<C::CircuitField, R>(0)?)
-            }
-            InnerErrorFinalStaged => {
-                registry.register_bonding(error_chain.final_mask_through::<C::CircuitField, R>(2)?)
-            }
-            OuterErrorFinalStaged => {
-                registry.register_bonding(error_chain.final_mask_through::<C::CircuitField, R>(1)?)
-            }
-            EvalFinalStaged => {
-                registry.register_bonding(query_chain.final_mask_through::<C::CircuitField, R>(2)?)
-            }
-            ChallengeStage(slot) => registry.register_bonding(
-                crate::step::internal::challenge_stage::layout()
-                    .mask::<C::CircuitField, R>(slot as usize)?,
-            ),
-            ChallengeFinalStaged => registry.register_bonding(
-                crate::step::internal::challenge_stage::layout()
-                    .final_mask::<C::CircuitField, R>()?,
-            ),
-            Hashes1Circuit => {
-                registry.register_internal_circuit(circuits::hashes_1::Circuit::<
-                    C,
-                    R,
-                    HEADER_SIZE,
-                    RevdotParameters,
-                >::new(
-                    params, log2_circuits, capacity, capacity
-                ))?
-            }
-            Hashes2Circuit => registry.register_internal_circuit(circuits::hashes_2::Circuit::<
-                C,
-                R,
-                HEADER_SIZE,
-                RevdotParameters,
-            >::new(
-                params, capacity, capacity
-            ))?,
-            InnerCollapseCircuit => {
-                registry.register_internal_circuit(circuits::inner_collapse::Circuit::<
-                    C,
-                    R,
-                    HEADER_SIZE,
-                    RevdotParameters,
-                >::new(capacity, capacity))?
-            }
-            OuterCollapseCircuit => {
-                registry.register_internal_circuit(circuits::outer_collapse::Circuit::<
-                    C,
-                    R,
-                    HEADER_SIZE,
-                    RevdotParameters,
-                >::new(capacity, capacity))?
-            }
-            ComputeVCircuit => {
-                registry.register_internal_circuit(circuits::compute_v::Circuit::<
-                    C,
-                    R,
-                    HEADER_SIZE,
-                >::new(
-                    num_challenges, capacity, capacity
-                ))?
-            }
-            ChallengeBindingCircuit => {
-                registry.register_internal_circuit(circuits::challenge_binding::Circuit::<
-                    C,
-                    R,
-                    HEADER_SIZE,
-                >::new(
-                    params, capacity, capacity
-                ))?
-            }
-        };
+    for (own, left, right) in space.triples() {
+        let (query_chain, error_chain) = chain_layouts::<C, R, HEADER_SIZE>(
+            InternalCircuitIndex::num(own.challenge.calls),
+            left,
+            right,
+        );
+        // Stage masks, then final-trace masks, in TRIPLE_MASKS order.
+        registry = registry.register_bonding(query_chain.mask::<C::CircuitField, R>(0)?);
+        registry = registry.register_bonding(error_chain.mask::<C::CircuitField, R>(2)?);
+        registry = registry.register_bonding(error_chain.mask::<C::CircuitField, R>(1)?);
+        registry = registry.register_bonding(query_chain.mask::<C::CircuitField, R>(1)?);
+        registry = registry.register_bonding(query_chain.mask::<C::CircuitField, R>(2)?);
+        registry =
+            registry.register_bonding(query_chain.final_mask_through::<C::CircuitField, R>(0)?);
+        registry =
+            registry.register_bonding(error_chain.final_mask_through::<C::CircuitField, R>(2)?);
+        registry =
+            registry.register_bonding(error_chain.final_mask_through::<C::CircuitField, R>(1)?);
+        registry =
+            registry.register_bonding(query_chain.final_mask_through::<C::CircuitField, R>(2)?);
+    }
+
+    let max_challenges = space.max_challenges();
+    for slot in 0..max_challenges {
+        registry = registry.register_bonding(
+            crate::step::internal::challenge_stage::layout_for(max_challenges)
+                .mask::<C::CircuitField, R>(slot)?,
+        );
+    }
+    for own_challenges in space.distinct_challenges() {
+        registry = registry.register_bonding(
+            crate::step::internal::challenge_stage::layout_for(own_challenges)
+                .final_mask::<C::CircuitField, R>()?,
+        );
     }
 
     assert_eq!(
         registry.num_internal_circuits(),
-        initial_internal_circuits + InternalCircuitIndex::num(num_challenges),
+        initial_internal_circuits + index_space.num_internal(),
         "internal circuit count mismatch"
     );
 

@@ -330,15 +330,25 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         // 1. Application circuits (registered just above)
         // 2. Internal circuits and masks
         // 3. Internal steps
-        let (total_circuits, log2_circuits) =
-            internal::native::total_circuit_counts(self.num_application_steps, NUM_CHALLENGE_SLOTS);
+        // The variant space: the distinct shapes the registry hosts one
+        // variant block per (own, left, right) triple over. Transitional: the
+        // singleton padded shape, which reproduces exactly the fixed index
+        // space; the flip swaps this for the collected step plans.
+        let variant_space =
+            internal::VariantSpace::from_plans(&[framework_hooks::HookLayout::padded()]);
+        let native_index = internal::native::NativeIndexSpace::new(variant_space.clone());
+
+        let (total_circuits, log2_circuits) = internal::native::total_circuit_counts(
+            self.num_application_steps,
+            native_index.num_internal(),
+        );
 
         // First, register internal circuits and masks
         self.native_registry = internal::native::register_all::<C, R, HEADER_SIZE>(
             self.native_registry,
             params,
             log2_circuits,
-            framework_hooks::HookLayout::padded(),
+            &native_index,
         )?;
 
         // Then, register internal steps
@@ -368,6 +378,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             nested_registry: self.nested_registry.finalize()?,
             params,
             num_application_steps: self.num_application_steps,
+            native_index,
             step_plans,
             seeded_trivial: OnceCell::new(),
             #[cfg(feature = "unstable-fuzzing")]
@@ -413,10 +424,14 @@ pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     nested_registry: Registry<'params, C::ScalarField, R>,
     params: &'params C::Params,
     num_application_steps: usize,
+    /// The native internal-circuit index space this application's registry
+    /// was built over. Every variant lookup — fuse, verify, claims — resolves
+    /// through this.
+    native_index: internal::native::NativeIndexSpace,
     /// Every step's discovered plan, in circuit-index order within the step
     /// block: internal steps (rerandomize, trivial) first, then application
     /// steps in registration order. Index `i` here corresponds to circuit
-    /// index `InternalCircuitIndex::NUM + i`. Collected by
+    /// index `num_internal + i`. Collected by
     /// [`ApplicationBuilder::finalize`] before hand-over; this table — not
     /// any list a proof carries — is what fuse and verify consult for a
     /// child's shape, keyed by its registry-committed circuit index.
@@ -440,7 +455,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         index: ragu_circuits::registry::CircuitIndex,
     ) -> Option<framework_hooks::HookLayout> {
         usize::from(index)
-            .checked_sub(internal::native::InternalCircuitIndex::NUM)
+            .checked_sub(self.native_index.num_internal())
             .and_then(|i| self.step_plans.get(i))
             .copied()
     }

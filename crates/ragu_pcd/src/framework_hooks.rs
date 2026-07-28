@@ -461,7 +461,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHookOutputs<'d
 /// Discovered by the registration-time dry run and replayed at synthesis: a
 /// body whose calls diverge from it would synthesize a circuit other than the
 /// one that was registered.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct HookLayout {
     /// What [`derive_challenge`](crate::step::StepCtx::derive_challenge)
     /// requires.
@@ -478,7 +478,7 @@ pub struct HookLayout {
 /// provides recursive opening enforcement, and neither implies the other. They
 /// share only the registration dry run that discovers them, which is an
 /// implementation convenience rather than a relationship between the features.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ChallengeLayout {
     /// [`derive_challenge`](crate::step::StepCtx::derive_challenge) calls.
     pub calls: usize,
@@ -487,7 +487,7 @@ pub struct ChallengeLayout {
 /// What the poly-query hook requires of a step's circuit.
 ///
 /// Two counts, not one, and that separation is the point of the mechanism.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PolyQueryLayout {
     /// [`witness_polynomial`](crate::step::StepCtx::witness_polynomial) calls —
     /// the expensive count. Each costs a bridge stage with its own commitment,

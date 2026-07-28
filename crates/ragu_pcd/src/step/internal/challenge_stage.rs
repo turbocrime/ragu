@@ -79,7 +79,15 @@ impl<F: Field> Default for Witness<F> {
 /// [`configure_induced`](ragu_circuits::staging::StageBuilder::configure_induced)
 /// rejects the pair if they disagree.
 pub(crate) fn layout() -> InducedStages {
-    InducedStages::new(alloc::vec![CHALLENGE_WIDTH; NUM_CHALLENGE_SLOTS])
+    layout_for(NUM_CHALLENGE_SLOTS)
+}
+
+/// [`layout`] for a step with `num_challenges` slots. Slot `i`'s geometry is
+/// identical for every step with at least `i + 1` slots, which is what lets
+/// the per-slot masks be shared across steps; only the final-trace mask
+/// (which starts after the step's own last slot) is per-count.
+pub(crate) fn layout_for(num_challenges: usize) -> InducedStages {
+    InducedStages::new(alloc::vec![CHALLENGE_WIDTH; num_challenges])
 }
 
 /// One challenge slot's witness body: [`CHALLENGE_WIDTH`] committed wires.

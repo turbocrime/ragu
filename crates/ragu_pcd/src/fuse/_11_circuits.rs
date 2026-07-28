@@ -51,7 +51,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             native::RevdotParameters,
         >::new(
             self.params,
-            total_circuit_counts(self.num_application_steps, crate::NUM_CHALLENGE_SLOTS).1,
+            total_circuit_counts(self.num_application_steps, self.native_index.num_internal()).1,
             crate::framework_hooks::HookLayout::padded(),
             crate::framework_hooks::HookLayout::padded(),
         )
