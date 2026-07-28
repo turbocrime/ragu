@@ -226,11 +226,6 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             step::internal::trivial::Trivial::new(),
             Some(params),
         )?;
-        let mut step_plans = Vec::with_capacity(step::NUM_INTERNAL_STEPS + self.held_steps.len());
-        step_plans.push(rerandomize.layout());
-        step_plans.push(trivial.layout());
-        step_plans.extend(self.held_steps.iter().map(|held| held.layout()));
-
         // The application's slot capacity. Uniform across one application,
         // because the internal circuits read a child's instance as a
         // fixed-width record and any step's proof may be any fuse's child.
@@ -238,9 +233,9 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         // **Discovered, never declared**: an application whose steps open two
         // polynomials pays for two, and the cost of a heavy step falls on the
         // application that registers it rather than on the framework.
-        let capacity = step_plans
-            .iter()
-            .copied()
+        let capacity = [rerandomize.layout(), trivial.layout()]
+            .into_iter()
+            .chain(self.held_steps.iter().map(|held| held.layout()))
             .reduce(framework_hooks::HookLayout::max_with)
             .expect("the internal steps are always registered");
 
@@ -256,10 +251,9 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         // 1. Application circuits (registered just above)
         // 2. Internal circuits and masks
         // 3. Internal steps
+        //
         // Internal circuits are built for the one settled capacity, since
         // every application circuit exposes exactly it.
-        let nested_index = internal::nested::NestedIndexSpace::new(capacity);
-
         let (total_circuits, log2_circuits) = internal::native::total_circuit_counts(
             self.num_application_steps,
             internal::native::InternalCircuitIndex::NUM,
@@ -294,15 +288,13 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
 
         // Register nested internal circuits (no application steps, no headers).
         self.nested_registry =
-            internal::nested::register_all::<C, R>(self.nested_registry, &nested_index)?;
+            internal::nested::register_all::<C, R>(self.nested_registry, capacity)?;
 
         Ok(Application {
             native_registry: self.native_registry.finalize()?,
             nested_registry: self.nested_registry.finalize()?,
             params,
             num_application_steps: self.num_application_steps,
-            nested_index,
-            step_plans,
             capacity,
             seeded_trivial: OnceCell::new(),
             #[cfg(feature = "unstable-fuzzing")]
@@ -348,20 +340,9 @@ pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     nested_registry: Registry<'params, C::ScalarField, R>,
     params: &'params C::Params,
     num_application_steps: usize,
-    /// The nested internal-circuit index space this application's registry
-    /// was built over, laid out at [`capacity`](Self::capacity).
-    #[allow(dead_code)] // the nested-side consumer switch takes this up
-    nested_index: internal::nested::NestedIndexSpace,
-    /// Every step's discovered plan, in circuit-index order within the step
-    /// block: internal steps (rerandomize, trivial) first, then application
-    /// steps in registration order. Index `i` here corresponds to circuit
-    /// index `num_internal + i`. Collected by
-    /// [`ApplicationBuilder::finalize`] before hand-over; this table — not
-    /// any list a proof carries — is what fuse and verify consult for a
-    /// child's shape, keyed by its registry-committed circuit index.
-    step_plans: Vec<framework_hooks::HookLayout>,
     /// The application's settled slot capacity: the pointwise maximum over
-    /// [`step_plans`](Self::step_plans).
+    /// its registered steps' discovered plans, folded by
+    /// [`ApplicationBuilder::finalize`].
     ///
     /// Every application circuit exposes exactly these slots, so this is the
     /// shape the internal circuits are built for, the shape a proof's lists
@@ -377,10 +358,6 @@ pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
-    /// The discovered plan of the step occupying circuit `index`, or `None`
-    /// if that index is an internal circuit (which is not a step and has no
-    /// plan). See [`Self::step_plans`] for the table's provenance.
-    #[allow(dead_code)] // consumed when fuse/verify select variants by plan
     /// The application's settled slot capacity — the shape every application
     /// circuit's instance has, and every proof's slot lists.
     pub(crate) fn capacity(&self) -> framework_hooks::HookLayout {
@@ -417,17 +394,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             self.capacity,
             self.capacity,
         )
-    }
-
-    #[allow(dead_code)] // the per-step consumer arrives with per-step exactness
-    pub(crate) fn step_plan(
-        &self,
-        index: ragu_circuits::registry::CircuitIndex,
-    ) -> Option<framework_hooks::HookLayout> {
-        usize::from(index)
-            .checked_sub(internal::native::InternalCircuitIndex::NUM)
-            .and_then(|i| self.step_plans.get(i))
-            .copied()
     }
 
     /// Seed a new computation by running a step with trivial inputs.

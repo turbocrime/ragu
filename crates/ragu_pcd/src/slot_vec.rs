@@ -48,23 +48,14 @@ use ragu_primitives::{
 /// A vector gadget whose length is a circuit-construction parameter.
 ///
 /// See the [module documentation](self) for the length discipline. Construct
-/// with [`SlotVec::new`] when the surrounding code already produced the
-/// planned number of elements, or [`SlotVec::with_len`] to check a length
-/// taken from a plan against data that crossed an API boundary.
+/// with [`SlotVec::with_len`], which checks a length taken from a plan against
+/// data that crossed an API boundary.
 pub(crate) struct SlotVec<T> {
     v: Vec<T>,
 }
 
 impl<T> SlotVec<T> {
-    /// Wraps a vector whose length the caller has already arranged to match
-    /// the governing plan.
-    #[allow(dead_code)] // consumers arrive with the remaining plan migrations
-    pub(crate) fn new(v: Vec<T>) -> Self {
-        SlotVec { v }
-    }
-
     /// Wraps a vector, checking its length against `expected` (a plan value).
-    #[allow(dead_code)] // consumers arrive with the remaining plan migrations
     pub(crate) fn with_len(v: Vec<T>, expected: usize) -> Result<Self> {
         if v.len() != expected {
             return Err(Error::VectorLengthMismatch {
@@ -73,12 +64,6 @@ impl<T> SlotVec<T> {
             });
         }
         Ok(SlotVec { v })
-    }
-
-    /// Consumes `self` and returns the inner vector.
-    #[allow(dead_code)] // consumers arrive with the remaining plan migrations
-    pub(crate) fn into_inner(self) -> Vec<T> {
-        self.v
     }
 }
 

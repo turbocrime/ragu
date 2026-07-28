@@ -78,11 +78,6 @@ pub const fn num_endoscaling_steps(
     endoscalar::num_steps(num_endoscaling_points(left, right))
 }
 
-/// Number of endoscaling steps, derived from [`NUM_ENDOSCALING_POINTS`] via
-/// [`endoscalar::num_steps`].
-#[allow(dead_code)] // documentation anchor; the value path uses num_endoscaling_steps
-const NUM_ENDOSCALING_STEPS: usize = endoscalar::num_steps(NUM_ENDOSCALING_POINTS);
-
 /// The nested stage chain's value-level geometry for a step of shape `own`
 /// fusing children of shapes `left` and `right`.
 ///
@@ -129,23 +124,7 @@ pub fn claim_run_layout<HC: ragu_arithmetic::CurveAffine, R: Rank>(
     )
 }
 
-/// The nested internal-circuit index space, laid out over the application's
-/// settled capacity.
-///
-/// Layout (circuits before bondings, matching `RegistryBuilder::finalize()`):
-/// the endoscaling step circuits, then the bonding block — the endoscalar,
-/// points, and points-final masks, the eight fixed bridge masks, the claim
-/// bridge slot masks at the capacity's poly count, the loading circuit, and
-/// the two copying circuits.
-///
-/// Every one of these is built at the capacity, children included, so there
-/// is a single run and a single block rather than a family keyed by shape.
-#[derive(Clone, Debug)]
-pub(crate) struct NestedIndexSpace {
-    capacity: crate::framework_hooks::HookLayout,
-}
-
-/// Positions inside a triple's bonding block, before the per-slot masks.
+/// Positions inside the bonding block, before the per-slot masks.
 const BLOCK_FIXED: [InternalCircuitIndex; 11] = [
     InternalCircuitIndex::EndoscalarStage,
     InternalCircuitIndex::PointsStage,
@@ -160,71 +139,19 @@ const BLOCK_FIXED: [InternalCircuitIndex; 11] = [
     InternalCircuitIndex::BridgeEval,
 ];
 
-#[allow(dead_code)] // the index accessors are the registry's documented layout
-impl NestedIndexSpace {
-    pub(crate) fn new(capacity: crate::framework_hooks::HookLayout) -> Self {
-        Self { capacity }
-    }
-
-    /// The bonding-block length.
-    fn block_len(&self) -> usize {
-        BLOCK_FIXED.len() + self.capacity.poly_query.polys + 3
-    }
-
-    /// Total nested internal circuits and bondings.
-    pub(crate) fn num_internal(&self) -> usize {
-        self.num_circuits() + self.block_len()
-    }
-
-    /// Total endoscaling step circuits (the circuits-section length).
-    fn num_circuits(&self) -> usize {
-        num_endoscaling_steps(self.capacity, self.capacity)
-    }
-
-    /// Registry index of an endoscaling step circuit.
-    pub(crate) fn endoscaling_step_index(&self, step: usize) -> CircuitIndex {
-        assert!(step < self.num_circuits());
-        CircuitIndex::new(step)
-    }
-
-    /// Bonding index of the block start.
-    fn block_start(&self) -> usize {
-        self.num_circuits()
-    }
-
-    /// Registry index of a fixed (non-slot) mask or circuit in the block.
-    ///
-    /// # Panics
-    ///
-    /// Panics for slot-indexed or side-indexed categories (use the dedicated
-    /// methods).
-    pub(crate) fn circuit_index(&self, category: InternalCircuitIndex) -> CircuitIndex {
-        let start = self.block_start();
-        if let Some(pos) = BLOCK_FIXED.iter().position(|&c| c == category) {
-            return CircuitIndex::new(start + pos);
-        }
-        if category == InternalCircuitIndex::Loading {
-            return CircuitIndex::new(start + BLOCK_FIXED.len() + self.capacity.poly_query.polys);
-        }
-        unreachable!("slot- and side-indexed categories have dedicated methods");
-    }
-
-    /// Registry index of a claim-bridge slot mask in the block.
-    pub(crate) fn claim_slot_index(&self, slot: usize) -> CircuitIndex {
-        assert!(slot < self.capacity.poly_query.polys);
-        CircuitIndex::new(self.block_start() + BLOCK_FIXED.len() + slot)
-    }
-
-    /// Registry index of a copying circuit, by the side it walks.
-    pub(crate) fn copying_index(&self, side: Side) -> CircuitIndex {
-        let side_offset = match side {
-            Side::Left => 1,
-            Side::Right => 2,
-        };
-        CircuitIndex::new(
-            self.block_start() + BLOCK_FIXED.len() + self.capacity.poly_query.polys + side_offset,
-        )
-    }
+/// The number of nested internal circuits and bondings [`register_all`]
+/// registers at `capacity`.
+///
+/// Layout (circuits before bondings, matching `RegistryBuilder::finalize()`):
+/// the endoscaling step circuits, then one bonding block — the eleven fixed
+/// entries of [`BLOCK_FIXED`], the claim bridge slot masks at the capacity's
+/// poly count, the loading circuit, and the two copying circuits.
+///
+/// Every one of these is built at the capacity, children included, which is
+/// why there is a single run and a single block rather than a family keyed by
+/// shape.
+pub(crate) fn num_internal(capacity: crate::framework_hooks::HookLayout) -> usize {
+    num_endoscaling_steps(capacity, capacity) + BLOCK_FIXED.len() + capacity.poly_query.polys + 3
 }
 
 /// Index of internal nested circuits registered into the registry.
@@ -485,25 +412,20 @@ pub mod stages {
 }
 
 /// Registers internal nested circuits into the provided registry: the
-/// endoscaling step circuits per ordered (left, right) pair, then one bonding
-/// block per (own, left, right) triple — in exactly the order
-/// [`NestedIndexSpace`] resolves indices.
+/// endoscaling step circuits, then the bonding block — in exactly the order
+/// [`num_internal`] documents.
 ///
 /// Circuits are registered as internal to ensure they occupy prefix indices
 /// before application steps.
 pub fn register_all<'params, C: Cycle, R: Rank>(
     mut registry: RegistryBuilder<'params, C::ScalarField, R>,
-    index_space: &NestedIndexSpace,
+    capacity: crate::framework_hooks::HookLayout,
 ) -> Result<RegistryBuilder<'params, C::ScalarField, R>> {
     let initial_internal_circuits = registry.num_internal_circuits();
-    let (own, left, right) = (
-        index_space.capacity,
-        index_space.capacity,
-        index_space.capacity,
-    );
+    let (own, left, right) = (capacity, capacity, capacity);
 
     // Circuits first, then bondings - matching RegistryBuilder::finalize()'s
-    // concatenation order and NestedIndexSpace's layout.
+    // concatenation order and the layout `num_internal` documents.
     {
         let num_points = num_endoscaling_points(left, right);
         for step in 0..num_endoscaling_steps(left, right) {
@@ -545,7 +467,7 @@ pub fn register_all<'params, C: Cycle, R: Rank>(
 
     assert_eq!(
         registry.num_internal_circuits(),
-        initial_internal_circuits + index_space.num_internal(),
+        initial_internal_circuits + num_internal(capacity),
         "internal circuit count mismatch"
     );
 
