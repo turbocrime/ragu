@@ -10,7 +10,7 @@ fn fuse_bench(c: &mut Criterion) {
     let pasta = Pasta::baked();
     let poseidon_params = Pasta::circuit_poseidon(pasta);
 
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4, 0, 1>::new()
+    let app = ApplicationBuilder::<Pasta, ProductionRank, 4, 0, 0, 1>::new()
         .register(nontrivial::WitnessLeaf { poseidon_params })
         .unwrap()
         .register(nontrivial::Hash2 { poseidon_params })

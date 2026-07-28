@@ -9,7 +9,7 @@ use rand::{SeedableRng, rngs::StdRng};
 #[test]
 fn various_merging_operations() -> Result<()> {
     let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4, 0, 1>::new()
+    let app = ApplicationBuilder::<Pasta, ProductionRank, 4, 0, 0, 1>::new()
         .register(WitnessLeaf {
             poseidon_params: Pasta::circuit_poseidon(pasta),
         })?

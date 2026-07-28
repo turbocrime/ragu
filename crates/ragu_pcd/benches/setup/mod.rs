@@ -18,12 +18,12 @@ pub fn setup_register() -> (
 }
 
 pub fn setup_finalize() -> (
-    ApplicationBuilder<'static, Pasta, ProductionRank, 4, 0, 1>,
+    ApplicationBuilder<'static, Pasta, ProductionRank, 4, 0, 0, 1>,
     &'static <Pasta as Cycle>::Params,
 ) {
     let pasta = Pasta::baked();
     let poseidon_params = Pasta::circuit_poseidon(pasta);
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4, 0, 1>::new()
+    let app = ApplicationBuilder::<Pasta, ProductionRank, 4, 0, 0, 1>::new()
         .register(nontrivial::WitnessLeaf { poseidon_params })
         .unwrap()
         .register(nontrivial::Hash2 { poseidon_params })
@@ -38,7 +38,7 @@ pub fn setup_seed() -> (
 ) {
     let pasta = Pasta::baked();
     let poseidon_params = Pasta::circuit_poseidon(pasta);
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4, 0, 1>::new()
+    let app = ApplicationBuilder::<Pasta, ProductionRank, 4, 0, 0, 1>::new()
         .register(nontrivial::WitnessLeaf { poseidon_params })
         .unwrap()
         .register(nontrivial::Hash2 { poseidon_params })

@@ -30,7 +30,7 @@ fn poly(coeffs: &[u64]) -> sparse::Polynomial<Fp, R> {
 
 fn open_app() -> Result<ragu_pcd::Application<'static, Pasta, R, HEADER_SIZE>> {
     let pasta = Pasta::baked();
-    ApplicationBuilder::<Pasta, R, HEADER_SIZE, 1, 1>::new()
+    ApplicationBuilder::<Pasta, R, HEADER_SIZE, 1, 2, 1>::new()
         .register(CommitAndOpen::<Pasta, R>::new(Pasta::circuit_poseidon(
             pasta,
         )))?
@@ -217,7 +217,7 @@ fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
 
     let pasta = Pasta::baked();
     // A prover that simply does not run the fuse-time pre-check.
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 1, 1>::new()
+    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 1, 2, 1>::new()
         .register(CommitAndOpen::<Pasta, R>::new(Pasta::circuit_poseidon(
             pasta,
         )))?

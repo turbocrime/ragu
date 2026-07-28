@@ -336,7 +336,7 @@ mod tests {
 
     fn create_test_app() -> crate::Application<'static, Pasta, TestR, HEADER_SIZE> {
         let pasta = Pasta::baked();
-        ApplicationBuilder::<Pasta, TestR, HEADER_SIZE, 0, 1>::new()
+        ApplicationBuilder::<Pasta, TestR, HEADER_SIZE, 0, 0, 1>::new()
             .finalize(pasta)
             .expect("failed to create test application")
     }

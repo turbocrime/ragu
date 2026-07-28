@@ -103,19 +103,26 @@ pub(crate) const RAGU_TAG: &[u8] = b"FIXME";
 /// application is willing to pay for is its choice, not something to be learned
 /// by running its steps.
 ///
-/// Claim slots are neither declared here nor folded from the steps: they are
-/// whatever space is left under the framework's gate bound
-/// ([`Rank::n()`](ragu_circuits::polynomials::Rank::n)). A claim costs one
-/// instance triple, one `_08_f` quotient and one `compute_v` triple, and claim
-/// slots and header elements are terms in the same $k(Y)$ Horner loop — so a
-/// smaller header simply leaves room for more claims before
-/// [`GateBoundExceeded`](ragu_core::Error::GateBoundExceeded) trips.
+/// `CLAIMS` is how many opening claims any one step may enforce. A claim is the
+/// cheap axis — one instance triple, one `_08_f` quotient, one `compute_v`
+/// triple, no commitment and no endoscaling point — and claim slots trade
+/// against `HEADER_SIZE`, since both are terms in the same $k(Y)$ Horner loop.
+/// An application that asks for more of either than its circuits can hold fails
+/// at [`finalize`](ApplicationBuilder::finalize) with
+/// [`GateBoundExceeded`](ragu_core::Error::GateBoundExceeded); there is no
+/// arithmetic to do in advance, just a number to lower.
+///
+/// Declaring it is what lets a step's circuit be measured the moment it
+/// registers. Folding it from the steps instead would mean no circuit's shape
+/// is final until the last step has arrived, since the shape includes an
+/// instance whose width counts claim slots.
 pub struct ApplicationBuilder<
     'params,
     C: Cycle,
     R: Rank,
     const HEADER_SIZE: usize,
     const POLYS: usize,
+    const CLAIMS: usize,
     const CHALLENGE_PERMUTATIONS: usize,
 > {
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,
@@ -142,8 +149,9 @@ impl<
     R: Rank,
     const HEADER_SIZE: usize,
     const POLYS: usize,
+    const CLAIMS: usize,
     const CHALLENGE_PERMUTATIONS: usize,
-> Default for ApplicationBuilder<'_, C, R, HEADER_SIZE, POLYS, CHALLENGE_PERMUTATIONS>
+> Default for ApplicationBuilder<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGE_PERMUTATIONS>
 {
     fn default() -> Self {
         Self::new()
@@ -156,8 +164,9 @@ impl<
     R: Rank,
     const HEADER_SIZE: usize,
     const POLYS: usize,
+    const CLAIMS: usize,
     const CHALLENGE_PERMUTATIONS: usize,
-> ApplicationBuilder<'params, C, R, HEADER_SIZE, POLYS, CHALLENGE_PERMUTATIONS>
+> ApplicationBuilder<'params, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGE_PERMUTATIONS>
 {
     /// Create an empty [`ApplicationBuilder`] for proof-carrying data. The
     /// cycle's runtime parameters are not needed until
@@ -290,6 +299,7 @@ impl<
         // the application declared is rejected with both numbers in hand.
         capacity.challenge.points = Self::challenge_points();
         capacity.poly_query.polys = POLYS;
+        capacity.poly_query.claims = CLAIMS;
 
         let (total_circuits, log2_circuits) = internal::native::total_circuit_counts(
             self.num_application_steps,

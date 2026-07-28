@@ -97,7 +97,7 @@ const NUM_APP_STEPS: usize = 6000;
 fn test_internal_circuit_constraint_counts() {
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 0, 1>::new()
+    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 0, 0, 1>::new()
         .register_dummy_circuits(NUM_APP_STEPS)
         .unwrap()
         .finalize(pasta)
@@ -210,7 +210,7 @@ fn print_internal_stage_parameters() {
 fn test_native_registry_digest() {
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 0, 1>::new()
+    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 0, 0, 1>::new()
         .register_dummy_circuits(NUM_APP_STEPS)
         .unwrap()
         .finalize(pasta)
@@ -272,7 +272,7 @@ fn test_native_registry_digest() {
 fn test_nested_registry_digest() {
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 0, 1>::new()
+    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 0, 0, 1>::new()
         .register_dummy_circuits(NUM_APP_STEPS)
         .unwrap()
         .finalize(pasta)
@@ -330,7 +330,7 @@ fn print_registry_digests() {
 
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 0, 1>::new()
+    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 0, 0, 1>::new()
         .register_dummy_circuits(NUM_APP_STEPS)
         .unwrap()
         .finalize(pasta)
@@ -567,41 +567,33 @@ mod capacity_is_per_application {
         let pasta = Pasta::baked();
         // The declared polynomial capacity is the difference between these two
         // applications: `Light` witnesses none, `Heavy` witnesses two.
-        let light = ApplicationBuilder::<Pasta, R, HS, 0, 1>::new()
+        let light = ApplicationBuilder::<Pasta, R, HS, 0, 0, 1>::new()
             .register(Light)
             .unwrap()
             .finalize(pasta)
             .unwrap();
-        let heavy = ApplicationBuilder::<Pasta, R, HS, 2, 1>::new()
+        let heavy = ApplicationBuilder::<Pasta, R, HS, 2, 3, 1>::new()
             .register(Heavy)
             .unwrap()
             .finalize(pasta)
             .unwrap();
 
-        // The slot *counts* are what the steps do, discovered, not declared —
-        // the light step uses none, so all three are zero. The challenge input
-        // width is the exception: the application declares the absorb
-        // permutations it pays for, so it is present whether or not any step
-        // derives a challenge.
-        // Declared: the polynomial slots and the challenge input width.
+        // Declared: polynomial slots, claim slots, and the challenge input
+        // width. Each application asks for what its own step needs, which is
+        // what makes the two shapes differ at all.
         assert_eq!(light.capacity().poly_query.polys, 0);
         assert_eq!(heavy.capacity().poly_query.polys, 2);
+        assert_eq!(light.capacity().poly_query.claims, 0);
+        assert_eq!(heavy.capacity().poly_query.claims, 3);
         assert_eq!(
             light.capacity().challenge.points,
             framework_hooks::ChallengeLayout::points_per_call(1, 4)
         );
 
-        // Discovered: how many challenges a step actually derives.
+        // Discovered: how many challenges a step actually derives. The last
+        // axis still folded from the steps rather than declared.
         assert_eq!(light.capacity().challenge.calls, 0);
         assert_eq!(heavy.capacity().challenge.calls, 1);
-
-        // Neither: claim slots are the remainder. `Light` declares no
-        // polynomial slots, and a claim names a polynomial by index, so it gets
-        // no claim slots either. `Heavy` declares two and is handed whatever
-        // gates the chains have left. `Heavy` raises three claims and `Light`
-        // none; neither number appears here, which is the point.
-        assert_eq!(light.capacity().poly_query.claims, 0);
-        assert!(heavy.capacity().poly_query.claims >= 3);
 
         // Every internal circuit that reads a child's slots is strictly
         // smaller in the light application. Under a framework constant these
