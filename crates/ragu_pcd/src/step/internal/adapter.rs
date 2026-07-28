@@ -158,7 +158,6 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
     pub fn challenge_calls(&self) -> usize {
         self.layout.challenge.calls
     }
-
 }
 
 /// An application step adapter held between
@@ -200,8 +199,10 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize>
 {
     /// An application circuit's stages are its challenge slots: one committed
     /// partial trace per `derive_challenge` call, so each challenge can be
-    /// bound to a commitment of the values known when it was derived.
-    type Last = challenge_stage::Last<C::CircuitField, R>;
+    /// bound to a commitment of the values known when it was derived. The
+    /// slots are one induced run — a single typed stage subdivided by the
+    /// value-level layout.
+    type Last = challenge_stage::Run<C::CircuitField, R>;
     type Instance<'source> = (
         FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
         FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
@@ -233,15 +234,17 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize>
         Self: 'dr,
     {
         // Staging phase 1: reserve every challenge slot's wires before any
-        // witness runs. This resolves the whole `Parent` chain up front, which
-        // is what lets the slots be handed to the step body one at a time
-        // despite having distinct types.
-        let (slot0, builder) =
-            builder.add_stage::<challenge_stage::Stage0<C::CircuitField, R>>()?;
-        let (slot1, builder) =
-            builder.add_stage::<challenge_stage::Stage1<C::CircuitField, R>>()?;
+        // witness runs. The slots are reserved as one induced run: the layout
+        // (a value) says where each slot's wires fall inside the span the
+        // `Run` stage declares to the type system, so the reservation is a
+        // loop over slots rather than a typed chain.
+        let (guards, builder) = builder
+            .configure_induced::<challenge_stage::Run<C::CircuitField, R>, _>(
+                challenge_stage::Slot::default(),
+                &challenge_stage::layout(),
+            )?;
         let dr = builder.finish();
-        let mut challenge_slots = challenge_stage::Slots::new(slot0, slot1);
+        let mut challenge_slots = challenge_stage::Slots::new(guards);
 
         let (alphas, left, right, witness) = witness.cast();
         // `Self: 'dr` gives `'params: 'dr`, so the parameters coerce. The

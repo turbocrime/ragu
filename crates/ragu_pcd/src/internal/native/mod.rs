@@ -439,17 +439,14 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
             EvalFinalStaged => {
                 registry.register_bonding(stages::eval::Stage::<C, R, HEADER_SIZE>::final_mask()?)
             }
-            ChallengeStage(slot) => registry.register_bonding(match slot {
-                0 => crate::step::internal::challenge_stage::Stage0::<C::CircuitField, R>::mask()?,
-                1 => crate::step::internal::challenge_stage::Stage1::<C::CircuitField, R>::mask()?,
-                _ => unreachable!("NUM_CHALLENGE_SLOTS is 2"),
-            }),
-            ChallengeFinalStaged => {
-                registry.register_bonding(crate::step::internal::challenge_stage::Last::<
-                    C::CircuitField,
-                    R,
-                >::final_mask()?)
-            }
+            ChallengeStage(slot) => registry.register_bonding(
+                crate::step::internal::challenge_stage::layout()
+                    .mask::<C::CircuitField, R>(slot as usize)?,
+            ),
+            ChallengeFinalStaged => registry.register_bonding(
+                crate::step::internal::challenge_stage::layout()
+                    .final_mask::<C::CircuitField, R>()?,
+            ),
             Hashes1Circuit => {
                 registry.register_internal_circuit(circuits::hashes_1::Circuit::<
                     C,

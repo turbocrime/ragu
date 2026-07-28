@@ -18,12 +18,13 @@
 //! One stage covering every slot would let a later slot's inputs influence an
 //! earlier slot's challenge, which is exactly what Fiat–Shamir forbids.
 //!
-//! The stages chain in slot order, so slot `i`'s wires occupy a distinct,
-//! statically-known region of the trace. The chain is expressed through the
-//! `Parent` associated type, which cannot be computed from a const generic on
-//! stable Rust, so [`Stage`] takes its parent as a type parameter and each slot
-//! is an alias — the same shape as the nested
-//! [`host_bridge`](crate::internal::nested::stages::host_bridge) stages.
+//! The slots form an induced **run**: one typed stage ([`Run`]) spans every
+//! slot's wires, and the value-level [`layout`] says where the slot boundaries
+//! fall inside that span — the same shape as the nested
+//! [`challenge_bridge`](crate::internal::nested::stages::challenge_bridge)
+//! family. The slot count is a property of the application, not of any Rust
+//! type, so the geometry travels as data; [`Slot`] supplies only the per-slot
+//! witness body.
 //!
 //! # Wire discipline
 //!
@@ -39,7 +40,7 @@ use core::marker::PhantomData;
 use ragu_arithmetic::{Cycle, ff::Field};
 use ragu_circuits::{
     polynomials::Rank,
-    staging::{StageExt, StageGuard},
+    staging::{InducedGuard, InducedStages},
 };
 use ragu_core::{
     Result,
@@ -53,7 +54,7 @@ use ragu_primitives::{
     vec::{ConstLen, FixedVec},
 };
 
-use crate::{CHALLENGE_WIDTH, framework_hooks::ProofValues};
+use crate::{CHALLENGE_WIDTH, NUM_CHALLENGE_SLOTS, framework_hooks::ProofValues};
 
 /// A challenge stage's witness: the input elements, zero-padded to
 /// [`CHALLENGE_WIDTH`].
@@ -69,13 +70,34 @@ impl<F: Field> Default for Witness<F> {
     }
 }
 
-/// One challenge slot's stage — [`CHALLENGE_WIDTH`] committed wires — chained
-/// after `P`.
-pub struct Stage<F, R, P> {
-    _marker: PhantomData<(F, R, P)>,
+/// The layout subdividing the challenge run into its slots: one
+/// [`CHALLENGE_WIDTH`]-wire slot per challenge, anchored at the start of the
+/// application circuit's trace ([`Run`]'s `Parent` is `()`).
+///
+/// This is the only place the run's geometry is described twice — once as
+/// [`Run`]'s own `values()`, once as the slot widths here — and
+/// [`configure_induced`](ragu_circuits::staging::StageBuilder::configure_induced)
+/// rejects the pair if they disagree.
+pub(crate) fn layout() -> InducedStages {
+    InducedStages::new(alloc::vec![CHALLENGE_WIDTH; NUM_CHALLENGE_SLOTS])
 }
 
-impl<F, R, P> Default for Stage<F, R, P> {
+/// One challenge slot's witness body: [`CHALLENGE_WIDTH`] committed wires.
+///
+/// Its chain position is unused — where a slot's wires land comes from
+/// [`layout`], not from this type. One concrete type serves every slot of the
+/// run.
+pub struct Slot<F, R> {
+    _marker: PhantomData<(F, R)>,
+}
+
+impl<F, R> Clone for Slot<F, R> {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl<F, R> Default for Slot<F, R> {
     fn default() -> Self {
         Self {
             _marker: PhantomData,
@@ -83,10 +105,8 @@ impl<F, R, P> Default for Stage<F, R, P> {
     }
 }
 
-impl<F: Field, R: Rank, P: ragu_circuits::staging::Stage<F, R>> ragu_circuits::staging::Stage<F, R>
-    for Stage<F, R, P>
-{
-    type Parent = P;
+impl<F: Field, R: Rank> ragu_circuits::staging::Stage<F, R> for Slot<F, R> {
+    type Parent = ();
     type Witness<'source> = Witness<F>;
     type OutputKind = Kind![F; FixedVec<Element<'_, _>, ConstLen<CHALLENGE_WIDTH>>];
 
@@ -112,43 +132,66 @@ impl<F: Field, R: Rank, P: ragu_circuits::staging::Stage<F, R>> ragu_circuits::s
     }
 }
 
-/// Challenge stage for slot 0.
-pub type Stage0<F, R> = Stage<F, R, ()>;
-/// Challenge stage for slot 1.
-pub type Stage1<F, R> = Stage<F, R, Stage0<F, R>>;
+/// The whole family of challenge slots as one typed stage — an application
+/// circuit's [`MultiStageCircuit::Last`](ragu_circuits::staging::MultiStageCircuit::Last).
+///
+/// The run spans every slot's wires; [`layout`] subdivides it. Everything
+/// after the run — the circuit's final trace — chains onto `Run` and computes
+/// the same `skip_gates` it always did, with no knowledge that the span is
+/// subdivided (`ragu_circuits`' `induced_run_matches_typed_chain` test pins
+/// that equivalence). The run is never witnessed through the typed path — each
+/// slot is reserved and filled individually via
+/// [`configure_induced`](ragu_circuits::staging::StageBuilder::configure_induced)
+/// — so its output is `()`.
+pub struct Run<F, R> {
+    _marker: PhantomData<(F, R)>,
+}
 
-/// Compile-time guard: the number of aliases above must match the number of
-/// challenge slots. Bump both together.
-const _: () = assert!(crate::NUM_CHALLENGE_SLOTS == 2);
+impl<F, R> Default for Run<F, R> {
+    fn default() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
+}
 
-/// The last stage in the chain — an application circuit's
-/// [`MultiStageCircuit::Last`](ragu_circuits::staging::MultiStageCircuit::Last).
-pub type Last<F, R> = Stage1<F, R>;
+impl<F: Field, R: Rank> ragu_circuits::staging::Stage<F, R> for Run<F, R> {
+    type Parent = ();
+    type Witness<'source> = ();
+    type OutputKind = ();
 
-/// A slot's stage rx, built from its input values. Dispatches on the slot
-/// because each slot is a distinct type with distinct generator positions.
+    fn values() -> usize {
+        NUM_CHALLENGE_SLOTS * CHALLENGE_WIDTH
+    }
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+        &self,
+        _: &mut D,
+        _: DriverValue<D, Self::Witness<'source>>,
+    ) -> Result<Bound<'dr, D, Self::OutputKind>>
+    where
+        Self: 'dr,
+    {
+        Ok(())
+    }
+}
+
+/// A slot's stage rx, built from its input values. The slot's generator
+/// positions come from [`layout`]; the witness body is [`Slot`].
 pub(crate) fn stage_rx<F: Field, R: Rank>(
     slot: usize,
     alpha: F,
     inputs: [F; CHALLENGE_WIDTH],
 ) -> Result<ragu_circuits::polynomials::sparse::Polynomial<F, R>> {
-    let witness = Witness { inputs };
-    match slot {
-        0 => Stage0::<F, R>::rx(alpha, witness),
-        1 => Stage1::<F, R>::rx(alpha, witness),
-        _ => unreachable!("slot is bounded by NUM_CHALLENGE_SLOTS"),
-    }
+    layout().rx_configured(slot, alpha, &Slot::<F, R>::default(), Witness { inputs })
 }
 
-/// The challenge slots' reserved wires, with their concrete stage types
-/// erased.
+/// The challenge slots' reserved wires, with the run bookkeeping erased.
 ///
 /// The [`StageBuilder`](ragu_circuits::staging::StageBuilder) reserves every
-/// stage's wires before the step body runs, so the whole `Parent` chain is
-/// resolved by then. The guards differ *only* in that chain — which
-/// [`StageGuard::unenforced`] never consults, and which carries no data — so
-/// the adapter keeps them in a [`Slots`] on its own frame and lends the hook
-/// this cursor over them.
+/// slot's wires before the step body runs. The guards carry no data beyond
+/// those wires, so the adapter keeps them in a [`Slots`] on its own frame and
+/// lends the hook this cursor over them.
 ///
 /// Borrowed rather than owned on purpose: an owned `Box<dyn …>` would have to
 /// outlive `'dr`, which would require `D: 'dr` at every `Circuit::witness`.
@@ -186,19 +229,15 @@ pub(crate) struct Filled<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
 /// The adapter-owned store the [`ChallengeSlots`] cursor lends out. This is
 /// where `R` lives — and where it stays: the step body never names it.
 pub(crate) struct Slots<'dr, D: Driver<'dr>, R: Rank> {
-    slot0: Option<StageGuard<'dr, D, R, Stage0<D::F, R>>>,
-    slot1: Option<StageGuard<'dr, D, R, Stage1<D::F, R>>>,
+    guards: alloc::vec::Vec<Option<InducedGuard<'dr, D, R, Slot<D::F, R>>>>,
     next: usize,
 }
 
 impl<'dr, D: Driver<'dr>, R: Rank> Slots<'dr, D, R> {
-    pub(crate) fn new(
-        slot0: StageGuard<'dr, D, R, Stage0<D::F, R>>,
-        slot1: StageGuard<'dr, D, R, Stage1<D::F, R>>,
-    ) -> Self {
+    /// Wraps the guards of one reserved run, in slot order.
+    pub(crate) fn new(guards: alloc::vec::Vec<InducedGuard<'dr, D, R, Slot<D::F, R>>>) -> Self {
         Self {
-            slot0: Some(slot0),
-            slot1: Some(slot1),
+            guards: guards.into_iter().map(Some).collect(),
             next: 0,
         }
     }
@@ -221,12 +260,12 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> ChallengeSlots
         // zero — immediately after this returns.
         //
         // Each guard is taken at most once and the slot index is bounded by
-        // `take_challenge_slot`, so neither arm below can be reached twice.
-        let taken = match slot {
-            0 => self.slot0.take().map(|guard| guard.unenforced(dr, witness)),
-            1 => self.slot1.take().map(|guard| guard.unenforced(dr, witness)),
-            _ => None,
-        };
+        // `take_challenge_slot`, so no slot below can be reached twice.
+        let taken = self
+            .guards
+            .get_mut(slot)
+            .and_then(|guard| guard.take())
+            .map(|guard| guard.unenforced(dr, witness));
         let wires =
             taken.unwrap_or_else(|| unreachable!("slot is bounded by NUM_CHALLENGE_SLOTS"))?;
         self.next += 1;
@@ -248,14 +287,32 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> ChallengeSlots
 
 #[cfg(test)]
 mod tests {
+    use ragu_circuits::staging::{Stage, StageExt};
     use ragu_pasta::Fp;
 
     use super::*;
     use crate::internal::tests::{R, assert_stage_values};
 
     #[test]
-    fn stage_values_matches_wire_count() {
-        assert_stage_values(&Stage0::<Fp, R>::default());
-        assert_stage_values(&Stage1::<Fp, R>::default());
+    fn slot_body_matches_width() {
+        assert_stage_values(&Slot::<Fp, R>::default());
+    }
+
+    /// The layout tiles the [`Run`] exactly: same start gate, same end gate.
+    /// `configure_induced` enforces this at reservation; pinning it here keeps
+    /// the failure local if the two descriptions of the geometry drift.
+    #[test]
+    fn layout_tiles_run() {
+        let layout = layout();
+        assert_eq!(layout.len(), NUM_CHALLENGE_SLOTS);
+        assert_eq!(
+            layout.skip_gates(0),
+            <Run<Fp, R> as Stage<Fp, R>>::skip_gates()
+        );
+        assert_eq!(
+            layout.final_skip_gates(),
+            <Run<Fp, R> as Stage<Fp, R>>::skip_gates()
+                + <Run<Fp, R> as StageExt<Fp, R>>::num_gates()
+        );
     }
 }
