@@ -21,8 +21,7 @@ use ragu_primitives::{
 };
 
 use crate::{
-    NUM_CHALLENGE_SLOTS, NUM_POLY_SLOTS, NUM_QUERY_SLOTS, Proof, header::Header,
-    internal::native::unified, slot_vec::SlotVec, step::internal::padded,
+    Proof, header::Header, internal::native::unified, slot_vec::SlotVec, step::internal::padded,
 };
 
 type HeaderVec<'dr, D, const HEADER_SIZE: usize> = FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>>;
@@ -227,18 +226,19 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
     ProofInputs<'dr, D, C, HEADER_SIZE>
 {
     /// Allocate ProofInputs from a proof reference and pre-computed output
-    /// header. The slot counts are circuit-construction parameters (from the
-    /// configuring plan): they fix the wire shape regardless of whether a
+    /// header. `shape` is a circuit-construction parameter (the configuring
+    /// plan for this child): it fixes the wire shape regardless of whether a
     /// witness is present, and the proof's own slot lists are checked against
-    /// them.
+    /// it.
     pub fn alloc<R: Rank>(
         dr: &mut D,
         proof: DriverValue<D, &Proof<C, R>>,
         output_header: DriverValue<D, &FixedVec<D::F, ConstLen<HEADER_SIZE>>>,
-        num_polys: usize,
-        num_queries: usize,
-        num_challenges: usize,
+        shape: crate::framework_hooks::HookLayout,
     ) -> Result<Self> {
+        let num_polys = shape.poly_query.polys;
+        let num_queries = shape.poly_query.claims;
+        let num_challenges = shape.challenge.calls;
         fn alloc_header<'dr, D: Driver<'dr>, const N: usize>(
             dr: &mut D,
             allocator: &mut (),
@@ -359,14 +359,12 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
     }
 
     /// Allocate ProofInputs from a proof reference and some unprocessed header
-    /// data. Slot counts as in [`alloc`](Self::alloc).
+    /// data. `shape` as in [`alloc`](Self::alloc).
     pub fn alloc_for_verify<R: Rank, H: Header<C::CircuitField>>(
         dr: &mut D,
         proof: DriverValue<D, &Proof<C, R>>,
         header_data: DriverValue<D, H::Data>,
-        num_polys: usize,
-        num_queries: usize,
-        num_challenges: usize,
+        shape: crate::framework_hooks::HookLayout,
     ) -> Result<Self> {
         let header_data = D::try_just(|| {
             use ragu_core::drivers::emulator::{Emulator, Wireless};
@@ -384,14 +382,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                 .collect_fixed()
         })?;
 
-        Self::alloc(
-            dr,
-            proof,
-            header_data.as_ref(),
-            num_polys,
-            num_queries,
-            num_challenges,
-        )
+        Self::alloc(dr, proof, header_data.as_ref(), shape)
     }
 }
 
@@ -449,23 +440,33 @@ pub fn child_num_values(header_size: usize, child: crate::framework_hooks::HookL
 }
 
 pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize> {
-    /// Number of polynomial slots each child carries.
-    num_polys: usize,
-    /// Number of poly-query claim slots each child carries.
-    num_queries: usize,
-    /// Number of challenge slots each child carries.
-    num_challenges: usize,
+    /// The left child's shape.
+    left: crate::framework_hooks::HookLayout,
+    /// The right child's shape.
+    right: crate::framework_hooks::HookLayout,
     _marker: PhantomData<(C, R)>,
+}
+
+impl<C: Cycle, R, const HEADER_SIZE: usize> Stage<C, R, HEADER_SIZE> {
+    /// A stage instance for children of the given shapes.
+    pub fn with_shapes(
+        left: crate::framework_hooks::HookLayout,
+        right: crate::framework_hooks::HookLayout,
+    ) -> Self {
+        Stage {
+            left,
+            right,
+            _marker: PhantomData,
+        }
+    }
 }
 
 impl<C: Cycle, R, const HEADER_SIZE: usize> Default for Stage<C, R, HEADER_SIZE> {
     fn default() -> Self {
-        Stage {
-            num_polys: NUM_POLY_SLOTS,
-            num_queries: NUM_QUERY_SLOTS,
-            num_challenges: NUM_CHALLENGE_SLOTS,
-            _marker: PhantomData,
-        }
+        Self::with_shapes(
+            crate::framework_hooks::HookLayout::padded(),
+            crate::framework_hooks::HookLayout::padded(),
+        )
     }
 }
 
@@ -496,18 +497,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
             dr,
             witness.as_ref().map(|w| w.left.proof),
             witness.as_ref().map(|w| &w.left.output_header),
-            self.num_polys,
-            self.num_queries,
-            self.num_challenges,
+            self.left,
         )?;
 
         let right = ProofInputs::alloc(
             dr,
             witness.as_ref().map(|w| w.right.proof),
             witness.as_ref().map(|w| &w.right.output_header),
-            self.num_polys,
-            self.num_queries,
-            self.num_challenges,
+            self.right,
         )?;
 
         Ok(Output { left, right })

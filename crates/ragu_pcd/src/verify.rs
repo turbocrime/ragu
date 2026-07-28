@@ -87,9 +87,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     dr,
                     proof,
                     data,
-                    crate::NUM_POLY_SLOTS,
-                    crate::NUM_QUERY_SLOTS,
-                    crate::NUM_CHALLENGE_SLOTS,
+                    crate::framework_hooks::HookLayout::padded(),
                 )?;
 
                 let (unified_ky, unified_bridge_ky) = proof_inputs.unified_ky_values(dr, &y)?;

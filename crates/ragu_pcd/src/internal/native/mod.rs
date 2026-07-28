@@ -263,10 +263,13 @@ impl<T> InternalCircuitValues<T> {
         }
     }
 
-    /// Construct from a closure called once per variant in [`ALL`](InternalCircuitIndex::ALL)
-    /// order.
-    pub fn from_fn(mut f: impl FnMut(InternalCircuitIndex) -> T) -> Self {
-        match Self::try_from_fn(|id| Ok::<_, core::convert::Infallible>(f(id))) {
+    /// Construct from a closure called once per variant, in
+    /// [`all`](InternalCircuitIndex::all) order at the given challenge-slot
+    /// count.
+    pub fn from_fn(num_challenges: usize, mut f: impl FnMut(InternalCircuitIndex) -> T) -> Self {
+        match Self::try_from_fn(num_challenges, |id| {
+            Ok::<_, core::convert::Infallible>(f(id))
+        }) {
             Ok(v) => v,
             Err(e) => match e {},
         }
@@ -276,6 +279,7 @@ impl<T> InternalCircuitValues<T> {
     ///
     /// The closure is called in [`ALL`](InternalCircuitIndex::ALL) order.
     pub fn try_from_fn<E>(
+        num_challenges: usize,
         mut f: impl FnMut(InternalCircuitIndex) -> core::result::Result<T, E>,
     ) -> core::result::Result<Self, E> {
         use InternalCircuitIndex::*;
@@ -295,7 +299,7 @@ impl<T> InternalCircuitValues<T> {
             inner_error_final_staged: f(InnerErrorFinalStaged)?,
             outer_error_final_staged: f(OuterErrorFinalStaged)?,
             eval_final_staged: f(EvalFinalStaged)?,
-            challenge_stages: (0..crate::NUM_CHALLENGE_SLOTS)
+            challenge_stages: (0..num_challenges)
                 .map(|slot| f(ChallengeStage(slot as u32)))
                 .collect::<core::result::Result<_, E>>()?,
             challenge_final_staged: f(ChallengeFinalStaged)?,
@@ -444,9 +448,12 @@ impl<T> RxValues<T> {
         }
     }
 
-    /// Construct from a closure called once per variant in [`ALL`](RxIndex::ALL) order.
-    pub fn from_fn(mut f: impl FnMut(RxIndex) -> T) -> Self {
-        match Self::try_from_fn(|id| Ok::<_, core::convert::Infallible>(f(id))) {
+    /// Construct from a closure called once per variant, in
+    /// [`all`](RxIndex::all) order at the given challenge-slot count.
+    pub fn from_fn(num_challenges: usize, mut f: impl FnMut(RxIndex) -> T) -> Self {
+        match Self::try_from_fn(num_challenges, |id| {
+            Ok::<_, core::convert::Infallible>(f(id))
+        }) {
             Ok(v) => v,
             Err(e) => match e {},
         }
@@ -456,6 +463,7 @@ impl<T> RxValues<T> {
     ///
     /// The closure is called in [`ALL`](RxIndex::ALL) order.
     pub fn try_from_fn<E>(
+        num_challenges: usize,
         mut f: impl FnMut(RxIndex) -> core::result::Result<T, E>,
     ) -> core::result::Result<Self, E> {
         use RxIndex::*;
@@ -472,7 +480,7 @@ impl<T> RxValues<T> {
             outer_error: f(OuterError)?,
             query: f(Query)?,
             eval: f(Eval)?,
-            challenge_stages: (0..crate::NUM_CHALLENGE_SLOTS)
+            challenge_stages: (0..num_challenges)
                 .map(|slot| f(ChallengeStage(slot as u32)))
                 .collect::<core::result::Result<_, E>>()?,
         })

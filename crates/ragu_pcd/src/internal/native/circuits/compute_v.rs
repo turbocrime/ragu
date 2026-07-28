@@ -355,7 +355,9 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
             .collect::<Result<Vec<_>>>()?;
 
         let circuit_indices =
-            InternalCircuitValues::try_from_fn(|id| inverter.add_circuit(dr, id))?;
+            InternalCircuitValues::try_from_fn(crate::NUM_CHALLENGE_SLOTS, |id| {
+                inverter.add_circuit(dr, id)
+            })?;
 
         let inverted = inverter.invert(dr)?;
 
@@ -380,7 +382,7 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
                 y: inverted[challenges_y].clone(),
                 xz: inverted[challenges_xz].clone(),
             },
-            internal: InternalCircuitValues::from_fn(|id| {
+            internal: InternalCircuitValues::from_fn(crate::NUM_CHALLENGE_SLOTS, |id| {
                 inverted[*circuit_indices.get(id)].clone()
             }),
         })

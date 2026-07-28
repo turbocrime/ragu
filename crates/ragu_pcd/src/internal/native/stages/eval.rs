@@ -30,7 +30,7 @@ use ragu_core::{
 use ragu_primitives::{Element, allocator::Allocator, io::Write};
 
 use crate::{
-    NUM_POLY_SLOTS, Proof,
+    Proof,
     internal::native::{RxComponent, RxValues},
     slot_vec::SlotVec,
 };
@@ -72,14 +72,12 @@ impl<F: PrimeField> ChildEvaluationsWitness<F> {
     /// Create child evaluations witness from a proof evaluated at point u.
     pub fn from_proof<C: Cycle<CircuitField = F>, R: Rank>(proof: &Proof<C, R>, u: F) -> Self {
         ChildEvaluationsWitness {
-            rx: RxValues::from_fn(|id| proof[id].eval(u)),
+            rx: RxValues::from_fn(proof.application_challenges().len(), |id| proof[id].eval(u)),
             a_poly: proof[RxComponent::AbA].eval(u),
             b_poly: proof[RxComponent::AbB].eval(u),
             registry_xy_poly: proof.native_registry_xy_poly().eval(u),
             p_poly: proof.native_p_poly().eval(u),
-            claims: (0..NUM_POLY_SLOTS)
-                .map(|i| proof.claim_polys[i].eval(u))
-                .collect(),
+            claims: proof.claim_polys.iter().map(|p| p.eval(u)).collect(),
         }
     }
 }
@@ -159,14 +157,16 @@ pub struct ChildEvaluations<'dr, D: Driver<'dr>> {
 
 impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
     /// Allocate child evaluations from pre-computed witness values.
-    /// `num_polys` is the child's poly-query claim slot count.
+    /// `child` is the child's shape: its claim slot count sizes `claims`, its
+    /// challenge count sizes the rx list.
     pub fn alloc<A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, &ChildEvaluationsWitness<D::F>>,
-        num_polys: usize,
+        child: crate::framework_hooks::HookLayout,
     ) -> Result<Self> {
-        let rx = RxValues::try_from_fn(|id| {
+        let num_polys = child.poly_query.polys;
+        let rx = RxValues::try_from_fn(child.challenge.calls, |id| {
             Element::alloc(dr, allocator, witness.as_ref().map(|w| *w.rx.get(id)))
         })?;
         Ok(ChildEvaluations {
@@ -229,17 +229,33 @@ pub fn num_values(
 
 /// The eval stage of the fuse witness.
 pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize> {
-    /// Number of poly-query claim slots each child carries.
-    num_polys: usize,
+    /// The left child's shape.
+    left: crate::framework_hooks::HookLayout,
+    /// The right child's shape.
+    right: crate::framework_hooks::HookLayout,
     _marker: PhantomData<(C, R)>,
+}
+
+impl<C: Cycle, R, const HEADER_SIZE: usize> Stage<C, R, HEADER_SIZE> {
+    /// A stage instance for children of the given shapes.
+    pub fn with_shapes(
+        left: crate::framework_hooks::HookLayout,
+        right: crate::framework_hooks::HookLayout,
+    ) -> Self {
+        Stage {
+            left,
+            right,
+            _marker: PhantomData,
+        }
+    }
 }
 
 impl<C: Cycle, R, const HEADER_SIZE: usize> Default for Stage<C, R, HEADER_SIZE> {
     fn default() -> Self {
-        Stage {
-            num_polys: NUM_POLY_SLOTS,
-            _marker: PhantomData,
-        }
+        Self::with_shapes(
+            crate::framework_hooks::HookLayout::padded(),
+            crate::framework_hooks::HookLayout::padded(),
+        )
     }
 }
 
@@ -266,17 +282,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
         Self: 'dr,
     {
         let allocator = &mut ();
-        let left = ChildEvaluations::alloc(
-            dr,
-            allocator,
-            witness.as_ref().map(|w| &w.left),
-            self.num_polys,
-        )?;
+        let left =
+            ChildEvaluations::alloc(dr, allocator, witness.as_ref().map(|w| &w.left), self.left)?;
         let right = ChildEvaluations::alloc(
             dr,
             allocator,
             witness.as_ref().map(|w| &w.right),
-            self.num_polys,
+            self.right,
         )?;
         let registry_wx0 = Element::alloc(
             dr,

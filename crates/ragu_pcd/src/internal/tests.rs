@@ -479,7 +479,7 @@ fn nested_chain_layout_tiles_typed_chain() {
 #[test]
 fn test_internal_circuit_index_all_exhaustive() {
     let mut collected = alloc::vec::Vec::new();
-    let _values = InternalCircuitValues::from_fn(|id| {
+    let _values = InternalCircuitValues::from_fn(crate::NUM_CHALLENGE_SLOTS, |id| {
         collected.push(id);
     });
     assert_eq!(collected.as_slice(), InternalCircuitIndex::ALL);
@@ -493,7 +493,7 @@ fn test_internal_circuit_index_all_exhaustive() {
 #[test]
 fn test_rx_index_all_exhaustive() {
     let mut collected = alloc::vec::Vec::new();
-    let _values = RxValues::from_fn(|id| {
+    let _values = RxValues::from_fn(crate::NUM_CHALLENGE_SLOTS, |id| {
         collected.push(id);
     });
     assert_eq!(collected.as_slice(), RxIndex::ALL);
