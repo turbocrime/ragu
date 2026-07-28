@@ -650,7 +650,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
             let step_rx = self.nested_registry.assemble(
                 &step_trace,
                 nested::InternalCircuitIndex::EndoscalingStep(step as u32)
-                    .circuit_index(crate::NUM_POLY_SLOTS),
+                    .circuit_index(crate::NUM_POLY_SLOTS, crate::NUM_CHALLENGE_SLOTS),
                 rng,
             )?;
             step_rxs.push(step_rx);

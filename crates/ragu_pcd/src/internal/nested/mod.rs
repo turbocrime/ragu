@@ -41,18 +41,19 @@ use crate::internal::{Side, endoscalar};
 ///
 /// The endoscaling circuits process these points across
 /// [`NUM_ENDOSCALING_STEPS`] steps.
-pub const NUM_ENDOSCALING_POINTS: usize = num_endoscaling_points(crate::NUM_POLY_SLOTS);
+pub const NUM_ENDOSCALING_POINTS: usize =
+    num_endoscaling_points(crate::NUM_POLY_SLOTS, crate::NUM_CHALLENGE_SLOTS);
 
 /// [`NUM_ENDOSCALING_POINTS`] for an application with `max_witnessed_polys`
-/// polynomial slots.
-pub const fn num_endoscaling_points(max_witnessed_polys: usize) -> usize {
-    1 + 2 * (crate::internal::native::RxIndex::NUM + 4 + max_witnessed_polys) + 6
+/// polynomial slots and `num_challenges` challenge slots.
+pub const fn num_endoscaling_points(max_witnessed_polys: usize, num_challenges: usize) -> usize {
+    1 + 2 * (crate::internal::native::RxIndex::num(num_challenges) + 4 + max_witnessed_polys) + 6
 }
 
 /// [`NUM_ENDOSCALING_STEPS`] for an application with `max_witnessed_polys`
-/// polynomial slots.
-pub const fn num_endoscaling_steps(max_witnessed_polys: usize) -> usize {
-    endoscalar::num_steps(num_endoscaling_points(max_witnessed_polys))
+/// polynomial slots and `num_challenges` challenge slots.
+pub const fn num_endoscaling_steps(max_witnessed_polys: usize, num_challenges: usize) -> usize {
+    endoscalar::num_steps(num_endoscaling_points(max_witnessed_polys, num_challenges))
 }
 
 /// [`NUM_ENDOSCALING_POINTS`] as a [`Len`](ragu_primitives::vec::Len), which is
@@ -119,17 +120,19 @@ pub enum InternalCircuitIndex {
 
 impl InternalCircuitIndex {
     /// The number of internal circuits registered by [`register_all`] for an
-    /// application with `max_witnessed_polys` polynomial slots — the number of
-    /// entries [`all`](Self::all) yields.
-    pub fn num(max_witnessed_polys: usize) -> usize {
-        num_endoscaling_steps(max_witnessed_polys)
+    /// application with `max_witnessed_polys` polynomial slots and
+    /// `num_challenges` challenge slots — the number of entries
+    /// [`all`](Self::all) yields.
+    pub fn num(max_witnessed_polys: usize, num_challenges: usize) -> usize {
+        num_endoscaling_steps(max_witnessed_polys, num_challenges)
             + 14
             + max_witnessed_polys
-            + crate::NUM_CHALLENGE_SLOTS
+            + num_challenges
     }
 
     /// All variants in canonical iteration order, for an application with
-    /// `max_witnessed_polys` polynomial slots.
+    /// `max_witnessed_polys` polynomial slots and `num_challenges` challenge
+    /// slots.
     ///
     /// This order must match the registry finalization concatenation order
     /// in [`RegistryBuilder::finalize()`](ragu_circuits::registry::RegistryBuilder::finalize)
@@ -140,10 +143,10 @@ impl InternalCircuitIndex {
     /// polynomial-slot count, which is an application parameter, and a length
     /// computed from a generic cannot size an array on stable Rust. The order
     /// is what matters here, and it is identical either way.
-    pub fn all(max_witnessed_polys: usize) -> Vec<Self> {
-        let mut all = Vec::with_capacity(Self::num(max_witnessed_polys));
+    pub fn all(max_witnessed_polys: usize, num_challenges: usize) -> Vec<Self> {
+        let mut all = Vec::with_capacity(Self::num(max_witnessed_polys, num_challenges));
         all.extend(
-            (0..num_endoscaling_steps(max_witnessed_polys))
+            (0..num_endoscaling_steps(max_witnessed_polys, num_challenges))
                 .map(|step| Self::EndoscalingStep(step as u32)),
         );
         all.extend([
@@ -160,13 +163,13 @@ impl InternalCircuitIndex {
             Self::BridgeEval,
         ]);
         all.extend((0..max_witnessed_polys).map(|i| Self::BridgeClaim(i as u32)));
-        all.extend((0..crate::NUM_CHALLENGE_SLOTS).map(|i| Self::BridgeChallenge(i as u32)));
+        all.extend((0..num_challenges).map(|i| Self::BridgeChallenge(i as u32)));
         all.extend([
             Self::Loading,
             Self::Copying(Side::Left),
             Self::Copying(Side::Right),
         ]);
-        debug_assert_eq!(all.len(), Self::num(max_witnessed_polys));
+        debug_assert_eq!(all.len(), Self::num(max_witnessed_polys, num_challenges));
         all
     }
 
@@ -174,8 +177,8 @@ impl InternalCircuitIndex {
     ///
     /// Circuit indices follow the `RegistryBuilder::finalize()` concatenation
     /// order: internal circuits first, then internal masks.
-    pub fn circuit_index(self, max_witnessed_polys: usize) -> CircuitIndex {
-        let pos = Self::all(max_witnessed_polys)
+    pub fn circuit_index(self, max_witnessed_polys: usize, num_challenges: usize) -> CircuitIndex {
+        let pos = Self::all(max_witnessed_polys, num_challenges)
             .iter()
             .position(|&v| v == self)
             .expect("every variant appears in `all`");
@@ -259,13 +262,13 @@ pub enum RxIndex {
 
 impl RxIndex {
     /// The number of rx components in the nested field for an application with
-    /// `max_witnessed_polys` polynomial slots — the number of entries
-    /// [`all`](Self::all) yields.
-    pub fn num(max_witnessed_polys: usize) -> usize {
-        num_endoscaling_steps(max_witnessed_polys)
+    /// `max_witnessed_polys` polynomial slots and `num_challenges` challenge
+    /// slots — the number of entries [`all`](Self::all) yields.
+    pub fn num(max_witnessed_polys: usize, num_challenges: usize) -> usize {
+        num_endoscaling_steps(max_witnessed_polys, num_challenges)
             + 24
             + max_witnessed_polys
-            + crate::NUM_CHALLENGE_SLOTS
+            + num_challenges
     }
 
     /// All variants in canonical order (circuits, then stages), for an
@@ -276,10 +279,10 @@ impl RxIndex {
     /// `const` array, since the native side's count does not depend on the
     /// polynomial-slot count. See [`InternalCircuitIndex::all`] for why this
     /// one cannot.
-    pub fn all(max_witnessed_polys: usize) -> Vec<Self> {
-        let mut all = Vec::with_capacity(Self::num(max_witnessed_polys));
+    pub fn all(max_witnessed_polys: usize, num_challenges: usize) -> Vec<Self> {
+        let mut all = Vec::with_capacity(Self::num(max_witnessed_polys, num_challenges));
         all.extend(
-            (0..num_endoscaling_steps(max_witnessed_polys))
+            (0..num_endoscaling_steps(max_witnessed_polys, num_challenges))
                 .map(|step| Self::EndoscalingStep(step as u32)),
         );
         all.extend([
@@ -295,7 +298,7 @@ impl RxIndex {
             Self::BridgeEval,
         ]);
         all.extend((0..max_witnessed_polys).map(|i| Self::BridgeClaim(i as u32)));
-        all.extend((0..crate::NUM_CHALLENGE_SLOTS).map(|i| Self::BridgeChallenge(i as u32)));
+        all.extend((0..num_challenges).map(|i| Self::BridgeChallenge(i as u32)));
         all.extend([
             Self::ChildPointsStage(Side::Left),
             Self::ChildPointsStage(Side::Right),
@@ -306,7 +309,7 @@ impl RxIndex {
                 Self::ChildBridge(kind, Side::Right),
             ]);
         }
-        debug_assert_eq!(all.len(), Self::num(max_witnessed_polys));
+        debug_assert_eq!(all.len(), Self::num(max_witnessed_polys, num_challenges));
         all
     }
 }
@@ -338,7 +341,7 @@ pub fn register_all<'params, C: Cycle, R: Rank>(
 
     // Circuits first, then masks — matching RegistryBuilder::finalize()
     // concatenation order and InternalCircuitIndex::circuit_index().
-    for id in InternalCircuitIndex::all(crate::NUM_POLY_SLOTS) {
+    for id in InternalCircuitIndex::all(crate::NUM_POLY_SLOTS, crate::NUM_CHALLENGE_SLOTS) {
         use InternalCircuitIndex::*;
         registry = match id {
             EndoscalingStep(step) => {
@@ -395,7 +398,8 @@ pub fn register_all<'params, C: Cycle, R: Rank>(
 
     assert_eq!(
         registry.num_internal_circuits(),
-        initial_internal_circuits + InternalCircuitIndex::num(crate::NUM_POLY_SLOTS),
+        initial_internal_circuits
+            + InternalCircuitIndex::num(crate::NUM_POLY_SLOTS, crate::NUM_CHALLENGE_SLOTS),
         "internal circuit count mismatch"
     );
 
