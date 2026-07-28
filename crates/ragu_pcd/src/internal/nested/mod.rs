@@ -19,7 +19,7 @@ use ragu_arithmetic::Cycle;
 use ragu_circuits::{
     polynomials::Rank,
     registry::{CircuitIndex, RegistryBuilder},
-    staging::{MultiStage, StageExt},
+    staging::MultiStage,
 };
 use ragu_core::Result;
 
@@ -78,6 +78,35 @@ impl ragu_primitives::vec::Len for EndoPoints {
 /// Number of endoscaling steps, derived from [`NUM_ENDOSCALING_POINTS`] via
 /// [`endoscalar::num_steps`].
 const NUM_ENDOSCALING_STEPS: usize = endoscalar::num_steps(NUM_ENDOSCALING_POINTS);
+
+/// The nested stage chain's value-level geometry for a step of the given
+/// shape.
+///
+/// The chain is linear: endoscalar → points → preamble → s_prime →
+/// inner_error → outer_error → ab → query → f → eval, followed by the claim
+/// and challenge bridge runs (whose layouts live with their `Run` types). The
+/// widths come from each stage's `num_values` (count-dependent stages) or its
+/// typed `values()` (count-free stages), so the layout agrees with the typed
+/// chain by construction; `nested_chain_layout_tiles_typed_chain` pins it.
+pub fn chain_layout<C: Cycle, R: Rank>(
+    num_polys: usize,
+    num_challenges: usize,
+) -> ragu_circuits::staging::InducedStages {
+    use ragu_circuits::staging::{InducedStages, Stage};
+
+    InducedStages::new(alloc::vec![
+        <endoscalar::EndoscalarStage as Stage<C::ScalarField, R>>::values(),
+        endoscalar::points_stage_num_values(num_endoscaling_points(num_polys, num_challenges)),
+        stages::preamble::num_values(num_polys, num_challenges),
+        <stages::s_prime::Stage<C::HostCurve, R> as Stage<C::ScalarField, R>>::values(),
+        <stages::inner_error::Stage<C::HostCurve, R> as Stage<C::ScalarField, R>>::values(),
+        <stages::outer_error::Stage<C::HostCurve, R> as Stage<C::ScalarField, R>>::values(),
+        <stages::ab::Stage<C::HostCurve, R> as Stage<C::ScalarField, R>>::values(),
+        <stages::query::Stage<C::HostCurve, R> as Stage<C::ScalarField, R>>::values(),
+        <stages::f::Stage<C::HostCurve, R> as Stage<C::ScalarField, R>>::values(),
+        stages::eval::num_values(num_polys, num_challenges),
+    ])
+}
 
 /// Index of internal nested circuits registered into the registry.
 ///
@@ -339,6 +368,8 @@ pub fn register_all<'params, C: Cycle, R: Rank>(
 ) -> Result<RegistryBuilder<'params, C::ScalarField, R>> {
     let initial_internal_circuits = registry.num_internal_circuits();
 
+    let chain = chain_layout::<C, R>(crate::NUM_POLY_SLOTS, crate::NUM_CHALLENGE_SLOTS);
+
     // Circuits first, then masks — matching RegistryBuilder::finalize()
     // concatenation order and InternalCircuitIndex::circuit_index().
     for id in InternalCircuitIndex::all(crate::NUM_POLY_SLOTS, crate::NUM_CHALLENGE_SLOTS) {
@@ -350,33 +381,19 @@ pub fn register_all<'params, C: Cycle, R: Rank>(
                 let staged = MultiStage::new(step_circuit);
                 registry.register_internal_circuit(staged)?
             }
-            EndoscalarStage => registry.register_bonding(endoscalar::EndoscalarStage::mask()?),
-            PointsStage => registry
-                .register_bonding(endoscalar::PointsStage::<C::HostCurve, EndoPoints>::mask()?),
-            PointsFinalStaged => registry
-                .register_bonding(
-                    endoscalar::PointsStage::<C::HostCurve, EndoPoints>::final_mask()?,
-                ),
-            BridgePreamble => {
-                registry.register_bonding(stages::preamble::Stage::<C::HostCurve, R>::mask()?)
+            EndoscalarStage => registry.register_bonding(chain.mask::<C::ScalarField, R>(0)?),
+            PointsStage => registry.register_bonding(chain.mask::<C::ScalarField, R>(1)?),
+            PointsFinalStaged => {
+                registry.register_bonding(chain.final_mask_through::<C::ScalarField, R>(1)?)
             }
-            BridgeSPrime => {
-                registry.register_bonding(stages::s_prime::Stage::<C::HostCurve, R>::mask()?)
-            }
-            BridgeInnerError => {
-                registry.register_bonding(stages::inner_error::Stage::<C::HostCurve, R>::mask()?)
-            }
-            BridgeOuterError => {
-                registry.register_bonding(stages::outer_error::Stage::<C::HostCurve, R>::mask()?)
-            }
-            BridgeAB => registry.register_bonding(stages::ab::Stage::<C::HostCurve, R>::mask()?),
-            BridgeQuery => {
-                registry.register_bonding(stages::query::Stage::<C::HostCurve, R>::mask()?)
-            }
-            BridgeF => registry.register_bonding(stages::f::Stage::<C::HostCurve, R>::mask()?),
-            BridgeEval => {
-                registry.register_bonding(stages::eval::Stage::<C::HostCurve, R>::mask()?)
-            }
+            BridgePreamble => registry.register_bonding(chain.mask::<C::ScalarField, R>(2)?),
+            BridgeSPrime => registry.register_bonding(chain.mask::<C::ScalarField, R>(3)?),
+            BridgeInnerError => registry.register_bonding(chain.mask::<C::ScalarField, R>(4)?),
+            BridgeOuterError => registry.register_bonding(chain.mask::<C::ScalarField, R>(5)?),
+            BridgeAB => registry.register_bonding(chain.mask::<C::ScalarField, R>(6)?),
+            BridgeQuery => registry.register_bonding(chain.mask::<C::ScalarField, R>(7)?),
+            BridgeF => registry.register_bonding(chain.mask::<C::ScalarField, R>(8)?),
+            BridgeEval => registry.register_bonding(chain.mask::<C::ScalarField, R>(9)?),
             BridgeChallenge(slot) => registry.register_bonding(
                 stages::challenge_bridge::layout::<C::HostCurve, R>()
                     .mask::<C::ScalarField, R>(slot as usize)?,

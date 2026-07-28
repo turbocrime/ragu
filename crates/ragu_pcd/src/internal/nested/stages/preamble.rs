@@ -26,12 +26,15 @@ use crate::{
 /// child, the `_10_p` components (one per [`RxIndex`] — challenge stages
 /// included — plus `a`, `b`, `registry_xy` and `p`) and the stashed
 /// poly-query claim commitments.
-pub const fn num_points(num_polys: usize) -> usize {
-    1 + 2 * (RxIndex::NUM + 4 + num_polys)
+pub const fn num_points(num_polys: usize, num_challenges: usize) -> usize {
+    1 + 2 * (RxIndex::num(num_challenges) + 4 + num_polys)
 }
 
-/// [`num_points`] at the crate's fixed slot capacity.
-pub const NUM_POINTS: usize = num_points(NUM_POLY_SLOTS);
+/// This stage's wire width for children of the given shape; the value-level
+/// source of the typed [`values()`](ragu_circuits::staging::Stage::values).
+pub const fn num_values(num_polys: usize, num_challenges: usize) -> usize {
+    num_points(num_polys, num_challenges) * 2
+}
 
 /// Witness data for a single child proof in the preamble bridge stage.
 ///
@@ -293,7 +296,7 @@ impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stag
     type OutputKind = Kind![C::Base; Output<'_, _, C>];
 
     fn values() -> usize {
-        NUM_POINTS * 2
+        num_values(NUM_POLY_SLOTS, NUM_CHALLENGE_SLOTS)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(

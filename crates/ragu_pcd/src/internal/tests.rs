@@ -407,6 +407,73 @@ fn native_chain_layouts_tile_typed_chain() {
     }
 }
 
+/// The nested chain layout describes exactly the geometry the typed `Parent`
+/// chain does — same role as `native_chain_layouts_tile_typed_chain`, for the
+/// nested side's masks.
+#[test]
+fn nested_chain_layout_tiles_typed_chain() {
+    use ragu_circuits::staging::{Stage, StageExt};
+    use ragu_pasta::Pasta;
+
+    use crate::internal::{
+        endoscalar::{EndoscalarStage, PointsStage},
+        nested::{EndoPoints, chain_layout, stages},
+    };
+
+    type Host = <Pasta as ragu_arithmetic::Cycle>::HostCurve;
+    type F = <Pasta as ragu_arithmetic::Cycle>::ScalarField;
+
+    let chain = chain_layout::<Pasta, R>(crate::NUM_POLY_SLOTS, crate::NUM_CHALLENGE_SLOTS);
+
+    let expected: [(usize, usize); 10] = [
+        (
+            <EndoscalarStage as Stage<F, R>>::skip_gates(),
+            <EndoscalarStage as StageExt<F, R>>::num_gates(),
+        ),
+        (
+            <PointsStage<Host, EndoPoints> as Stage<F, R>>::skip_gates(),
+            <PointsStage<Host, EndoPoints> as StageExt<F, R>>::num_gates(),
+        ),
+        (
+            <stages::preamble::Stage<Host, R> as Stage<F, R>>::skip_gates(),
+            <stages::preamble::Stage<Host, R> as StageExt<F, R>>::num_gates(),
+        ),
+        (
+            <stages::s_prime::Stage<Host, R> as Stage<F, R>>::skip_gates(),
+            <stages::s_prime::Stage<Host, R> as StageExt<F, R>>::num_gates(),
+        ),
+        (
+            <stages::inner_error::Stage<Host, R> as Stage<F, R>>::skip_gates(),
+            <stages::inner_error::Stage<Host, R> as StageExt<F, R>>::num_gates(),
+        ),
+        (
+            <stages::outer_error::Stage<Host, R> as Stage<F, R>>::skip_gates(),
+            <stages::outer_error::Stage<Host, R> as StageExt<F, R>>::num_gates(),
+        ),
+        (
+            <stages::ab::Stage<Host, R> as Stage<F, R>>::skip_gates(),
+            <stages::ab::Stage<Host, R> as StageExt<F, R>>::num_gates(),
+        ),
+        (
+            <stages::query::Stage<Host, R> as Stage<F, R>>::skip_gates(),
+            <stages::query::Stage<Host, R> as StageExt<F, R>>::num_gates(),
+        ),
+        (
+            <stages::f::Stage<Host, R> as Stage<F, R>>::skip_gates(),
+            <stages::f::Stage<Host, R> as StageExt<F, R>>::num_gates(),
+        ),
+        (
+            <stages::eval::Stage<Host, R> as Stage<F, R>>::skip_gates(),
+            <stages::eval::Stage<Host, R> as StageExt<F, R>>::num_gates(),
+        ),
+    ];
+
+    for (stage, (skip, num)) in expected.iter().enumerate() {
+        assert_eq!(chain.skip_gates(stage), *skip, "stage {stage} start");
+        assert_eq!(chain.num_gates(stage), *num, "stage {stage} span");
+    }
+}
+
 #[test]
 fn test_internal_circuit_index_all_exhaustive() {
     let mut collected = alloc::vec::Vec::new();

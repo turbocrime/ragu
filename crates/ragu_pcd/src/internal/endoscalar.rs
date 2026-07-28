@@ -72,6 +72,16 @@ impl<L: Len> Len for NumStepsLen<L> {
     }
 }
 
+/// The points stage's wire width for `num_points` accumulated points; the
+/// value-level source of the typed
+/// [`values()`](ragu_circuits::staging::Stage::values) of
+/// [`PointsStage`].
+pub fn points_stage_num_values(num_points: usize) -> usize {
+    // (x, y) coordinates for initial + inputs (num_points - 1)
+    // + interstitials (one per step).
+    2 * (num_points + num_steps(num_points))
+}
+
 /// Stage for allocating the endoscalar witness.
 #[derive(Default)]
 pub struct EndoscalarStage;
