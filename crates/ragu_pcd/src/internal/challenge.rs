@@ -1,6 +1,7 @@
 //! The poly-query commitment scheme: Pedersen-commit a polynomial on the host
 //! curve and bridge the resulting point onto the nested curve so it can be
-//! witnessed in-circuit.
+//! witnessed in-circuit. Also the native side of challenge derivation: hashing
+//! the points a step supplies into the challenge they derive.
 
 use alloc::vec;
 
@@ -10,7 +11,7 @@ use ragu_core::{Error, Result};
 
 use crate::internal::nested::{
     RxIndex,
-    stages::{challenge_bridge, claim_bridge, host_bridge},
+    stages::{claim_bridge, host_bridge},
 };
 
 /// The bridge stages whose blinds come from the proof's shared `bridge_alpha`,
@@ -27,8 +28,8 @@ use crate::internal::nested::{
 /// are set by the fuse stages, which blind them with an in-circuit challenge
 /// instead — [`bridge_alpha_exponent`] panics on those.
 fn blinded_bridges() -> impl Iterator<Item = RxIndex> {
-    // The four `cached_bridge!` stages first, then the per-slot bridges, which
-    // chain through `Parent` and so cannot use that macro.
+    // The four `cached_bridge!` stages first, then the per-slot claim bridges,
+    // which chain through `Parent` and so cannot use that macro.
     [
         RxIndex::BridgeOuterError,
         RxIndex::BridgeAB,
@@ -37,7 +38,6 @@ fn blinded_bridges() -> impl Iterator<Item = RxIndex> {
     ]
     .into_iter()
     .chain((0..crate::NUM_POLY_SLOTS).map(|slot| RxIndex::BridgeClaim(slot as u32)))
-    .chain((0..crate::NUM_CHALLENGE_SLOTS).map(|slot| RxIndex::BridgeChallenge(slot as u32)))
 }
 
 /// The exponent of `bridge_alpha` for a blinded bridge stage — its position in
@@ -151,62 +151,22 @@ pub(crate) fn padding_poly<C: Cycle, R: Rank>() -> sparse::Polynomial<C::Circuit
     sparse::Polynomial::from_coeffs(vec![C::CircuitField::ONE])
 }
 
-/// The stage blind for challenge `slot`'s **application-circuit** stage.
+/// The fixed non-identity point filling an unfilled challenge-input position:
+/// the zeroth nested generator.
 ///
-/// A separate source from [`claim_bridge_alpha`] because this stage lives on
-/// the native side: its polynomial is over `CircuitField`, so its blind must be
-/// too.
-pub(crate) fn challenge_stage_alpha<C: Cycle>(
-    challenge_alpha: C::CircuitField,
-    slot: usize,
-) -> C::CircuitField {
-    challenge_alpha.pow_vartime([(1 + slot) as u64])
+/// A challenge slot's sponge absorbs a full complement of
+/// [`CHALLENGE_POINTS_PER_CALL`](crate::CHALLENGE_POINTS_PER_CALL) points
+/// whether or not the caller supplied them all, so the prover, the root
+/// verifier, and the `challenge_binding` circuit agree on the sponge's shape
+/// by construction. Like [`padding_claim`], a fixed generator can never be
+/// the identity.
+pub(crate) fn sentinel_point<C: Cycle>(params: &C::Params) -> C::NestedCurve {
+    use ragu_arithmetic::FixedGenerators;
+
+    C::nested_generators(params).g()[0]
 }
 
-/// The stage blind for challenge `slot`'s **nested** bridge stage. Continues
-/// the `bridge_alpha` power series past the poly-query claim slots so no two
-/// bridge stages share a blind.
-pub(crate) fn challenge_bridge_alpha<C: Cycle>(
-    bridge_alpha: C::ScalarField,
-    slot: usize,
-) -> C::ScalarField {
-    bridge_alpha.pow_vartime([bridge_alpha_exponent(RxIndex::BridgeChallenge(slot as u32))])
-}
-
-/// Builds challenge `slot`'s bridge stage rx: a stage whose wires are the
-/// slot's host-curve stage commitment.
-///
-/// Reads the slot's position off the run's layout rather than dispatching on
-/// it, matching [`claim_bridge_rx`].
-pub(crate) fn challenge_bridge_rx<C: Cycle, R: Rank>(
-    slot: usize,
-    alpha: C::ScalarField,
-    host: C::HostCurve,
-) -> Result<sparse::Polynomial<C::ScalarField, R>> {
-    let witness = host_bridge::Witness { host };
-    challenge_bridge::layout::<C::HostCurve, R>().rx_configured(
-        slot,
-        alpha,
-        &challenge_bridge::Slot::<C::HostCurve, R>::default(),
-        &witness,
-    )
-}
-
-/// The nested-curve commitment to challenge `slot`'s bridge stage — the point
-/// the native side witnesses and hashes into the challenge.
-pub(crate) fn challenge_bridge_commitment<C: Cycle, R: Rank>(
-    params: &C::Params,
-    slot: usize,
-    alpha: C::ScalarField,
-    host: C::HostCurve,
-) -> Result<C::NestedCurve> {
-    Ok(commit_bridge::<C, R>(
-        params,
-        challenge_bridge_rx::<C, R>(slot, alpha, host)?,
-    ))
-}
-
-/// Hashes a bridged challenge-stage commitment into the challenge it derives.
+/// Hashes a challenge slot's input points into the challenge they derive.
 ///
 /// The native counterpart of what the `challenge_binding` circuit enforces
 /// in-circuit for every child slot; the two must agree exactly. Kept as one
@@ -214,58 +174,37 @@ pub(crate) fn challenge_bridge_commitment<C: Cycle, R: Rank>(
 /// the root verifier, and the circuit.
 ///
 /// [`challenge_binding`]: crate::internal::native::circuits::challenge_binding
-pub(crate) fn challenge_from_point<C: Cycle>(
+pub(crate) fn challenge_from_points<C: Cycle>(
     params: &C::Params,
-    point: C::NestedCurve,
+    points: &[C::NestedCurve],
 ) -> Result<C::CircuitField> {
     use ragu_core::{drivers::emulator::Emulator, maybe::Maybe};
     use ragu_primitives::{GadgetExt, Point, poseidon::Sponge};
 
     let mut dr = Emulator::execute();
-    let point = Point::constant(&mut dr, point)?;
     let mut sponge = Sponge::new(&mut dr, C::circuit_poseidon(params));
-    point.write(&mut dr, &mut sponge)?;
+    for &point in points {
+        let point = Point::constant(&mut dr, point)?;
+        point.write(&mut dr, &mut sponge)?;
+    }
     let challenge = sponge.squeeze(&mut dr)?;
     Ok(*challenge.value().take())
 }
 
-/// Derives challenge `slot`'s value from the values its stage commits.
-///
-/// The full prover-side chain: build the application-side stage rx from
-/// `inputs`, commit it on the host generators, bridge that host point onto the
-/// nested curve, and hash the bridged point. The result is a `CircuitField`
-/// element — the field the application circuit works in — which is exactly what
-/// the bridge is for.
-pub(crate) fn staged_challenge<C: Cycle, R: Rank>(
+/// Pads a `derive_challenge` call's points to the slot's full complement with
+/// the sentinel and hashes them: the whole prover-side derivation.
+pub(crate) fn points_challenge<C: Cycle>(
     params: &C::Params,
-    slot: usize,
-    challenge_alpha: C::CircuitField,
-    bridge_alpha: C::ScalarField,
-    inputs: [C::CircuitField; crate::CHALLENGE_WIDTH],
-) -> Result<(C::NestedCurve, C::CircuitField)> {
-    use crate::step::internal::challenge_stage;
-
-    let stage_rx = challenge_stage::stage_rx::<C::CircuitField, R>(
-        slot,
-        challenge_stage_alpha::<C>(challenge_alpha, slot),
-        inputs,
-    )?;
-    let host = stage_rx.commit_to_affine::<C::HostCurve>(C::host_generators(params));
-    if host.coordinates().into_option().is_none() {
-        return Err(Error::InvalidWitness(
-            "challenge stage commitment is the identity and cannot be bridged".into(),
-        ));
-    }
-    let bridged = challenge_bridge_commitment::<C, R>(
-        params,
-        slot,
-        challenge_bridge_alpha::<C>(bridge_alpha, slot),
-        host,
-    )?;
-
-    let challenge = challenge_from_point::<C>(params, bridged)?;
-
-    Ok((bridged, challenge))
+    points: &[C::NestedCurve],
+) -> Result<(alloc::vec::Vec<C::NestedCurve>, C::CircuitField)> {
+    debug_assert!(points.len() <= crate::CHALLENGE_POINTS_PER_CALL);
+    let mut padded = points.to_vec();
+    padded.resize(
+        crate::CHALLENGE_POINTS_PER_CALL,
+        sentinel_point::<C>(params),
+    );
+    let challenge = challenge_from_points::<C>(params, &padded)?;
+    Ok((padded, challenge))
 }
 
 #[cfg(test)]
@@ -290,8 +229,8 @@ mod tests {
         let expected: Vec<u64> = (1..=series.len() as u64).collect();
         assert_eq!(series, expected, "exponents must be 1..=n with no gaps");
 
-        // The four cached bridges, then the claim slots, then the challenge
-        // slots. Spelled out so a reordering has to be deliberate.
+        // The four cached bridges, then the claim slots. Spelled out so a
+        // reordering has to be deliberate.
         assert_eq!(bridge_alpha_exponent(RxIndex::BridgeOuterError), 1);
         assert_eq!(bridge_alpha_exponent(RxIndex::BridgeAB), 2);
         assert_eq!(bridge_alpha_exponent(RxIndex::BridgeQuery), 3);
@@ -300,10 +239,6 @@ mod tests {
         assert_eq!(
             bridge_alpha_exponent(RxIndex::BridgeClaim(crate::NUM_POLY_SLOTS as u32 - 1)),
             4 + crate::NUM_POLY_SLOTS as u64
-        );
-        assert_eq!(
-            bridge_alpha_exponent(RxIndex::BridgeChallenge(0)),
-            5 + crate::NUM_POLY_SLOTS as u64
         );
     }
 

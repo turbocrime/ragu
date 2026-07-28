@@ -129,40 +129,28 @@ pub const NUM_POLY_SLOTS: usize = 8;
 /// header that application actually configured.
 pub const NUM_QUERY_SLOTS: usize = 8;
 
-/// Maximum element width of a single
-/// [`StepCtx::derive_challenge`](step::StepCtx::derive_challenge) input.
+/// Number of **points** a single
+/// [`StepCtx::derive_challenge`](step::StepCtx::derive_challenge) call absorbs.
 ///
-/// The width of a challenge input is a **compile-time** property of its type
-/// ([`ChallengeInput::ELEMENTS`](framework_hooks::ChallengeInput::ELEMENTS)),
-/// and exceeding this bound is a compile error, not a runtime one. (It is a
-/// post-monomorphization error, so it surfaces on `cargo build`/`cargo test`
-/// rather than `cargo check`.) Circuit structure must not depend on witness
-/// values, and a challenge input whose width is only known at runtime — a
-/// `Vec`, a slice, a polynomial with a runtime capacity — cannot offer that
-/// guarantee. Compress such data into a single binding element first, the way
-/// [`witness_polynomial`](step::StepCtx::witness_polynomial) reduces a whole
-/// polynomial to one in-circuit commitment point, and derive the challenge from
-/// that.
-///
-/// This is the width of the *stage* each slot commits. Fixing it at compile
-/// time is what lets that stage be one type chained [`NUM_CHALLENGE_SLOTS`]
-/// times, with narrower inputs zero-padded into the stage for free.
+/// A challenge input is a slice of curve points, and a point is already a
+/// binding commitment — so the sponge absorbs the points directly and the step
+/// needs no committed stage to compress them into. A call may pass fewer
+/// points than this; the remaining positions are filled with a fixed
+/// non-identity sentinel, so every slot's sponge has the same shape and the
+/// count a call passed is witness data rather than circuit structure.
 ///
 /// # Cost
 ///
-/// `CHALLENGE_WIDTH` wires — `CHALLENGE_WIDTH / 2` gates — per slot in every
-/// application circuit, reserved whether or not the step derives a challenge.
+/// **Nothing in the step's own gate budget** beyond the instance wires the
+/// points occupy: the step performs no permutation and commits no stage. The
+/// derivation is paid by the internal `challenge_binding` circuit, once per
+/// `(child, slot)`, out of the framework's budget.
 ///
-/// It costs **no permutations**. The challenge is not a hash of the input: it
-/// is the hash of the input stage's *commitment*, bridged onto the nested
-/// curve, so the sponge absorbs two coordinates regardless of how wide the
-/// input was. That hash is paid once per `(child, slot)` pair by the internal
-/// `challenge_binding` circuit, out of the framework's budget rather than the
-/// step's. Raising this constant therefore costs wires and nothing else.
-///
-/// The value accommodates an [`Element`](ragu_primitives::Element), a
-/// [`Point`](ragu_primitives::Point), or a pair of either without padding.
-pub const CHALLENGE_WIDTH: usize = 4;
+/// Each point contributes two coordinates to the sponge, so at
+/// [`RATE`](ragu_primitives::poseidon) 4 this many points cost
+/// `⌈2 · CHALLENGE_POINTS_PER_CALL / 4⌉` permutations per `(child, slot)` in
+/// that circuit — the sole cost of raising it, and the reason it is small.
+pub const CHALLENGE_POINTS_PER_CALL: usize = 2;
 
 /// Number of Fiat–Shamir challenge slots a step body may use.
 ///
@@ -171,26 +159,22 @@ pub const CHALLENGE_WIDTH: usize = 4;
 /// call count must not depend on witness values (it is part of the circuit
 /// structure, checked by the adapter's determinism guard).
 ///
-/// Unused slots are padded, like the poly-query slots: the all-zero stage,
-/// blinded, with its challenge derived honestly. The parent's binding circuit
-/// re-derives every slot without knowing which ones the step actually used, so
-/// the padding is what keeps that circuit uniform.
+/// Unused slots are padded, like the poly-query slots: a challenge honestly
+/// derived from the sentinel points. The parent's binding circuit re-derives
+/// every slot without knowing which ones the step actually used, so the padding
+/// is what keeps that circuit uniform.
 ///
 /// # Cost
 ///
-/// Two places, neither of them the step's Poseidon budget:
+/// Not the step's Poseidon budget, and not its gates beyond instance wires. The
+/// recursion pays, per fuse, in the internal `challenge_binding` circuit:
+/// `2 · NUM_CHALLENGE_SLOTS · ⌈2 · CHALLENGE_POINTS_PER_CALL / 4⌉`
+/// permutations — at two slots and two points, 1536 of its own 2048 gates —
+/// plus one bonding mask per slot on each curve.
 ///
-/// * every application circuit reserves
-///   `NUM_CHALLENGE_SLOTS * CHALLENGE_WIDTH / 2` gates for the stages, whether
-///   or not it derives anything;
-/// * the recursion pays `2 * NUM_CHALLENGE_SLOTS` permutations per fuse in the
-///   internal `challenge_binding` circuit — at two slots, 1536 of its own 2048
-///   gates — plus `2 * NUM_CHALLENGE_SLOTS` endoscaling points and one bonding
-///   mask per slot on each curve.
-///
-/// So raising this constant is charged almost entirely to the framework's
-/// circuits, not to the steps that use it. Two is the smallest count that lets
-/// a step handle more than one polynomial at a time, which one would not.
+/// So raising this constant is charged to the framework's circuits, not to the
+/// steps that use it. Two is the smallest count that lets a step handle more
+/// than one polynomial at a time, which one would not.
 pub const NUM_CHALLENGE_SLOTS: usize = 2;
 
 /// Builder for an [`Application`] for proof-carrying data.

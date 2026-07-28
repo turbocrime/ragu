@@ -42,10 +42,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let query_witness = native::stages::query::Witness {
             // TODO: these can all be evaluated at the same time; in fact,
             // that's what registry.xy is supposed to allow.
-            fixed_registry: native::InternalCircuitValues::from_fn(
-                crate::NUM_CHALLENGE_SLOTS,
-                |id| registry_xy_poly.eval(id.circuit_index().omega_j()),
-            ),
+            fixed_registry: native::InternalCircuitValues::from_fn(|id| {
+                registry_xy_poly.eval(id.circuit_index().omega_j())
+            }),
             registry_wxy: registry_xy_poly.eval(w),
             left: native::stages::query::ChildEvaluationsWitness::from_proof(
                 left,

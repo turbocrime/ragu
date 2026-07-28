@@ -103,12 +103,12 @@ fn test_internal_circuit_constraint_counts() {
         }};
     }
 
-    check_constraints!(Hashes1Circuit,          mul = 1452, lin = 2038);
-    check_constraints!(Hashes2Circuit,          mul = 2000, lin = 2951);
-    check_constraints!(InnerCollapseCircuit,    mul = 1877, lin = 1918);
-    check_constraints!(OuterCollapseCircuit,    mul = 1986, lin = 2926);
-    check_constraints!(ComputeVCircuit,         mul = 1695, lin = 2787);
-    check_constraints!(ChallengeBindingCircuit, mul = 1530, lin = 2379);
+    check_constraints!(Hashes1Circuit,          mul = 1456, lin = 2038);
+    check_constraints!(Hashes2Circuit,          mul = 2004, lin = 2951);
+    check_constraints!(InnerCollapseCircuit,    mul = 1881, lin = 1918);
+    check_constraints!(OuterCollapseCircuit,    mul = 1998, lin = 2942);
+    check_constraints!(ComputeVCircuit,         mul = 1681, lin = 2767);
+    check_constraints!(ChallengeBindingCircuit, mul = 1534, lin = 2379);
 }
 
 #[rustfmt::skip]
@@ -121,11 +121,11 @@ fn test_internal_stage_parameters() {
         }};
     }
 
-    check_stage!(Preamble, skip =   1, num = 346);
-    check_stage!(OuterError,  skip = 347, num = 186);
-    check_stage!(InnerError,  skip = 533, num = 399);
-    check_stage!(Query,   skip = 347, num =  29);
-    check_stage!(Eval,    skip = 376, num =  29);
+    check_stage!(Preamble, skip =   1, num = 350);
+    check_stage!(OuterError,  skip = 351, num = 186);
+    check_stage!(InnerError,  skip = 537, num = 399);
+    check_stage!(Query,   skip = 351, num =  25);
+    check_stage!(Eval,    skip = 376, num =  27);
 }
 
 /// Helper test to print current constraint counts in copy-pasteable format.
@@ -237,7 +237,16 @@ fn test_native_registry_digest() {
     // (four more per fuse, one per child per slot). Changed again when
     // `NUM_QUERY_SLOTS` went from 4 to 8 and `HEADER_SIZE` from 100 to 90
     // — both change the width of every application circuit's instance.
-    let expected = fp!(0x35282de658728d23fdaa8e191f5fc36aacd415c531af9168e9708cbf26a9eb5b);
+    //
+    // Changed again when `derive_challenge` became points-only. The challenge
+    // stages are gone, so the native registry lost the per-slot stage masks,
+    // the per-count final-trace masks, and the `ChallengeStage` rx components
+    // — which shrinks `RxIndex::ALL`, and with it every stage that carries one
+    // evaluation per rx component. What grew is the instance: a slot now
+    // carries `2 * CHALLENGE_POINTS_PER_CALL + 1` elements where it carried
+    // three, so the preamble stage and its readers widen by two per slot per
+    // child.
+    let expected = fp!(0x0f3b036060e5e3181188837878d16068a29f0bc19b686cdd477d895d2069bd0d);
 
     assert_eq!(
         app.native_registry.digest(),
@@ -280,7 +289,15 @@ fn test_nested_registry_digest() {
     // `NUM_QUERY_SLOTS` went from 4 to 8: four more claim-bridge masks,
     // four more stashed commitments per child, and eight more endoscaling
     // points.
-    let expected = fq!(0x3d0e8bd5e0a4aa89cb6a0cb5952661b9aa9ea462d041e9e98e0b296624aefa12);
+    //
+    // Changed again when `derive_challenge` became points-only. A challenge is
+    // now hashed from points the step already holds, so nothing about it
+    // crosses the curve boundary: the challenge bridge stages and their
+    // bonding masks are gone, `Loading`'s final stage moved back from the last
+    // challenge bridge to the last claim bridge, the eval and preamble bridges
+    // no longer stash challenge-stage commitments, and the endoscaling point
+    // list shrank by `2 * NUM_CHALLENGE_SLOTS` per child.
+    let expected = fq!(0x074469777e333bb7d9fccb1cb4fd7032dfb174655682398a9acc956e34b4de27);
 
     assert_eq!(
         app.nested_registry.digest(),
@@ -479,27 +496,17 @@ fn nested_chain_layout_tiles_typed_chain() {
 #[test]
 fn test_internal_circuit_index_all_exhaustive() {
     let mut collected = alloc::vec::Vec::new();
-    let _values = InternalCircuitValues::from_fn(crate::NUM_CHALLENGE_SLOTS, |id| {
+    let _values = InternalCircuitValues::from_fn(|id| {
         collected.push(id);
     });
     assert_eq!(collected.as_slice(), InternalCircuitIndex::ALL);
-    // The value-level list at the crate's slot count is the const list.
-    assert_eq!(
-        InternalCircuitIndex::all(crate::NUM_CHALLENGE_SLOTS).as_slice(),
-        InternalCircuitIndex::ALL
-    );
 }
 
 #[test]
 fn test_rx_index_all_exhaustive() {
     let mut collected = alloc::vec::Vec::new();
-    let _values = RxValues::from_fn(crate::NUM_CHALLENGE_SLOTS, |id| {
+    let _values = RxValues::from_fn(|id| {
         collected.push(id);
     });
     assert_eq!(collected.as_slice(), RxIndex::ALL);
-    // The value-level list at the crate's slot count is the const list.
-    assert_eq!(
-        RxIndex::all(crate::NUM_CHALLENGE_SLOTS).as_slice(),
-        RxIndex::ALL
-    );
 }

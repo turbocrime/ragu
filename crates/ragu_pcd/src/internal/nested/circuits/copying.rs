@@ -158,16 +158,6 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
             stashed_claim.enforce_equal(dr, child_claim)?;
         }
 
-        // Challenge stages: likewise, the stashed stage commitments must match
-        // the child's own record of them.
-        for (stashed_stage, child_stage) in child
-            .stashed_challenge_stages
-            .iter()
-            .zip(eval.challenge_stages.iter())
-        {
-            stashed_stage.enforce_equal(dr, child_stage)?;
-        }
-
         // P: the child's accumulated p commitment is the last interstitial
         // of the child's PointsStage.
         let last_interstitial = points

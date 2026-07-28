@@ -4,41 +4,42 @@
 //! ## Operations
 //!
 //! An application circuit obtains a challenge through
-//! [`StepCtx::derive_challenge`], which exposes the pair
-//! $(\text{point}_i,\, \text{challenge}_i)$ on the circuit's instance for every
-//! challenge slot $i$. The derivation itself — one Poseidon permutation — does
-//! **not** happen in the application circuit; that is the whole point of the
-//! staged design, which spends a single gate per slot there instead of $288$.
-//! This circuit is where the permutation is actually paid for, once per
-//! $(\text{child},\, \text{slot})$ pair, out of the framework's own gate budget:
+//! [`StepCtx::derive_challenge`], which exposes that slot's input points and the
+//! challenge on the circuit's instance. The derivation itself does **not**
+//! happen in the application circuit — a step spends no permutation and commits
+//! no stage for it. This circuit is where the permutations are actually paid
+//! for, once per $(\text{child},\, \text{slot})$ pair, out of the framework's own
+//! gate budget:
 //!
-//! - Witness each child's challenge pairs from the [`preamble`] stage.
-//! - For each pair, absorb $\text{point}_i$ into a fresh sponge and squeeze.
-//! - Enforce that the squeezed value equals $\text{challenge}_i$.
+//! - Witness each child's challenge records from the [`preamble`] stage.
+//! - For each, absorb every input point into a fresh sponge and squeeze.
+//! - Enforce that the squeezed value equals the recorded challenge.
 //!
-//! With [`NUM_CHALLENGE_SLOTS`] slots and two children that is
-//! $2 \cdot \text{NUM\\_CHALLENGE\\_SLOTS}$ permutations.
+//! With [`NUM_CHALLENGE_SLOTS`] slots, two children, and
+//! [`CHALLENGE_POINTS_PER_CALL`](crate::CHALLENGE_POINTS_PER_CALL) points per
+//! slot, that is
+//! $2 \cdot \text{slots} \cdot \lceil 2 \cdot \text{points} / \text{RATE} \rceil$
+//! permutations.
 //!
 //! ## Why this closes the derivation
 //!
 //! Without this circuit a challenge is a free witness: an interior prover picks
-//! whichever value makes its argument go through, and grinds. The three links
-//! that make the pair rigid are:
+//! whichever value makes its argument go through, and grinds. Two links make the
+//! record rigid:
 //!
-//! 1. $\text{challenge}_i$ and $\text{point}_i$ are both written into the
-//!    child's application $k(Y)$
+//! 1. A slot's points and its challenge are all written into the child's
+//!    application $k(Y)$
 //!    ([`application_ky`](super::super::stages::preamble::ProofInputs::application_ky)),
 //!    binding them to the child's committed application rx.
-//! 2. $\text{point}_i$ is the bridge image of slot $i$'s challenge-stage
-//!    commitment, tied in the nested `loading` circuit and folded into the
-//!    endoscaling — so it commits to the stage inputs the application supplied.
-//! 3. **This circuit**: $\text{challenge}_i = \text{Hash}(\text{point}_i)$.
+//! 2. **This circuit**: $\text{challenge} = \text{Hash}(\text{points})$.
 //!
-//! Together they say the challenge is the hash of a commitment to its own
-//! inputs, which is what makes it unpredictable to the prover that chose them.
+//! Together they say the challenge is the hash of exactly the points the
+//! application passed, so a prover cannot choose it independently of them.
+//! **What those points bind is the step author's responsibility** — see
+//! [`StepCtx::derive_challenge`] for the contract.
 //! The prover-side counterpart is
-//! [`staged_challenge`](crate::internal::challenge::staged_challenge), which
-//! runs the identical sponge natively; the two must agree exactly.
+//! [`challenge_from_points`](crate::internal::challenge::challenge_from_points),
+//! which runs the identical sponge natively; the two must agree exactly.
 //!
 //! ## Staging
 //!
@@ -119,7 +120,7 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
 
     /// Witness for the [`preamble`] stage (unenforced).
     ///
-    /// Provides each child's `(point, challenge)` pairs.
+    /// Provides each child's `(points, challenge)` records.
     pub preamble_witness: &'a preamble::Witness<'a, C, R, HEADER_SIZE>,
 }
 
@@ -161,14 +162,17 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
         let preamble = preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;
 
         // Re-derive each child's challenges. A fresh sponge per slot, matching
-        // `staged_challenge` exactly: absorb the point, squeeze once. Chaining
-        // the slots into one sponge would not be cheaper — each squeeze costs a
-        // permutation regardless — and would make slot i's challenge depend on
-        // slot i-1's inputs.
+        // `challenge_from_points` exactly: absorb every input point in slot
+        // order, squeeze once. A fresh sponge per slot rather than one chained
+        // sponge, so slot i's challenge cannot depend on slot i-1's inputs —
+        // and it is no more expensive, since each squeeze costs a permutation
+        // regardless.
         for child in [&preamble.left, &preamble.right] {
             for pair in child.challenges.iter() {
                 let mut sponge = Sponge::new(dr, C::circuit_poseidon(self.params));
-                pair.point.write(dr, &mut sponge)?;
+                for point in pair.points.iter() {
+                    point.write(dr, &mut sponge)?;
+                }
                 let derived = sponge.squeeze(dr)?;
                 derived.enforce_equal(dr, &pair.challenge)?;
             }

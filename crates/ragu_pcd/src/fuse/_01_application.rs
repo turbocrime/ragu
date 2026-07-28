@@ -59,7 +59,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         .trace((
             Alphas {
                 bridge: builder.bridge_alpha(),
-                challenge: builder.challenge_alpha(),
             },
             left_data,
             right_data,
@@ -82,7 +81,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     polys,
                     claims,
                     challenges,
-                    challenge_inputs,
                 },
         } = aux;
 
@@ -162,25 +160,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         builder.set_children_circuit_ids([left_proof.circuit_id(), right_proof.circuit_id()]);
         builder.set_left_header(left_header.into_inner());
         builder.set_right_header(right_header.into_inner());
-
-        // The challenge stages are the application circuit's staged partial
-        // traces. `assemble` yields the final trace `r'(X)`; the stages are
-        // carried separately, each committed on its own — hashing that
-        // commitment is what produced the slot's challenge — and
-        // `native::claims::build` sums them back into the circuit's claim,
-        // exactly as it does for `compute_v` with `query` and `eval`.
-        let mut challenge_stage_polys = alloc::vec::Vec::with_capacity(challenge_inputs.len());
-        for (slot, inputs) in challenge_inputs.into_iter().enumerate() {
-            challenge_stage_polys.push(crate::step::internal::challenge_stage::stage_rx::<
-                C::CircuitField,
-                R,
-            >(
-                slot,
-                challenge::challenge_stage_alpha::<C>(builder.challenge_alpha(), slot),
-                inputs,
-            )?);
-        }
-        builder.set_challenge_stage_polys(challenge_stage_polys);
 
         builder.set_native_application_rx(rx);
         builder.set_application_polys(

@@ -1,7 +1,5 @@
 //! Native curve circuits for recursive verification.
 
-use alloc::vec::Vec;
-
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{
     polynomials::Rank,
@@ -61,13 +59,6 @@ pub enum InternalCircuitIndex {
     InnerErrorFinalStaged,
     OuterErrorFinalStaged,
     EvalFinalStaged,
-    /// Well-formedness mask for an application circuit's challenge stage, by
-    /// slot. Shared by every application circuit: the stage geometry is a
-    /// framework constant, so all of them have the same one.
-    ChallengeStage(u32),
-    /// Well-formedness mask for an application circuit's final trace, given the
-    /// challenge stages that precede it.
-    ChallengeFinalStaged,
 }
 
 /// Compute the total circuit count and log2 domain size from the number of
@@ -89,7 +80,7 @@ pub fn total_circuit_counts(
 /// chain** is preamble → query → eval, the **error chain** is preamble →
 /// outer_error → inner_error. Each returned layout describes one chain, with
 /// every real stage as one slot, so masks and rx positions can be computed
-/// from values — the same mechanism the challenge-stage run uses. The widths
+/// from values — the same mechanism the nested bridge runs use. The widths
 /// come from each stage's `num_values` (count-dependent stages, each child at
 /// its own shape) or its typed `values()` (count-free stages), so the layouts
 /// agree with the typed chain by construction;
@@ -108,7 +99,7 @@ pub fn chain_layouts<C: Cycle, R: Rank, const HEADER_SIZE: usize>(
     use ragu_circuits::staging::InducedStages;
 
     let preamble_w = stages::preamble::num_values(HEADER_SIZE, left, right);
-    let query_w = stages::query::num_values(num_internal_circuits, left, right);
+    let query_w = stages::query::num_values(num_internal_circuits);
     let eval_w = stages::eval::num_values(left, right);
     let outer_w = <stages::outer_error::Stage<C, R, HEADER_SIZE, RevdotParameters> as
         ragu_circuits::staging::Stage<C::CircuitField, R>>::values();
@@ -128,11 +119,7 @@ pub fn chain_layouts<C: Cycle, R: Rank, const HEADER_SIZE: usize>(
 /// Layout (matching `RegistryBuilder::finalize()`'s circuits-before-bondings
 /// concatenation): per (own, left, right) shape triple, the six internal
 /// circuits in [`InternalCircuitIndex::ALL`] order; then per triple, the nine
-/// stage and final-trace masks; then the shared per-slot challenge masks up
-/// to the largest challenge count; then one challenge final-trace mask per
-/// distinct challenge count. The `own` component enters because compute_v's
-/// registry block covers the current step's own challenge masks and the
-/// query stage's fixed-registry width is `16 + own.challenge.calls`.
+/// stage and final-trace masks.
 #[derive(Clone, Debug)]
 pub(crate) struct NativeIndexSpace {
     space: crate::internal::VariantSpace,
@@ -176,18 +163,13 @@ impl NativeIndexSpace {
     /// The total number of native internal circuits and masks.
     pub(crate) fn num_internal(&self) -> usize {
         self.space.num_triples() * (TRIPLE_CIRCUITS.len() + TRIPLE_MASKS.len())
-            + self.space.max_challenges()
-            + self.space.distinct_challenges().len()
     }
 
     /// Registry index of a triple-keyed circuit or mask category's variant.
     ///
     /// # Panics
     ///
-    /// Panics for the challenge-mask categories (use
-    /// [`challenge_stage_index`](Self::challenge_stage_index) /
-    /// [`challenge_final_index`](Self::challenge_final_index)) or for shapes
-    /// outside the space.
+    /// Panics for shapes outside the space.
     pub(crate) fn circuit_index(
         &self,
         category: InternalCircuitIndex,
@@ -203,74 +185,14 @@ impl NativeIndexSpace {
         if let Some(pos) = TRIPLE_MASKS.iter().position(|&c| c == category) {
             return CircuitIndex::new(circuits_end + triple * TRIPLE_MASKS.len() + pos);
         }
-        unreachable!("challenge-mask categories are not triple-keyed");
-    }
-
-    /// Registry index of the shared challenge-stage mask for `slot`.
-    pub(crate) fn challenge_stage_index(&self, slot: usize) -> CircuitIndex {
-        assert!(slot < self.space.max_challenges());
-        CircuitIndex::new(
-            self.space.num_triples() * (TRIPLE_CIRCUITS.len() + TRIPLE_MASKS.len()) + slot,
-        )
-    }
-
-    /// Registry index of the final-trace mask for a step with `own_challenges`
-    /// challenge stages.
-    pub(crate) fn challenge_final_index(&self, own_challenges: usize) -> CircuitIndex {
-        let pos = self
-            .space
-            .distinct_challenges()
-            .iter()
-            .position(|&c| c == own_challenges)
-            .expect("challenge count was registered");
-        CircuitIndex::new(
-            self.space.num_triples() * (TRIPLE_CIRCUITS.len() + TRIPLE_MASKS.len())
-                + self.space.max_challenges()
-                + pos,
-        )
+        unreachable!("every category is triple-keyed");
     }
 }
 
 impl InternalCircuitIndex {
-    /// The number of internal circuits registered by [`register_all`] for a
-    /// given challenge-slot count; the value-level source of [`NUM`](Self::NUM).
-    pub const fn num(num_challenges: usize) -> usize {
-        16 + num_challenges
-    }
-
     /// The number of internal circuits registered by [`register_all`],
     /// equal to the number of variants in [`InternalCircuitIndex`].
-    pub const NUM: usize = Self::num(crate::NUM_CHALLENGE_SLOTS);
-
-    /// All variants for a given challenge-slot count, in canonical iteration
-    /// order; the value-level source of [`ALL`](Self::ALL). The order must
-    /// match the registry finalization concatenation order, exactly as
-    /// documented on [`ALL`](Self::ALL).
-    #[allow(dead_code)] // superseded by NativeIndexSpace; dies with the flip
-    pub fn all(num_challenges: usize) -> Vec<Self> {
-        use InternalCircuitIndex::*;
-        let mut all = alloc::vec![
-            Hashes1Circuit,
-            Hashes2Circuit,
-            InnerCollapseCircuit,
-            OuterCollapseCircuit,
-            ComputeVCircuit,
-            ChallengeBindingCircuit,
-            PreambleStage,
-            InnerErrorStage,
-            OuterErrorStage,
-            QueryStage,
-            EvalStage,
-            PreambleFinalStaged,
-            InnerErrorFinalStaged,
-            OuterErrorFinalStaged,
-            EvalFinalStaged,
-        ];
-        all.extend((0..num_challenges).map(|i| ChallengeStage(i as u32)));
-        all.push(ChallengeFinalStaged);
-        assert_eq!(all.len(), Self::num(num_challenges));
-        all
-    }
+    pub const NUM: usize = 15;
 
     /// All variants in canonical iteration order.
     ///
@@ -300,12 +222,6 @@ impl InternalCircuitIndex {
         push(&mut slots, &mut c, Self::InnerErrorFinalStaged);
         push(&mut slots, &mut c, Self::OuterErrorFinalStaged);
         push(&mut slots, &mut c, Self::EvalFinalStaged);
-        let mut i = 0;
-        while i < crate::NUM_CHALLENGE_SLOTS {
-            push(&mut slots, &mut c, Self::ChallengeStage(i as u32));
-            i += 1;
-        }
-        push(&mut slots, &mut c, Self::ChallengeFinalStaged);
         assert!(c == Self::NUM);
         slots
     }
@@ -342,10 +258,6 @@ pub struct InternalCircuitValues<T> {
     pub inner_error_final_staged: T,
     pub outer_error_final_staged: T,
     pub eval_final_staged: T,
-    /// One per challenge slot, in slot order. Length is the challenge-slot
-    /// count the construction closure was driven with.
-    pub challenge_stages: Vec<T>,
-    pub challenge_final_staged: T,
 }
 
 impl<T> InternalCircuitValues<T> {
@@ -368,18 +280,13 @@ impl<T> InternalCircuitValues<T> {
             InnerErrorFinalStaged => &self.inner_error_final_staged,
             OuterErrorFinalStaged => &self.outer_error_final_staged,
             EvalFinalStaged => &self.eval_final_staged,
-            ChallengeStage(slot) => &self.challenge_stages[slot as usize],
-            ChallengeFinalStaged => &self.challenge_final_staged,
         }
     }
 
     /// Construct from a closure called once per variant, in
-    /// [`all`](InternalCircuitIndex::all) order at the given challenge-slot
-    /// count.
-    pub fn from_fn(num_challenges: usize, mut f: impl FnMut(InternalCircuitIndex) -> T) -> Self {
-        match Self::try_from_fn(num_challenges, |id| {
-            Ok::<_, core::convert::Infallible>(f(id))
-        }) {
+    /// [`ALL`](InternalCircuitIndex::ALL) order.
+    pub fn from_fn(mut f: impl FnMut(InternalCircuitIndex) -> T) -> Self {
+        match Self::try_from_fn(|id| Ok::<_, core::convert::Infallible>(f(id))) {
             Ok(v) => v,
             Err(e) => match e {},
         }
@@ -389,7 +296,6 @@ impl<T> InternalCircuitValues<T> {
     ///
     /// The closure is called in [`ALL`](InternalCircuitIndex::ALL) order.
     pub fn try_from_fn<E>(
-        num_challenges: usize,
         mut f: impl FnMut(InternalCircuitIndex) -> core::result::Result<T, E>,
     ) -> core::result::Result<Self, E> {
         use InternalCircuitIndex::*;
@@ -409,10 +315,6 @@ impl<T> InternalCircuitValues<T> {
             inner_error_final_staged: f(InnerErrorFinalStaged)?,
             outer_error_final_staged: f(OuterErrorFinalStaged)?,
             eval_final_staged: f(EvalFinalStaged)?,
-            challenge_stages: (0..num_challenges)
-                .map(|slot| f(ChallengeStage(slot as u32)))
-                .collect::<core::result::Result<_, E>>()?,
-            challenge_final_staged: f(ChallengeFinalStaged)?,
         })
     }
 }
@@ -434,51 +336,11 @@ pub enum RxIndex {
     OuterError,
     Query,
     Eval,
-    /// An application circuit's challenge-stage polynomial, by slot.
-    ///
-    /// An application circuit is multi-stage — $r(X) = r'(X) + a(X) + b(X)$ —
-    /// and each challenge slot contributes one staged partial trace. Those
-    /// stages are rx polynomials of the child like any other: committed per
-    /// child, folded in `_10_p`, tied to the endoscaling point list in
-    /// `loading`, and opened at $xz$ by `compute_v` against the quotient
-    /// `_08_f` folds. Being an [`RxIndex`] variant is what gets them all of
-    /// that from the same code every other component uses.
-    ChallengeStage(u32),
 }
 
 impl RxIndex {
-    /// The number of rx polynomial components for a given challenge-slot
-    /// count; the value-level source of [`NUM`](Self::NUM).
-    pub const fn num(num_challenges: usize) -> usize {
-        12 + num_challenges
-    }
-
     /// The number of rx polynomial components.
-    pub const NUM: usize = Self::num(crate::NUM_CHALLENGE_SLOTS);
-
-    /// All variants for a given challenge-slot count, in canonical order; the
-    /// value-level source of [`ALL`](Self::ALL), with the same order
-    /// obligations.
-    pub fn all(num_challenges: usize) -> Vec<Self> {
-        use RxIndex::*;
-        let mut all = alloc::vec![
-            Application,
-            Hashes1,
-            Hashes2,
-            InnerCollapse,
-            OuterCollapse,
-            ComputeV,
-            ChallengeBinding,
-            Preamble,
-            InnerError,
-            OuterError,
-            Query,
-            Eval,
-        ];
-        all.extend((0..num_challenges).map(|i| ChallengeStage(i as u32)));
-        assert_eq!(all.len(), Self::num(num_challenges));
-        all
-    }
+    pub const NUM: usize = 12;
 
     /// All variants in canonical order.
     ///
@@ -503,11 +365,6 @@ impl RxIndex {
         push(&mut slots, &mut c, Self::OuterError);
         push(&mut slots, &mut c, Self::Query);
         push(&mut slots, &mut c, Self::Eval);
-        let mut i = 0;
-        while i < crate::NUM_CHALLENGE_SLOTS {
-            push(&mut slots, &mut c, Self::ChallengeStage(i as u32));
-            i += 1;
-        }
         assert!(c == Self::NUM);
         slots
     }
@@ -532,9 +389,6 @@ pub struct RxValues<T> {
     pub outer_error: T,
     pub query: T,
     pub eval: T,
-    /// One per challenge slot, in slot order. Length is the challenge-slot
-    /// count the construction closure was driven with.
-    pub challenge_stages: Vec<T>,
 }
 
 impl<T> RxValues<T> {
@@ -554,16 +408,13 @@ impl<T> RxValues<T> {
             OuterError => &self.outer_error,
             Query => &self.query,
             Eval => &self.eval,
-            ChallengeStage(slot) => &self.challenge_stages[slot as usize],
         }
     }
 
     /// Construct from a closure called once per variant, in
-    /// [`all`](RxIndex::all) order at the given challenge-slot count.
-    pub fn from_fn(num_challenges: usize, mut f: impl FnMut(RxIndex) -> T) -> Self {
-        match Self::try_from_fn(num_challenges, |id| {
-            Ok::<_, core::convert::Infallible>(f(id))
-        }) {
+    /// [`ALL`](RxIndex::ALL) order.
+    pub fn from_fn(mut f: impl FnMut(RxIndex) -> T) -> Self {
+        match Self::try_from_fn(|id| Ok::<_, core::convert::Infallible>(f(id))) {
             Ok(v) => v,
             Err(e) => match e {},
         }
@@ -573,7 +424,6 @@ impl<T> RxValues<T> {
     ///
     /// The closure is called in [`ALL`](RxIndex::ALL) order.
     pub fn try_from_fn<E>(
-        num_challenges: usize,
         mut f: impl FnMut(RxIndex) -> core::result::Result<T, E>,
     ) -> core::result::Result<Self, E> {
         use RxIndex::*;
@@ -590,9 +440,6 @@ impl<T> RxValues<T> {
             outer_error: f(OuterError)?,
             query: f(Query)?,
             eval: f(Eval)?,
-            challenge_stages: (0..num_challenges)
-                .map(|slot| f(ChallengeStage(slot as u32)))
-                .collect::<core::result::Result<_, E>>()?,
         })
     }
 }
@@ -612,8 +459,7 @@ pub enum RxComponent {
 
 /// Registers internal native circuits and masks into the provided registry:
 /// one variant of every triple-keyed circuit and mask per (own, left, right)
-/// shape triple in the index space, then the shared challenge-slot masks and
-/// the per-count final-trace masks — in exactly the order
+/// shape triple in the index space — in exactly the order
 /// [`NativeIndexSpace`] resolves indices.
 ///
 /// Does not register internal steps (rerandomize, trivial); those are
@@ -629,7 +475,7 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
 
     // Circuits first, then masks - matching RegistryBuilder::finalize()'s
     // concatenation order and NativeIndexSpace's layout.
-    for (own, left, right) in space.triples() {
+    for (_own, left, right) in space.triples() {
         registry = registry.register_internal_circuit(circuits::hashes_1::Circuit::<
             C,
             R,
@@ -656,13 +502,10 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
             HEADER_SIZE,
             RevdotParameters,
         >::new(left, right))?;
-        registry = registry.register_internal_circuit(circuits::compute_v::Circuit::<
-            C,
-            R,
-            HEADER_SIZE,
-        >::new(
-            own.challenge.calls, left, right
-        ))?;
+        registry =
+            registry.register_internal_circuit(
+                circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new(left, right),
+            )?;
         registry = registry.register_internal_circuit(circuits::challenge_binding::Circuit::<
             C,
             R,
@@ -670,12 +513,9 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
         >::new(params, left, right))?;
     }
 
-    for (own, left, right) in space.triples() {
-        let (query_chain, error_chain) = chain_layouts::<C, R, HEADER_SIZE>(
-            InternalCircuitIndex::num(own.challenge.calls),
-            left,
-            right,
-        );
+    for (_own, left, right) in space.triples() {
+        let (query_chain, error_chain) =
+            chain_layouts::<C, R, HEADER_SIZE>(InternalCircuitIndex::NUM, left, right);
         // Stage masks, then final-trace masks, in TRIPLE_MASKS order.
         registry = registry.register_bonding(query_chain.mask::<C::CircuitField, R>(0)?);
         registry = registry.register_bonding(error_chain.mask::<C::CircuitField, R>(2)?);
@@ -690,20 +530,6 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
             registry.register_bonding(error_chain.final_mask_through::<C::CircuitField, R>(1)?);
         registry =
             registry.register_bonding(query_chain.final_mask_through::<C::CircuitField, R>(2)?);
-    }
-
-    let max_challenges = space.max_challenges();
-    for slot in 0..max_challenges {
-        registry = registry.register_bonding(
-            crate::step::internal::challenge_stage::layout_for(max_challenges)
-                .mask::<C::CircuitField, R>(slot)?,
-        );
-    }
-    for own_challenges in space.distinct_challenges() {
-        registry = registry.register_bonding(
-            crate::step::internal::challenge_stage::layout_for(own_challenges)
-                .final_mask::<C::CircuitField, R>()?,
-        );
     }
 
     assert_eq!(

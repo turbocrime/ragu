@@ -22,12 +22,9 @@ use ragu_primitives::{
     vec::{CollectFixed, ConstLen, FixedVec, Len},
 };
 
-use super::{
-    super::{Step, StepCtx},
-    challenge_stage,
-};
+use super::super::{Step, StepCtx};
 use crate::{
-    Header, NUM_CHALLENGE_SLOTS, NUM_POLY_SLOTS, NUM_QUERY_SLOTS,
+    CHALLENGE_POINTS_PER_CALL, Header, NUM_CHALLENGE_SLOTS, NUM_POLY_SLOTS, NUM_QUERY_SLOTS,
     framework_hooks::{
         Alphas, ChallengeLayout, FrameworkAux, FrameworkHooks, HookLayout, PolyQueryLayout,
         ProofValues,
@@ -37,8 +34,8 @@ use crate::{
 /// Length of an application circuit's public instance: the three headers, then
 /// the polynomial slots (commitment point coordinates — two elements per slot),
 /// then the query slots (the polynomial index and the $(x, y)$ opening — three
-/// elements per slot), then the challenge slots (bridged stage commitment
-/// coordinates and the challenge — three elements per slot).
+/// elements per slot), then the challenge slots (the coordinates of every input
+/// point, then the challenge).
 ///
 /// A polynomial's commitment appears once, in its own slot, rather than once
 /// per query that opens it. That is what makes a repeat opening cost three
@@ -49,7 +46,10 @@ pub struct InstanceLen<const HEADER_SIZE: usize>;
 
 impl<const HEADER_SIZE: usize> Len for InstanceLen<HEADER_SIZE> {
     fn len() -> usize {
-        HEADER_SIZE * 3 + NUM_POLY_SLOTS * 2 + NUM_QUERY_SLOTS * 3 + NUM_CHALLENGE_SLOTS * 3
+        HEADER_SIZE * 3
+            + NUM_POLY_SLOTS * 2
+            + NUM_QUERY_SLOTS * 3
+            + NUM_CHALLENGE_SLOTS * (CHALLENGE_POINTS_PER_CALL * 2 + 1)
     }
 }
 
@@ -58,17 +58,15 @@ impl<const HEADER_SIZE: usize> Len for InstanceLen<HEADER_SIZE> {
 /// poly-query claims it raises — by dry-running its witness body once, with an
 /// [`Empty`] witness on a counting emulator and the hooks in discovery mode.
 ///
-/// Only counts, never widths: a challenge input's width is a compile-time
-/// constant of its type ([`ChallengeInput::ELEMENTS`]), and a claim's wires are
-/// a fixed shape.
+/// Only call counts: how many points a `derive_challenge` call passes is
+/// witness data (every slot's instance region is the same width regardless),
+/// and a claim's wires are a fixed shape.
 ///
 /// This is sound because circuit structure must be witness-independent: the
 /// same body runs with `Empty` witnesses for wiring extraction and metrics,
 /// so the call sequence cannot differ between this dry run and real
 /// synthesis. (A body that violates that requirement is caught at synthesis
 /// time by the determinism guard in [`StepCtx::derive_challenge`].)
-///
-/// [`ChallengeInput::ELEMENTS`]: crate::framework_hooks::ChallengeInput::ELEMENTS
 pub(crate) fn discover_hook_layout<C: Cycle, S: Step<C>, const HEADER_SIZE: usize>(
     step: &S,
 ) -> Result<HookLayout> {
@@ -210,12 +208,11 @@ impl<'params, C: Cycle, S: Step<C> + 'params, R: Rank, const HEADER_SIZE: usize>
 impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize>
     MultiStageCircuit<C::CircuitField, R> for Adapter<'_, C, S, R, HEADER_SIZE>
 {
-    /// An application circuit's stages are its challenge slots: one committed
-    /// partial trace per `derive_challenge` call, so each challenge can be
-    /// bound to a commitment of the values known when it was derived. The
-    /// slots are one induced run — a single typed stage subdivided by the
-    /// value-level layout.
-    type Last = challenge_stage::Run<C::CircuitField, R>;
+    /// An application circuit has no stages. Challenge derivation used to need
+    /// one per slot — a committed partial trace to compress the inputs into —
+    /// but a challenge input is a point, which is already a commitment, so
+    /// there is nothing left to stage.
+    type Last = ();
     type Instance<'source> = (
         FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
         FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
@@ -246,18 +243,7 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize>
     where
         Self: 'dr,
     {
-        // Staging phase 1: reserve every challenge slot's wires before any
-        // witness runs. The slots are reserved as one induced run: the layout
-        // (a value) says where each slot's wires fall inside the span the
-        // `Run` stage declares to the type system, so the reservation is a
-        // loop over slots rather than a typed chain.
-        let (guards, builder) = builder
-            .configure_induced::<challenge_stage::Run<C::CircuitField, R>, _>(
-                challenge_stage::Slot::default(),
-                &challenge_stage::layout(),
-            )?;
         let dr = builder.finish();
-        let mut challenge_slots = challenge_stage::Slots::new(guards);
 
         let (alphas, left, right, witness) = witness.cast();
         // `Self: 'dr` gives `'params: 'dr`, so the parameters coerce. The
@@ -274,13 +260,12 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize>
                 )
             })?;
             let alphas = alphas.take();
-            Ok(ProofValues::new(params, alphas.bridge, alphas.challenge))
+            Ok(ProofValues::new(params, alphas.bridge))
         })?;
 
         let mut hooks = FrameworkHooks::with_expected(self.layout, Maybe::clone(&proof_values));
         let ((left, right, output), output_data, step_aux) = {
-            let mut ctx = StepCtx::<'_, '_, _, C>::new(dr, &mut hooks)
-                .with_challenge_slots(&mut challenge_slots);
+            let mut ctx = StepCtx::<'_, '_, _, C>::new(dr, &mut hooks);
             let body = self
                 .step
                 .witness::<_, HEADER_SIZE>(&mut ctx, witness, left, right)?;
@@ -307,11 +292,13 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize>
             query.x.write(dr, &mut elements)?;
             query.y.write(dr, &mut elements)?;
         }
-        // Then the challenge slots: per slot, the bridged stage commitment's
-        // two coordinates and the challenge hashed from it. The parent's
-        // binding circuit re-derives the second from the first.
+        // Then the challenge slots: per slot, every input point's coordinates
+        // followed by the challenge. The parent's binding circuit re-derives
+        // the challenge from those points.
         for pair in &outputs.challenge_pairs {
-            pair.point.write(dr, &mut elements)?;
+            for point in &pair.points {
+                point.write(dr, &mut elements)?;
+            }
             pair.challenge.write(dr, &mut elements)?;
         }
 
@@ -429,12 +416,14 @@ mod tests {
     fn test_alphas() -> Alphas<Pasta> {
         Alphas {
             bridge: <Pasta as Cycle>::ScalarField::ONE,
-            challenge: <Pasta as Cycle>::CircuitField::ONE,
         }
     }
 
-    /// Like [`TestStep`], but derives a challenge from a two-element gadget,
-    /// inducing one stage of width 2.
+    /// Like [`TestStep`], but derives a challenge and folds it into the output.
+    ///
+    /// The challenge takes no input points: a step's cost does not depend on
+    /// how many it passes, and these tests are about the call's circuit
+    /// structure, not about what the challenge binds.
     struct ChallengeStep;
 
     impl Step<Pasta> for ChallengeStep {
@@ -464,9 +453,8 @@ mod tests {
             let left_elem = Element::alloc(ctx.dr, allocator, left)?;
             let right_elem = Element::alloc(ctx.dr, allocator, right)?;
 
-            // Derive a challenge bound to both inputs: induces a stage of
-            // width 2. The outputs are deferred; only the wires are used.
-            let challenge = ctx.derive_challenge((left_elem.clone(), right_elem.clone()))?;
+            // The outputs are deferred; only the wires are used.
+            let challenge = ctx.derive_challenge(&[])?;
 
             // Output = left + right + challenge, so the deferred challenge
             // wire participates in downstream circuit structure.
@@ -488,7 +476,9 @@ mod tests {
 
     #[test]
     fn instance_len_covers_headers_polys_claims_and_challenges() {
-        let slots = NUM_POLY_SLOTS * 2 + NUM_QUERY_SLOTS * 3 + NUM_CHALLENGE_SLOTS * 3;
+        let slots = NUM_POLY_SLOTS * 2
+            + NUM_QUERY_SLOTS * 3
+            + NUM_CHALLENGE_SLOTS * (CHALLENGE_POINTS_PER_CALL * 2 + 1);
         assert_eq!(InstanceLen::<1>::len(), 3 + slots);
         assert_eq!(InstanceLen::<4>::len(), 12 + slots);
         assert_eq!(InstanceLen::<10>::len(), 30 + slots);
@@ -512,7 +502,10 @@ mod tests {
         // Output should have 3 * HEADER_SIZE elements (left + right + output headers)
         assert_eq!(
             output.len(),
-            HEADER_SIZE * 3 + NUM_POLY_SLOTS * 2 + NUM_QUERY_SLOTS * 3 + NUM_CHALLENGE_SLOTS * 3
+            HEADER_SIZE * 3
+                + NUM_POLY_SLOTS * 2
+                + NUM_QUERY_SLOTS * 3
+                + NUM_CHALLENGE_SLOTS * (CHALLENGE_POINTS_PER_CALL * 2 + 1)
         );
     }
 
@@ -602,7 +595,7 @@ mod tests {
 
                 let mut output = left_elem.clone();
                 for _ in 0..crate::NUM_CHALLENGE_SLOTS + 1 {
-                    let challenge = ctx.derive_challenge(output.clone())?;
+                    let challenge = ctx.derive_challenge(&[])?;
                     output = output.add(ctx.dr, &challenge);
                 }
 
@@ -654,7 +647,10 @@ mod tests {
 
         assert_eq!(
             output.len(),
-            HEADER_SIZE * 3 + NUM_POLY_SLOTS * 2 + NUM_QUERY_SLOTS * 3 + NUM_CHALLENGE_SLOTS * 3
+            HEADER_SIZE * 3
+                + NUM_POLY_SLOTS * 2
+                + NUM_QUERY_SLOTS * 3
+                + NUM_CHALLENGE_SLOTS * (CHALLENGE_POINTS_PER_CALL * 2 + 1)
         );
     }
 }

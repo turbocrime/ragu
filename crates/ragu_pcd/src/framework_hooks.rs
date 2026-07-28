@@ -26,18 +26,11 @@
 //!
 //! * challenge slots — the bookkeeping behind
 //!   [`StepCtx::derive_challenge`](crate::step::StepCtx::derive_challenge):
-//!   the slot cap, the determinism guard, and the
-//!   `(bridged stage commitment, challenge)` pairs the adapter writes into the
-//!   application circuit's public instance. Every application circuit gets at
-//!   most [`NUM_CHALLENGE_SLOTS`] slots, each
-//!   committing at most [`CHALLENGE_WIDTH`](crate::CHALLENGE_WIDTH) elements.
-//!
-//!   The derivation itself lives on [`StepCtx`](crate::step::StepCtx), not
-//!   here, because it needs the rank — to build the slot's stage polynomial —
-//!   which this container deliberately does not carry, so that `R` stays out of
-//!   every `Step::witness` signature. The values it derives *from* — the cycle
-//!   parameters and the proof's blinds — are framework state, so they live here
-//!   as [`ProofValues`].
+//!   the slot cap, the determinism guard, and the `(points, challenge)` records
+//!   the adapter writes into the application circuit's public instance. Every
+//!   application circuit gets at most [`NUM_CHALLENGE_SLOTS`] slots, each
+//!   absorbing exactly
+//!   [`CHALLENGE_POINTS_PER_CALL`](crate::CHALLENGE_POINTS_PER_CALL) points.
 //!
 //! ## Structure discovery
 //!
@@ -52,46 +45,44 @@
 //! sequence diverges from the dry run fails with [`Error::InvalidWitness`]
 //! instead of silently synthesizing a different circuit.
 //!
-//! The *width* of each challenge input is not discovered at all — it is
-//! [`ChallengeInput::ELEMENTS`], a compile-time constant of the input's type,
-//! bounded by `CHALLENGE_WIDTH` with a compile-time assertion. That is why no
-//! `ChallengeInput` impl exists for slices or `Vec`s: a runtime length cannot
-//! be circuit structure. Data of runtime length must be hashed down to one
-//! binding [`Element`] first.
+//! How many *points* a call passes is not discovered, and need not be: every
+//! slot's instance region holds `CHALLENGE_POINTS_PER_CALL` points, with the
+//! positions a call leaves empty filled by a fixed sentinel. So a call's point
+//! count is witness data, not structure.
 //!
 //! ## Challenge soundness
 //!
-//! A challenge is the hash of a commitment to the values it is derived from —
-//! computed natively, witnessed, and re-derived by the parent from the same
-//! instance-bound commitment. On a value-carrying driver the returned `Element`
+//! A challenge is the hash of the points it was derived from — computed
+//! natively, witnessed, and re-derived by the parent from the same
+//! instance-bound points. On a value-carrying driver the returned `Element`
 //! holds the real value immediately, so the step body can use it at once.
 //!
-//! The binding is enforced, in four links:
+//! The binding is enforced, in two links:
 //!
-//! 1. Both halves of the `(point, challenge)` pair are written into the child's
+//! 1. The slot's points and its challenge are written into the child's
 //!    application $k(Y)$ (by the internal `preamble` stage's `application_ky`),
 //!    binding them to its committed application rx.
-//! 2. The slot's stage polynomial is summed into the application circuit's
-//!    claim (in `native::claims`, as `ComputeVCircuit` treats `Query` and
-//!    `Eval`), folded in `_10_p`, and mask-registered so the trace split is
-//!    unique — so the stage's wires, which `derive_challenge` pins to the
-//!    caller's elements, are covered by the circuit check.
-//! 3. `point` is the bridge image of that stage's host commitment, tied in the
-//!    `loading` circuit against the eval-stage record and in `copying` against
-//!    the child's own.
-//! 4. `challenge = Hash(point)` is re-derived per `(child, slot)` by the
+//! 2. `challenge = Hash(points)` is re-derived per `(child, slot)` by the
 //!    internal `challenge_binding` circuit, and natively by
 //!    [`Application::verify`](crate::Application::verify) for a root proof's own
 //!    slots, which no parent has bound yet.
 //!
-//! Together: the prover cannot choose a challenge independently of the inputs
-//! it committed. What remains is the framework-wide deferred PCS opening —
-//! the commitment-to-carried-polynomial link that **no** commitment in the
-//! system has yet, `bridge_f` and the endoscaling commitments included — so
-//! the chain reaches exactly the same parity as the framework's own bridges
-//! and no further. `Application::verify` closes it for a root proof's own
-//! claims and challenges; interior nodes inherit the framework's status quo.
-//! The acceptance gate for that work is
+//! Together: the prover cannot choose a challenge independently of the points
+//! it passed. **What those points bind is the caller's responsibility** — the
+//! framework binds the challenge to the points, not the points to any
+//! particular data. A step passing a freely witnessed point can grind its
+//! challenge by varying it, so every point must be one this step has pinned
+//! (a poly-query commitment, a header-carried point, or a point otherwise
+//! constrained). This is the same discipline the framework applies to itself:
+//! compress data into a binding commitment, then derive from that.
+//!
+//! What remains beyond that is the framework-wide deferred PCS opening — the
+//! commitment-to-carried-polynomial link that **no** commitment in the system
+//! has yet, `bridge_f` and the endoscaling commitments included — so the chain
+//! reaches exactly the same parity as the framework's own bridges and no
+//! further. `Application::verify` closes it for a root proof's own claims and
+//! challenges; interior nodes inherit the framework's status quo. The
+//! acceptance gate for that work is
 //! `poly_query_com_is_not_bound_to_the_folded_polynomial` in
 //! `tests/recursive_claims.rs`.
 //!
@@ -111,7 +102,7 @@ use ragu_core::{
     maybe::{Maybe, MaybeKind},
 };
 use ragu_primitives::{
-    Element, GadgetExt, Point,
+    Element, Point,
     vec::{ConstLen, FixedVec},
 };
 
@@ -148,13 +139,15 @@ pub struct PolyQueryClaim<F: Field> {
     pub y: F,
 }
 
-/// The in-circuit wires of a derived challenge: the bridged commitment to the
-/// slot's stage, and the challenge hashed from it. Both go into the application
-/// circuit's public instance so the parent can re-derive one from the other.
+/// The in-circuit wires of a derived challenge: the points it was hashed from,
+/// and the challenge itself. All of them go into the application circuit's
+/// public instance so the parent can re-derive the challenge from the points.
 pub struct ChallengeWires<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
-    /// The slot's stage commitment, bridged onto the nested curve.
-    pub point: Point<'dr, D, C>,
-    /// The challenge, hashed from [`point`](Self::point).
+    /// The slot's input points, exactly
+    /// [`CHALLENGE_POINTS_PER_CALL`](crate::CHALLENGE_POINTS_PER_CALL) of them:
+    /// the caller's, then the sentinel in each position left empty.
+    pub points: Vec<Point<'dr, D, C>>,
+    /// The challenge, hashed from [`points`](Self::points).
     pub challenge: Element<'dr, D>,
 }
 
@@ -194,114 +187,6 @@ pub struct QueryWires<'dr, D: Driver<'dr>> {
     pub y: Element<'dr, D>,
 }
 
-/// An input to [`derive_challenge`](crate::step::StepCtx::derive_challenge): a
-/// bundle of in-circuit data exposed as a canonical sequence of [`Element`]s.
-/// Exactly this sequence is pinned into the slot's challenge stage, whose
-/// commitment the challenge is hashed from — so the challenge is bound to this
-/// input and nothing else.
-///
-/// Implemented for [`Element`], [`Point`], and fixed-width compositions of
-/// these (tuples, arrays, and references). Deliberately **not** implemented for
-/// slices, `Vec`s, or anything else whose length is a runtime value — see
-/// [`ELEMENTS`](Self::ELEMENTS).
-pub trait ChallengeInput<'dr, D: Driver<'dr>> {
-    /// The number of elements [`append_elements`](Self::append_elements)
-    /// produces.
-    ///
-    /// A compile-time constant, because the challenge derivation is circuit
-    /// structure: it fixes how many of the slot's stage wires the input
-    /// occupies, and the rest are pinned to zero. A runtime-length input would
-    /// make the circuit's shape depend on its witness, which the framework
-    /// forbids. This is what makes
-    /// [`CHALLENGE_WIDTH`](crate::CHALLENGE_WIDTH) a compile-time bound rather
-    /// than a runtime check.
-    const ELEMENTS: usize;
-
-    /// Appends this input's elements, in canonical order. Must append exactly
-    /// [`ELEMENTS`](Self::ELEMENTS) of them; `derive_challenge` checks this.
-    fn append_elements(&self, dr: &mut D, out: &mut Vec<Element<'dr, D>>) -> Result<()>;
-}
-
-impl<'dr, D: Driver<'dr>> ChallengeInput<'dr, D> for Element<'dr, D> {
-    const ELEMENTS: usize = 1;
-
-    fn append_elements(&self, _dr: &mut D, out: &mut Vec<Element<'dr, D>>) -> Result<()> {
-        out.push(self.clone());
-        Ok(())
-    }
-}
-
-/// Collects the elements a [`Write`](ragu_primitives::io::Write) gadget
-/// serializes into.
-struct ElementCollector<'dr, D: Driver<'dr>>(Vec<Element<'dr, D>>);
-
-impl<'dr, D: Driver<'dr>> ragu_primitives::io::Buffer<'dr, D> for ElementCollector<'dr, D> {
-    fn write(&mut self, _dr: &mut D, value: &Element<'dr, D>) -> Result<()> {
-        self.0.push(value.clone());
-        Ok(())
-    }
-}
-
-impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> ChallengeInput<'dr, D> for Point<'dr, D, C> {
-    const ELEMENTS: usize = 2;
-
-    fn append_elements(&self, dr: &mut D, out: &mut Vec<Element<'dr, D>>) -> Result<()> {
-        // Serialize the point's (x, y) coordinate elements via its `Write`
-        // impl.
-        let mut collector = ElementCollector(Vec::new());
-        GadgetExt::write(self, dr, &mut collector)?;
-        out.append(&mut collector.0);
-        Ok(())
-    }
-}
-
-impl<'dr, D: Driver<'dr>, T: ChallengeInput<'dr, D>> ChallengeInput<'dr, D> for &T {
-    const ELEMENTS: usize = T::ELEMENTS;
-
-    fn append_elements(&self, dr: &mut D, out: &mut Vec<Element<'dr, D>>) -> Result<()> {
-        (*self).append_elements(dr, out)
-    }
-}
-
-impl<'dr, D: Driver<'dr>, T: ChallengeInput<'dr, D>, const N: usize> ChallengeInput<'dr, D>
-    for [T; N]
-{
-    const ELEMENTS: usize = T::ELEMENTS * N;
-
-    fn append_elements(&self, dr: &mut D, out: &mut Vec<Element<'dr, D>>) -> Result<()> {
-        for item in self {
-            item.append_elements(dr, out)?;
-        }
-        Ok(())
-    }
-}
-
-// No impls for `&[T]` or `Vec<T>`: their lengths are runtime values, so they
-// cannot supply a compile-time `ELEMENTS`. Hash such data down to a single
-// binding `Element` and derive the challenge from that.
-
-macro_rules! impl_challenge_input_tuple {
-    ($($name:ident),+) => {
-        impl<'dr, D: Driver<'dr>, $($name: ChallengeInput<'dr, D>),+> ChallengeInput<'dr, D>
-            for ($($name,)+)
-        {
-            const ELEMENTS: usize = 0 $(+ $name::ELEMENTS)+;
-
-            fn append_elements(&self, dr: &mut D, out: &mut Vec<Element<'dr, D>>) -> Result<()> {
-                #[allow(non_snake_case)]
-                let ($($name,)+) = self;
-                $($name.append_elements(dr, out)?;)+
-                Ok(())
-            }
-        }
-    };
-}
-
-impl_challenge_input_tuple!(A);
-impl_challenge_input_tuple!(A, B);
-impl_challenge_input_tuple!(A, B, C2);
-impl_challenge_input_tuple!(A, B, C2, D2);
-
 /// Container for framework-side state threaded through a
 /// [`Step::witness`](crate::step::Step::witness) invocation.
 ///
@@ -320,16 +205,13 @@ pub struct FrameworkHooks<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     /// bridge stage — and therefore the generator positions — its `com` commits
     /// to, and is what a query names.
     witnessed_polys: Vec<PolyWires<'dr, D, C::NestedCurve>>,
-    /// The `(bridged stage commitment, challenge)` pair each
-    /// [`derive_challenge`](crate::step::StepCtx::derive_challenge) call produced, in slot
-    /// order.
+    /// The `(points, challenge)` record each
+    /// [`derive_challenge`](crate::step::StepCtx::derive_challenge) call
+    /// produced, in slot order.
     challenge_pairs: Vec<ChallengeWires<'dr, D, C::NestedCurve>>,
-    /// The values each challenge stage commits, in slot order.
-    challenge_inputs: Vec<DriverValue<D, [D::F; crate::CHALLENGE_WIDTH]>>,
     /// Number of [`derive_challenge`](crate::step::StepCtx::derive_challenge) calls so far.
-    /// Each occupies one of the
-    /// [`NUM_CHALLENGE_SLOTS`] slots; the widths
-    /// need no recording, being compile-time constants of the input types.
+    /// Each occupies one of the [`NUM_CHALLENGE_SLOTS`] slots; how many points a
+    /// call passed needs no recording, every slot holding the same number.
     challenge_calls: usize,
     /// The hook-call counts discovered by the registration-time dry run,
     /// replayed as determinism guards. `None` in discovery mode, which is the
@@ -362,17 +244,12 @@ pub struct FrameworkAux<C: Cycle> {
     /// proof, and the *next* fuse enforces them recursively via the PCS
     /// accumulator.
     pub claims: FixedVec<PolyQueryClaim<C::CircuitField>, ConstLen<NUM_QUERY_SLOTS>>,
-    /// The derived-challenge pairs the circuit exposes, padded to exactly
+    /// The derived-challenge records the circuit exposes, padded to exactly
     /// [`NUM_CHALLENGE_SLOTS`] entries, in slot order.
     pub challenges: FixedVec<
         crate::proof::ChallengeOpening<C::NestedCurve, C::CircuitField>,
         ConstLen<NUM_CHALLENGE_SLOTS>,
     >,
-    /// The values each challenge stage commits, in slot order, zero-padded to
-    /// [`CHALLENGE_WIDTH`](crate::CHALLENGE_WIDTH). Plain field elements: the
-    /// fuse holds the rank, so it builds the stage polynomials itself.
-    pub challenge_inputs:
-        FixedVec<[C::CircuitField; crate::CHALLENGE_WIDTH], ConstLen<NUM_CHALLENGE_SLOTS>>,
 }
 
 /// A small non-negative index as a field element.
@@ -433,14 +310,17 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHookOutputs<'d
         let mut challenges = Vec::with_capacity(self.challenge_pairs.len());
         for pair in self.challenge_pairs {
             challenges.push(D::try_just(|| {
+                let mut points = Vec::with_capacity(pair.points.len());
+                for point in &pair.points {
+                    points.push(point.value().take());
+                }
                 Ok(crate::proof::ChallengeOpening {
-                    point: pair.point.value().take(),
+                    points,
                     challenge: *pair.challenge.value().take(),
                 })
             })?);
         }
         let challenges = collect_values::<D, _>(challenges)?;
-        let challenge_inputs = collect_values::<D, _>(self.challenge_inputs)?;
 
         // `StepCtx::finish_slots` padded each to its slot count, so these
         // conversions cannot fail; the fixed types are what make that guarantee
@@ -450,7 +330,6 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHookOutputs<'d
                 polys: FixedVec::try_from(polys.take())?,
                 claims: FixedVec::try_from(claims.take())?,
                 challenges: FixedVec::try_from(challenges.take())?,
-                challenge_inputs: FixedVec::try_from(challenge_inputs.take())?,
             })
         })
     }
@@ -554,12 +433,10 @@ impl HookLayout {
 pub struct Alphas<C: Cycle> {
     /// Blinds the nested bridge stages.
     pub bridge: C::ScalarField,
-    /// Blinds the application circuit's challenge stages.
-    pub challenge: C::CircuitField,
 }
 
-// Hand-written: `derive` would demand `C: Clone`/`C: Copy`, but both fields are
-// field elements, `Copy` for every `Cycle`.
+// Hand-written: `derive` would demand `C: Clone`/`C: Copy`, but the field is a
+// field element, `Copy` for every `Cycle`.
 impl<C: Cycle> Clone for Alphas<C> {
     fn clone(&self) -> Self {
         *self
@@ -568,7 +445,7 @@ impl<C: Cycle> Clone for Alphas<C> {
 impl<C: Cycle> Copy for Alphas<C> {}
 
 /// The proof-level values a hook needs to compute a witness: the cycle
-/// parameters, and the proof's two blind sources.
+/// parameters, and the proof's bridge blind source.
 ///
 /// A [`DriverValue`] rather than an `Option`, because its absence is exactly
 /// the driver's absence of values — unlike [`HookLayout`], which
@@ -580,25 +457,19 @@ impl<C: Cycle> Copy for Alphas<C> {}
 pub struct ProofValues<'dr, C: Cycle> {
     pub(crate) params: &'dr C::Params,
     pub(crate) bridge_alpha: C::ScalarField,
-    pub(crate) challenge_alpha: C::CircuitField,
 }
 
 impl<'dr, C: Cycle> ProofValues<'dr, C> {
-    pub(crate) fn new(
-        params: &'dr C::Params,
-        bridge_alpha: C::ScalarField,
-        challenge_alpha: C::CircuitField,
-    ) -> Self {
+    pub(crate) fn new(params: &'dr C::Params, bridge_alpha: C::ScalarField) -> Self {
         Self {
             params,
             bridge_alpha,
-            challenge_alpha,
         }
     }
 }
 
 // Hand-written: `derive` would demand `C: Clone`/`C: Copy`, but the fields are
-// a shared reference and two field elements, all `Copy` for every `Cycle`.
+// a shared reference and a field element, both `Copy` for every `Cycle`.
 impl<C: Cycle> Clone for ProofValues<'_, C> {
     fn clone(&self) -> Self {
         *self
@@ -622,11 +493,9 @@ pub struct FrameworkHookOutputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::
     /// registration-time dry run reads this to discover the call count; the
     /// adapter compares it against that count after real synthesis.
     pub challenge_calls: usize,
-    /// The `(bridged commitment, challenge)` pair per `derive_challenge` call,
-    /// in slot order.
+    /// The `(points, challenge)` record per `derive_challenge` call, in slot
+    /// order.
     pub challenge_pairs: Vec<ChallengeWires<'dr, D, C::NestedCurve>>,
-    /// The values each challenge stage commits, in slot order.
-    pub challenge_inputs: Vec<DriverValue<D, [D::F; crate::CHALLENGE_WIDTH]>>,
 }
 
 impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, C> {
@@ -649,7 +518,6 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
             witnessed_polys: Vec::new(),
             challenge_calls: 0,
             challenge_pairs: Vec::new(),
-            challenge_inputs: Vec::new(),
             expected: None,
             proof_values: <D::MaybeKind as MaybeKind>::empty(),
         }
@@ -672,7 +540,6 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
             witnessed_polys: Vec::new(),
             challenge_calls: 0,
             challenge_pairs: Vec::new(),
-            challenge_inputs: Vec::new(),
             expected: Some(expected),
             proof_values,
         }
@@ -736,19 +603,18 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
         Ok(slot)
     }
 
-    /// Records a derived challenge's `(bridged stage commitment, challenge)`
-    /// pair. The adapter writes these into the application circuit's public
-    /// instance, binding them to its $k(Y)$ so the parent's binding circuit can
-    /// re-derive the challenge from the point.
+    /// Records a derived challenge's `(points, challenge)` record. The adapter
+    /// writes these into the application circuit's public instance, binding
+    /// them to its $k(Y)$ so the parent's binding circuit can re-derive the
+    /// challenge from the points.
     pub(crate) fn record_challenge(
         &mut self,
-        point: Point<'dr, D, C::NestedCurve>,
+        points: Vec<Point<'dr, D, C::NestedCurve>>,
         challenge: Element<'dr, D>,
-        inputs: DriverValue<D, [D::F; crate::CHALLENGE_WIDTH]>,
     ) {
+        debug_assert_eq!(points.len(), crate::CHALLENGE_POINTS_PER_CALL);
         self.challenge_pairs
-            .push(ChallengeWires { point, challenge });
-        self.challenge_inputs.push(inputs);
+            .push(ChallengeWires { points, challenge });
     }
 
     /// Records a claim that the polynomial with the given `coefficients`
@@ -876,7 +742,6 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
             poly_queries: self.poly_queries,
             challenge_calls: self.challenge_calls,
             challenge_pairs: self.challenge_pairs,
-            challenge_inputs: self.challenge_inputs,
         }
     }
 }
@@ -891,7 +756,6 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Default for FrameworkHo
 
 #[cfg(test)]
 mod tests {
-    use ragu_arithmetic::Cycle;
     use ragu_core::{
         drivers::emulator::{Emulator, Wireless},
         maybe::Empty,
@@ -900,7 +764,6 @@ mod tests {
 
     use super::*;
 
-    type NestedCurve = <Pasta as Cycle>::NestedCurve;
     type Dr<'dr> = Emulator<Wireless<Empty, Fp>>;
 
     /// The framework caps a step body at `NUM_CHALLENGE_SLOTS` challenges.
@@ -943,18 +806,28 @@ mod tests {
         );
     }
 
-    /// The width of a challenge input is a compile-time property of its type.
+    /// A challenge record's instance region is the same width for every slot:
+    /// two wires per input point, plus the challenge. Nothing about it depends
+    /// on how many points a call actually passed, which is what lets the
+    /// count be witness data rather than circuit structure.
     #[test]
-    fn challenge_input_widths_are_compile_time() {
-        const fn width<'dr, G: ChallengeInput<'dr, Dr<'dr>>>() -> usize {
-            G::ELEMENTS
-        }
-        type NestedPoint<'dr> = Point<'dr, Dr<'dr>, NestedCurve>;
-
-        assert_eq!(width::<Element<'_, Dr<'_>>>(), 1);
-        assert_eq!(width::<NestedPoint<'_>>(), 2);
-        assert_eq!(width::<(Element<'_, Dr<'_>>, NestedPoint<'_>)>(), 3);
-        assert_eq!(width::<[NestedPoint<'_>; 2]>(), 4);
-        assert!(width::<[NestedPoint<'_>; 2]>() <= crate::CHALLENGE_WIDTH);
+    fn a_challenge_slot_has_one_fixed_instance_width() {
+        let per_slot = 2 * crate::CHALLENGE_POINTS_PER_CALL + 1;
+        assert_eq!(
+            crate::internal::native::stages::preamble::child_num_values(
+                0,
+                HookLayout {
+                    challenge: ChallengeLayout { calls: 1 },
+                    poly_query: PolyQueryLayout::default(),
+                },
+            ) - crate::internal::native::stages::preamble::child_num_values(
+                0,
+                HookLayout {
+                    challenge: ChallengeLayout { calls: 0 },
+                    poly_query: PolyQueryLayout::default(),
+                },
+            ),
+            per_slot,
+        );
     }
 }

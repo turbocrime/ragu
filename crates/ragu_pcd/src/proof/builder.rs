@@ -211,9 +211,6 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
 
     /// Shared alpha source for the four cached bridge commitments.
     bridge_alpha: C::ScalarField,
-    /// Blind source for the application circuit's challenge stages. A separate
-    /// field from `bridge_alpha` because those stages are native-side.
-    challenge_alpha: C::CircuitField,
 
     // Application metadata
     circuit_id: Option<CircuitIndex>,
@@ -313,8 +310,6 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     /// order, padded by the adapter to exactly
     /// [`NUM_CHALLENGE_SLOTS`](crate::NUM_CHALLENGE_SLOTS) entries.
     application_challenges: Vec<crate::proof::ChallengeOpening<C::NestedCurve, C::CircuitField>>,
-    /// The application circuit's challenge-stage polynomials, in slot order.
-    challenge_stage_polys: Vec<sparse::Polynomial<C::CircuitField, R>>,
     /// Per-step polynomial-query claims raised by the user's
     /// [`Step::witness`](crate::step::Step::witness) via
     /// [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query),
@@ -332,21 +327,15 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     claim_polys: Vec<sparse::Polynomial<C::CircuitField, R>>,
     /// The claims' host-curve commitments, in slot order.
     claim_host_commitments: Option<[C::HostCurve; crate::NUM_POLY_SLOTS]>,
-    challenge_stage_commitments: Option<[C::HostCurve; crate::NUM_CHALLENGE_SLOTS]>,
 }
 
 impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     /// Create a new empty builder with the given `bridge_alpha` source for
     /// deriving cached bridge polynomial alphas.
-    pub(crate) fn new(
-        params: &'params C::Params,
-        bridge_alpha: C::ScalarField,
-        challenge_alpha: C::CircuitField,
-    ) -> Self {
+    pub(crate) fn new(params: &'params C::Params, bridge_alpha: C::ScalarField) -> Self {
         Self {
             params,
             bridge_alpha,
-            challenge_alpha,
             circuit_id: None,
             children_circuit_ids: None,
             left_header: None,
@@ -421,10 +410,8 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             application_claims: Vec::new(),
             application_polys: Vec::new(),
             application_challenges: Vec::new(),
-            challenge_stage_polys: Vec::new(),
             claim_polys: Vec::new(),
             claim_host_commitments: None,
-            challenge_stage_commitments: None,
         }
     }
 
@@ -619,32 +606,9 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         eval,
         {
             native_eval: native_eval_commitment(),
-            claims: claim_host_commitments(),
-            challenge_stages: challenge_stage_commitments()
+            claims: claim_host_commitments()
         }
     );
-
-    /// The challenge-stage host commitments, for the eval bridge stage witness.
-    fn challenge_stage_commitments(&self) -> Vec<C::HostCurve> {
-        self.challenge_stage_commitments
-            .expect("challenge_stage_commitments not set before deriving the eval bridge")
-            .to_vec()
-    }
-
-    /// Derives the bridge stage rx for challenge slot `slot`.
-    ///
-    /// The stage's wires are that slot's host-curve stage commitment, so
-    /// committing this rx yields the nested point the challenge is hashed
-    /// from — at parity with the claim bridges.
-    pub(crate) fn challenge_bridge_rx(
-        &self,
-        slot: usize,
-    ) -> Result<sparse::Polynomial<C::ScalarField, R>> {
-        let host = self.challenge_stage_commitments()[slot];
-        let alpha =
-            crate::internal::challenge::challenge_bridge_alpha::<C>(self.bridge_alpha, slot);
-        crate::internal::challenge::challenge_bridge_rx::<C, R>(slot, alpha, host)
-    }
 
     /// Derives the bridge stage rx for poly-query claim `slot`.
     ///
@@ -660,11 +624,6 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         let host = self.claim_host_commitments()[slot];
         let alpha = crate::internal::challenge::claim_bridge_alpha::<C>(self.bridge_alpha, slot);
         crate::internal::challenge::claim_bridge_rx::<C, R>(slot, alpha, host)
-    }
-
-    /// The blind source for the application circuit's challenge stages.
-    pub(crate) fn challenge_alpha(&self) -> C::CircuitField {
-        self.challenge_alpha
     }
 
     /// The proof's shared bridge-alpha source, so the prover-side claim bridge
@@ -746,23 +705,6 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         child_right_stage_rx,
         super::ChildStageRx<C::ScalarField, R>
     );
-
-    /// Records the application circuit's challenge-stage polynomials, in slot
-    /// order, deriving their host commitments. May only be called once.
-    pub(crate) fn set_challenge_stage_polys(
-        &mut self,
-        polys: Vec<sparse::Polynomial<C::CircuitField, R>>,
-    ) {
-        assert!(
-            self.challenge_stage_polys.is_empty(),
-            "double-set: challenge_stage_polys"
-        );
-        assert_eq!(polys.len(), crate::NUM_CHALLENGE_SLOTS);
-        self.challenge_stage_commitments = Some(core::array::from_fn(|i| {
-            polys[i].commit_to_affine::<C::HostCurve>(C::host_generators(self.params))
-        }));
-        self.challenge_stage_polys = polys;
-    }
 
     /// Records the derived-challenge pairs the application circuit exposed.
     pub(crate) fn set_application_challenges(
@@ -882,15 +824,11 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             };
         }
 
-        let challenge_bridge_rxs = (0..crate::NUM_CHALLENGE_SLOTS)
-            .map(|slot| self.challenge_bridge_rx(slot))
-            .collect::<Result<Vec<_>>>()?;
         let claim_bridge_rxs = (0..crate::NUM_POLY_SLOTS)
             .map(|slot| self.claim_bridge_rx(slot))
             .collect::<Result<alloc::vec::Vec<_>>>()?;
 
         Ok(Proof {
-            challenge_bridge_rxs,
             claim_bridge_rxs,
             bridge_alpha: self.bridge_alpha,
 
@@ -981,13 +919,6 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             child_right_stage_rx: take!(child_right_stage_rx),
 
             application_challenges: core::mem::take(&mut self.application_challenges),
-            challenge_stage_polys: core::mem::take(&mut self.challenge_stage_polys),
-            challenge_stage_commitments: self
-                .challenge_stage_commitments
-                .expect("challenge_stage_commitments not set")
-                .into_iter()
-                .map(Cached)
-                .collect(),
             application_claims: self
                 .application_claims
                 .iter()

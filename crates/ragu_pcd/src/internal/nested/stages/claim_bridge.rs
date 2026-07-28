@@ -17,15 +17,14 @@
 //! ## Why this family is a run
 //!
 //! How many claim slots exist is a property of the application being built, not
-//! of any Rust type, so this family cannot be a chain of aliases the way
-//! [`super::challenge_bridge`] is. It is a [`host_bridge::Run`] instead: one
-//! stage in the typed hierarchy spanning every slot, subdivided by a
-//! [`layout`] that says where each slot's wires begin.
+//! of any Rust type, so this family cannot be a chain of per-slot aliases. It
+//! is a [`host_bridge::Run`] instead: one stage in the typed hierarchy spanning
+//! every slot, subdivided by a [`layout`] that says where each slot's wires
+//! begin.
 //!
-//! Nothing downstream has to care. The run occupies the same gates the alias
-//! chain did, so [`super::challenge_bridge`] chains after [`Run`] exactly as it
-//! chained after the last alias, and the loading circuit's `Last` is still an
-//! ordinary stage type.
+//! Nothing downstream has to care: the run occupies the same gates an alias
+//! chain would, and the loading circuit's `Last` is still an ordinary stage
+//! type.
 
 use ragu_arithmetic::CurveAffine;
 use ragu_circuits::{polynomials::Rank, staging::InducedStages};

@@ -153,7 +153,7 @@ impl<C: Cycle, R: Rank> Step<C> for CommitAndOpen<'_, C, R> {
         let handle = ctx.witness_polynomial(commitment)?;
 
         // (2) Derive a challenge bound to the commitment.
-        let z = ctx.derive_challenge(handle.commitment().clone())?;
+        let z = ctx.derive_challenge(&[handle.commitment().clone()])?;
 
         // (3) Evaluate the polynomial at the challenge (natively; the
         // polynomial is not in-circuit). A dishonest override, if provided,

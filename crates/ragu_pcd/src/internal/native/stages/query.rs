@@ -68,9 +68,7 @@ impl<F: PrimeField> ChildEvaluationsWitness<F> {
         registry_wy: &sparse::Polynomial<F, R>,
     ) -> Self {
         ChildEvaluationsWitness {
-            rx: RxValues::from_fn(proof.application_challenges().len(), |id| {
-                proof[id].eval(xz)
-            }),
+            rx: RxValues::from_fn(|id| proof[id].eval(xz)),
             a_poly_at_xz: proof[RxComponent::AbA].eval(xz),
             b_poly_at_x: proof[RxComponent::AbB].eval(x),
             child_registry_xy_at_current_w: proof.native_registry_xy_poly().eval(w),
@@ -98,9 +96,8 @@ pub fn alloc_fixed_registry<'dr, D: Driver<'dr>, A: Allocator<'dr, D>>(
     dr: &mut D,
     allocator: &mut A,
     witness: DriverValue<D, &InternalCircuitValues<D::F>>,
-    num_challenges: usize,
 ) -> Result<InternalCircuitValues<Element<'dr, D>>> {
-    InternalCircuitValues::try_from_fn(num_challenges, |id| {
+    InternalCircuitValues::try_from_fn(|id| {
         Element::alloc(dr, allocator, witness.as_ref().map(|w| *w.get(id)))
     })
 }
@@ -124,7 +121,7 @@ unsafe impl<F: ragu_arithmetic::ff::Field> ragu_core::gadgets::GadgetKind<F>
         this: &InternalCircuitValues<Element<'src, WM::Src>>,
         wm: &mut WM,
     ) -> Result<InternalCircuitValues<Element<'dst, WM::Dst>>> {
-        InternalCircuitValues::try_from_fn(this.challenge_stages.len(), |id| this.get(id).map(wm))
+        InternalCircuitValues::try_from_fn(|id| this.get(id).map(wm))
     }
 
     fn enforce_conservative_equal_gadget<
@@ -162,7 +159,7 @@ unsafe impl<F: ragu_arithmetic::ff::Field> ragu_core::gadgets::GadgetKind<F>
         this: &RxValues<Element<'src, WM::Src>>,
         wm: &mut WM,
     ) -> Result<RxValues<Element<'dst, WM::Dst>>> {
-        RxValues::try_from_fn(this.challenge_stages.len(), |id| this.get(id).map(wm))
+        RxValues::try_from_fn(|id| this.get(id).map(wm))
     }
 
     fn enforce_conservative_equal_gadget<
@@ -226,15 +223,12 @@ pub struct ChildEvaluations<'dr, D: Driver<'dr>> {
 
 impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
     /// Allocate child evaluations from pre-computed witness values.
-    /// `num_challenges` is the child's own challenge count (it sizes the
-    /// child's rx list).
     pub fn alloc<A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, &ChildEvaluationsWitness<D::F>>,
-        num_challenges: usize,
     ) -> Result<Self> {
-        let rx = RxValues::try_from_fn(num_challenges, |id| {
+        let rx = RxValues::try_from_fn(|id| {
             Element::alloc(dr, allocator, witness.as_ref().map(|w| *w.rx.get(id)))
         })?;
         Ok(ChildEvaluations {
@@ -282,63 +276,35 @@ pub struct Output<'dr, D: Driver<'dr>> {
 }
 
 /// The query stage of the fuse witness.
+///
+/// Shape-free: every child contributes the same wire count here (one
+/// evaluation per rx component plus five scalars), so nothing about this
+/// stage's geometry depends on a step's hook counts.
 pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize> {
-    /// Size of the recursion's internal circuit list (one fixed-registry
-    /// evaluation each).
-    mask_challenges: usize,
-    /// The left child's shape.
-    left: crate::framework_hooks::HookLayout,
-    /// The right child's shape.
-    right: crate::framework_hooks::HookLayout,
     _marker: PhantomData<(C, R)>,
 }
 
-impl<C: Cycle, R, const HEADER_SIZE: usize> Stage<C, R, HEADER_SIZE> {
-    /// A stage instance for children of the given shapes, under a recursion
-    /// whose internal-circuit list is built for `mask_challenges` challenge
-    /// slots.
-    pub fn with_shapes(
-        mask_challenges: usize,
-        left: crate::framework_hooks::HookLayout,
-        right: crate::framework_hooks::HookLayout,
-    ) -> Self {
+impl<C: Cycle, R, const HEADER_SIZE: usize> Default for Stage<C, R, HEADER_SIZE> {
+    fn default() -> Self {
         Stage {
-            mask_challenges,
-            left,
-            right,
             _marker: PhantomData,
         }
     }
 }
 
-impl<C: Cycle, R, const HEADER_SIZE: usize> Default for Stage<C, R, HEADER_SIZE> {
-    fn default() -> Self {
-        Self::with_shapes(
-            crate::NUM_CHALLENGE_SLOTS,
-            crate::framework_hooks::HookLayout::padded(),
-            crate::framework_hooks::HookLayout::padded(),
-        )
-    }
-}
-
-/// One child's contribution to this stage's wire width: one rx evaluation
-/// per entry of its rx list (challenge stages at its own count) and 5
-/// scalars.
-pub fn child_num_values(child: crate::framework_hooks::HookLayout) -> usize {
-    RxIndex::num(child.challenge.calls) + 5
+/// One child's contribution to this stage's wire width: one rx evaluation per
+/// rx component, plus 5 scalars.
+pub fn child_num_values() -> usize {
+    RxIndex::NUM + 5
 }
 
 /// This stage's wire width; the value-level source of the typed
 /// [`values()`](staging::Stage::values). `num_internal_circuits` is the size
 /// of the recursion's internal circuit list (one fixed-registry evaluation
-/// each); the two children contribute independently, each at its own shape.
-pub fn num_values(
-    num_internal_circuits: usize,
-    left: crate::framework_hooks::HookLayout,
-    right: crate::framework_hooks::HookLayout,
-) -> usize {
+/// each).
+pub fn num_values(num_internal_circuits: usize) -> usize {
     // num_internal_circuits + registry_wxy (1) + per-child evaluations
-    num_internal_circuits + 1 + child_num_values(left) + child_num_values(right)
+    num_internal_circuits + 1 + 2 * child_num_values()
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField, R>
@@ -349,11 +315,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     type OutputKind = Kind![C::CircuitField; Output<'_, _>];
 
     fn values() -> usize {
-        num_values(
-            InternalCircuitIndex::NUM,
-            crate::framework_hooks::HookLayout::padded(),
-            crate::framework_hooks::HookLayout::padded(),
-        )
+        num_values(InternalCircuitIndex::NUM)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -365,25 +327,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
         Self: 'dr,
     {
         let allocator = &mut ();
-        let fixed_registry = alloc_fixed_registry(
-            dr,
-            allocator,
-            witness.as_ref().map(|w| &w.fixed_registry),
-            self.mask_challenges,
-        )?;
+        let fixed_registry =
+            alloc_fixed_registry(dr, allocator, witness.as_ref().map(|w| &w.fixed_registry))?;
         let registry_wxy = Element::alloc(dr, allocator, witness.as_ref().map(|w| w.registry_wxy))?;
-        let left = ChildEvaluations::alloc(
-            dr,
-            allocator,
-            witness.as_ref().map(|w| &w.left),
-            self.left.challenge.calls,
-        )?;
-        let right = ChildEvaluations::alloc(
-            dr,
-            allocator,
-            witness.as_ref().map(|w| &w.right),
-            self.right.challenge.calls,
-        )?;
+        let left = ChildEvaluations::alloc(dr, allocator, witness.as_ref().map(|w| &w.left))?;
+        let right = ChildEvaluations::alloc(dr, allocator, witness.as_ref().map(|w| &w.right))?;
         Ok(Output {
             fixed_registry,
             registry_wxy,

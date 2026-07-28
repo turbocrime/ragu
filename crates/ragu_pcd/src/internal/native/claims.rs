@@ -161,18 +161,10 @@ where
         processor.raw_claim(a, b);
     }
 
-    // App circuits (interleaved per proof). An application circuit is
-    // multi-stage — `r(X) = r'(X) + a(X) + b(X)` — so its claim sums the final
-    // trace with every challenge stage, exactly as `ComputeVCircuit` does with
-    // `Query` and `Eval`.
-    let mut app_stages: alloc::vec::Vec<_> = (0..crate::NUM_CHALLENGE_SLOTS)
-        .map(|slot| source.rx(Rx(RxIndex::ChallengeStage(slot as u32))))
-        .collect();
+    // App circuits (interleaved per proof). An application circuit has no
+    // stages, so its claim is its trace alone.
     for (app_id, rx) in source.app_circuits().zip(source.rx(Rx(Application))) {
-        let stages = app_stages
-            .iter_mut()
-            .map(|iter| iter.next().expect("one stage rx per proof"));
-        processor.circuit_claim(app_id, core::iter::once(rx).chain(stages));
+        processor.circuit_claim(app_id, core::iter::once(rx));
     }
 
     // Internal circuits and stages in canonical order.
@@ -271,12 +263,6 @@ where
                         .chain(source.rx(Rx(Hashes2)))
                         .chain(source.rx(Rx(OuterCollapse))),
                 )?;
-            }
-            ChallengeStage(slot) => {
-                processor.bonding_claim(id, source.rx(Rx(RxIndex::ChallengeStage(slot))))?;
-            }
-            ChallengeFinalStaged => {
-                processor.bonding_claim(id, source.rx(Rx(Application)))?;
             }
             EvalFinalStaged => {
                 processor.bonding_claim(id, source.rx(Rx(ComputeV)))?;

@@ -93,7 +93,7 @@ impl<C: CurveAffine, R: Rank> Circuit<C, R> {
 }
 
 impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
-    type Last = stages::challenge_bridge::Run<C, R>;
+    type Last = stages::claim_bridge::Run<C, R>;
     type Instance<'source> = ();
     type Witness<'source> = ();
     type Output = ();
@@ -115,8 +115,6 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         let num_points = crate::internal::nested::num_endoscaling_points(self.left, self.right);
         let claim_layout =
             crate::internal::nested::claim_run_layout::<C, R>(self.own, self.left, self.right);
-        let challenge_layout =
-            crate::internal::nested::challenge_run_layout::<C, R>(self.own, self.left, self.right);
 
         let dr = dr.skip_stage::<EndoscalarStage>()?;
         let (points_guard, dr) = dr.configure_stage_sized(
@@ -142,12 +140,6 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
             &claim_layout,
             claim_layout.skip_gates(0),
         )?;
-        let (challenge_guards, dr) = dr
-            .configure_induced_sized::<stages::challenge_bridge::Run<C, R>, _>(
-                stages::challenge_bridge::Slot::<C, R>::default(),
-                &challenge_layout,
-                challenge_layout.skip_gates(0),
-            )?;
         let dr = dr.finish();
 
         // Load stage gadgets. Witness values are never accessed — the circuit
@@ -166,10 +158,6 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         let f_stage = f_guard.unenforced(dr, w!())?;
         let eval = eval_guard.unenforced(dr, w!())?;
         let claim_bridges = claim_guards
-            .into_iter()
-            .map(|guard| Ok(guard.unenforced(dr, w!())?.host))
-            .collect::<Result<alloc::vec::Vec<_>>>()?;
-        let challenge_bridges = challenge_guards
             .into_iter()
             .map(|guard| Ok(guard.unenforced(dr, w!())?.host))
             .collect::<Result<alloc::vec::Vec<_>>>()?;
@@ -222,20 +210,6 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         );
         for (slot, bridge_host) in claim_bridges.iter().enumerate() {
             bridge_host.enforce_equal(dr, &eval.claims[slot])?;
-        }
-
-        // Each challenge bridge's wires are that slot's stage commitment — the
-        // same host point the eval bridge records and `_10_p` folds. This is
-        // what makes the nested point in the application instance the bridge
-        // image of the commitment actually accumulated, rather than a free
-        // witness.
-        assert_eq!(
-            challenge_bridges.len(),
-            eval.challenge_stages.len(),
-            "the challenge-bridge run did not yield one slot per challenge"
-        );
-        for (slot, bridge_host) in challenge_bridges.iter().enumerate() {
-            bridge_host.enforce_equal(dr, &eval.challenge_stages[slot])?;
         }
 
         Ok(WithAux::new((), D::unit()))

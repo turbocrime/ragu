@@ -6,11 +6,9 @@
 //! value that has to cross the curve boundary does so this way (see
 //! [`super::f`], whose rx's wires *are* `native_f`).
 //!
-//! [`claim_bridge`](super::claim_bridge) and
-//! [`challenge_bridge`](super::challenge_bridge) are both chains of this stage;
-//! they differ only in what the carried point commits to and where the chain
-//! attaches. Rather than duplicate the stage per family, [`Stage`] takes its
-//! parent as a type parameter and each family is a chain of type aliases.
+//! [`claim_bridge`](super::claim_bridge) is a run of this stage. [`Stage`]
+//! takes its parent as a type parameter so a family can attach wherever it
+//! needs to without the stage being duplicated per family.
 
 use core::marker::PhantomData;
 

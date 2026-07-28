@@ -53,7 +53,7 @@ pub const NUM_ENDOSCALING_POINTS: usize = num_endoscaling_points(
 /// Shared between [`num_endoscaling_points`] and the nested preamble's
 /// `num_points` — both walk the same per-child block.
 pub const fn child_endoscaling_points(child: crate::framework_hooks::HookLayout) -> usize {
-    crate::internal::native::RxIndex::num(child.challenge.calls) + 4 + child.poly_query.polys
+    crate::internal::native::RxIndex::NUM + 4 + child.poly_query.polys
 }
 
 /// [`NUM_ENDOSCALING_POINTS`] for children of the given shapes: the base
@@ -124,19 +124,6 @@ pub fn claim_run_layout<HC: ragu_arithmetic::CurveAffine, R: Rank>(
     )
 }
 
-/// The challenge-bridge run's layout, following the claim run: one two-wire
-/// slot per derived challenge.
-pub fn challenge_run_layout<HC: ragu_arithmetic::CurveAffine, R: Rank>(
-    own: crate::framework_hooks::HookLayout,
-    left: crate::framework_hooks::HookLayout,
-    right: crate::framework_hooks::HookLayout,
-) -> ragu_circuits::staging::InducedStages {
-    ragu_circuits::staging::InducedStages::anchored(
-        claim_run_layout::<HC, R>(own, left, right).final_skip_gates(),
-        alloc::vec![2; own.challenge.calls],
-    )
-}
-
 /// The nested internal-circuit index space for a variant registry.
 ///
 /// Layout (circuits before bondings, matching `RegistryBuilder::finalize()`):
@@ -204,7 +191,7 @@ impl NestedIndexSpace {
 
     /// One triple's bonding-block length.
     fn block_len(own: crate::framework_hooks::HookLayout) -> usize {
-        BLOCK_FIXED.len() + own.poly_query.polys + own.challenge.calls + 3
+        BLOCK_FIXED.len() + own.poly_query.polys + 3
     }
 
     /// Total nested internal circuits and bondings.
@@ -259,9 +246,7 @@ impl NestedIndexSpace {
             return CircuitIndex::new(start + pos);
         }
         if category == InternalCircuitIndex::Loading {
-            return CircuitIndex::new(
-                start + BLOCK_FIXED.len() + own.poly_query.polys + own.challenge.calls,
-            );
+            return CircuitIndex::new(start + BLOCK_FIXED.len() + own.poly_query.polys);
         }
         unreachable!("slot- and side-indexed categories have dedicated methods");
     }
@@ -276,20 +261,6 @@ impl NestedIndexSpace {
     ) -> CircuitIndex {
         assert!(slot < own.poly_query.polys);
         CircuitIndex::new(self.block_start(own, left, right) + BLOCK_FIXED.len() + slot)
-    }
-
-    /// Registry index of a challenge-bridge slot mask in a triple's block.
-    pub(crate) fn challenge_slot_index(
-        &self,
-        own: crate::framework_hooks::HookLayout,
-        left: crate::framework_hooks::HookLayout,
-        right: crate::framework_hooks::HookLayout,
-        slot: usize,
-    ) -> CircuitIndex {
-        assert!(slot < own.challenge.calls);
-        CircuitIndex::new(
-            self.block_start(own, left, right) + BLOCK_FIXED.len() + own.poly_query.polys + slot,
-        )
     }
 
     /// Registry index of a copying circuit that walks a child of the given
@@ -309,7 +280,6 @@ impl NestedIndexSpace {
             self.block_start(child, child_left, child_right)
                 + BLOCK_FIXED.len()
                 + child.poly_query.polys
-                + child.challenge.calls
                 + side_offset,
         )
     }
@@ -346,8 +316,6 @@ pub enum InternalCircuitIndex {
     BridgeEval,
     /// Per-claim bridge stage mask, indexed by poly-query claim slot.
     BridgeClaim(u32),
-    /// Per-challenge bridge stage mask, indexed by challenge slot.
-    BridgeChallenge(u32),
     /// Loading circuit over all nested stages.
     Loading,
     /// Copying circuit relating current preamble to a child proof's stages.
@@ -355,22 +323,20 @@ pub enum InternalCircuitIndex {
 }
 
 impl InternalCircuitIndex {
-    /// The number of internal circuits registered by [`register_all`] for an
-    /// application with `max_witnessed_polys` polynomial slots and
-    /// `num_challenges` challenge slots — the number of entries
-    /// [`all`](Self::all) yields.
+    /// The number of internal circuits registered by [`register_all`] for a
+    /// step of shape `own` fusing children of shapes `left` and `right` — the
+    /// number of entries [`all`](Self::all) yields.
     pub fn num(
         own: crate::framework_hooks::HookLayout,
         left: crate::framework_hooks::HookLayout,
         right: crate::framework_hooks::HookLayout,
     ) -> usize {
-        num_endoscaling_steps(left, right) + 14 + own.poly_query.polys + own.challenge.calls
+        num_endoscaling_steps(left, right) + 14 + own.poly_query.polys
     }
 
     /// All variants in canonical iteration order. The endoscaling steps are a
     /// function of the *children's* shapes (their points are what the current
-    /// step endoscales); the claim and challenge bridge slots are the current
-    /// step's own.
+    /// step endoscales); the claim bridge slots are the current step's own.
     ///
     /// This order must match the registry finalization concatenation order
     /// in [`RegistryBuilder::finalize()`](ragu_circuits::registry::RegistryBuilder::finalize)
@@ -404,7 +370,6 @@ impl InternalCircuitIndex {
             Self::BridgeEval,
         ]);
         all.extend((0..own.poly_query.polys).map(|i| Self::BridgeClaim(i as u32)));
-        all.extend((0..own.challenge.calls).map(|i| Self::BridgeChallenge(i as u32)));
         all.extend([
             Self::Loading,
             Self::Copying(Side::Left),
@@ -497,8 +462,6 @@ pub enum RxIndex {
     BridgeEval,
     /// Per-claim bridge rx polynomial, indexed by poly-query claim slot.
     BridgeClaim(u32),
-    /// Per-challenge bridge rx polynomial, indexed by challenge slot.
-    BridgeChallenge(u32),
     /// Child proof's `PointsStage` rx polynomial (per-side, for copying).
     ChildPointsStage(Side),
     /// Child proof's bridge rx polynomial (per-side, for copying),
@@ -516,7 +479,7 @@ impl RxIndex {
         left: crate::framework_hooks::HookLayout,
         right: crate::framework_hooks::HookLayout,
     ) -> usize {
-        num_endoscaling_steps(left, right) + 24 + own.poly_query.polys + own.challenge.calls
+        num_endoscaling_steps(left, right) + 24 + own.poly_query.polys
     }
 
     /// All variants in canonical order (circuits, then stages), for an
@@ -549,7 +512,6 @@ impl RxIndex {
             Self::BridgeEval,
         ]);
         all.extend((0..own.poly_query.polys).map(|i| Self::BridgeClaim(i as u32)));
-        all.extend((0..own.challenge.calls).map(|i| Self::BridgeChallenge(i as u32)));
         all.extend([
             Self::ChildPointsStage(Side::Left),
             Self::ChildPointsStage(Side::Right),
@@ -569,7 +531,6 @@ pub mod claims;
 
 pub mod stages {
     pub mod ab;
-    pub mod challenge_bridge;
     pub mod claim_bridge;
     pub mod eval;
     pub mod f;
@@ -609,7 +570,6 @@ pub fn register_all<'params, C: Cycle, R: Rank>(
     for (own, left, right) in space.triples() {
         let chain = chain_layout::<C::HostCurve, R>(own, left, right);
         let claim_layout = claim_run_layout::<C::HostCurve, R>(own, left, right);
-        let challenge_layout = challenge_run_layout::<C::HostCurve, R>(own, left, right);
 
         // The fixed block, in BLOCK_FIXED order: endoscalar, points, points
         // final, then the eight bridge masks in chain order.
@@ -622,9 +582,6 @@ pub fn register_all<'params, C: Cycle, R: Rank>(
 
         for slot in 0..own.poly_query.polys {
             registry = registry.register_bonding(claim_layout.mask::<C::ScalarField, R>(slot)?);
-        }
-        for slot in 0..own.challenge.calls {
-            registry = registry.register_bonding(challenge_layout.mask::<C::ScalarField, R>(slot)?);
         }
 
         let circuit = circuits::loading::Circuit::<C::HostCurve, R>::new(own, left, right);

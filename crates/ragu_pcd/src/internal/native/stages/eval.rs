@@ -72,7 +72,7 @@ impl<F: PrimeField> ChildEvaluationsWitness<F> {
     /// Create child evaluations witness from a proof evaluated at point u.
     pub fn from_proof<C: Cycle<CircuitField = F>, R: Rank>(proof: &Proof<C, R>, u: F) -> Self {
         ChildEvaluationsWitness {
-            rx: RxValues::from_fn(proof.application_challenges().len(), |id| proof[id].eval(u)),
+            rx: RxValues::from_fn(|id| proof[id].eval(u)),
             a_poly: proof[RxComponent::AbA].eval(u),
             b_poly: proof[RxComponent::AbB].eval(u),
             registry_xy_poly: proof.native_registry_xy_poly().eval(u),
@@ -157,8 +157,7 @@ pub struct ChildEvaluations<'dr, D: Driver<'dr>> {
 
 impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
     /// Allocate child evaluations from pre-computed witness values.
-    /// `child` is the child's shape: its claim slot count sizes `claims`, its
-    /// challenge count sizes the rx list.
+    /// `child` is the child's shape: its claim slot count sizes `claims`.
     pub fn alloc<A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
@@ -166,7 +165,7 @@ impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
         child: crate::framework_hooks::HookLayout,
     ) -> Result<Self> {
         let num_polys = child.poly_query.polys;
-        let rx = RxValues::try_from_fn(child.challenge.calls, |id| {
+        let rx = RxValues::try_from_fn(|id| {
             Element::alloc(dr, allocator, witness.as_ref().map(|w| *w.rx.get(id)))
         })?;
         Ok(ChildEvaluations {
@@ -210,10 +209,10 @@ pub struct Output<'dr, D: Driver<'dr>> {
 }
 
 /// One child's contribution to this stage's wire width: one evaluation per
-/// entry of its rx list (challenge stages at its own count), 4 scalars, and
-/// one evaluation per claim slot at its own count.
+/// entry of its rx list, 4 scalars, and one evaluation per claim slot at its
+/// own count.
 pub fn child_num_values(child: crate::framework_hooks::HookLayout) -> usize {
-    super::super::RxIndex::num(child.challenge.calls) + 4 + child.poly_query.polys
+    super::super::RxIndex::NUM + 4 + child.poly_query.polys
 }
 
 /// This stage's wire width for children of the given shapes; the value-level

@@ -19,7 +19,7 @@ use crate::slot_vec::SlotVec;
 /// slots, not a child's); the value-level source of the typed
 /// [`values()`](ragu_circuits::staging::Stage::values).
 pub const fn num_values(own: crate::framework_hooks::HookLayout) -> usize {
-    2 * (1 + own.poly_query.polys + own.challenge.calls)
+    2 * (1 + own.poly_query.polys)
 }
 
 /// Witness data for this bridge stage.
@@ -33,10 +33,6 @@ pub struct Witness<C: CurveAffine> {
     /// Must contain exactly the stage's poly-slot count; the stage body
     /// indexes it up to that count.
     pub claims: Vec<C>,
-    /// The current step's challenge-stage host commitments, in slot order,
-    /// stashed for the same reason as the claims. Length disciplined like
-    /// `claims`, at the stage's challenge-slot count.
-    pub challenge_stages: Vec<C>,
 }
 
 /// Prover-internal output gadget for this bridge stage.
@@ -50,14 +46,10 @@ pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     /// The current step's poly-query claim host commitments, in slot order.
     #[ragu(gadget)]
     pub claims: SlotVec<Point<'dr, D, C>>,
-    /// The current step's challenge-stage host commitments, in slot order.
-    #[ragu(gadget)]
-    pub challenge_stages: SlotVec<Point<'dr, D, C>>,
 }
 
 pub struct Stage<C: CurveAffine, R> {
-    /// The current step's own shape: its poly and challenge counts size this
-    /// stage's slots.
+    /// The current step's own shape: its poly count sizes this stage's slots.
     own: crate::framework_hooks::HookLayout,
     _marker: PhantomData<(C, R)>,
 }
@@ -99,9 +91,6 @@ impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stag
             native_eval: Point::alloc(dr, witness.as_ref().map(|w| w.native_eval))?,
             claims: (0..self.own.poly_query.polys)
                 .map(|i| Point::alloc(dr, witness.as_ref().map(|w| w.claims[i])))
-                .collect::<Result<_>>()?,
-            challenge_stages: (0..self.own.challenge.calls)
-                .map(|i| Point::alloc(dr, witness.as_ref().map(|w| w.challenge_stages[i])))
                 .collect::<Result<_>>()?,
         })
     }

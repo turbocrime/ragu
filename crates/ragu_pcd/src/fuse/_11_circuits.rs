@@ -133,7 +133,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         let (compute_v_trace, unified) =
             native::circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new(
-                crate::NUM_CHALLENGE_SLOTS,
                 crate::framework_hooks::HookLayout::padded(),
                 crate::framework_hooks::HookLayout::padded(),
             )

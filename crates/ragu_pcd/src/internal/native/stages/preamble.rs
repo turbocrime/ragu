@@ -54,14 +54,14 @@ pub struct PolyInstance<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     pub com: Point<'dr, D, C::NestedCurve>,
 }
 
-/// A single derived-challenge pair witnessed from a child proof: the bridged
-/// commitment to that slot's challenge stage, and the challenge hashed from it.
-/// The wire layout (point.x, point.y, challenge) matches the challenge-slot
-/// region of the application circuit's instance.
+/// A single derived challenge witnessed from a child proof: the points it was
+/// hashed from, and the challenge itself. The wire layout (every point's
+/// coordinates, then the challenge) matches the challenge-slot region of the
+/// application circuit's instance.
 #[derive(Gadget, Consistent)]
 pub struct ChallengeInstance<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     #[ragu(gadget)]
-    pub point: Point<'dr, D, C::NestedCurve>,
+    pub points: crate::slot_vec::SlotVec<Point<'dr, D, C::NestedCurve>>,
     #[ragu(gadget)]
     pub challenge: Element<'dr, D>,
 }
@@ -205,7 +205,9 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
             claim.y.write(dr, &mut ky)?;
         }
         for pair in self.challenges.iter() {
-            pair.point.write(dr, &mut ky)?;
+            for point in pair.points.iter() {
+                point.write(dr, &mut ky)?;
+            }
             pair.challenge.write(dr, &mut ky)?;
         }
         ky.finish_ky(dr)
@@ -334,10 +336,16 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                 (0..num_challenges)
                     .map(|i| {
                         Ok(ChallengeInstance {
-                            point: Point::alloc(
-                                dr,
-                                proof.as_ref().map(|p| p.application_challenges()[i].point),
-                            )?,
+                            points: (0..crate::CHALLENGE_POINTS_PER_CALL)
+                                .map(|j| {
+                                    Point::alloc(
+                                        dr,
+                                        proof
+                                            .as_ref()
+                                            .map(|p| p.application_challenges()[i].points[j]),
+                                    )
+                                })
+                                .collect::<Result<_>>()?,
                             challenge: Element::alloc(
                                 dr,
                                 allocator,
@@ -429,12 +437,13 @@ pub fn num_values(
 /// instance wires.
 pub fn child_num_values(header_size: usize, child: crate::framework_hooks::HookLayout) -> usize {
     // 3 headers * HEADER_SIZE + polynomial slots (2 wires each)
-    //   + query slots (3 wires each) + challenge slots (3 wires each)
+    //   + query slots (3 wires each)
+    //   + challenge slots (2 wires per input point, plus the challenge)
     //   + 1 circuit_id + unified instance wires
     3 * header_size
         + 2 * child.poly_query.polys
         + 3 * child.poly_query.claims
-        + 3 * child.challenge.calls
+        + (2 * crate::CHALLENGE_POINTS_PER_CALL + 1) * child.challenge.calls
         + 1
         + unified::NUM_WIRES
 }

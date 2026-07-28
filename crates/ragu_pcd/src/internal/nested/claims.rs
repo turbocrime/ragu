@@ -130,9 +130,6 @@ where
             BridgeClaim(slot) => {
                 processor.bonding_claim(id, source.rx(RxIndex::BridgeClaim(slot)))?;
             }
-            BridgeChallenge(slot) => {
-                processor.bonding_claim(id, source.rx(RxIndex::BridgeChallenge(slot)))?;
-            }
             BridgePreamble => {
                 processor.bonding_claim(id, source.rx(RxIndex::BridgePreamble))?;
             }
