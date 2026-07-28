@@ -16,6 +16,7 @@
 //! This stage contains the committed claims of all evaluations (other than
 //! $f(X)$) at $u$ for all the queried polynomials.
 
+use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use ragu_arithmetic::{Cycle, ff::PrimeField};
@@ -26,16 +27,12 @@ use ragu_core::{
     gadgets::{Bound, Gadget, Kind},
     maybe::Maybe,
 };
-use ragu_primitives::{
-    Element,
-    allocator::Allocator,
-    io::Write,
-    vec::{CollectFixed, ConstLen, FixedVec},
-};
+use ragu_primitives::{Element, allocator::Allocator, io::Write};
 
 use crate::{
     NUM_POLY_SLOTS, Proof,
     internal::native::{RxComponent, RxValues},
+    slot_vec::SlotVec,
 };
 
 /// Polynomial evaluations at $u$ (from the parent fuse operation) for a child
@@ -65,8 +62,10 @@ pub struct ChildEvaluationsWitness<F> {
     /// The child proof's poly-query claim polynomials, each evaluated at $u$,
     /// in slot order. These feed the parent's recursive enforcement of the
     /// child's claims: the quotient $(p_i(u) - y_i)/(u - x_i)$ enters $f(u)$
-    /// and each $p_i(u)$ enters the $v$ Horner accumulation.
-    pub claims: [F; NUM_POLY_SLOTS],
+    /// and each $p_i(u)$ enters the $v$ Horner accumulation. Must contain
+    /// exactly the stage's poly-slot count; the stage body indexes it up to
+    /// that count.
+    pub claims: Vec<F>,
 }
 
 impl<F: PrimeField> ChildEvaluationsWitness<F> {
@@ -78,7 +77,9 @@ impl<F: PrimeField> ChildEvaluationsWitness<F> {
             b_poly: proof[RxComponent::AbB].eval(u),
             registry_xy_poly: proof.native_registry_xy_poly().eval(u),
             p_poly: proof.native_p_poly().eval(u),
-            claims: core::array::from_fn(|i| proof.claim_polys[i].eval(u)),
+            claims: (0..NUM_POLY_SLOTS)
+                .map(|i| proof.claim_polys[i].eval(u))
+                .collect(),
         }
     }
 }
@@ -153,15 +154,17 @@ pub struct ChildEvaluations<'dr, D: Driver<'dr>> {
     /// last so the [`Write`] order (and hence the $v$ Horner weighting)
     /// matches the `_10_p` accumulation order.
     #[ragu(gadget)]
-    pub claims: FixedVec<Element<'dr, D>, ConstLen<NUM_POLY_SLOTS>>,
+    pub claims: SlotVec<Element<'dr, D>>,
 }
 
 impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
     /// Allocate child evaluations from pre-computed witness values.
+    /// `num_polys` is the child's poly-query claim slot count.
     pub fn alloc<A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, &ChildEvaluationsWitness<D::F>>,
+        num_polys: usize,
     ) -> Result<Self> {
         let rx = RxValues::try_from_fn(|id| {
             Element::alloc(dr, allocator, witness.as_ref().map(|w| *w.rx.get(id)))
@@ -176,9 +179,9 @@ impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
                 witness.as_ref().map(|w| w.registry_xy_poly),
             )?,
             p_poly: Element::alloc(dr, allocator, witness.as_ref().map(|w| w.p_poly))?,
-            claims: (0..NUM_POLY_SLOTS)
+            claims: (0..num_polys)
                 .map(|i| Element::alloc(dr, allocator, witness.as_ref().map(|w| w.claims[i])))
-                .try_collect_fixed()?,
+                .collect::<Result<_>>()?,
         })
     }
 }
@@ -207,9 +210,19 @@ pub struct Output<'dr, D: Driver<'dr>> {
 }
 
 /// The eval stage of the fuse witness.
-#[derive(Default)]
 pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize> {
+    /// Number of poly-query claim slots each child carries.
+    num_polys: usize,
     _marker: PhantomData<(C, R)>,
+}
+
+impl<C: Cycle, R, const HEADER_SIZE: usize> Default for Stage<C, R, HEADER_SIZE> {
+    fn default() -> Self {
+        Stage {
+            num_polys: NUM_POLY_SLOTS,
+            _marker: PhantomData,
+        }
+    }
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField, R>
@@ -234,8 +247,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
         Self: 'dr,
     {
         let allocator = &mut ();
-        let left = ChildEvaluations::alloc(dr, allocator, witness.as_ref().map(|w| &w.left))?;
-        let right = ChildEvaluations::alloc(dr, allocator, witness.as_ref().map(|w| &w.right))?;
+        let left = ChildEvaluations::alloc(
+            dr,
+            allocator,
+            witness.as_ref().map(|w| &w.left),
+            self.num_polys,
+        )?;
+        let right = ChildEvaluations::alloc(
+            dr,
+            allocator,
+            witness.as_ref().map(|w| &w.right),
+            self.num_polys,
+        )?;
         let registry_wx0 = Element::alloc(
             dr,
             allocator,
