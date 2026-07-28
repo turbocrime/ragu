@@ -1,12 +1,11 @@
-use alloc::{boxed::Box, vec::Vec};
+use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{
     WithAux,
     polynomials::Rank,
-    registry::RegistryBuilder,
-    staging::{MultiStage, MultiStageCircuit, StageBuilder},
+    staging::{MultiStageCircuit, StageBuilder},
 };
 use ragu_core::{
     Result,
@@ -209,55 +208,6 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
     #[cfg(test)]
     pub fn challenge_calls(&self) -> usize {
         self.layout.challenge.calls
-    }
-
-    /// The step's discovered hook layout — its plan.
-    pub(crate) fn layout(&self) -> HookLayout {
-        self.layout
-    }
-}
-
-/// An application step adapter held between
-/// [`register`](crate::ApplicationBuilder::register) and
-/// [`finalize`](crate::ApplicationBuilder::finalize).
-///
-/// Construction — including the hook-discovery dry run — happens at
-/// `register`, but handing a circuit to the registry *measures* it: the
-/// registry synthesizes the circuit and freezes its shape on the spot. A step
-/// circuit's padded shape depends on the maximum slot counts over every
-/// registered step, a value that is settled only once registration closes. So
-/// the builder holds each adapter behind this trait and hands them all over in
-/// `finalize`, after the last step has contributed to the maximum.
-///
-/// One method, because [`Circuit`](ragu_circuits::Circuit) is not object-safe
-/// and the builder needs to hold adapters for differing `Step` types in one
-/// collection.
-pub(crate) trait PendingStep<'params, C: Cycle, R: Rank> {
-    /// The held step's discovered hook layout — its plan, available before
-    /// hand-over so `finalize` can settle the application's shape set first.
-    fn layout(&self) -> HookLayout;
-
-    /// Hands the adapter to the registry, measuring its circuit now.
-    fn register(
-        self: Box<Self>,
-        capacity: HookLayout,
-        registry: RegistryBuilder<'params, C::CircuitField, R>,
-    ) -> Result<RegistryBuilder<'params, C::CircuitField, R>>;
-}
-
-impl<'params, C: Cycle, S: Step<C> + 'params, R: Rank, const HEADER_SIZE: usize>
-    PendingStep<'params, C, R> for Adapter<'params, C, S, R, HEADER_SIZE>
-{
-    fn layout(&self) -> HookLayout {
-        Adapter::layout(self)
-    }
-
-    fn register(
-        self: Box<Self>,
-        capacity: HookLayout,
-        registry: RegistryBuilder<'params, C::CircuitField, R>,
-    ) -> Result<RegistryBuilder<'params, C::CircuitField, R>> {
-        registry.register_circuit(MultiStage::new((*self).with_capacity(capacity)?))
     }
 }
 

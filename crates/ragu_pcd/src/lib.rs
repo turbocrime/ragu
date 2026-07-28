@@ -10,27 +10,36 @@
 //! - [`header::Header`] — the trait that defines succinct state representations.
 //! - [`Proof`] / [`Pcd`] — the proof and proof-carrying-data structures.
 //!
-//! # Slot capacities are discovered, not declared
+//! # Slot capacities are declared per application
 //!
-//! How many polynomials a step may witness, how many openings it may enforce
-//! and how many challenges it may derive are **not** framework constants.
-//! [`finalize`](ApplicationBuilder::finalize) discovers each registered step's
-//! counts and takes their pointwise maximum; that maximum is the application's
-//! capacity, and every application circuit exposes exactly it.
+//! How many polynomials a step may witness, how many openings it may enforce,
+//! how many challenges it may derive and how wide each challenge is are **not**
+//! framework constants — consumers' needs vary too widely for that. They are
+//! parameters of [`ApplicationBuilder`], so a step's cost falls on the
+//! application that registers it rather than on every application the framework
+//! will ever host.
 //!
-//! The capacity is uniform within one application because the internal
-//! circuits read a child's instance as a fixed-width record and any step's
-//! proof may be any fuse's child — but it is *per application*, so a step's
-//! cost falls on the application that registers it rather than on every
-//! application the framework will ever host. An application whose steps open
-//! two polynomials pays for two.
+//! They are declared rather than folded from the registered steps because
+//! handing a circuit to the registry *measures* it: the registry synthesizes the
+//! circuit and freezes its shape. A shape derived from a maximum over steps is
+//! not settled until the last one arrives, which is what once forced hand-over
+//! to wait for [`finalize`](ApplicationBuilder::finalize). Declared, an
+//! application's shape is known before the first step registers, so
+//! [`register`](ApplicationBuilder::register) hands each circuit over on the
+//! spot.
 //!
-//! What the capacity trades against is [`HEADER_SIZE`]: a claim slot adds
+//! A capacity is uniform within one application because the internal circuits
+//! read a child's instance as a fixed-width record and any step's proof may be
+//! any fuse's child. Steps that use fewer slots than declared are padded up to
+//! it, at a cost that does not grow with the capacity.
+//!
+//! What the capacities trade against is [`HEADER_SIZE`]: a claim slot adds
 //! three elements to the child's $k(Y)$ and a header element adds one, both
 //! absorbed by `outer_collapse` at roughly the same per-element rate. There is
 //! no capacity arithmetic anywhere — an application is simply built, and if a
 //! combination does not fit, `finalize` returns
-//! [`GateBoundExceeded`](ragu_core::Error::GateBoundExceeded).
+//! [`GateBoundExceeded`](ragu_core::Error::GateBoundExceeded) and the numbers
+//! come down.
 //!
 //! [`HEADER_SIZE`]: Application
 
@@ -60,7 +69,7 @@ mod slot_vec;
 pub mod step;
 mod verify;
 
-use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
+use alloc::collections::BTreeMap;
 use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 
 use header::Header;
@@ -74,10 +83,7 @@ use ragu_circuits::{
 };
 use ragu_core::{Error, Result};
 
-use step::{
-    Step,
-    internal::adapter::{Adapter, PendingStep},
-};
+use step::{Step, internal::adapter::Adapter};
 
 /// Domain separation tag for Ragu PCD protocol.
 // FIXME: choose a permanent domain separation tag before release.
@@ -140,15 +146,6 @@ pub struct ApplicationBuilder<
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
     num_application_steps: usize,
-    /// Application step adapters constructed at [`register`](Self::register)
-    /// but not yet handed to the registry.
-    ///
-    /// Hand-over measures a circuit — the registry synthesizes it and freezes
-    /// its shape — and a step circuit's padded shape depends on the maximum
-    /// slot counts over every registered step. That maximum is settled only
-    /// when registration closes, so hand-over waits for
-    /// [`finalize`](Self::finalize).
-    held_steps: Vec<Box<dyn PendingStep<'params, C, R> + 'params>>,
     header_map: BTreeMap<header::Suffix, TypeId>,
     /// Test-only: see [`ApplicationBuilder::skip_claim_precheck_for_testing`].
     #[cfg(feature = "unstable-fuzzing")]
@@ -190,7 +187,6 @@ impl<
             native_registry: RegistryBuilder::new(),
             nested_registry: RegistryBuilder::new(),
             num_application_steps: 0,
-            held_steps: Vec::new(),
             header_map: BTreeMap::new(),
             #[cfg(feature = "unstable-fuzzing")]
             skip_claim_precheck: false,
@@ -206,6 +202,26 @@ impl<
     /// number of points.
     fn challenge_width() -> usize {
         CHALLENGE_WIDTH
+    }
+
+    /// The application's slot capacity, straight from its declared parameters.
+    ///
+    /// Every application circuit exposes exactly these slots. Nothing is folded
+    /// from the registered steps, so this is available before the first one
+    /// arrives — which is what lets [`register`](Self::register) hand a circuit
+    /// to the registry immediately instead of holding it until
+    /// [`finalize`](Self::finalize).
+    fn capacity() -> framework_hooks::HookLayout {
+        framework_hooks::HookLayout {
+            challenge: framework_hooks::ChallengeLayout {
+                calls: CHALLENGES,
+                width: CHALLENGE_WIDTH,
+            },
+            poly_query: framework_hooks::PolyQueryLayout {
+                polys: POLYS,
+                claims: CLAIMS,
+            },
+        }
     }
 
     /// Register a new application-defined [`Step`] in this context. The
@@ -224,18 +240,20 @@ impl<
         self.prevent_duplicate_suffixes::<S::Left>()?;
         self.prevent_duplicate_suffixes::<S::Right>()?;
 
-        // Building the adapter discovers the step's hook-call layout — its
-        // `derive_challenge` and `enforce_poly_query` counts — by dry-running
-        // the witness body. That dry run is structure-only, so it needs no
-        // cycle parameters, which is what lets adapter construction stay eager
-        // here while `finalize` remains where the parameters arrive.
+        // Building the adapter dry-runs the witness body to discover the step's
+        // hook-call counts. That dry run is structure-only, so it needs no cycle
+        // parameters — which is what lets registration happen here, before
+        // `finalize` supplies them.
         //
-        // The adapter is held rather than registered: hand-over to the
-        // registry would freeze the circuit's shape now, and its shape is not
-        // knowable until every step has registered (see
-        // [`PendingStep`](step::internal::adapter::PendingStep)).
-        let adapter = Adapter::<C, S, R, HEADER_SIZE>::new(step, None, Self::challenge_width())?;
-        self.held_steps.push(Box::new(adapter));
+        // Hand-over is immediate: it freezes the circuit's shape, and the shape
+        // is settled, because every term of the instance comes from a declared
+        // parameter rather than from a maximum over steps still to arrive.
+        // `with_capacity` rejects a step that needs more than was declared,
+        // naming both numbers, at the moment that step registers.
+        self.native_registry = self.native_registry.register_circuit(MultiStage::new(
+            Adapter::<C, S, R, HEADER_SIZE>::new(step, None, Self::challenge_width())?
+                .with_capacity(Self::capacity())?,
+        ))?;
         self.num_application_steps += 1;
 
         Ok(self)
@@ -290,39 +308,12 @@ impl<
         // steps open two polynomials pays for two, and the cost of a heavy step
         // falls on the application that registers it rather than on the
         // framework. The challenge input width is the exception, below.
-        let mut capacity = [rerandomize.layout(), trivial.layout()]
-            .into_iter()
-            .chain(self.held_steps.iter().map(|held| held.layout()))
-            .reduce(framework_hooks::HookLayout::max_with)
-            .expect("the internal steps are always registered");
-
-        // Two axes are *declared*, not discovered, because they are budgets the
-        // application chooses to spend rather than facts about any step's body:
-        // the challenge input width, and the polynomial slot count. Declaring
-        // them means every application circuit is built for them whether or not
-        // a given step uses them — which is what "cost per step is constant"
-        // asks for.
-        //
-        // The fold above still runs, and `Adapter::with_capacity` still checks
-        // each step against the result, so a step needing more polynomials than
-        // the application declared is rejected with both numbers in hand.
-        capacity.challenge.width = Self::challenge_width();
-        capacity.challenge.calls = CHALLENGES;
-        capacity.poly_query.polys = POLYS;
-        capacity.poly_query.claims = CLAIMS;
+        let capacity = Self::capacity();
 
         let (total_circuits, log2_circuits) = internal::native::total_circuit_counts(
             self.num_application_steps,
             internal::native::InternalCircuitIndex::NUM,
         );
-
-        // The held application step adapters can be handed to the registry:
-        // their circuits are measured now, with every step known. Registry
-        // indexing is by category, not hand-over order, so registering them
-        // here rather than in `register` changes nothing downstream.
-        for held in self.held_steps.drain(..) {
-            self.native_registry = held.register(capacity, self.native_registry)?;
-        }
 
         // Build the native registry:
         // 1. Application circuits (registered just above)

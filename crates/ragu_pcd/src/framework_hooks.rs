@@ -406,30 +406,6 @@ pub struct PolyQueryLayout {
     pub claims: usize,
 }
 
-impl HookLayout {
-    /// The pointwise maximum of two layouts.
-    ///
-    /// How an application's slot capacity is settled: fold this over every
-    /// registered step and the result is the smallest shape that fits them all.
-    /// Every count is maximised independently, so an application that opens one
-    /// polynomial at many points gets one polynomial slot and many claim slots
-    /// rather than the larger of the two in both.
-    pub fn max_with(self, other: Self) -> Self {
-        Self {
-            challenge: ChallengeLayout {
-                calls: self.challenge.calls.max(other.challenge.calls),
-                // Declared, so identical across an application's layouts; the
-                // max is here so folding stays a pointwise operation.
-                width: self.challenge.width.max(other.challenge.width),
-            },
-            poly_query: PolyQueryLayout {
-                polys: self.poly_query.polys.max(other.poly_query.polys),
-                claims: self.poly_query.claims.max(other.poly_query.claims),
-            },
-        }
-    }
-}
-
 /// The proof's two blind sources, as the step circuit's witness carries them.
 ///
 /// Separate from the cycle parameters on purpose. Both are absent during
