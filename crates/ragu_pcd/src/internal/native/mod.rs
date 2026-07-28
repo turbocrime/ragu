@@ -1,5 +1,7 @@
 //! Native curve circuits for recursive verification.
 
+use alloc::vec::Vec;
+
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{
     polynomials::Rank,
@@ -153,8 +155,9 @@ pub struct InternalCircuitValues<T> {
     pub inner_error_final_staged: T,
     pub outer_error_final_staged: T,
     pub eval_final_staged: T,
-    /// One per challenge slot, in slot order.
-    pub challenge_stages: [T; crate::NUM_CHALLENGE_SLOTS],
+    /// One per challenge slot, in slot order. Length is the challenge-slot
+    /// count the construction closure was driven with.
+    pub challenge_stages: Vec<T>,
     pub challenge_final_staged: T,
 }
 
@@ -215,16 +218,9 @@ impl<T> InternalCircuitValues<T> {
             inner_error_final_staged: f(InnerErrorFinalStaged)?,
             outer_error_final_staged: f(OuterErrorFinalStaged)?,
             eval_final_staged: f(EvalFinalStaged)?,
-            challenge_stages: {
-                let mut slots = alloc::vec::Vec::with_capacity(crate::NUM_CHALLENGE_SLOTS);
-                for slot in 0..crate::NUM_CHALLENGE_SLOTS {
-                    slots.push(f(ChallengeStage(slot as u32))?);
-                }
-                match <[T; crate::NUM_CHALLENGE_SLOTS]>::try_from(slots) {
-                    Ok(slots) => slots,
-                    Err(_) => unreachable!("pushed exactly NUM_CHALLENGE_SLOTS values"),
-                }
-            },
+            challenge_stages: (0..crate::NUM_CHALLENGE_SLOTS)
+                .map(|slot| f(ChallengeStage(slot as u32)))
+                .collect::<core::result::Result<_, E>>()?,
             challenge_final_staged: f(ChallengeFinalStaged)?,
         })
     }
@@ -315,8 +311,9 @@ pub struct RxValues<T> {
     pub outer_error: T,
     pub query: T,
     pub eval: T,
-    /// One per challenge slot, in slot order.
-    pub challenge_stages: [T; crate::NUM_CHALLENGE_SLOTS],
+    /// One per challenge slot, in slot order. Length is the challenge-slot
+    /// count the construction closure was driven with.
+    pub challenge_stages: Vec<T>,
 }
 
 impl<T> RxValues<T> {
@@ -368,16 +365,9 @@ impl<T> RxValues<T> {
             outer_error: f(OuterError)?,
             query: f(Query)?,
             eval: f(Eval)?,
-            challenge_stages: {
-                let mut slots = alloc::vec::Vec::with_capacity(crate::NUM_CHALLENGE_SLOTS);
-                for slot in 0..crate::NUM_CHALLENGE_SLOTS {
-                    slots.push(f(ChallengeStage(slot as u32))?);
-                }
-                match <[T; crate::NUM_CHALLENGE_SLOTS]>::try_from(slots) {
-                    Ok(slots) => slots,
-                    Err(_) => unreachable!("pushed exactly NUM_CHALLENGE_SLOTS values"),
-                }
-            },
+            challenge_stages: (0..crate::NUM_CHALLENGE_SLOTS)
+                .map(|slot| f(ChallengeStage(slot as u32)))
+                .collect::<core::result::Result<_, E>>()?,
         })
     }
 }
