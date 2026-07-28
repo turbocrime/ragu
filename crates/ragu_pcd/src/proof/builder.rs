@@ -618,9 +618,10 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     );
 
     /// The challenge-stage host commitments, for the eval bridge stage witness.
-    fn challenge_stage_commitments(&self) -> [C::HostCurve; crate::NUM_CHALLENGE_SLOTS] {
+    fn challenge_stage_commitments(&self) -> Vec<C::HostCurve> {
         self.challenge_stage_commitments
             .expect("challenge_stage_commitments not set before deriving the eval bridge")
+            .to_vec()
     }
 
     /// Derives the bridge stage rx for challenge slot `slot`.
@@ -675,9 +676,10 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
 
     /// The claim host commitments, for the eval bridge stage witness. Requires
     /// `set_application_claims` to have been called.
-    fn claim_host_commitments(&self) -> [C::HostCurve; crate::NUM_POLY_SLOTS] {
+    fn claim_host_commitments(&self) -> Vec<C::HostCurve> {
         self.claim_host_commitments
             .expect("claim_host_commitments not set before deriving the eval bridge")
+            .to_vec()
     }
 
     setter!(

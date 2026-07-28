@@ -32,6 +32,7 @@ pub mod header;
 mod internal;
 pub mod poly_commitment;
 mod proof;
+mod slot_vec;
 pub mod step;
 mod verify;
 

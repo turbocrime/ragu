@@ -1,5 +1,6 @@
 //! Eval stage for nested fuse operations.
 
+use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use ragu_arithmetic::CurveAffine;
@@ -10,13 +11,9 @@ use ragu_core::{
     gadgets::{Bound, Gadget, Kind},
     maybe::Maybe,
 };
-use ragu_primitives::{
-    Point,
-    io::Write,
-    vec::{CollectFixed, ConstLen, FixedVec},
-};
+use ragu_primitives::{Point, io::Write};
 
-use crate::{NUM_CHALLENGE_SLOTS, NUM_POLY_SLOTS};
+use crate::{NUM_CHALLENGE_SLOTS, NUM_POLY_SLOTS, slot_vec::SlotVec};
 
 /// Number of curve points in this stage.
 const NUM: usize = 1 + NUM_POLY_SLOTS + NUM_CHALLENGE_SLOTS;
@@ -28,10 +25,14 @@ pub struct Witness<C: CurveAffine> {
     /// Stashed here — in a transcript-bound bridge stage — so the *parent's*
     /// copying circuit can check its preamble's stashed claim commitments
     /// against this proof's own record of them.
-    pub claims: [C; NUM_POLY_SLOTS],
+    ///
+    /// Must contain exactly the stage's poly-slot count; the stage body
+    /// indexes it up to that count.
+    pub claims: Vec<C>,
     /// The current step's challenge-stage host commitments, in slot order,
-    /// stashed for the same reason as the claims.
-    pub challenge_stages: [C; NUM_CHALLENGE_SLOTS],
+    /// stashed for the same reason as the claims. Length disciplined like
+    /// `claims`, at the stage's challenge-slot count.
+    pub challenge_stages: Vec<C>,
 }
 
 /// Prover-internal output gadget for this bridge stage.
@@ -44,15 +45,28 @@ pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     pub native_eval: Point<'dr, D, C>,
     /// The current step's poly-query claim host commitments, in slot order.
     #[ragu(gadget)]
-    pub claims: FixedVec<Point<'dr, D, C>, ConstLen<NUM_POLY_SLOTS>>,
+    pub claims: SlotVec<Point<'dr, D, C>>,
     /// The current step's challenge-stage host commitments, in slot order.
     #[ragu(gadget)]
-    pub challenge_stages: FixedVec<Point<'dr, D, C>, ConstLen<NUM_CHALLENGE_SLOTS>>,
+    pub challenge_stages: SlotVec<Point<'dr, D, C>>,
 }
 
-#[derive(Default)]
 pub struct Stage<C: CurveAffine, R> {
+    /// Number of poly-query claim slots this stage instance carries.
+    num_polys: usize,
+    /// Number of challenge-stage slots this stage instance carries.
+    num_challenges: usize,
     _marker: PhantomData<(C, R)>,
+}
+
+impl<C: CurveAffine, R> Default for Stage<C, R> {
+    fn default() -> Self {
+        Stage {
+            num_polys: NUM_POLY_SLOTS,
+            num_challenges: NUM_CHALLENGE_SLOTS,
+            _marker: PhantomData,
+        }
+    }
 }
 
 impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R> {
@@ -74,12 +88,12 @@ impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stag
     {
         Ok(Output {
             native_eval: Point::alloc(dr, witness.as_ref().map(|w| w.native_eval))?,
-            claims: (0..NUM_POLY_SLOTS)
+            claims: (0..self.num_polys)
                 .map(|i| Point::alloc(dr, witness.as_ref().map(|w| w.claims[i])))
-                .try_collect_fixed()?,
-            challenge_stages: (0..NUM_CHALLENGE_SLOTS)
+                .collect::<Result<_>>()?,
+            challenge_stages: (0..self.num_challenges)
                 .map(|i| Point::alloc(dr, witness.as_ref().map(|w| w.challenge_stages[i])))
-                .try_collect_fixed()?,
+                .collect::<Result<_>>()?,
         })
     }
 }
