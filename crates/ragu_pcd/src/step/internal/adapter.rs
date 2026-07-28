@@ -158,6 +158,11 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
     pub fn challenge_calls(&self) -> usize {
         self.layout.challenge.calls
     }
+
+    /// The step's discovered hook layout — its plan.
+    pub(crate) fn layout(&self) -> HookLayout {
+        self.layout
+    }
 }
 
 /// An application step adapter held between
@@ -176,6 +181,10 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
 /// and the builder needs to hold adapters for differing `Step` types in one
 /// collection.
 pub(crate) trait PendingStep<'params, C: Cycle, R: Rank> {
+    /// The held step's discovered hook layout — its plan, available before
+    /// hand-over so `finalize` can settle the application's shape set first.
+    fn layout(&self) -> HookLayout;
+
     /// Hands the adapter to the registry, measuring its circuit now.
     fn register(
         self: Box<Self>,
@@ -186,6 +195,10 @@ pub(crate) trait PendingStep<'params, C: Cycle, R: Rank> {
 impl<'params, C: Cycle, S: Step<C> + 'params, R: Rank, const HEADER_SIZE: usize>
     PendingStep<'params, C, R> for Adapter<'params, C, S, R, HEADER_SIZE>
 {
+    fn layout(&self) -> HookLayout {
+        Adapter::layout(self)
+    }
+
     fn register(
         self: Box<Self>,
         registry: RegistryBuilder<'params, C::CircuitField, R>,

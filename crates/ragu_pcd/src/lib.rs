@@ -300,11 +300,28 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         mut self,
         params: &'params C::Params,
     ) -> Result<Application<'params, C, R, HEADER_SIZE>> {
-        // Registration is closed, so the held application step adapters can be
-        // handed to the registry: their circuits are measured now, with every
-        // step known. Registry indexing is by category, not hand-over order,
-        // so registering them here rather than in `register` changes nothing
-        // downstream.
+        // Registration is closed, so the shape set is settled: collect every
+        // step's discovered plan before hand-over freezes the circuits. The
+        // internal steps are constructed here too (their discovery dry run is
+        // structure-only), so their plans join the table in circuit-index
+        // order: internal steps first, then application steps.
+        let rerandomize = Adapter::<C, _, R, HEADER_SIZE>::new(
+            step::internal::rerandomize::Rerandomize::<()>::new(),
+            Some(params),
+        )?;
+        let trivial = Adapter::<C, _, R, HEADER_SIZE>::new(
+            step::internal::trivial::Trivial::new(),
+            Some(params),
+        )?;
+        let mut step_plans = Vec::with_capacity(step::NUM_INTERNAL_STEPS + self.held_steps.len());
+        step_plans.push(rerandomize.layout());
+        step_plans.push(trivial.layout());
+        step_plans.extend(self.held_steps.iter().map(|held| held.layout()));
+
+        // The held application step adapters can be handed to the registry:
+        // their circuits are measured now, with every step known. Registry
+        // indexing is by category, not hand-over order, so registering them
+        // here rather than in `register` changes nothing downstream.
         for held in self.held_steps.drain(..) {
             self.native_registry = held.register(self.native_registry)?;
         }
@@ -327,16 +344,10 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         // Then, register internal steps
         self.native_registry = self
             .native_registry
-            .register_internal_step(MultiStage::new(Adapter::<C, _, R, HEADER_SIZE>::new(
-                step::internal::rerandomize::Rerandomize::<()>::new(),
-                Some(params),
-            )?))?;
+            .register_internal_step(MultiStage::new(rerandomize))?;
         self.native_registry = self
             .native_registry
-            .register_internal_step(MultiStage::new(Adapter::<C, _, R, HEADER_SIZE>::new(
-                step::internal::trivial::Trivial::new(),
-                Some(params),
-            )?))?;
+            .register_internal_step(MultiStage::new(trivial))?;
 
         assert_eq!(
             self.native_registry.log2_circuits(),
@@ -357,6 +368,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             nested_registry: self.nested_registry.finalize()?,
             params,
             num_application_steps: self.num_application_steps,
+            step_plans,
             seeded_trivial: OnceCell::new(),
             #[cfg(feature = "unstable-fuzzing")]
             skip_claim_precheck: self.skip_claim_precheck,
@@ -401,6 +413,14 @@ pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     nested_registry: Registry<'params, C::ScalarField, R>,
     params: &'params C::Params,
     num_application_steps: usize,
+    /// Every step's discovered plan, in circuit-index order within the step
+    /// block: internal steps (rerandomize, trivial) first, then application
+    /// steps in registration order. Index `i` here corresponds to circuit
+    /// index `InternalCircuitIndex::NUM + i`. Collected by
+    /// [`ApplicationBuilder::finalize`] before hand-over; this table — not
+    /// any list a proof carries — is what fuse and verify consult for a
+    /// child's shape, keyed by its registry-committed circuit index.
+    step_plans: Vec<framework_hooks::HookLayout>,
     /// Cached seeded trivial proof for rerandomization.
     seeded_trivial: OnceCell<Proof<C, R>>,
     /// Test-only: skip the prover-side poly-query pre-check. See
@@ -411,6 +431,20 @@ pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+    /// The discovered plan of the step occupying circuit `index`, or `None`
+    /// if that index is an internal circuit (which is not a step and has no
+    /// plan). See [`Self::step_plans`] for the table's provenance.
+    #[allow(dead_code)] // consumed when fuse/verify select variants by plan
+    pub(crate) fn step_plan(
+        &self,
+        index: ragu_circuits::registry::CircuitIndex,
+    ) -> Option<framework_hooks::HookLayout> {
+        usize::from(index)
+            .checked_sub(internal::native::InternalCircuitIndex::NUM)
+            .and_then(|i| self.step_plans.get(i))
+            .copied()
+    }
+
     /// Seed a new computation by running a step with trivial inputs.
     ///
     /// This is the entry point for creating leaf nodes in a PCD tree.
