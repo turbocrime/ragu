@@ -105,14 +105,33 @@ pub struct Output<
 
 /// The outer error stage (layer 2) of the fuse witness.
 #[derive(Default)]
-pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
+pub struct Stage<
+    C: Cycle,
+    R,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+    FP: fold_revdot::Parameters,
+> {
     _marker: PhantomData<(C, R, FP)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
-    staging::Stage<C::CircuitField, R> for Stage<C, R, HEADER_SIZE, FP>
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+    FP: fold_revdot::Parameters,
+> staging::Stage<C::CircuitField, R>
+    for Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH, FP>
 {
-    type Parent = super::preamble::Stage<C, R, HEADER_SIZE>;
+    type Parent =
+        super::preamble::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>;
     type Witness<'source> = &'source Witness<C, FP>;
     type OutputKind = Kind![C::CircuitField; Output<'_, _, FP, C::CircuitPoseidon>];
 
@@ -195,6 +214,8 @@ mod tests {
 
     #[test]
     fn stage_values_matches_wire_count() {
-        assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }, RevdotParameters>::default());
+        assert_stage_values(
+            &Stage::<Pasta, R, { HEADER_SIZE }, 1, 1, 1, 2, RevdotParameters>::default(),
+        );
     }
 }

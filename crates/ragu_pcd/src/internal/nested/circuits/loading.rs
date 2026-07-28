@@ -29,23 +29,23 @@ use ragu_core::{
     gadgets::Bound,
     maybe::Maybe,
 };
-use ragu_primitives::{GadgetExt as _, Point};
+use ragu_primitives::{GadgetExt as _, Point, vec::Len};
 
 use crate::internal::{
     endoscalar::{EndoscalarStage, Points, PointsStage},
     native::RxIndex,
-    nested::stages,
+    nested::{EndoscalingPointsLen, stages},
 };
 
 /// A cursor over [`PointsStage`] inputs that enforces equality against
 /// corresponding bridge stage elements.
-struct Walker<'pts, 'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
-    points: &'pts Points<'dr, D, C>,
+struct Walker<'pts, 'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> {
+    points: &'pts Points<'dr, D, C, L>,
     index: usize,
 }
 
-impl<'pts, 'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> Walker<'pts, 'dr, D, C> {
-    fn new(points: &'pts Points<'dr, D, C>) -> Self {
+impl<'pts, 'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> Walker<'pts, 'dr, D, C, L> {
+    fn new(points: &'pts Points<'dr, D, C, L>) -> Self {
         Self { points, index: 0 }
     }
 
@@ -67,7 +67,7 @@ impl<'pts, 'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> Walker<'pts, 'dr, D
 }
 
 /// Loading circuit that loads the entire nested stage hierarchy.
-pub struct Circuit<C: CurveAffine, R: Rank> {
+pub struct Circuit<C: CurveAffine, R: Rank, const POLYS: usize> {
     /// The current step's own shape (its bridge runs and eval stashes).
     own: crate::framework_hooks::HookLayout,
     /// The left child's shape.
@@ -77,7 +77,7 @@ pub struct Circuit<C: CurveAffine, R: Rank> {
     _marker: PhantomData<(C, R)>,
 }
 
-impl<C: CurveAffine, R: Rank> Circuit<C, R> {
+impl<C: CurveAffine, R: Rank, const POLYS: usize> Circuit<C, R, POLYS> {
     pub fn new(
         own: crate::framework_hooks::HookLayout,
         left: crate::framework_hooks::HookLayout,
@@ -92,8 +92,10 @@ impl<C: CurveAffine, R: Rank> Circuit<C, R> {
     }
 }
 
-impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
-    type Last = stages::claim_bridge::Run<C, R>;
+impl<C: CurveAffine, R: Rank, const POLYS: usize> MultiStageCircuit<C::Base, R>
+    for Circuit<C, R, POLYS>
+{
+    type Last = stages::claim_bridge::Run<C, R, POLYS>;
     type Instance<'source> = ();
     type Witness<'source> = ();
     type Output = ();
@@ -112,7 +114,6 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         dr: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
         _witness: DriverValue<D, ()>,
     ) -> Result<WithAux<Bound<'dr, D, ()>, DriverValue<D, ()>>> {
-        let num_points = crate::internal::nested::num_endoscaling_points(self.left, self.right);
         let claim_layout =
             crate::internal::nested::claim_run_layout::<C, R>(self.own, self.left, self.right);
 
@@ -121,38 +122,43 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
 
         let dr = dr.skip_stage_sized(EndoscalarStage, chain.width(0))?;
         let (points_guard, dr) = dr.configure_stage_sized(
-            PointsStage::<C>::with_num_points(num_points),
+            PointsStage::<C, EndoscalingPointsLen<POLYS>>::default(),
             chain.width(1),
         )?;
         let (preamble_guard, dr) = dr.configure_stage_sized(
-            stages::preamble::Stage::<C, R>::with_shapes(self.left, self.right),
+            stages::preamble::Stage::<C, R, POLYS>::default(),
             chain.width(2),
         )?;
-        let (s_prime_guard, dr) =
-            dr.configure_stage_sized(stages::s_prime::Stage::<C, R>::default(), chain.width(3))?;
+        let (s_prime_guard, dr) = dr.configure_stage_sized(
+            stages::s_prime::Stage::<C, R, POLYS>::default(),
+            chain.width(3),
+        )?;
         let (inner_error_guard, dr) = dr.configure_stage_sized(
-            stages::inner_error::Stage::<C, R>::default(),
+            stages::inner_error::Stage::<C, R, POLYS>::default(),
             chain.width(4),
         )?;
         let dr = dr.skip_stage_sized(
-            stages::outer_error::Stage::<C, R>::default(),
+            stages::outer_error::Stage::<C, R, POLYS>::default(),
             chain.width(5),
         )?;
         let (ab_guard, dr) =
-            dr.configure_stage_sized(stages::ab::Stage::<C, R>::default(), chain.width(6))?;
-        let (query_guard, dr) =
-            dr.configure_stage_sized(stages::query::Stage::<C, R>::default(), chain.width(7))?;
+            dr.configure_stage_sized(stages::ab::Stage::<C, R, POLYS>::default(), chain.width(6))?;
+        let (query_guard, dr) = dr.configure_stage_sized(
+            stages::query::Stage::<C, R, POLYS>::default(),
+            chain.width(7),
+        )?;
         let (f_guard, dr) =
-            dr.configure_stage_sized(stages::f::Stage::<C, R>::default(), chain.width(8))?;
+            dr.configure_stage_sized(stages::f::Stage::<C, R, POLYS>::default(), chain.width(8))?;
         let (eval_guard, dr) = dr.configure_stage_sized(
-            stages::eval::Stage::<C, R>::with_shape(self.own),
+            stages::eval::Stage::<C, R, POLYS>::default(),
             chain.width(9),
         )?;
-        let (claim_guards, dr) = dr.configure_induced_sized::<stages::claim_bridge::Run<C, R>, _>(
-            stages::claim_bridge::Slot::<C, R>::default(),
-            &claim_layout,
-            claim_layout.skip_gates(0),
-        )?;
+        let (claim_guards, dr) = dr
+            .configure_induced_sized::<stages::claim_bridge::Run<C, R, POLYS>, _>(
+                stages::claim_bridge::Slot::<C, R>::default(),
+                &claim_layout,
+                claim_layout.skip_gates(0),
+            )?;
         let dr = dr.finish();
 
         // Load stage gadgets. Witness values are never accessed — the circuit

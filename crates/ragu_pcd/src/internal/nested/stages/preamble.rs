@@ -13,12 +13,19 @@ use ragu_core::{
     gadgets::{Bound, Gadget, Kind},
     maybe::Maybe,
 };
-use ragu_primitives::{Point, io::Write};
+use ragu_primitives::{
+    Point,
+    io::Write,
+    vec::{CollectFixed, ConstLen, FixedVec, Len},
+};
 
 use crate::{
     Proof,
-    internal::{endoscalar::PointsStage, native::RxIndex},
-    slot_vec::SlotVec,
+    internal::{
+        endoscalar::PointsStage,
+        native::RxIndex,
+        nested::{EndoscalingPointsLen, child_endoscaling_points_for},
+    },
 };
 
 /// Number of curve points in this stage for children of the given shapes:
@@ -135,7 +142,7 @@ pub struct Witness<C: CurveAffine> {
 
 /// Output gadget for a single child proof in the preamble bridge stage.
 #[derive(Gadget, Write)]
-pub struct ChildOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
+pub struct ChildOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, const POLYS: usize> {
     // Field order matches `_10_p` accumulation order.
     /// Point commitment from the child's application circuit.
     #[ragu(gadget)]
@@ -189,11 +196,11 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     /// Stashed poly-query claim host commitments from the child, in slot
     /// order.
     #[ragu(gadget)]
-    pub stashed_claims: SlotVec<Point<'dr, D, C>>,
+    pub stashed_claims: FixedVec<Point<'dr, D, C>, ConstLen<POLYS>>,
 }
 
-impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> core::ops::Index<RxIndex>
-    for ChildOutput<'dr, D, C>
+impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, const POLYS: usize> core::ops::Index<RxIndex>
+    for ChildOutput<'dr, D, C, POLYS>
 {
     type Output = Point<'dr, D, C>;
 
@@ -216,12 +223,10 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> core::ops::Index<RxIndex>
     }
 }
 
-impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> ChildOutput<'dr, D, C> {
-    fn alloc(
-        dr: &mut D,
-        witness: DriverValue<D, &ChildWitness<C>>,
-        num_polys: usize,
-    ) -> Result<Self> {
+impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, const POLYS: usize>
+    ChildOutput<'dr, D, C, POLYS>
+{
+    fn alloc(dr: &mut D, witness: DriverValue<D, &ChildWitness<C>>) -> Result<Self> {
         Ok(ChildOutput {
             application: Point::alloc(dr, witness.as_ref().map(|w| w.application))?,
             hashes_1: Point::alloc(dr, witness.as_ref().map(|w| w.hashes_1))?,
@@ -239,9 +244,9 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> ChildOutput<'dr, D, C> {
             stashed_ab_b: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_ab_b))?,
             stashed_registry_xy: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_registry_xy))?,
             stashed_p: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_p))?,
-            stashed_claims: (0..num_polys)
+            stashed_claims: ConstLen::<POLYS>::range()
                 .map(|i| Point::alloc(dr, witness.as_ref().map(|w| w.stashed_claims[i])))
-                .collect::<Result<_>>()?,
+                .try_collect_fixed()?,
         })
     }
 }
@@ -250,47 +255,40 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> ChildOutput<'dr, D, C> {
 ///
 /// This is stage communication data, not part of the circuit's public instance.
 #[derive(Gadget, Write)]
-pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
+pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, const POLYS: usize> {
     /// Point commitment from the native preamble stage.
     #[ragu(gadget)]
     pub native_preamble: Point<'dr, D, C>,
     /// Output gadget for the left child proof.
     #[ragu(gadget)]
-    pub left: ChildOutput<'dr, D, C>,
+    pub left: ChildOutput<'dr, D, C, POLYS>,
     /// Output gadget for the right child proof.
     #[ragu(gadget)]
-    pub right: ChildOutput<'dr, D, C>,
+    pub right: ChildOutput<'dr, D, C, POLYS>,
 }
 
-pub struct Stage<C: CurveAffine, R> {
-    /// The left child's shape.
-    left: crate::framework_hooks::HookLayout,
-    /// The right child's shape.
-    right: crate::framework_hooks::HookLayout,
+/// Both children are the application's shape, so one `POLYS` sizes both.
+pub struct Stage<C: CurveAffine, R, const POLYS: usize> {
     _marker: PhantomData<(C, R)>,
 }
 
-impl<C: CurveAffine, R> Stage<C, R> {
-    /// A stage instance for children of the given shapes.
-    pub fn with_shapes(
-        left: crate::framework_hooks::HookLayout,
-        right: crate::framework_hooks::HookLayout,
-    ) -> Self {
+impl<C: CurveAffine, R, const POLYS: usize> Default for Stage<C, R, POLYS> {
+    fn default() -> Self {
         Stage {
-            left,
-            right,
             _marker: PhantomData,
         }
     }
 }
 
-impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R> {
-    type Parent = PointsStage<C>;
+impl<C: CurveAffine, R: Rank, const POLYS: usize> ragu_circuits::staging::Stage<C::Base, R>
+    for Stage<C, R, POLYS>
+{
+    type Parent = PointsStage<C, EndoscalingPointsLen<POLYS>>;
     type Witness<'source> = &'source Witness<C>;
-    type OutputKind = Kind![C::Base; Output<'_, _, C>];
+    type OutputKind = Kind![C::Base; Output<'_, _, C, POLYS>];
 
     fn values() -> usize {
-        crate::internal::shape_dependent_stage()
+        2 * (1 + 2 * child_endoscaling_points_for(POLYS))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -303,16 +301,8 @@ impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stag
     {
         Ok(Output {
             native_preamble: Point::alloc(dr, witness.as_ref().map(|w| w.native_preamble))?,
-            left: ChildOutput::alloc(
-                dr,
-                witness.as_ref().map(|w| &w.left),
-                self.left.poly_query.polys,
-            )?,
-            right: ChildOutput::alloc(
-                dr,
-                witness.as_ref().map(|w| &w.right),
-                self.right.poly_query.polys,
-            )?,
+            left: ChildOutput::alloc(dr, witness.as_ref().map(|w| &w.left))?,
+            right: ChildOutput::alloc(dr, witness.as_ref().map(|w| &w.right))?,
         })
     }
 }
@@ -327,13 +317,17 @@ mod tests {
     /// `num_values` predicts the wire count at every shape, not just one.
     #[test]
     fn num_values_matches_wire_count() {
-        for polys in [0, 1, 4, 8] {
-            let capacity = capacity_with_polys(polys);
+        fn check<const POLYS: usize>() {
+            let capacity = capacity_with_polys(POLYS);
             assert_eq!(
-                stage_wire_count(&Stage::<EqAffine, R>::with_shapes(capacity, capacity)),
+                stage_wire_count(&Stage::<EqAffine, R, POLYS>::default()),
                 num_values(capacity, capacity),
-                "polys={polys}"
+                "polys={POLYS}"
             );
         }
+        check::<0>();
+        check::<1>();
+        check::<4>();
+        check::<8>();
     }
 }

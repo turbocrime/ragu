@@ -8,7 +8,16 @@ use crate::{
     proof::ProofBuilder,
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> Application<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+{
     pub(super) fn compute_internal_circuits<RNG: CryptoRngCore>(
         &self,
         rng: &mut RNG,
@@ -17,7 +26,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         inner_error_witness: &native::stages::inner_error::Witness<C, native::RevdotParameters>,
         query_witness: &native::stages::query::Witness<C>,
         eval_witness: &native::stages::eval::Witness<C::CircuitField>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, POLYS>,
     ) -> Result<()> {
         let unified = native::unified::Instance {
             bridge_preamble_commitment: builder.bridge_preamble_commitment(),
@@ -48,6 +57,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             C,
             R,
             HEADER_SIZE,
+            POLYS,
+            CLAIMS,
+            CHALLENGES,
+            CHALLENGE_WIDTH,
             native::RevdotParameters,
         >::new(
             self.params,
@@ -56,8 +69,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 crate::internal::native::InternalCircuitIndex::NUM,
             )
             .1,
-            self.capacity(),
-            self.capacity(),
         )
         .trace(native::circuits::hashes_1::Witness {
             unified,
@@ -75,10 +86,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             C,
             R,
             HEADER_SIZE,
+            POLYS,
+            CLAIMS,
+            CHALLENGES,
+            CHALLENGE_WIDTH,
             native::RevdotParameters,
-        >::new(
-            self.params, self.capacity(), self.capacity()
-        )
+        >::new(self.params)
         .trace(native::circuits::hashes_2::Witness {
             unified,
             outer_error_witness,
@@ -94,8 +107,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             C,
             R,
             HEADER_SIZE,
+            POLYS,
+            CLAIMS,
+            CHALLENGES,
+            CHALLENGE_WIDTH,
             native::RevdotParameters,
-        >::new(self.capacity(), self.capacity())
+        >::new()
         .trace(native::circuits::inner_collapse::Witness {
             preamble_witness,
             unified,
@@ -113,8 +130,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             C,
             R,
             HEADER_SIZE,
+            POLYS,
+            CLAIMS,
+            CHALLENGES,
+            CHALLENGE_WIDTH,
             native::RevdotParameters,
-        >::new(self.capacity(), self.capacity())
+        >::new()
         .trace(native::circuits::outer_collapse::Witness {
             unified,
             preamble_witness,
@@ -128,10 +149,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         )?;
 
         let (compute_v_trace, unified) =
-            native::circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new(
-                self.capacity(),
-                self.capacity(),
-            )
+            native::circuits::compute_v::Circuit::<
+                C,
+                R,
+                HEADER_SIZE,
+                POLYS,
+                CLAIMS,
+                CHALLENGES,
+                CHALLENGE_WIDTH,
+            >::new()
             .trace(native::circuits::compute_v::Witness {
                 unified,
                 preamble_witness,
@@ -146,11 +172,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         )?;
 
         let (challenge_binding_trace, unified) =
-            native::circuits::challenge_binding::Circuit::<C, R, HEADER_SIZE>::new(
-                self.params,
-                self.capacity(),
-                self.capacity(),
-            )
+            native::circuits::challenge_binding::Circuit::<
+                C,
+                R,
+                HEADER_SIZE,
+                POLYS,
+                CLAIMS,
+                CHALLENGES,
+                CHALLENGE_WIDTH,
+            >::new(self.params)
             .trace(native::circuits::challenge_binding::Witness {
                 unified,
                 preamble_witness,

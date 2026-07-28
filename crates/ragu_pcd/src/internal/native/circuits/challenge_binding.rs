@@ -83,30 +83,39 @@ use super::super::{
 /// performed by this circuit.
 ///
 /// [module-level documentation]: self
-pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize> {
+pub struct Circuit<
+    'params,
+    C: Cycle,
+    R,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> {
     params: &'params C::Params,
-    /// The left child's shape.
-    left: crate::framework_hooks::HookLayout,
-    /// The right child's shape.
-    right: crate::framework_hooks::HookLayout,
     _marker: PhantomData<(R,)>,
 }
 
-impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> Circuit<'params, C, R, HEADER_SIZE> {
+impl<
+    'params,
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> Circuit<'params, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+{
     /// Creates a new multi-stage circuit.
     ///
     /// # Parameters
     ///
     /// - `params`: Curve cycle parameters providing Poseidon configuration.
-    pub fn new(
-        params: &'params C::Params,
-        left: crate::framework_hooks::HookLayout,
-        right: crate::framework_hooks::HookLayout,
-    ) -> MultiStage<C::CircuitField, R, Self> {
+    pub fn new(params: &'params C::Params) -> MultiStage<C::CircuitField, R, Self> {
         MultiStage::new(Circuit {
             params,
-            left,
-            right,
             _marker: PhantomData,
         })
     }
@@ -123,10 +132,19 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     pub preamble_witness: &'a preamble::Witness<'a, C, R, HEADER_SIZE>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitField, R>
-    for Circuit<'_, C, R, HEADER_SIZE>
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> MultiStageCircuit<C::CircuitField, R>
+    for Circuit<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
 {
-    type Last = preamble::Stage<C, R, HEADER_SIZE>;
+    type Last =
+        preamble::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>;
 
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, R, HEADER_SIZE>;
@@ -152,10 +170,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
     where
         Self: 'dr,
     {
-        let (preamble, builder) = builder.configure_stage_sized(
-            preamble::Stage::<C, R, HEADER_SIZE>::with_shapes(self.left, self.right),
-            preamble::num_values(HEADER_SIZE, self.left, self.right),
-        )?;
+        let (preamble, builder) = builder.add_stage::<Self::Last>()?;
         let dr = builder.finish();
 
         let preamble = preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;

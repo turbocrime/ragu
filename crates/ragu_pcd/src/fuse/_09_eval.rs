@@ -12,7 +12,16 @@ use ragu_primitives::Element;
 use super::{NativeSPrime, RegistryWy};
 use crate::{Application, Proof, internal::native, proof::ProofBuilder};
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> Application<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+{
     pub(super) fn compute_eval<'dr, D, RNG: CryptoRngCore>(
         &self,
         rng: &mut RNG,
@@ -21,7 +30,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         right: &Proof<C, R>,
         s_prime: &NativeSPrime<C, R>,
         registry_wy: &RegistryWy<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, POLYS>,
     ) -> Result<native::stages::eval::Witness<C::CircuitField>>
     where
         D: Driver<'dr, F = C::CircuitField>,
@@ -48,10 +57,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let rx = query_chain.rx_configured(
             2,
             C::CircuitField::random(&mut *rng),
-            &native::stages::eval::Stage::<C, R, HEADER_SIZE>::with_shapes(
-                self.capacity(),
-                self.capacity(),
-            ),
+            &native::stages::eval::Stage::<
+                C,
+                R,
+                HEADER_SIZE,
+                POLYS,
+                CLAIMS,
+                CHALLENGES,
+                CHALLENGE_WIDTH,
+            >::default(),
             &eval_witness,
         )?;
 

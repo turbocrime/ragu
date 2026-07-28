@@ -48,6 +48,33 @@ pub fn instance_len(header_size: usize, capacity: HookLayout) -> usize {
         + capacity.challenge.calls * (capacity.challenge.width * 2 + 1)
 }
 
+/// [`instance_len`] as a [`Len`](ragu_primitives::vec::Len), so the application
+/// circuit's instance can be a `FixedVec`.
+///
+/// It is a computed length, not one of the declared consts, so it cannot ride
+/// as a const-generic argument on stable — hence a type that computes it.
+pub struct InstanceLen<
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+>;
+
+impl<
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> ragu_primitives::vec::Len
+    for InstanceLen<HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+{
+    fn len() -> usize {
+        HEADER_SIZE * 3 + POLYS * 2 + CLAIMS * 3 + CHALLENGES * (CHALLENGE_WIDTH * 2 + 1)
+    }
+}
+
 /// Discovers the hook-call counts of `step` — how many
 /// [`derive_challenge`](StepCtx::derive_challenge) calls it makes and how many
 /// poly-query claims it raises — by dry-running its witness body once, with an
@@ -125,7 +152,17 @@ pub(crate) struct AdapterAux<'source, C: Cycle, S: Step<C>, const HEADER_SIZE: u
     pub framework: FrameworkAux<C>,
 }
 
-pub(crate) struct Adapter<'params, C: Cycle, S, R: Rank, const HEADER_SIZE: usize> {
+pub(crate) struct Adapter<
+    'params,
+    C: Cycle,
+    S,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> {
     step: S,
     /// The hook-call counts discovered from the step's witness body at
     /// construction time; see [`discover_hook_layout`]. Part of the circuit
@@ -153,8 +190,17 @@ pub(crate) struct Adapter<'params, C: Cycle, S, R: Rank, const HEADER_SIZE: usiz
     _marker: PhantomData<(C, R)>,
 }
 
-impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
-    Adapter<'params, C, S, R, HEADER_SIZE>
+impl<
+    'params,
+    C: Cycle,
+    S: Step<C>,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> Adapter<'params, C, S, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
 {
     /// Wraps `step` for registration/keygen, discovering its `derive_challenge`
     /// call count and poly-query claim count with a dry run of the witness
@@ -211,8 +257,17 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
     }
 }
 
-impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize>
-    MultiStageCircuit<C::CircuitField, R> for Adapter<'_, C, S, R, HEADER_SIZE>
+impl<
+    C: Cycle,
+    S: Step<C> + Send + Sync,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> MultiStageCircuit<C::CircuitField, R>
+    for Adapter<'_, C, S, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
 {
     /// An application circuit has no stages. Challenge derivation used to need
     /// one per slot — a committed partial trace to compress the inputs into —
@@ -230,7 +285,13 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize>
         <S::Right as Header<C::CircuitField>>::Data,
         S::Witness<'source>,
     );
-    type Output = Kind![C::CircuitField; crate::slot_vec::SlotVec<Element<'_, _>>];
+    type Output = Kind![
+        C::CircuitField;
+        ragu_primitives::vec::FixedVec<
+            Element<'_, _>,
+            InstanceLen<HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>,
+        >
+    ];
     type Aux<'source> = AdapterAux<'source, C, S, HEADER_SIZE>;
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -333,7 +394,7 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize>
         })?;
 
         Ok(WithAux::new(
-            crate::slot_vec::SlotVec::with_len(elements, instance_len(HEADER_SIZE, self.capacity))?,
+            ragu_primitives::vec::FixedVec::try_from(elements)?,
             adapter_aux,
         ))
     }
@@ -520,8 +581,12 @@ mod tests {
         let dr = &mut dr;
 
         let adapter =
-            Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, Some(Pasta::baked()), 2)
-                .expect("adapter construction should succeed");
+            Adapter::<Pasta, TestStep, TestR, HEADER_SIZE, 0, 0, 0, 2>::new(
+                TestStep,
+                Some(Pasta::baked()),
+                2,
+            )
+            .expect("adapter construction should succeed");
         let capacity = adapter.capacity;
         let witness = Always::maybe_just(|| (test_alphas(), Fp::from(10u64), Fp::from(20u64), ()));
 
@@ -540,8 +605,12 @@ mod tests {
         let dr = &mut dr;
 
         let adapter =
-            Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, Some(Pasta::baked()), 2)
-                .expect("adapter construction should succeed");
+            Adapter::<Pasta, TestStep, TestR, HEADER_SIZE, 0, 0, 0, 2>::new(
+                TestStep,
+                Some(Pasta::baked()),
+                2,
+            )
+            .expect("adapter construction should succeed");
         let witness = Always::maybe_just(|| (test_alphas(), Fp::from(10u64), Fp::from(20u64), ()));
 
         let aux = MultiStage::new(adapter)
@@ -569,15 +638,19 @@ mod tests {
     #[test]
     fn discovery_finds_no_calls_for_plain_step() {
         let adapter =
-            Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, Some(Pasta::baked()), 2)
-                .expect("discovery should succeed");
+            Adapter::<Pasta, TestStep, TestR, HEADER_SIZE, 0, 0, 0, 2>::new(
+                TestStep,
+                Some(Pasta::baked()),
+                2,
+            )
+            .expect("discovery should succeed");
         assert_eq!(adapter.challenge_calls(), 0);
     }
 
     /// The dry run counts each `derive_challenge` call.
     #[test]
     fn discovery_finds_challenge_call() {
-        let adapter = Adapter::<Pasta, ChallengeStep, TestR, HEADER_SIZE>::new(
+        let adapter = Adapter::<Pasta, ChallengeStep, TestR, HEADER_SIZE, 0, 0, 1, 2>::new(
             ChallengeStep,
             Some(Pasta::baked()),
             2,
@@ -641,7 +714,7 @@ mod tests {
             }
         }
 
-        let adapter = Adapter::<Pasta, TooManyChallenges, TestR, HEADER_SIZE>::new(
+        let adapter = Adapter::<Pasta, TooManyChallenges, TestR, HEADER_SIZE, 0, 0, 1, 2>::new(
             TooManyChallenges,
             Some(Pasta::baked()),
             2,
@@ -675,7 +748,7 @@ mod tests {
         let mut dr: Emulator<Wireless<Empty, Fp>> = Emulator::counter();
         let dr = &mut dr;
 
-        let adapter = Adapter::<Pasta, ChallengeStep, TestR, HEADER_SIZE>::new(
+        let adapter = Adapter::<Pasta, ChallengeStep, TestR, HEADER_SIZE, 0, 0, 1, 2>::new(
             ChallengeStep,
             Some(Pasta::baked()),
             2,

@@ -30,7 +30,16 @@ use crate::{
 
 type NativeNumGroups = <native::RevdotParameters as fold_revdot::Parameters>::NumGroups;
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> Application<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+{
     pub(super) fn outer_error_terms<'dr, 'rx, D, RNG: CryptoRngCore>(
         &self,
         rng: &mut RNG,
@@ -44,7 +53,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             C::CircuitField,
             ragu_primitives::poseidon::PoseidonStateLen<C::CircuitField, C::CircuitPoseidon>,
         >,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, POLYS>,
     ) -> Result<(
         native::stages::outer_error::Witness<C, native::RevdotParameters>,
         FixedVec<TrackedPoly<'rx, FoldKey, C::CircuitField, R>, NativeNumGroups>,
@@ -62,7 +71,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let b = fold_revdot::fold_inner::<_, _, native::RevdotParameters>(&claims.b, mu_nu);
         drop(claims);
 
-        let capacity = self.capacity();
         let (ky, collapsed) = Emulator::emulate_wireless(
             (
                 preamble_witness,
@@ -75,9 +83,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 let (preamble_witness, inner_error_terms, y, mu, nu) = witness.cast();
                 let allocator = &mut ();
 
-                let preamble = native::stages::preamble::Stage::<C, R, HEADER_SIZE>::with_shapes(
-                    capacity, capacity,
-                )
+                let preamble = native::stages::preamble::Stage::<
+                    C,
+                    R,
+                    HEADER_SIZE,
+                    POLYS,
+                    CLAIMS,
+                    CHALLENGES,
+                    CHALLENGE_WIDTH,
+                >::default()
                 .witness(dr, preamble_witness.as_ref().map(|w| *w))?;
 
                 let y = Element::alloc(dr, allocator, y)?;
@@ -158,12 +172,21 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         &self,
         rng: &mut RNG,
         outer_error_witness: &native::stages::outer_error::Witness<C, native::RevdotParameters>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, POLYS>,
     ) -> Result<()> {
         let rx = self.native_chain_layouts().1.rx_configured(
             1,
             C::CircuitField::random(&mut *rng),
-            &native::stages::outer_error::Stage::<C, R, HEADER_SIZE, native::RevdotParameters>::default(),
+            &native::stages::outer_error::Stage::<
+                C,
+                R,
+                HEADER_SIZE,
+                POLYS,
+                CLAIMS,
+                CHALLENGES,
+                CHALLENGE_WIDTH,
+                native::RevdotParameters,
+            >::default(),
             outer_error_witness,
         )?;
 

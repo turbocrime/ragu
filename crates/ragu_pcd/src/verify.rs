@@ -20,7 +20,16 @@ use crate::{
     },
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> Application<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+{
     /// Verifies some [`Pcd`] for the provided [`Header`].
     ///
     /// Returns `Ok(true)` if all verification checks pass, `Ok(false)` if
@@ -86,9 +95,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             Emulator::emulate_wireless((pcd.proof(), pcd.data().clone(), y), |dr, witness| {
                 let (proof, data, y) = witness.cast();
                 let y = Element::alloc(dr, &mut (), y)?;
-                let proof_inputs = ProofInputs::<_, C, HEADER_SIZE>::alloc_for_verify::<R, H>(
-                    dr, proof, data, capacity,
-                )?;
+                let proof_inputs = ProofInputs::<
+                    _,
+                    C,
+                    HEADER_SIZE,
+                    POLYS,
+                    CLAIMS,
+                    CHALLENGES,
+                    CHALLENGE_WIDTH,
+                >::alloc_for_verify::<R, H>(dr, proof, data)?;
 
                 let (unified_ky, unified_bridge_ky) = proof_inputs.unified_ky_values(dr, &y)?;
                 let unified_ky = *unified_ky.value().take();
@@ -334,7 +349,7 @@ mod tests {
     type TestR = ProductionRank;
     const HEADER_SIZE: usize = 4;
 
-    fn create_test_app() -> crate::Application<'static, Pasta, TestR, HEADER_SIZE> {
+    fn create_test_app() -> crate::Application<'static, Pasta, TestR, HEADER_SIZE, 0, 0, 0, 2> {
         let pasta = Pasta::baked();
         ApplicationBuilder::<Pasta, TestR, HEADER_SIZE, 0, 0, 0, 2>::new()
             .finalize(pasta)

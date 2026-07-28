@@ -280,11 +280,28 @@ pub struct Output<'dr, D: Driver<'dr>> {
 /// Shape-free: every child contributes the same wire count here (one
 /// evaluation per rx component plus five scalars), so nothing about this
 /// stage's geometry depends on a step's hook counts.
-pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize> {
+pub struct Stage<
+    C: Cycle,
+    R,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> {
     _marker: PhantomData<(C, R)>,
 }
 
-impl<C: Cycle, R, const HEADER_SIZE: usize> Default for Stage<C, R, HEADER_SIZE> {
+impl<
+    C: Cycle,
+    R,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> Default for Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+{
     fn default() -> Self {
         Stage {
             _marker: PhantomData,
@@ -307,10 +324,19 @@ pub fn num_values(num_internal_circuits: usize) -> usize {
     num_internal_circuits + 1 + 2 * child_num_values()
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField, R>
-    for Stage<C, R, HEADER_SIZE>
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> staging::Stage<C::CircuitField, R>
+    for Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
 {
-    type Parent = super::preamble::Stage<C, R, HEADER_SIZE>;
+    type Parent =
+        super::preamble::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>;
     type Witness<'source> = &'source Witness<C>;
     type OutputKind = Kind![C::CircuitField; Output<'_, _>];
 
@@ -350,6 +376,6 @@ mod tests {
 
     #[test]
     fn stage_values_matches_wire_count() {
-        assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }>::default());
+        assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }, 1, 1, 1, 2>::default());
     }
 }

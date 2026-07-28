@@ -13,13 +13,22 @@ use crate::{
     proof::ProofBuilder,
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> Application<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+{
     pub(super) fn compute_preamble<'a, RNG: CryptoRngCore>(
         &self,
         rng: &mut RNG,
         left: &'a Proof<C, R>,
         right: &'a Proof<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, POLYS>,
     ) -> Result<native::stages::preamble::Witness<'a, C, R, HEADER_SIZE>> {
         let preamble_witness = self.compute_native_preamble(rng, left, right, builder)?;
         self.compute_bridge_preamble(rng, left, right, builder)?;
@@ -31,7 +40,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         rng: &mut RNG,
         left: &'a Proof<C, R>,
         right: &'a Proof<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, POLYS>,
     ) -> Result<native::stages::preamble::Witness<'a, C, R, HEADER_SIZE>> {
         let preamble_witness = native::stages::preamble::Witness::new(
             left,
@@ -44,10 +53,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let rx = query_chain.rx_configured(
             0,
             C::CircuitField::random(&mut *rng),
-            &native::stages::preamble::Stage::<C, R, HEADER_SIZE>::with_shapes(
-                self.capacity(),
-                self.capacity(),
-            ),
+            &native::stages::preamble::Stage::<
+                C,
+                R,
+                HEADER_SIZE,
+                POLYS,
+                CLAIMS,
+                CHALLENGES,
+                CHALLENGE_WIDTH,
+            >::default(),
             &preamble_witness,
         )?;
 
@@ -61,15 +75,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         rng: &mut RNG,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, POLYS>,
     ) -> Result<()> {
         let bridge_rx = self.nested_chain_layout().rx_configured(
             2,
             C::ScalarField::random(&mut *rng),
-            &nested::stages::preamble::Stage::<C::HostCurve, R>::with_shapes(
-                self.capacity(),
-                self.capacity(),
-            ),
+            &nested::stages::preamble::Stage::<C::HostCurve, R, POLYS>::default(),
             &nested::stages::preamble::Witness {
                 native_preamble: builder.native_preamble_commitment(),
                 left: nested::stages::preamble::ChildWitness::from_proof(left),

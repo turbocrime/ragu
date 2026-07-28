@@ -32,22 +32,19 @@ use ragu_primitives::vec::Len;
 
 use super::host_bridge;
 
-/// The claim-slot count the *typed* [`Run`] would need, which no type knows.
-///
-/// The real count is the application's poly capacity, which every
-/// construction takes as a value through [`layout`]. See
-/// [`shape_dependent_stage`](crate::internal::shape_dependent_stage).
-pub struct Slots;
+/// The claim-slot count: the application's poly capacity, as a [`Len`].
+pub struct Slots<const POLYS: usize>;
 
-impl Len for Slots {
+impl<const POLYS: usize> Len for Slots<POLYS> {
     fn len() -> usize {
-        crate::internal::shape_dependent_stage()
+        POLYS
     }
 }
 
 /// The claim-bridge family: every slot, as one stage chained after
 /// [`super::eval`].
-pub type Run<C, R> = host_bridge::Run<C, R, super::eval::Stage<C, R>, Slots>;
+pub type Run<C, R, const POLYS: usize> =
+    host_bridge::Run<C, R, super::eval::Stage<C, R, POLYS>, Slots<POLYS>>;
 
 /// The witness body for a single claim slot.
 ///

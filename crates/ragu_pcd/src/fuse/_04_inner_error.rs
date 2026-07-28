@@ -22,7 +22,16 @@ use crate::{
     proof::ProofBuilder,
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> Application<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+{
     pub(super) fn inner_error_terms<'dr, 'rx, D, RNG: CryptoRngCore>(
         &self,
         rng: &mut RNG,
@@ -30,7 +39,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
         source: &FuseProofSource<'rx, C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, POLYS>,
     ) -> Result<(
         native::stages::inner_error::Witness<C, native::RevdotParameters>,
         FuseBuilder<'_, 'rx, C::CircuitField, R>,
@@ -49,12 +58,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         &self,
         rng: &mut RNG,
         registry_wy: &RegistryWy<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, POLYS>,
     ) -> Result<()> {
         let bridge_rx = self.nested_chain_layout().rx_configured(
             4,
             C::ScalarField::random(&mut *rng),
-            &nested::stages::inner_error::Stage::<C::HostCurve, R>::default(),
+            &nested::stages::inner_error::Stage::<C::HostCurve, R, POLYS>::default(),
             &nested::stages::inner_error::Witness {
                 native_inner_error: builder.native_inner_error_commitment(),
                 registry_wy: registry_wy.commitment,
@@ -72,7 +81,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
         source: &FuseProofSource<'rx, C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, POLYS>,
     ) -> Result<(
         native::stages::inner_error::Witness<C, native::RevdotParameters>,
         FuseBuilder<'_, 'rx, C::CircuitField, R>,
@@ -102,6 +111,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     C,
                     R,
                     HEADER_SIZE,
+                    POLYS,
+                    CLAIMS,
+                    CHALLENGES,
+                    CHALLENGE_WIDTH,
                     native::RevdotParameters,
                 >::default(),
                 &inner_error_witness,

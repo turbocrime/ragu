@@ -84,25 +84,33 @@ use crate::internal::fold_revdot;
 /// performed by this circuit.
 ///
 /// [module-level documentation]: self
-pub struct Circuit<C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
-    /// The left child's shape.
-    left: crate::framework_hooks::HookLayout,
-    /// The right child's shape.
-    right: crate::framework_hooks::HookLayout,
+pub struct Circuit<
+    C: Cycle,
+    R,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+    FP: fold_revdot::Parameters,
+> {
     _marker: PhantomData<(C, R, FP)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
-    Circuit<C, R, HEADER_SIZE, FP>
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+    FP: fold_revdot::Parameters,
+> Circuit<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH, FP>
 {
     /// Creates a new multi-stage circuit for layer 1 revdot verification.
-    pub fn new(
-        left: crate::framework_hooks::HookLayout,
-        right: crate::framework_hooks::HookLayout,
-    ) -> MultiStage<C::CircuitField, R, Self> {
+    pub fn new() -> MultiStage<C::CircuitField, R, Self> {
         MultiStage::new(Circuit {
-            left,
-            right,
             _marker: PhantomData,
         })
     }
@@ -120,10 +128,28 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_rev
     pub outer_error_witness: &'a native_outer_error::Witness<C, FP>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
-    MultiStageCircuit<C::CircuitField, R> for Circuit<C, R, HEADER_SIZE, FP>
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+    FP: fold_revdot::Parameters,
+> MultiStageCircuit<C::CircuitField, R>
+    for Circuit<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH, FP>
 {
-    type Last = native_inner_error::Stage<C, R, HEADER_SIZE, FP>;
+    type Last = native_inner_error::Stage<
+        C,
+        R,
+        HEADER_SIZE,
+        POLYS,
+        CLAIMS,
+        CHALLENGES,
+        CHALLENGE_WIDTH,
+        FP,
+    >;
 
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, R, HEADER_SIZE, FP>;
@@ -149,14 +175,37 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     where
         Self: 'dr,
     {
-        let (preamble, builder) = builder.configure_stage_sized(
-            native_preamble::Stage::<C, R, HEADER_SIZE>::with_shapes(self.left, self.right),
-            native_preamble::num_values(HEADER_SIZE, self.left, self.right),
-        )?;
+        let (preamble, builder) = builder.add_stage::<native_preamble::Stage<
+            C,
+            R,
+            HEADER_SIZE,
+            POLYS,
+            CLAIMS,
+            CHALLENGES,
+            CHALLENGE_WIDTH,
+        >>()?;
         let (outer_error, builder) =
-            builder.add_stage::<native_outer_error::Stage<C, R, HEADER_SIZE, FP>>()?;
+            builder.add_stage::<native_outer_error::Stage<
+                C,
+                R,
+                HEADER_SIZE,
+                POLYS,
+                CLAIMS,
+                CHALLENGES,
+                CHALLENGE_WIDTH,
+                FP,
+            >>()?;
         let (inner_error, builder) =
-            builder.add_stage::<native_inner_error::Stage<C, R, HEADER_SIZE, FP>>()?;
+            builder.add_stage::<native_inner_error::Stage<
+                C,
+                R,
+                HEADER_SIZE,
+                POLYS,
+                CLAIMS,
+                CHALLENGES,
+                CHALLENGE_WIDTH,
+                FP,
+            >>()?;
         let dr = builder.finish();
         let preamble = preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;
         let outer_error =

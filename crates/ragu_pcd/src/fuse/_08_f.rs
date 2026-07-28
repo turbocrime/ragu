@@ -26,7 +26,16 @@ use crate::{
     proof::ProofBuilder,
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> Application<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+{
     pub(super) fn compute_f<'dr, D, RNG: CryptoRngCore>(
         &self,
         rng: &mut RNG,
@@ -37,7 +46,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         alpha: &Element<'dr, D>,
         s_prime: &NativeSPrime<C, R>,
         registry_wy: &RegistryWy<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, POLYS>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
     ) -> Result<NativeF<C, R>>
@@ -68,12 +77,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         &self,
         rng: &mut RNG,
         native: &NativeF<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, POLYS>,
     ) -> Result<()> {
         let bridge_rx = self.nested_chain_layout().rx_configured(
             8,
             C::ScalarField::random(&mut *rng),
-            &nested::stages::f::Stage::<C::HostCurve, R>::default(),
+            &nested::stages::f::Stage::<C::HostCurve, R, POLYS>::default(),
             &nested::stages::f::Witness {
                 native_f: native.commitment,
             },
@@ -92,7 +101,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         alpha: &Element<'dr, D>,
         s_prime: &NativeSPrime<C, R>,
         registry_wy: &RegistryWy<C, R>,
-        builder: &ProofBuilder<'_, C, R>,
+        builder: &ProofBuilder<'_, C, R, POLYS>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
     ) -> Result<NativeF<C, R>>

@@ -187,7 +187,7 @@ macro_rules! cached_bridge {
             let rx = self.nested_chain().rx_configured(
                 $pos,
                 self.bridge_alpha_power($idx),
-                &nested::stages::$stage::Stage::<C::HostCurve, R>::default(),
+                &nested::stages::$stage::Stage::<C::HostCurve, R, POLYS>::default(),
                 &nested::stages::$stage::Witness {
                     $($wit_field: self.$getter()),*
                 },
@@ -211,7 +211,7 @@ macro_rules! cached_bridge {
 /// Native commitment caches are computed lazily from polynomials on first
 /// access. Special commitments (`a`, `b`, `p`) must be provided explicitly
 /// because they are computed via non-standard techniques.
-pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
+pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, const POLYS: usize> {
     params: &'params C::Params,
 
     /// Shared alpha source for the four cached bridge commitments.
@@ -335,7 +335,7 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     capacity: crate::framework_hooks::HookLayout,
 }
 
-impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
+impl<'params, C: Cycle, R: Rank, const POLYS: usize> ProofBuilder<'params, C, R, POLYS> {
     /// Create a new empty builder with the given `bridge_alpha` source for
     /// deriving cached bridge polynomial alphas.
     pub(crate) fn new(
@@ -624,7 +624,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         let rx = self.nested_chain().rx_configured(
             9,
             self.bridge_alpha_power(nested::RxIndex::BridgeEval),
-            &nested::stages::eval::Stage::<C::HostCurve, R>::with_shape(self.capacity),
+            &nested::stages::eval::Stage::<C::HostCurve, R, POLYS>::default(),
             &nested::stages::eval::Witness {
                 native_eval: self.native_eval_commitment(),
                 claims: self.claim_host_commitments(),

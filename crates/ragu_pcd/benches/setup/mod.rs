@@ -32,7 +32,7 @@ pub fn setup_finalize() -> (
 }
 
 pub fn setup_seed() -> (
-    Application<'static, Pasta, ProductionRank, 4>,
+    Application<'static, Pasta, ProductionRank, 4, 0, 0, 0, 2>,
     &'static <Pasta as Cycle>::CircuitPoseidon,
     StdRng,
 ) {
@@ -49,7 +49,7 @@ pub fn setup_seed() -> (
 }
 
 pub fn setup_fuse() -> (
-    Application<'static, Pasta, ProductionRank, 4>,
+    Application<'static, Pasta, ProductionRank, 4, 0, 0, 0, 2>,
     Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
     Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
     &'static <Pasta as Cycle>::CircuitPoseidon,
@@ -77,7 +77,7 @@ pub fn setup_fuse() -> (
 }
 
 pub fn setup_verify_leaf() -> (
-    Application<'static, Pasta, ProductionRank, 4>,
+    Application<'static, Pasta, ProductionRank, 4, 0, 0, 0, 2>,
     Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
     StdRng,
 ) {
@@ -95,7 +95,7 @@ pub fn setup_verify_leaf() -> (
 }
 
 pub fn setup_verify_node() -> (
-    Application<'static, Pasta, ProductionRank, 4>,
+    Application<'static, Pasta, ProductionRank, 4, 0, 0, 0, 2>,
     Pcd<Pasta, ProductionRank, nontrivial::InternalNode>,
     StdRng,
 ) {

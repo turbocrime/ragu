@@ -30,11 +30,11 @@ use ragu_primitives::GadgetExt as _;
 use crate::internal::{
     Side,
     endoscalar::{EndoscalarStage, PointsStage},
-    nested::stages,
+    nested::{EndoscalingPointsLen, stages},
 };
 
 /// Copying circuit that relates the current preamble to a child's stages.
-pub struct Circuit<C: CurveAffine, R: Rank> {
+pub struct Circuit<C: CurveAffine, R: Rank, const POLYS: usize> {
     side: Side,
     /// The walked *child's* own shape — this circuit traverses the child's
     /// trace, so its geometry is the child's triple, grandchildren included.
@@ -46,7 +46,7 @@ pub struct Circuit<C: CurveAffine, R: Rank> {
     _marker: PhantomData<(C, R)>,
 }
 
-impl<C: CurveAffine, R: Rank> Circuit<C, R> {
+impl<C: CurveAffine, R: Rank, const POLYS: usize> Circuit<C, R, POLYS> {
     pub fn new(
         side: Side,
         child: crate::framework_hooks::HookLayout,
@@ -63,8 +63,10 @@ impl<C: CurveAffine, R: Rank> Circuit<C, R> {
     }
 }
 
-impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
-    type Last = stages::eval::Stage<C, R>;
+impl<C: CurveAffine, R: Rank, const POLYS: usize> MultiStageCircuit<C::Base, R>
+    for Circuit<C, R, POLYS>
+{
+    type Last = stages::eval::Stage<C, R, POLYS>;
     type Instance<'source> = ();
     type Witness<'source> = ();
     type Output = ();
@@ -92,35 +94,38 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
             self.child_left,
             self.child_right,
         );
-        let num_points =
-            crate::internal::nested::num_endoscaling_points(self.child_left, self.child_right);
 
         let dr = dr.skip_stage_sized(EndoscalarStage, chain.width(0))?;
         let (points_guard, dr) = dr.configure_stage_sized(
-            PointsStage::<C>::with_num_points(num_points),
+            PointsStage::<C, EndoscalingPointsLen<POLYS>>::default(),
             chain.width(1),
         )?;
         let (preamble_guard, dr) = dr.configure_stage_sized(
-            stages::preamble::Stage::<C, R>::with_shapes(self.child_left, self.child_right),
+            stages::preamble::Stage::<C, R, POLYS>::default(),
             chain.width(2),
         )?;
-        let (s_prime_guard, dr) =
-            dr.configure_stage_sized(stages::s_prime::Stage::<C, R>::default(), chain.width(3))?;
+        let (s_prime_guard, dr) = dr.configure_stage_sized(
+            stages::s_prime::Stage::<C, R, POLYS>::default(),
+            chain.width(3),
+        )?;
         let (inner_error_guard, dr) = dr.configure_stage_sized(
-            stages::inner_error::Stage::<C, R>::default(),
+            stages::inner_error::Stage::<C, R, POLYS>::default(),
             chain.width(4),
         )?;
         let (outer_error_guard, dr) = dr.configure_stage_sized(
-            stages::outer_error::Stage::<C, R>::default(),
+            stages::outer_error::Stage::<C, R, POLYS>::default(),
             chain.width(5),
         )?;
         let (ab_guard, dr) =
-            dr.configure_stage_sized(stages::ab::Stage::<C, R>::default(), chain.width(6))?;
-        let (query_guard, dr) =
-            dr.configure_stage_sized(stages::query::Stage::<C, R>::default(), chain.width(7))?;
-        let dr = dr.skip_stage_sized(stages::f::Stage::<C, R>::default(), chain.width(8))?;
+            dr.configure_stage_sized(stages::ab::Stage::<C, R, POLYS>::default(), chain.width(6))?;
+        let (query_guard, dr) = dr.configure_stage_sized(
+            stages::query::Stage::<C, R, POLYS>::default(),
+            chain.width(7),
+        )?;
+        let dr =
+            dr.skip_stage_sized(stages::f::Stage::<C, R, POLYS>::default(), chain.width(8))?;
         let (eval_guard, dr) = dr.configure_stage_sized(
-            stages::eval::Stage::<C, R>::with_shape(self.child),
+            stages::eval::Stage::<C, R, POLYS>::default(),
             chain.width(9),
         )?;
         let dr = dr.finish();

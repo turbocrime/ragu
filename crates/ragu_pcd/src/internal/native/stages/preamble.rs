@@ -17,12 +17,10 @@ use ragu_primitives::{
     Boolean, Element, GadgetExt, Point,
     allocator::Allocator,
     consistent::Consistent,
-    vec::{CollectFixed, ConstLen, FixedVec},
+    vec::{CollectFixed, ConstLen, FixedVec, Len},
 };
 
-use crate::{
-    Proof, header::Header, internal::native::unified, slot_vec::SlotVec, step::internal::padded,
-};
+use crate::{Proof, header::Header, internal::native::unified, step::internal::padded};
 
 type HeaderVec<'dr, D, const HEADER_SIZE: usize> = FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>>;
 
@@ -59,9 +57,14 @@ pub struct PolyInstance<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
 /// coordinates, then the challenge) matches the challenge-slot region of the
 /// application circuit's instance.
 #[derive(Gadget, Consistent)]
-pub struct ChallengeInstance<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
+pub struct ChallengeInstance<
+    'dr,
+    D: Driver<'dr>,
+    C: Cycle<CircuitField = D::F>,
+    const CHALLENGE_WIDTH: usize,
+> {
     #[ragu(gadget)]
-    pub points: crate::slot_vec::SlotVec<Point<'dr, D, C::NestedCurve>>,
+    pub points: FixedVec<Point<'dr, D, C::NestedCurve>, ConstLen<CHALLENGE_WIDTH>>,
     #[ragu(gadget)]
     pub challenge: Element<'dr, D>,
 }
@@ -119,8 +122,16 @@ pub struct ChildHeaders<'dr, D: Driver<'dr>, const HEADER_SIZE: usize> {
 
 /// Processed inputs from a single child proof in the preamble stage.
 #[derive(Gadget, Consistent)]
-pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>
-{
+pub struct ProofInputs<
+    'dr,
+    D: Driver<'dr>,
+    C: Cycle<CircuitField = D::F>,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> {
     /// Headers this child proof claimed for its own children.
     #[ragu(gadget)]
     pub children: ChildHeaders<'dr, D, HEADER_SIZE>,
@@ -128,27 +139,34 @@ pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const
     #[ragu(gadget)]
     pub output_header: HeaderVec<'dr, D, HEADER_SIZE>,
     /// The poly-query claim instances this child proof raised, in slot order.
-    /// Length is the configuring query-slot count; unused slots hold the
-    /// canonical padding claim.
+    /// Unused slots hold the canonical padding claim.
     #[ragu(gadget)]
-    pub claims: SlotVec<ClaimInstance<'dr, D>>,
-    /// The polynomials this child proof witnessed, in slot order. Length is
-    /// the configuring poly-slot count; unused slots hold the canonical
-    /// padding polynomial. A claim above names one of these by index.
+    pub claims: FixedVec<ClaimInstance<'dr, D>, ConstLen<CLAIMS>>,
+    /// The polynomials this child proof witnessed, in slot order. Unused slots
+    /// hold the canonical padding polynomial. A claim above names one of these
+    /// by index.
     #[ragu(gadget)]
-    pub polys: SlotVec<PolyInstance<'dr, D, C>>,
+    pub polys: FixedVec<PolyInstance<'dr, D, C>, ConstLen<POLYS>>,
     /// The derived-challenge pairs the child's circuit exposed, in slot order.
-    /// Length is the configuring challenge-slot count.
     #[ragu(gadget)]
-    pub challenges: SlotVec<ChallengeInstance<'dr, D, C>>,
+    pub challenges:
+        FixedVec<ChallengeInstance<'dr, D, C, CHALLENGE_WIDTH>, ConstLen<CHALLENGES>>,
     #[ragu(gadget)]
     pub circuit_id: Element<'dr, D>,
     #[ragu(gadget)]
     pub unified: unified::Output<'dr, D, C>,
 }
 
-impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usize>
-    ProofInputs<'dr, D, C, HEADER_SIZE>
+impl<
+    'dr,
+    D: Driver<'dr, F = C::CircuitField>,
+    C: Cycle,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> ProofInputs<'dr, D, C, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
 {
     /// Compute unified k(y) and unified+bridged k(y) values simultaneously,
     /// sharing computation.
@@ -224,24 +242,29 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
     }
 }
 
-impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usize>
-    ProofInputs<'dr, D, C, HEADER_SIZE>
+impl<
+    'dr,
+    D: Driver<'dr, F = C::CircuitField>,
+    C: Cycle,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> ProofInputs<'dr, D, C, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
 {
     /// Allocate ProofInputs from a proof reference and pre-computed output
-    /// header. `shape` is a circuit-construction parameter (the configuring
-    /// plan for this child): it fixes the wire shape regardless of whether a
-    /// witness is present, and the proof's own slot lists are checked against
-    /// it.
+    /// header. The slot counts are circuit-construction parameters: they fix
+    /// the wire shape regardless of whether a witness is present, and the
+    /// proof's own slot lists are checked against them.
     pub fn alloc<R: Rank>(
         dr: &mut D,
         proof: DriverValue<D, &Proof<C, R>>,
         output_header: DriverValue<D, &FixedVec<D::F, ConstLen<HEADER_SIZE>>>,
-        shape: crate::framework_hooks::HookLayout,
     ) -> Result<Self> {
-        let num_polys = shape.poly_query.polys;
-        let num_queries = shape.poly_query.claims;
-        let num_challenges = shape.challenge.calls;
-        let challenge_points = shape.challenge.width;
+        let num_polys = POLYS;
+        let num_queries = CLAIMS;
+        let num_challenges = CHALLENGES;
         fn alloc_header<'dr, D: Driver<'dr>, const N: usize>(
             dr: &mut D,
             allocator: &mut (),
@@ -292,7 +315,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                             )?,
                         })
                     })
-                    .collect::<Result<_>>()?
+                    .try_collect_fixed()?
             },
             claims: {
                 D::try_just(|| {
@@ -324,7 +347,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                             )?,
                         })
                     })
-                    .collect::<Result<_>>()?
+                    .try_collect_fixed()?
             },
             challenges: {
                 D::try_just(|| {
@@ -340,7 +363,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                 (0..num_challenges)
                     .map(|i| {
                         Ok(ChallengeInstance {
-                            points: (0..challenge_points)
+                            points: ConstLen::<CHALLENGE_WIDTH>::range()
                                 .map(|j| {
                                     Point::alloc(
                                         dr,
@@ -349,7 +372,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                                             .map(|p| p.application_challenges()[i].points[j]),
                                     )
                                 })
-                                .collect::<Result<_>>()?,
+                                .try_collect_fixed()?,
                             challenge: Element::alloc(
                                 dr,
                                 allocator,
@@ -359,7 +382,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                             )?,
                         })
                     })
-                    .collect::<Result<_>>()?
+                    .try_collect_fixed()?
             },
             circuit_id: Element::alloc(
                 dr,
@@ -371,12 +394,11 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
     }
 
     /// Allocate ProofInputs from a proof reference and some unprocessed header
-    /// data. `shape` as in [`alloc`](Self::alloc).
+    /// data. Shape as in [`alloc`](Self::alloc).
     pub fn alloc_for_verify<R: Rank, H: Header<C::CircuitField>>(
         dr: &mut D,
         proof: DriverValue<D, &Proof<C, R>>,
         header_data: DriverValue<D, H::Data>,
-        shape: crate::framework_hooks::HookLayout,
     ) -> Result<Self> {
         let header_data = D::try_just(|| {
             use ragu_core::drivers::emulator::{Emulator, Wireless};
@@ -394,7 +416,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                 .collect_fixed()
         })?;
 
-        Self::alloc(dr, proof, header_data.as_ref(), shape)
+        Self::alloc(dr, proof, header_data.as_ref())
     }
 }
 
@@ -403,15 +425,32 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
 /// This is stage communication data, not part of the circuit's public instance.
 /// The verifier never sees these values directly.
 #[derive(Gadget, Consistent)]
-pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize> {
+pub struct Output<
+    'dr,
+    D: Driver<'dr>,
+    C: Cycle<CircuitField = D::F>,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> {
     #[ragu(gadget)]
-    pub left: ProofInputs<'dr, D, C, HEADER_SIZE>,
+    pub left: ProofInputs<'dr, D, C, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>,
     #[ragu(gadget)]
-    pub right: ProofInputs<'dr, D, C, HEADER_SIZE>,
+    pub right: ProofInputs<'dr, D, C, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>,
 }
 
-impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>
-    Output<'dr, D, C, HEADER_SIZE>
+impl<
+    'dr,
+    D: Driver<'dr>,
+    C: Cycle<CircuitField = D::F>,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> Output<'dr, D, C, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
 {
     /// Returns true if both child proofs are trivial proofs.
     pub fn is_base_case(
@@ -452,37 +491,62 @@ pub fn child_num_values(header_size: usize, child: crate::framework_hooks::HookL
         + unified::NUM_WIRES
 }
 
-pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize> {
-    /// The left child's shape.
-    left: crate::framework_hooks::HookLayout,
-    /// The right child's shape.
-    right: crate::framework_hooks::HookLayout,
+/// Both children present the application's shape, so one set of slot counts
+/// sizes both.
+pub struct Stage<
+    C: Cycle,
+    R,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> {
     _marker: PhantomData<(C, R)>,
 }
 
-impl<C: Cycle, R, const HEADER_SIZE: usize> Stage<C, R, HEADER_SIZE> {
-    /// A stage instance for children of the given shapes.
-    pub fn with_shapes(
-        left: crate::framework_hooks::HookLayout,
-        right: crate::framework_hooks::HookLayout,
-    ) -> Self {
+impl<
+    C: Cycle,
+    R,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> Default for Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+{
+    fn default() -> Self {
         Stage {
-            left,
-            right,
             _marker: PhantomData,
         }
     }
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField, R>
-    for Stage<C, R, HEADER_SIZE>
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> staging::Stage<C::CircuitField, R>
+    for Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
 {
     type Parent = ();
     type Witness<'source> = &'source Witness<'source, C, R, HEADER_SIZE>;
-    type OutputKind = Kind![C::CircuitField; Output<'_, _, C, HEADER_SIZE>];
+    type OutputKind = Kind![
+        C::CircuitField;
+        Output<'_, _, C, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+    ];
 
     fn values() -> usize {
-        crate::internal::shape_dependent_stage()
+        2 * (3 * HEADER_SIZE
+            + 2 * POLYS
+            + 3 * CLAIMS
+            + (2 * CHALLENGE_WIDTH + 1) * CHALLENGES
+            + 1
+            + unified::NUM_WIRES)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -497,14 +561,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
             dr,
             witness.as_ref().map(|w| w.left.proof),
             witness.as_ref().map(|w| &w.left.output_header),
-            self.left,
         )?;
 
         let right = ProofInputs::alloc(
             dr,
             witness.as_ref().map(|w| w.right.proof),
             witness.as_ref().map(|w| &w.right.output_header),
-            self.right,
         )?;
 
         Ok(Output { left, right })
@@ -521,15 +583,19 @@ mod tests {
     /// `num_values` predicts the wire count at every shape, not just one.
     #[test]
     fn num_values_matches_wire_count() {
-        for polys in [0, 1, 4, 8] {
-            let capacity = capacity_with_polys(polys);
+        fn check<const POLYS: usize>() {
+            let capacity = capacity_with_polys(POLYS);
             assert_eq!(
-                stage_wire_count(&Stage::<Pasta, R, { HEADER_SIZE }>::with_shapes(
-                    capacity, capacity
-                )),
+                stage_wire_count(
+                    &Stage::<Pasta, R, { HEADER_SIZE }, POLYS, 1, 1, 2>::default()
+                ),
                 num_values(HEADER_SIZE, capacity, capacity),
-                "polys={polys}"
+                "polys={POLYS}"
             );
         }
+        check::<0>();
+        check::<1>();
+        check::<4>();
+        check::<8>();
     }
 }

@@ -83,22 +83,30 @@ use crate::internal::{
 ///
 /// [module-level documentation]: self
 /// [$v$]: unified::Output::v
-pub struct Circuit<C: Cycle, R, const HEADER_SIZE: usize> {
-    /// The left child's shape.
-    left: crate::framework_hooks::HookLayout,
-    /// The right child's shape.
-    right: crate::framework_hooks::HookLayout,
+pub struct Circuit<
+    C: Cycle,
+    R,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> {
     _marker: PhantomData<(C, R)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Circuit<C, R, HEADER_SIZE> {
-    pub fn new(
-        left: crate::framework_hooks::HookLayout,
-        right: crate::framework_hooks::HookLayout,
-    ) -> MultiStage<C::CircuitField, R, Self> {
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> Circuit<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+{
+    pub fn new() -> MultiStage<C::CircuitField, R, Self> {
         MultiStage::new(Circuit {
-            left,
-            right,
             _marker: PhantomData,
         })
     }
@@ -123,10 +131,19 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     pub eval_witness: &'a native_eval::Witness<C::CircuitField>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitField, R>
-    for Circuit<C, R, HEADER_SIZE>
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> MultiStageCircuit<C::CircuitField, R>
+    for Circuit<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
 {
-    type Last = native_eval::Stage<C, R, HEADER_SIZE>;
+    type Last =
+        native_eval::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>;
 
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, R, HEADER_SIZE>;
@@ -154,18 +171,36 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
     {
         // Set up multi-stage circuit pipeline: preamble -> query -> eval.
         // Each stage provides data needed for the v computation.
-        let (preamble, builder) = builder.configure_stage_sized(
-            native_preamble::Stage::<C, R, HEADER_SIZE>::with_shapes(self.left, self.right),
-            native_preamble::num_values(HEADER_SIZE, self.left, self.right),
-        )?;
+        let (preamble, builder) = builder.add_stage::<native_preamble::Stage<
+            C,
+            R,
+            HEADER_SIZE,
+            POLYS,
+            CLAIMS,
+            CHALLENGES,
+            CHALLENGE_WIDTH,
+        >>()?;
         let (query, builder) = builder.configure_stage_sized(
-            native_query::Stage::<C, R, HEADER_SIZE>::default(),
+            native_query::Stage::<
+                C,
+                R,
+                HEADER_SIZE,
+                POLYS,
+                CLAIMS,
+                CHALLENGES,
+                CHALLENGE_WIDTH,
+            >::default(),
             native_query::num_values(super::super::InternalCircuitIndex::NUM),
         )?;
-        let (eval, builder) = builder.configure_stage_sized(
-            native_eval::Stage::<C, R, HEADER_SIZE>::with_shapes(self.left, self.right),
-            native_eval::num_values(self.left, self.right),
-        )?;
+        let (eval, builder) = builder.add_stage::<native_eval::Stage<
+            C,
+            R,
+            HEADER_SIZE,
+            POLYS,
+            CLAIMS,
+            CHALLENGES,
+            CHALLENGE_WIDTH,
+        >>()?;
         let dr = builder.finish();
 
         // Preamble is enforced because it contains child proof data that must
@@ -330,14 +365,31 @@ struct Denominators<'dr, D: Driver<'dr>> {
 }
 
 impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
-    fn new<C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>(
+    #[allow(clippy::too_many_arguments)]
+    fn new<
+        C: Cycle<CircuitField = D::F>,
+        const HEADER_SIZE: usize,
+        const POLYS: usize,
+        const CLAIMS: usize,
+        const CHALLENGES: usize,
+        const CHALLENGE_WIDTH: usize,
+    >(
         dr: &mut D,
         u: &Element<'dr, D>,
         w: &Element<'dr, D>,
         x: &Element<'dr, D>,
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
-        preamble: &native_preamble::Output<'dr, D, C, HEADER_SIZE>,
+        preamble: &native_preamble::Output<
+            'dr,
+            D,
+            C,
+            HEADER_SIZE,
+            POLYS,
+            CLAIMS,
+            CHALLENGES,
+            CHALLENGE_WIDTH,
+        >,
     ) -> Result<Self>
     where
         D::F: ragu_arithmetic::ff::PrimeField,
@@ -636,10 +688,28 @@ fn compute_axbx<'dr, D: Driver<'dr>, P: Parameters>(
 /// [`compute_f`]: crate::Application::compute_f
 /// [$\alpha$]: unified::Output::alpha
 #[rustfmt::skip]
-fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>(
-    eval: &'a native_eval::Output<'dr, D>,
+fn poly_queries<
+    'a, 'dr,
+    D: Driver<'dr>,
+    C: Cycle<CircuitField = D::F>,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+>(
+    eval: &'a native_eval::Output<'dr, D, POLYS>,
     query: &'a native_query::Output<'dr, D>,
-    preamble: &'a native_preamble::Output<'dr, D, C, HEADER_SIZE>,
+    preamble: &'a native_preamble::Output<
+        'dr,
+        D,
+        C,
+        HEADER_SIZE,
+        POLYS,
+        CLAIMS,
+        CHALLENGES,
+        CHALLENGE_WIDTH,
+    >,
     d: &'a Denominators<'dr, D>,
     computed_ax: &'a Element<'dr, D>,
     computed_bx: &'a Element<'dr, D>,

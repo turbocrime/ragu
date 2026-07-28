@@ -127,18 +127,33 @@ pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEAD
 /// circuit.
 ///
 /// [module-level documentation]: self
-pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
+pub struct Circuit<
+    'params,
+    C: Cycle,
+    R,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+    FP: fold_revdot::Parameters,
+> {
     params: &'params C::Params,
     log2_circuits: u32,
-    /// The left child's shape.
-    left: crate::framework_hooks::HookLayout,
-    /// The right child's shape.
-    right: crate::framework_hooks::HookLayout,
     _marker: PhantomData<(R, FP)>,
 }
 
-impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
-    Circuit<'params, C, R, HEADER_SIZE, FP>
+impl<
+    'params,
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+    FP: fold_revdot::Parameters,
+> Circuit<'params, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH, FP>
 {
     /// Creates a new multi-stage circuit.
     ///
@@ -150,14 +165,10 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Para
     pub fn new(
         params: &'params C::Params,
         log2_circuits: u32,
-        left: crate::framework_hooks::HookLayout,
-        right: crate::framework_hooks::HookLayout,
     ) -> MultiStage<C::CircuitField, R, Self> {
         MultiStage::new(Circuit {
             params,
             log2_circuits,
-            left,
-            right,
             _marker: PhantomData,
         })
     }
@@ -187,10 +198,28 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_rev
     pub outer_error_witness: &'a native_outer_error::Witness<C, FP>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
-    MultiStageCircuit<C::CircuitField, R> for Circuit<'_, C, R, HEADER_SIZE, FP>
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+    FP: fold_revdot::Parameters,
+> MultiStageCircuit<C::CircuitField, R>
+    for Circuit<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH, FP>
 {
-    type Last = native_outer_error::Stage<C, R, HEADER_SIZE, FP>;
+    type Last = native_outer_error::Stage<
+        C,
+        R,
+        HEADER_SIZE,
+        POLYS,
+        CLAIMS,
+        CHALLENGES,
+        CHALLENGE_WIDTH,
+        FP,
+    >;
 
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, R, HEADER_SIZE, FP>;
@@ -216,12 +245,26 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     where
         Self: 'dr,
     {
-        let (preamble, builder) = builder.configure_stage_sized(
-            native_preamble::Stage::<C, R, HEADER_SIZE>::with_shapes(self.left, self.right),
-            native_preamble::num_values(HEADER_SIZE, self.left, self.right),
-        )?;
+        let (preamble, builder) = builder.add_stage::<native_preamble::Stage<
+            C,
+            R,
+            HEADER_SIZE,
+            POLYS,
+            CLAIMS,
+            CHALLENGES,
+            CHALLENGE_WIDTH,
+        >>()?;
         let (outer_error, builder) =
-            builder.add_stage::<native_outer_error::Stage<C, R, HEADER_SIZE, FP>>()?;
+            builder.add_stage::<native_outer_error::Stage<
+                C,
+                R,
+                HEADER_SIZE,
+                POLYS,
+                CLAIMS,
+                CHALLENGES,
+                CHALLENGE_WIDTH,
+                FP,
+            >>()?;
         let dr = builder.finish();
 
         let preamble = preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;

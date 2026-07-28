@@ -167,7 +167,11 @@ fn stage_parameter_chains() -> (
     ragu_circuits::staging::InducedStages,
 ) {
     let capacity = capacity_with_polys(8);
-    native::chain_layouts::<Pasta, R, HEADER_SIZE>(InternalCircuitIndex::NUM, capacity, capacity)
+    native::chain_layouts::<Pasta, R, HEADER_SIZE, 8, 1, 1, 2>(
+        InternalCircuitIndex::NUM,
+        capacity,
+        capacity,
+    )
 }
 
 /// Helper test to print current stage parameters in copy-pasteable format.
@@ -397,7 +401,7 @@ fn chain_layouts_tile_at_every_capacity() {
             poly_query: PolyQueryLayout { polys, claims: 1 },
         };
         let (query_chain, error_chain) =
-            crate::internal::native::chain_layouts::<Pasta, R, HEADER_SIZE>(
+            crate::internal::native::chain_layouts::<Pasta, R, HEADER_SIZE, 1, 1, 1, 2>(
                 crate::internal::native::InternalCircuitIndex::NUM,
                 capacity,
                 capacity,
@@ -558,7 +562,10 @@ mod capacity_is_per_application {
         ctx.derive_challenge(&[handle.commitment().clone()])?;
     });
 
-    fn gates(app: &Application<'_, Pasta, R, HS>, id: InternalCircuitIndex) -> usize {
+    fn gates<const POLYS: usize, const CLAIMS: usize, const CHALLENGES: usize>(
+        app: &Application<'_, Pasta, R, HS, POLYS, CLAIMS, CHALLENGES, 2>,
+        id: InternalCircuitIndex,
+    ) -> usize {
         app.native_registry.constraint_counts(id.circuit_index()).0
     }
 

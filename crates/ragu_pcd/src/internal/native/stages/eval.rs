@@ -27,12 +27,16 @@ use ragu_core::{
     gadgets::{Bound, Gadget, Kind},
     maybe::Maybe,
 };
-use ragu_primitives::{Element, allocator::Allocator, io::Write};
+use ragu_primitives::{
+    Element,
+    allocator::Allocator,
+    io::Write,
+    vec::{CollectFixed, ConstLen, FixedVec, Len},
+};
 
 use crate::{
     Proof,
     internal::native::{RxComponent, RxValues},
-    slot_vec::SlotVec,
 };
 
 /// Polynomial evaluations at $u$ (from the parent fuse operation) for a child
@@ -137,7 +141,7 @@ pub struct Witness<F> {
 /// of the coefficients for the weighted sum with $\beta$ via
 /// [`Horner`](ragu_circuits::horner::Horner) evaluation.
 #[derive(Gadget, Write)]
-pub struct ChildEvaluations<'dr, D: Driver<'dr>> {
+pub struct ChildEvaluations<'dr, D: Driver<'dr>, const POLYS: usize> {
     #[ragu(gadget)]
     pub rx: RxValues<Element<'dr, D>>,
     #[ragu(gadget)]
@@ -152,19 +156,17 @@ pub struct ChildEvaluations<'dr, D: Driver<'dr>> {
     /// last so the [`Write`] order (and hence the $v$ Horner weighting)
     /// matches the `_10_p` accumulation order.
     #[ragu(gadget)]
-    pub claims: SlotVec<Element<'dr, D>>,
+    pub claims: FixedVec<Element<'dr, D>, ConstLen<POLYS>>,
 }
 
-impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
-    /// Allocate child evaluations from pre-computed witness values.
-    /// `child` is the child's shape: its claim slot count sizes `claims`.
+impl<'dr, D: Driver<'dr>, const POLYS: usize> ChildEvaluations<'dr, D, POLYS> {
+    /// Allocate child evaluations from pre-computed witness values. `POLYS` is
+    /// the child's poly-slot count, which sizes `claims`.
     pub fn alloc<A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, &ChildEvaluationsWitness<D::F>>,
-        child: crate::framework_hooks::HookLayout,
     ) -> Result<Self> {
-        let num_polys = child.poly_query.polys;
         let rx = RxValues::try_from_fn(|id| {
             Element::alloc(dr, allocator, witness.as_ref().map(|w| *w.rx.get(id)))
         })?;
@@ -178,9 +180,9 @@ impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
                 witness.as_ref().map(|w| w.registry_xy_poly),
             )?,
             p_poly: Element::alloc(dr, allocator, witness.as_ref().map(|w| w.p_poly))?,
-            claims: (0..num_polys)
+            claims: ConstLen::<POLYS>::range()
                 .map(|i| Element::alloc(dr, allocator, witness.as_ref().map(|w| w.claims[i])))
-                .collect::<Result<_>>()?,
+                .try_collect_fixed()?,
         })
     }
 }
@@ -189,11 +191,11 @@ impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
 ///
 /// This is stage communication data, not part of the circuit's public instance.
 #[derive(Gadget, Write)]
-pub struct Output<'dr, D: Driver<'dr>> {
+pub struct Output<'dr, D: Driver<'dr>, const POLYS: usize> {
     #[ragu(gadget)]
-    pub left: ChildEvaluations<'dr, D>,
+    pub left: ChildEvaluations<'dr, D, POLYS>,
     #[ragu(gadget)]
-    pub right: ChildEvaluations<'dr, D>,
+    pub right: ChildEvaluations<'dr, D, POLYS>,
     #[ragu(gadget)]
     pub registry_wx0: Element<'dr, D>,
     #[ragu(gadget)]
@@ -227,37 +229,53 @@ pub fn num_values(
 }
 
 /// The eval stage of the fuse witness.
-pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize> {
-    /// The left child's shape.
-    left: crate::framework_hooks::HookLayout,
-    /// The right child's shape.
-    right: crate::framework_hooks::HookLayout,
+pub struct Stage<
+    C: Cycle,
+    R,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> {
     _marker: PhantomData<(C, R)>,
 }
 
-impl<C: Cycle, R, const HEADER_SIZE: usize> Stage<C, R, HEADER_SIZE> {
-    /// A stage instance for children of the given shapes.
-    pub fn with_shapes(
-        left: crate::framework_hooks::HookLayout,
-        right: crate::framework_hooks::HookLayout,
-    ) -> Self {
+impl<
+    C: Cycle,
+    R,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> Default for Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+{
+    fn default() -> Self {
         Stage {
-            left,
-            right,
             _marker: PhantomData,
         }
     }
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField, R>
-    for Stage<C, R, HEADER_SIZE>
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> staging::Stage<C::CircuitField, R>
+    for Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
 {
-    type Parent = super::query::Stage<C, R, HEADER_SIZE>;
+    type Parent =
+        super::query::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>;
     type Witness<'source> = &'source Witness<C::CircuitField>;
-    type OutputKind = Kind![C::CircuitField; Output<'_, _>];
+    type OutputKind = Kind![C::CircuitField; Output<'_, _, POLYS>];
 
     fn values() -> usize {
-        crate::internal::shape_dependent_stage()
+        2 * (super::super::RxIndex::NUM + 4 + POLYS) + 6
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -269,14 +287,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
         Self: 'dr,
     {
         let allocator = &mut ();
-        let left =
-            ChildEvaluations::alloc(dr, allocator, witness.as_ref().map(|w| &w.left), self.left)?;
-        let right = ChildEvaluations::alloc(
-            dr,
-            allocator,
-            witness.as_ref().map(|w| &w.right),
-            self.right,
-        )?;
+        let left = ChildEvaluations::alloc(dr, allocator, witness.as_ref().map(|w| &w.left))?;
+        let right = ChildEvaluations::alloc(dr, allocator, witness.as_ref().map(|w| &w.right))?;
         let registry_wx0 = Element::alloc(
             dr,
             allocator,
@@ -322,15 +334,19 @@ mod tests {
     /// `num_values` predicts the wire count at every shape, not just one.
     #[test]
     fn num_values_matches_wire_count() {
-        for polys in [0, 1, 4, 8] {
-            let capacity = capacity_with_polys(polys);
+        fn check<const POLYS: usize>() {
+            let capacity = capacity_with_polys(POLYS);
             assert_eq!(
-                stage_wire_count(&Stage::<Pasta, R, { HEADER_SIZE }>::with_shapes(
-                    capacity, capacity
-                )),
+                stage_wire_count(
+                    &Stage::<Pasta, R, { HEADER_SIZE }, POLYS, 1, 1, 2>::default()
+                ),
                 num_values(capacity, capacity),
-                "polys={polys}"
+                "polys={POLYS}"
             );
         }
+        check::<0>();
+        check::<1>();
+        check::<4>();
+        check::<8>();
     }
 }

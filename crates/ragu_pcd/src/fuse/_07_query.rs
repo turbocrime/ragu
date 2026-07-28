@@ -16,7 +16,16 @@ use ragu_primitives::Element;
 use super::RegistryWy;
 use crate::{Application, Proof, internal::native, proof::ProofBuilder};
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> Application<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+{
     pub(super) fn compute_query<'dr, D, RNG: CryptoRngCore>(
         &self,
         rng: &mut RNG,
@@ -27,7 +36,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         registry_wy: &RegistryWy<C, R>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, POLYS>,
     ) -> Result<native::stages::query::Witness<C>>
     where
         D: Driver<'dr, F = C::CircuitField>,
@@ -68,7 +77,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let rx = query_chain.rx_configured(
             1,
             C::CircuitField::random(&mut *rng),
-            &native::stages::query::Stage::<C, R, HEADER_SIZE>::default(),
+            &native::stages::query::Stage::<
+                C,
+                R,
+                HEADER_SIZE,
+                POLYS,
+                CLAIMS,
+                CHALLENGES,
+                CHALLENGE_WIDTH,
+            >::default(),
             &query_witness,
         )?;
 

@@ -572,7 +572,16 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     }
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, HEADER_SIZE> {
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> crate::Application<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+{
     /// Runs endoscaling over the host-curve commitments that feed
     /// `PointsStage`, in the order `compute_p` (`_10_p.rs`)
     /// accumulates them. Writes `nested_endoscalar_rx`,
@@ -590,7 +599,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
         points: &[C::HostCurve],
         endoscalar_alpha: C::ScalarField,
         points_alpha: C::ScalarField,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, POLYS>,
     ) -> Result<C::HostCurve> {
         let num_points =
             crate::internal::nested::num_endoscaling_points(self.capacity(), self.capacity());
@@ -607,14 +616,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
         let points_rx = chain.rx_configured(
             1,
             points_alpha,
-            &PointsStage::<C::HostCurve>::with_num_points(num_points),
+            &PointsStage::<C::HostCurve, nested::EndoscalingPointsLen<POLYS>>::default(),
             &witness,
         )?;
 
         let num_steps = crate::internal::endoscalar::num_steps(num_points);
         let mut step_rxs = Vec::with_capacity(num_steps);
         for step in 0..num_steps {
-            let step_circuit = EndoscalingStep::<C::HostCurve, R>::new(step, num_points);
+            let step_circuit =
+                EndoscalingStep::<C::HostCurve, R, nested::EndoscalingPointsLen<POLYS>>::new(step);
             let staged = MultiStage::new(step_circuit);
             let step_trace = staged
                 .trace(EndoscalingStepWitness {
@@ -761,7 +771,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                 .rx_configured(
                     3,
                     C::ScalarField::ONE,
-                    &nested::stages::s_prime::Stage::<C::HostCurve, R>::default(),
+                    &nested::stages::s_prime::Stage::<C::HostCurve, R, POLYS>::default(),
                     &nested::stages::s_prime::Witness {
                         registry_wx0: host_commitment,
                         registry_wx1: host_commitment,
@@ -778,7 +788,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                 .rx_configured(
                     4,
                     C::ScalarField::ONE,
-                    &nested::stages::inner_error::Stage::<C::HostCurve, R>::default(),
+                    &nested::stages::inner_error::Stage::<C::HostCurve, R, POLYS>::default(),
                     &nested::stages::inner_error::Witness {
                         native_inner_error: host_commitment,
                         registry_wy: host_commitment,
@@ -794,7 +804,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                 .rx_configured(
                     8,
                     C::ScalarField::ONE,
-                    &nested::stages::f::Stage::<C::HostCurve, R>::default(),
+                    &nested::stages::f::Stage::<C::HostCurve, R, POLYS>::default(),
                     &nested::stages::f::Witness {
                         native_f: host_commitment,
                     },
@@ -892,10 +902,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                 .rx_configured(
                     2,
                     C::ScalarField::ONE,
-                    &nested::stages::preamble::Stage::<C::HostCurve, R>::with_shapes(
-                        self.capacity(),
-                        self.capacity(),
-                    ),
+                    &nested::stages::preamble::Stage::<C::HostCurve, R, POLYS>::default(),
                     &nested::stages::preamble::Witness {
                         native_preamble: host_commitment,
                         left: trivial_child_witness.clone(),

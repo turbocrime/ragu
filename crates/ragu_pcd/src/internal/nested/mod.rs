@@ -37,7 +37,26 @@ use crate::internal::{Side, endoscalar};
 /// Shared between [`num_endoscaling_points`] and the nested preamble's
 /// `num_points` — both walk the same per-child block.
 pub const fn child_endoscaling_points(child: crate::framework_hooks::HookLayout) -> usize {
-    crate::internal::native::RxIndex::NUM + 4 + child.poly_query.polys
+    child_endoscaling_points_for(child.poly_query.polys)
+}
+
+/// [`child_endoscaling_points`] straight from a poly count, for the
+/// compile-time path where the shape is a const rather than a value.
+pub const fn child_endoscaling_points_for(polys: usize) -> usize {
+    crate::internal::native::RxIndex::NUM + 4 + polys
+}
+
+/// [`num_endoscaling_points`] as a [`Len`](ragu_primitives::vec::Len), for an
+/// application whose children
+/// both witness `POLYS` polynomials. This is what sizes the endoscaling
+/// [`Points`](endoscalar::Points) gadget, and it is a computed length, so it
+/// cannot ride as a const-generic argument on stable.
+pub struct EndoscalingPointsLen<const POLYS: usize>;
+
+impl<const POLYS: usize> ragu_primitives::vec::Len for EndoscalingPointsLen<POLYS> {
+    fn len() -> usize {
+        1 + 2 * child_endoscaling_points_for(POLYS) + 6
+    }
 }
 
 /// Number of curve points accumulated during `compute_p` for nested-field
@@ -83,16 +102,23 @@ pub fn chain_layout<HC: ragu_arithmetic::CurveAffine, R: Rank>(
 ) -> ragu_circuits::staging::InducedStages {
     use ragu_circuits::staging::{InducedStages, Stage};
 
+    // The two shape-carrying stages (preamble, eval) take their widths from the
+    // layout values, not from their types. The six between them carry `POLYS`
+    // only to name their parent in the typed chain — their `values()` never
+    // reads it — so any argument gives the same number, and this function stays
+    // free of a const it does not need.
+    const POLYS_IRRELEVANT: usize = 0;
+
     InducedStages::new(alloc::vec![
         <endoscalar::EndoscalarStage as Stage<HC::Base, R>>::values(),
         endoscalar::points_stage_num_values(num_endoscaling_points(left, right)),
         stages::preamble::num_values(left, right),
-        <stages::s_prime::Stage<HC, R> as Stage<HC::Base, R>>::values(),
-        <stages::inner_error::Stage<HC, R> as Stage<HC::Base, R>>::values(),
-        <stages::outer_error::Stage<HC, R> as Stage<HC::Base, R>>::values(),
-        <stages::ab::Stage<HC, R> as Stage<HC::Base, R>>::values(),
-        <stages::query::Stage<HC, R> as Stage<HC::Base, R>>::values(),
-        <stages::f::Stage<HC, R> as Stage<HC::Base, R>>::values(),
+        <stages::s_prime::Stage<HC, R, POLYS_IRRELEVANT> as Stage<HC::Base, R>>::values(),
+        <stages::inner_error::Stage<HC, R, POLYS_IRRELEVANT> as Stage<HC::Base, R>>::values(),
+        <stages::outer_error::Stage<HC, R, POLYS_IRRELEVANT> as Stage<HC::Base, R>>::values(),
+        <stages::ab::Stage<HC, R, POLYS_IRRELEVANT> as Stage<HC::Base, R>>::values(),
+        <stages::query::Stage<HC, R, POLYS_IRRELEVANT> as Stage<HC::Base, R>>::values(),
+        <stages::f::Stage<HC, R, POLYS_IRRELEVANT> as Stage<HC::Base, R>>::values(),
         stages::eval::num_values(own),
     ])
 }
@@ -404,7 +430,7 @@ pub mod stages {
 ///
 /// Circuits are registered as internal to ensure they occupy prefix indices
 /// before application steps.
-pub fn register_all<'params, C: Cycle, R: Rank>(
+pub fn register_all<'params, C: Cycle, R: Rank, const POLYS: usize>(
     mut registry: RegistryBuilder<'params, C::ScalarField, R>,
     capacity: crate::framework_hooks::HookLayout,
 ) -> Result<RegistryBuilder<'params, C::ScalarField, R>> {
@@ -414,10 +440,11 @@ pub fn register_all<'params, C: Cycle, R: Rank>(
     // Circuits first, then bondings - matching RegistryBuilder::finalize()'s
     // concatenation order and the layout `num_internal` documents.
     {
-        let num_points = num_endoscaling_points(left, right);
         for step in 0..num_endoscaling_steps(left, right) {
             let step_circuit =
-                endoscalar::EndoscalingStep::<C::HostCurve, R>::new(step, num_points);
+                endoscalar::EndoscalingStep::<C::HostCurve, R, EndoscalingPointsLen<POLYS>>::new(
+                    step,
+                );
             registry = registry.register_internal_circuit(MultiStage::new(step_circuit))?;
         }
     }
@@ -439,7 +466,7 @@ pub fn register_all<'params, C: Cycle, R: Rank>(
             registry = registry.register_bonding(claim_layout.mask::<C::ScalarField, R>(slot)?);
         }
 
-        let circuit = circuits::loading::Circuit::<C::HostCurve, R>::new(own, left, right);
+        let circuit = circuits::loading::Circuit::<C::HostCurve, R, POLYS>::new(own, left, right);
         registry = registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?);
 
         for side in [Side::Left, Side::Right] {
@@ -447,7 +474,7 @@ pub fn register_all<'params, C: Cycle, R: Rank>(
             // shapes are the capacity too — every step in the application
             // exposes it — so the same values serve here.
             let circuit =
-                circuits::copying::Circuit::<C::HostCurve, R>::new(side, own, left, right);
+                circuits::copying::Circuit::<C::HostCurve, R, POLYS>::new(side, own, left, right);
             registry = registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?);
         }
     }

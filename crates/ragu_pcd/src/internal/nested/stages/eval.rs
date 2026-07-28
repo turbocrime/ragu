@@ -11,9 +11,11 @@ use ragu_core::{
     gadgets::{Bound, Gadget, Kind},
     maybe::Maybe,
 };
-use ragu_primitives::{Point, io::Write};
-
-use crate::slot_vec::SlotVec;
+use ragu_primitives::{
+    Point,
+    io::Write,
+    vec::{CollectFixed, ConstLen, FixedVec, Len},
+};
 
 /// This stage's wire width for a step of shape `own` (the *current* step's
 /// slots, not a child's); the value-level source of the typed
@@ -40,37 +42,36 @@ pub struct Witness<C: CurveAffine> {
 /// This is stage communication data, not part of the circuit's
 /// public instance.
 #[derive(Gadget, Write)]
-pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
+pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, const POLYS: usize> {
     #[ragu(gadget)]
     pub native_eval: Point<'dr, D, C>,
     /// The current step's poly-query claim host commitments, in slot order.
     #[ragu(gadget)]
-    pub claims: SlotVec<Point<'dr, D, C>>,
+    pub claims: FixedVec<Point<'dr, D, C>, ConstLen<POLYS>>,
 }
 
-pub struct Stage<C: CurveAffine, R> {
-    /// The current step's own shape: its poly count sizes this stage's slots.
-    own: crate::framework_hooks::HookLayout,
+/// The current step's poly count sizes this stage's slots.
+pub struct Stage<C: CurveAffine, R, const POLYS: usize> {
     _marker: PhantomData<(C, R)>,
 }
 
-impl<C: CurveAffine, R> Stage<C, R> {
-    /// A stage instance for a step of the given shape.
-    pub fn with_shape(own: crate::framework_hooks::HookLayout) -> Self {
+impl<C: CurveAffine, R, const POLYS: usize> Default for Stage<C, R, POLYS> {
+    fn default() -> Self {
         Stage {
-            own,
             _marker: PhantomData,
         }
     }
 }
 
-impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R> {
-    type Parent = super::f::Stage<C, R>;
+impl<C: CurveAffine, R: Rank, const POLYS: usize> ragu_circuits::staging::Stage<C::Base, R>
+    for Stage<C, R, POLYS>
+{
+    type Parent = super::f::Stage<C, R, POLYS>;
     type Witness<'source> = &'source Witness<C>;
-    type OutputKind = Kind![C::Base; Output<'_, _, C>];
+    type OutputKind = Kind![C::Base; Output<'_, _, C, POLYS>];
 
     fn values() -> usize {
-        crate::internal::shape_dependent_stage()
+        2 * (1 + POLYS)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -83,9 +84,9 @@ impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stag
     {
         Ok(Output {
             native_eval: Point::alloc(dr, witness.as_ref().map(|w| w.native_eval))?,
-            claims: (0..self.own.poly_query.polys)
+            claims: ConstLen::<POLYS>::range()
                 .map(|i| Point::alloc(dr, witness.as_ref().map(|w| w.claims[i])))
-                .collect::<Result<_>>()?,
+                .try_collect_fixed()?,
         })
     }
 }
@@ -100,13 +101,16 @@ mod tests {
     /// `num_values` predicts the wire count at every shape, not just one.
     #[test]
     fn num_values_matches_wire_count() {
-        for polys in [0, 1, 4, 8] {
-            let capacity = capacity_with_polys(polys);
+        fn check<const POLYS: usize>() {
             assert_eq!(
-                stage_wire_count(&Stage::<EqAffine, R>::with_shape(capacity)),
-                num_values(capacity),
-                "polys={polys}"
+                stage_wire_count(&Stage::<EqAffine, R, POLYS>::default()),
+                num_values(capacity_with_polys(POLYS)),
+                "polys={POLYS}"
             );
         }
+        check::<0>();
+        check::<1>();
+        check::<4>();
+        check::<8>();
     }
 }

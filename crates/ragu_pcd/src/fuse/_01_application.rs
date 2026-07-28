@@ -35,7 +35,16 @@ use crate::{
     },
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> Application<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+{
     pub(super) fn compute_application_proof<'source, RNG: CryptoRngCore, S: Step<C>>(
         &self,
         rng: &mut RNG,
@@ -43,7 +52,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         witness: S::Witness<'source>,
         left: Pcd<C, R, S::Left>,
         right: Pcd<C, R, S::Right>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, POLYS>,
     ) -> Result<(
         Proof<C, R>,
         Proof<C, R>,
@@ -56,7 +65,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // synthesizing at the step's own shape would produce a narrower
         // instance than the registry committed to.
         let (trace, aux) = MultiStage::new(
-            Adapter::<C, S, R, HEADER_SIZE>::new(
+            Adapter::<C, S, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>::new(
                 step,
                 Some(self.params),
                 self.capacity().challenge.width,

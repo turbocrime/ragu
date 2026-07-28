@@ -88,7 +88,15 @@ pub fn total_circuit_counts(
 /// sizes the query stage's fixed-registry block.
 ///
 /// Returns `(query_chain, error_chain)`.
-pub fn chain_layouts<C: Cycle, R: Rank, const HEADER_SIZE: usize>(
+pub fn chain_layouts<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+>(
     num_internal_circuits: usize,
     left: crate::framework_hooks::HookLayout,
     right: crate::framework_hooks::HookLayout,
@@ -101,9 +109,9 @@ pub fn chain_layouts<C: Cycle, R: Rank, const HEADER_SIZE: usize>(
     let preamble_w = stages::preamble::num_values(HEADER_SIZE, left, right);
     let query_w = stages::query::num_values(num_internal_circuits);
     let eval_w = stages::eval::num_values(left, right);
-    let outer_w = <stages::outer_error::Stage<C, R, HEADER_SIZE, RevdotParameters> as
+    let outer_w = <stages::outer_error::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH, RevdotParameters> as
         ragu_circuits::staging::Stage<C::CircuitField, R>>::values();
-    let inner_w = <stages::inner_error::Stage<C, R, HEADER_SIZE, RevdotParameters> as
+    let inner_w = <stages::inner_error::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH, RevdotParameters> as
         ragu_circuits::staging::Stage<C::CircuitField, R>>::values();
 
     (
@@ -389,7 +397,16 @@ pub enum RxComponent {
 ///
 /// Does not register internal steps (rerandomize, trivial); those are
 /// registered by the caller after this function returns.
-pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
+pub fn register_all<
+    'params,
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+>(
     mut registry: RegistryBuilder<'params, C::CircuitField, R>,
     params: &'params C::Params,
     log2_circuits: u32,
@@ -405,42 +422,72 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
             C,
             R,
             HEADER_SIZE,
+            POLYS,
+            CLAIMS,
+            CHALLENGES,
+            CHALLENGE_WIDTH,
             RevdotParameters,
-        >::new(
-            params, log2_circuits, left, right
-        ))?;
+        >::new(params, log2_circuits))?;
         registry = registry.register_internal_circuit(circuits::hashes_2::Circuit::<
             C,
             R,
             HEADER_SIZE,
+            POLYS,
+            CLAIMS,
+            CHALLENGES,
+            CHALLENGE_WIDTH,
             RevdotParameters,
-        >::new(params, left, right))?;
+        >::new(params))?;
         registry = registry.register_internal_circuit(circuits::inner_collapse::Circuit::<
             C,
             R,
             HEADER_SIZE,
+            POLYS,
+            CLAIMS,
+            CHALLENGES,
+            CHALLENGE_WIDTH,
             RevdotParameters,
-        >::new(left, right))?;
+        >::new())?;
         registry = registry.register_internal_circuit(circuits::outer_collapse::Circuit::<
             C,
             R,
             HEADER_SIZE,
+            POLYS,
+            CLAIMS,
+            CHALLENGES,
+            CHALLENGE_WIDTH,
             RevdotParameters,
-        >::new(left, right))?;
+        >::new())?;
         registry =
             registry.register_internal_circuit(
-                circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new(left, right),
+                circuits::compute_v::Circuit::<
+                    C,
+                    R,
+                    HEADER_SIZE,
+                    POLYS,
+                    CLAIMS,
+                    CHALLENGES,
+                    CHALLENGE_WIDTH,
+                >::new(),
             )?;
         registry = registry.register_internal_circuit(circuits::challenge_binding::Circuit::<
             C,
             R,
             HEADER_SIZE,
-        >::new(params, left, right))?;
+            POLYS,
+            CLAIMS,
+            CHALLENGES,
+            CHALLENGE_WIDTH,
+        >::new(params))?;
     }
 
     {
         let (query_chain, error_chain) =
-            chain_layouts::<C, R, HEADER_SIZE>(InternalCircuitIndex::NUM, left, right);
+            chain_layouts::<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>(
+                InternalCircuitIndex::NUM,
+                left,
+                right,
+            );
         // Stage masks, then final-trace masks, in TRIPLE_MASKS order.
         registry = registry.register_bonding(query_chain.mask::<C::CircuitField, R>(0)?);
         registry = registry.register_bonding(error_chain.mask::<C::CircuitField, R>(2)?);

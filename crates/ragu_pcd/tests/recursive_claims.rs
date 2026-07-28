@@ -28,7 +28,7 @@ fn poly(coeffs: &[u64]) -> sparse::Polynomial<Fp, R> {
     sparse::Polynomial::from_coeffs(coeffs.iter().map(|c| Fp::from(*c)).collect())
 }
 
-fn open_app() -> Result<ragu_pcd::Application<'static, Pasta, R, HEADER_SIZE>> {
+fn open_app() -> Result<ragu_pcd::Application<'static, Pasta, R, HEADER_SIZE, 1, 2, 1, 2>> {
     let pasta = Pasta::baked();
     ApplicationBuilder::<Pasta, R, HEADER_SIZE, 1, 2, 1, 2>::new()
         .register(CommitAndOpen::<Pasta, R>::new(Pasta::circuit_poseidon(

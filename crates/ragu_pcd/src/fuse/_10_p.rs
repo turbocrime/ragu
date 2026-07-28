@@ -44,7 +44,16 @@ impl<C: Cycle, R: Rank> Accumulator<'_, C, R> {
     }
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> Application<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+{
     pub(super) fn compute_p<'dr, D, RNG: ragu_arithmetic::CryptoRngCore>(
         &self,
         rng: &mut RNG,
@@ -54,7 +63,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         s_prime: &NativeSPrime<C, R>,
         registry_wy: &RegistryWy<C, R>,
         f: &NativeF<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, POLYS>,
     ) -> Result<()>
     where
         D: Driver<'dr, F = C::CircuitField>,
