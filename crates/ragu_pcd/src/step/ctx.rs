@@ -47,18 +47,71 @@ where
         Self { dr, hooks }
     }
 
-    /// Witnesses a [`PolyCommitment`] in-circuit, producing a
-    /// [`PolyQueryHandle`].
+    /// Witnesses this step's polynomials in-circuit, producing one
+    /// [`PolyQueryHandle`] per [`PolyCommitment`].
     ///
-    /// The commitment is allocated as an in-circuit [`Point`] (reachable via
-    /// [`PolyQueryHandle::commitment`] for challenges, hashing, etc.) while the
-    /// polynomial is retained for a later
-    /// [`enforce_poly_query`](Self::enforce_poly_query). Because the
-    /// [`PolyCommitment`] came from
+    /// # The polynomial never enters the circuit
+    ///
+    /// This is the property the whole mechanism exists for. A polynomial is
+    /// handled **abstractly, by its commitment**: the only thing allocated here
+    /// is the commitment [`Point`], and the coefficients ride along as a
+    /// [`DriverValue`] — prover-side data that is never witnessed, never
+    /// constrained, and absent entirely on a verifying driver.
+    ///
+    /// So witnessing a polynomial costs one point allocation **regardless of
+    /// the polynomial's size**. Witnessing coefficients individually would make
+    /// a step's circuit grow with its data and would blow the gate budget on
+    /// any real polynomial; it is also unnecessary, because a commitment binds
+    /// the coefficients already and an opening at a challenge binds the
+    /// relation. Anything added here must preserve that: allocate the
+    /// commitment, retain the coefficients as a value.
+    ///
+    /// The commitment point is reachable via [`PolyQueryHandle::commitment`]
+    /// for challenges, hashing and the like; the retained polynomial is what a
+    /// later [`enforce_poly_query`](Self::enforce_poly_query) opens. Because a
+    /// [`PolyCommitment`] can only come from
     /// [`Application::commit_polynomial`](crate::Application::commit_polynomial),
-    /// the commitment and the polynomial cannot be mismatched by an honest
-    /// caller.
-    pub fn witness_polynomial<R: Rank>(
+    /// which derives the commitment from the polynomial, the two cannot be
+    /// mismatched.
+    ///
+    /// # All of them, once
+    ///
+    /// A step witnesses *all* its polynomials in a single call, and the handles
+    /// come back in the same order. Slot `i` is index `i`, so a claim raised
+    /// through `handles[i]` occupies the slot whose bridge stage `com` commits
+    /// to — there is no separate counter to keep in step with, and no
+    /// pair-them-in-order discipline to get wrong.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidWitness`](ragu_core::Error::InvalidWitness) if
+    /// called more than once — a second call would assign slots the first
+    /// call's handles already own — or if `N` exceeds the application's
+    /// polynomial capacity.
+    pub fn witness_polynomial<R: Rank, const N: usize>(
+        &mut self,
+        commitments: [DriverValue<D, PolyCommitment<C, R>>; N],
+    ) -> Result<[PolyQueryHandle<'dr, D, C, R>; N]> {
+        if self.hooks.polys_filled() > 0 {
+            return Err(ragu_core::Error::InvalidWitness(
+                "witness_polynomial may only be called once per step".into(),
+            ));
+        }
+
+        let mut handles = alloc::vec::Vec::with_capacity(N);
+        for commitment in commitments {
+            handles.push(self.witness_one_polynomial::<R>(commitment)?);
+        }
+
+        // `N` handles were pushed, one per element of a `[_; N]`.
+        Ok(handles
+            .try_into()
+            .map_err(|_| ())
+            .expect("one handle per commitment"))
+    }
+
+    /// Witnesses one polynomial into the next free slot.
+    fn witness_one_polynomial<R: Rank>(
         &mut self,
         commitment: DriverValue<D, PolyCommitment<C, R>>,
     ) -> Result<PolyQueryHandle<'dr, D, C, R>> {
@@ -280,10 +333,11 @@ where
                 ))
             })?;
 
-            // The commitment goes through `witness_polynomial`, so the padding
-            // slot's `com` is that slot's bridge-stage commitment, derived
-            // exactly as a real polynomial's is.
-            padding_handle = Some(self.witness_polynomial::<R>(padding)?);
+            // Straight to the per-slot path, not the step-facing array call:
+            // padding runs after the body, so the once-only rule would reject
+            // it. The slot's `com` is still that slot's bridge-stage
+            // commitment, derived exactly as a real polynomial's is.
+            padding_handle = Some(self.witness_one_polynomial::<R>(padding)?);
         }
 
         // Then queries. A padding query opens a polynomial at $x = 0$, where the

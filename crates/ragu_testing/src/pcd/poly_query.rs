@@ -150,7 +150,7 @@ impl<C: Cycle, R: Rank> Step<C> for CommitAndOpen<'_, C, R> {
         // in-circuit and retain the polynomial for the claim.
         let claimed_y = witness.as_ref().map(|w| w.claimed_y);
         let commitment = witness.map(|w| w.commitment);
-        let handle = ctx.witness_polynomial(commitment)?;
+        let [handle] = ctx.witness_polynomial::<R, 1>([commitment])?;
 
         // (2) Derive a challenge bound to the commitment.
         let z = ctx.derive_challenge(&[handle.commitment().clone()])?;
@@ -266,7 +266,7 @@ impl<C: Cycle, R: Rank> Step<C> for OpenAndHash<'_, C, R> {
         let x_witness = witness.as_ref().map(|w| w.x);
         let y_witness = witness.as_ref().map(|w| w.y);
         let commitment = witness.map(|w| w.commitment);
-        let handle = ctx.witness_polynomial(commitment)?;
+        let [handle] = ctx.witness_polynomial::<R, 1>([commitment])?;
 
         let x = Element::alloc(ctx.dr, allocator, x_witness)?;
         let y = Element::alloc(ctx.dr, allocator, y_witness)?;
