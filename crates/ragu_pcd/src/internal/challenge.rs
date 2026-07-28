@@ -161,7 +161,7 @@ pub(crate) fn padding_poly<C: Cycle, R: Rank>() -> sparse::Polynomial<C::Circuit
 /// the zeroth nested generator.
 ///
 /// A challenge slot's sponge absorbs a full complement of
-/// [`CHALLENGE_POINTS_PER_CALL`](crate::CHALLENGE_POINTS_PER_CALL) points
+/// [`ChallengeLayout::points`](crate::framework_hooks::ChallengeLayout::points)
 /// whether or not the caller supplied them all, so the prover, the root
 /// verifier, and the `challenge_binding` circuit agree on the sponge's shape
 /// by construction. Like [`padding_claim`], a fixed generator can never be
@@ -202,13 +202,11 @@ pub(crate) fn challenge_from_points<C: Cycle>(
 pub(crate) fn points_challenge<C: Cycle>(
     params: &C::Params,
     points: &[C::NestedCurve],
+    width: usize,
 ) -> Result<(alloc::vec::Vec<C::NestedCurve>, C::CircuitField)> {
-    debug_assert!(points.len() <= crate::CHALLENGE_POINTS_PER_CALL);
+    debug_assert!(points.len() <= width);
     let mut padded = points.to_vec();
-    padded.resize(
-        crate::CHALLENGE_POINTS_PER_CALL,
-        sentinel_point::<C>(params),
-    );
+    padded.resize(width, sentinel_point::<C>(params));
     let challenge = challenge_from_points::<C>(params, &padded)?;
     Ok((padded, challenge))
 }

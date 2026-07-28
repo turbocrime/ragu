@@ -57,7 +57,10 @@ where
 #[cfg(test)]
 pub fn capacity_with_polys(polys: usize) -> crate::framework_hooks::HookLayout {
     crate::framework_hooks::HookLayout {
-        challenge: crate::framework_hooks::ChallengeLayout { calls: 1 },
+        challenge: crate::framework_hooks::ChallengeLayout {
+            calls: 1,
+            points: 2,
+        },
         poly_query: crate::framework_hooks::PolyQueryLayout { polys, claims: 1 },
     }
 }
@@ -67,19 +70,21 @@ pub fn capacity_with_polys(polys: usize) -> crate::framework_hooks::HookLayout {
 // Then copy-paste the output into the check_constraints! calls in the test below.
 //
 // This is not a free test parameter. It is the widest header the framework
-// claims to support, and it is one half of a pair with
-// `NUM_QUERY_SLOTS`: both are charged to `outer_collapse`, the largest
-// internal circuit, at roughly 13 gates per header element and 12 per slot.
-// Measured points, all against its 2048-gate bound:
+// claims to support, and it trades directly against the claim slots: both are
+// charged to `outer_collapse`, the largest internal circuit, at roughly 13
+// gates per header element and 12 per slot. Measured against its 2048-gate
+// bound, back when the slot count was a framework constant:
 //
-//     4 slots, header 100 -> 2044   (was the configuration; 4 gates spare)
-//     8 slots, header  90 -> 1962   (current)
+//     4 slots, header 100 -> 2044   (4 gates spare)
+//     8 slots, header  90 -> 1962
 //     8 slots, header  84 -> 1884
 //     8 slots, header  60 -> 1572
 //
-// So a slot costs about one header element. Ten elements of header bought
-// four more claim slots and still left 86 gates spare, where the previous
-// configuration had 4. See `NUM_QUERY_SLOTS` for the rest of the trade.
+// So a slot costs about one header element, and ten elements of header bought
+// four more claim slots. That constant is gone — claim slots are now whatever
+// header space is left before `GateBoundExceeded` trips, since claim slots and
+// header elements are terms in the same k(Y) Horner loop. The measurements
+// stand as the exchange rate.
 pub const HEADER_SIZE: usize = 90;
 
 // Number of dummy application circuits to register before testing internal
@@ -92,7 +97,7 @@ const NUM_APP_STEPS: usize = 6000;
 fn test_internal_circuit_constraint_counts() {
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
+    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 1>::new()
         .register_dummy_circuits(NUM_APP_STEPS)
         .unwrap()
         .finalize(pasta)
@@ -205,7 +210,7 @@ fn print_internal_stage_parameters() {
 fn test_native_registry_digest() {
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
+    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 1>::new()
         .register_dummy_circuits(NUM_APP_STEPS)
         .unwrap()
         .finalize(pasta)
@@ -228,8 +233,8 @@ fn test_native_registry_digest() {
     // challenge stages became `RxIndex` variants: they moved from their own
     // position in the `_10_p` accumulation into the `RxIndex::ALL` block, and
     // `compute_v` gained the poly-query triple every other rx component has
-    // (four more per fuse, one per child per slot). Changed again when
-    // `NUM_QUERY_SLOTS` went from 4 to 8 and `HEADER_SIZE` from 100 to 90
+    // (four more per fuse, one per child per slot). Changed again when the
+    // query-slot count went from 4 to 8 and `HEADER_SIZE` from 100 to 90
     // — both change the width of every application circuit's instance.
     //
     // Changed again when `derive_challenge` became points-only. The challenge
@@ -237,7 +242,7 @@ fn test_native_registry_digest() {
     // the per-count final-trace masks, and the `ChallengeStage` rx components
     // — which shrinks `RxIndex::ALL`, and with it every stage that carries one
     // evaluation per rx component. What grew is the instance: a slot now
-    // carries `2 * CHALLENGE_POINTS_PER_CALL + 1` elements where it carried
+    // carries `2 * challenge.points + 1` elements where it carried
     // three, so the preamble stage and its readers widen by two per slot per
     // child.
     //
@@ -267,7 +272,7 @@ fn test_native_registry_digest() {
 fn test_nested_registry_digest() {
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
+    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 1>::new()
         .register_dummy_circuits(NUM_APP_STEPS)
         .unwrap()
         .finalize(pasta)
@@ -288,8 +293,8 @@ fn test_nested_registry_digest() {
     // preamble stashes one more commitment per child. Changed again when the
     // challenge stages became `RxIndex` variants: the point count is unchanged,
     // but they moved within the per-child block, from after the poly-query
-    // claims to inside the `RxIndex::ALL` run. Changed again when
-    // `NUM_QUERY_SLOTS` went from 4 to 8: four more claim-bridge masks,
+    // claims to inside the `RxIndex::ALL` run. Changed again when the
+    // query-slot count went from 4 to 8: four more claim-bridge masks,
     // four more stashed commitments per child, and eight more endoscaling
     // points.
     //
@@ -325,7 +330,7 @@ fn print_registry_digests() {
 
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
+    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 1>::new()
         .register_dummy_circuits(NUM_APP_STEPS)
         .unwrap()
         .finalize(pasta)
@@ -385,7 +390,10 @@ fn chain_layouts_tile_at_every_capacity() {
 
     for polys in [0, 1, 4, 8] {
         let capacity = HookLayout {
-            challenge: ChallengeLayout { calls: 1 },
+            challenge: ChallengeLayout {
+                calls: 1,
+                points: 2,
+            },
             poly_query: PolyQueryLayout { polys, claims: 1 },
         };
         let (query_chain, error_chain) =
@@ -556,19 +564,32 @@ mod capacity_is_per_application {
     #[test]
     fn a_light_application_pays_less_than_a_heavy_one() {
         let pasta = Pasta::baked();
-        let light = ApplicationBuilder::<Pasta, R, HS>::new()
+        let light = ApplicationBuilder::<Pasta, R, HS, 1>::new()
             .register(Light)
             .unwrap()
             .finalize(pasta)
             .unwrap();
-        let heavy = ApplicationBuilder::<Pasta, R, HS>::new()
+        let heavy = ApplicationBuilder::<Pasta, R, HS, 1>::new()
             .register(Heavy)
             .unwrap()
             .finalize(pasta)
             .unwrap();
 
-        // The capacities are what the steps do, discovered, not declared.
-        assert_eq!(light.capacity(), framework_hooks::HookLayout::default());
+        // The slot *counts* are what the steps do, discovered, not declared —
+        // the light step uses none, so all three are zero. The challenge input
+        // width is the exception: the application declares the absorb
+        // permutations it pays for, so it is present whether or not any step
+        // derives a challenge.
+        assert_eq!(
+            light.capacity(),
+            framework_hooks::HookLayout {
+                challenge: framework_hooks::ChallengeLayout {
+                    calls: 0,
+                    points: framework_hooks::ChallengeLayout::points_per_call(1, 4),
+                },
+                poly_query: framework_hooks::PolyQueryLayout::default(),
+            }
+        );
         assert_eq!(heavy.capacity().poly_query.polys, 2);
         assert_eq!(heavy.capacity().poly_query.claims, 3);
         assert_eq!(heavy.capacity().challenge.calls, 1);

@@ -29,8 +29,7 @@
 //!   the slot cap, the determinism guard, and the `(points, challenge)` records
 //!   the adapter writes into the application circuit's public instance. Every
 //!   application circuit gets the application's challenge capacity in slots, each
-//!   absorbing exactly
-//!   [`CHALLENGE_POINTS_PER_CALL`](crate::CHALLENGE_POINTS_PER_CALL) points.
+//!   absorbing exactly [`ChallengeLayout::points`] of them.
 //!
 //! ## Structure discovery
 //!
@@ -47,9 +46,11 @@
 //! instead of silently synthesizing a different circuit.
 //!
 //! How many *points* a call passes is not discovered, and need not be: every
-//! slot's instance region holds `CHALLENGE_POINTS_PER_CALL` points, with the
+//! slot's instance region holds [`ChallengeLayout::points`] points, with the
 //! positions a call leaves empty filled by a fixed sentinel. So a call's point
-//! count is witness data, not structure.
+//! count is witness data, not structure. That width is not discovered either —
+//! the application declares the absorb permutations it is willing to pay for,
+//! and the width follows from the Poseidon rate.
 //!
 //! ## Challenge soundness
 //!
@@ -139,8 +140,7 @@ pub struct PolyQueryClaim<F: Field> {
 /// and the challenge itself. All of them go into the application circuit's
 /// public instance so the parent can re-derive the challenge from the points.
 pub struct ChallengeWires<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
-    /// The slot's input points, exactly
-    /// [`CHALLENGE_POINTS_PER_CALL`](crate::CHALLENGE_POINTS_PER_CALL) of them:
+    /// The slot's input points, exactly [`ChallengeLayout::points`] of them:
     /// the caller's, then the sentinel in each position left empty.
     pub points: Vec<Point<'dr, D, C>>,
     /// The challenge, hashed from [`points`](Self::points).
@@ -360,6 +360,24 @@ pub struct HookLayout {
 pub struct ChallengeLayout {
     /// [`derive_challenge`](crate::step::StepCtx::derive_challenge) calls.
     pub calls: usize,
+    /// The widest input a call may pass, in curve points.
+    ///
+    /// **Derived, never declared.** The application declares how many absorb
+    /// permutations `derive_challenge` performs; this is what that buys at the
+    /// cycle's Poseidon rate. See
+    /// [`points_per_call`](ChallengeLayout::points_per_call).
+    pub points: usize,
+}
+
+impl ChallengeLayout {
+    /// The widest input `permutations` absorb permutations can take, in points.
+    ///
+    /// A point contributes two coordinates, and a permutation absorbs `rate` of
+    /// them, so one permutation buys `rate / 2` points. The remainder is
+    /// dropped: half a point is not a point.
+    pub const fn points_per_call(permutations: usize, rate: usize) -> usize {
+        permutations * rate / 2
+    }
 }
 
 /// What the poly-query hook requires of a step's circuit.
@@ -394,6 +412,9 @@ impl HookLayout {
         Self {
             challenge: ChallengeLayout {
                 calls: self.challenge.calls.max(other.challenge.calls),
+                // Declared, so identical across an application's layouts; the
+                // max is here so folding stays a pointwise operation.
+                points: self.challenge.points.max(other.challenge.points),
             },
             poly_query: PolyQueryLayout {
                 polys: self.poly_query.polys.max(other.poly_query.polys),
@@ -592,7 +613,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
         points: Vec<Point<'dr, D, C::NestedCurve>>,
         challenge: Element<'dr, D>,
     ) {
-        debug_assert_eq!(points.len(), crate::CHALLENGE_POINTS_PER_CALL);
+        debug_assert_eq!(points.len(), self.capacity.challenge.points);
         self.challenge_pairs
             .push(ChallengeWires { points, challenge });
     }
@@ -764,7 +785,7 @@ mod tests {
     fn challenge_slots_are_capped() {
         let with_capacity = |calls| {
             FrameworkHooks::<Dr<'_>, Pasta>::new(HookLayout {
-                challenge: ChallengeLayout { calls },
+                challenge: ChallengeLayout { calls, points: 2 },
                 poly_query: PolyQueryLayout::default(),
             })
         };
@@ -790,7 +811,10 @@ mod tests {
         for (discovered, hook) in [
             (
                 HookLayout {
-                    challenge: ChallengeLayout { calls: 1 },
+                    challenge: ChallengeLayout {
+                        calls: 1,
+                        points: 2,
+                    },
                     poly_query: PolyQueryLayout::default(),
                 },
                 "derive_challenge",
@@ -840,7 +864,10 @@ mod tests {
     #[test]
     fn check_layout_is_spent_once() {
         let discovered = HookLayout {
-            challenge: ChallengeLayout { calls: 1 },
+            challenge: ChallengeLayout {
+                calls: 1,
+                points: 2,
+            },
             poly_query: PolyQueryLayout::default(),
         };
         let mut hooks = FrameworkHooks::<Dr<'_>, Pasta>::with_expected(
@@ -860,22 +887,27 @@ mod tests {
     /// count be witness data rather than circuit structure.
     #[test]
     fn a_challenge_slot_has_one_fixed_instance_width() {
-        let per_slot = 2 * crate::CHALLENGE_POINTS_PER_CALL + 1;
+        let points = ChallengeLayout::points_per_call(1, 4);
+        let layout = |calls| HookLayout {
+            challenge: ChallengeLayout { calls, points },
+            poly_query: PolyQueryLayout::default(),
+        };
         assert_eq!(
-            crate::internal::native::stages::preamble::child_num_values(
-                0,
-                HookLayout {
-                    challenge: ChallengeLayout { calls: 1 },
-                    poly_query: PolyQueryLayout::default(),
-                },
-            ) - crate::internal::native::stages::preamble::child_num_values(
-                0,
-                HookLayout {
-                    challenge: ChallengeLayout { calls: 0 },
-                    poly_query: PolyQueryLayout::default(),
-                },
-            ),
-            per_slot,
+            crate::internal::native::stages::preamble::child_num_values(0, layout(1))
+                - crate::internal::native::stages::preamble::child_num_values(0, layout(0)),
+            2 * points + 1,
         );
+    }
+
+    /// One absorb permutation buys `RATE / 2` points, because a point is two
+    /// coordinates. The remainder is dropped: half a point is not a point.
+    #[test]
+    fn points_per_call_follows_the_rate() {
+        assert_eq!(ChallengeLayout::points_per_call(0, 4), 0);
+        assert_eq!(ChallengeLayout::points_per_call(1, 4), 2);
+        assert_eq!(ChallengeLayout::points_per_call(2, 4), 4);
+        assert_eq!(ChallengeLayout::points_per_call(3, 4), 6);
+        // An odd rate cannot spend its last element on half a point.
+        assert_eq!(ChallengeLayout::points_per_call(1, 3), 1);
     }
 }

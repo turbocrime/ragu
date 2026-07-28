@@ -83,31 +83,26 @@ use step::{
 // FIXME: choose a permanent domain separation tag before release.
 pub(crate) const RAGU_TAG: &[u8] = b"FIXME";
 
-/// Number of **points** a single
-/// [`StepCtx::derive_challenge`](step::StepCtx::derive_challenge) call absorbs.
-///
-/// A challenge input is a slice of curve points, and a point is already a
-/// binding commitment — so the sponge absorbs the points directly and the step
-/// needs no committed stage to compress them into. A call may pass fewer
-/// points than this; the remaining positions are filled with a fixed
-/// non-identity sentinel, so every slot's sponge has the same shape and the
-/// count a call passed is witness data rather than circuit structure.
-///
-/// # Cost
-///
-/// **Nothing in the step's own gate budget** beyond the instance wires the
-/// points occupy: the step performs no permutation and commits no stage. The
-/// derivation is paid by the internal `challenge_binding` circuit, once per
-/// `(child, slot)`, out of the framework's budget.
-///
-/// Each point contributes two coordinates to the sponge, so at
-/// [`RATE`](ragu_primitives::poseidon) 4 this many points cost
-/// `⌈2 · CHALLENGE_POINTS_PER_CALL / 4⌉` permutations per `(child, slot)` in
-/// that circuit — the sole cost of raising it, and the reason it is small.
-pub const CHALLENGE_POINTS_PER_CALL: usize = 2;
-
 /// Builder for an [`Application`] for proof-carrying data.
-pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
+///
+/// `CHALLENGE_PERMUTATIONS` is how many absorb permutations the application is
+/// willing to pay for in each
+/// [`derive_challenge`](step::StepCtx::derive_challenge) call. It fixes the
+/// widest input a call may pass — a point is two coordinates, so one
+/// permutation buys `RATE / 2` points — and that width is what every challenge
+/// slot's instance region holds, with unfilled positions taking a sentinel.
+///
+/// The cost is paid by the internal `challenge_binding` circuit, once per
+/// `(child, slot)`, out of the framework's budget rather than the step's. It is
+/// declared rather than discovered because it is a budget the application
+/// chooses to spend, not a fact about any step's body.
+pub struct ApplicationBuilder<
+    'params,
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    const CHALLENGE_PERMUTATIONS: usize,
+> {
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
     num_application_steps: usize,
@@ -127,16 +122,16 @@ pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, const HEADER_SIZE: usi
     _marker: PhantomData<[(); HEADER_SIZE]>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Default
-    for ApplicationBuilder<'_, C, R, HEADER_SIZE>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const CHALLENGE_PERMUTATIONS: usize> Default
+    for ApplicationBuilder<'_, C, R, HEADER_SIZE, CHALLENGE_PERMUTATIONS>
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
-    ApplicationBuilder<'params, C, R, HEADER_SIZE>
+impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, const CHALLENGE_PERMUTATIONS: usize>
+    ApplicationBuilder<'params, C, R, HEADER_SIZE, CHALLENGE_PERMUTATIONS>
 {
     /// Create an empty [`ApplicationBuilder`] for proof-carrying data. The
     /// cycle's runtime parameters are not needed until
@@ -152,6 +147,21 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             skip_claim_precheck: false,
             _marker: PhantomData,
         }
+    }
+
+    /// The widest input a [`derive_challenge`](step::StepCtx::derive_challenge)
+    /// call may pass, in curve points.
+    ///
+    /// Derived from the declared `CHALLENGE_PERMUTATIONS` and the cycle's
+    /// Poseidon rate — the application declares the permutations it will pay
+    /// for, and the width is what they buy. Known before any step registers,
+    /// which is what lets the registration dry run witness the right number of
+    /// points.
+    fn challenge_points() -> usize {
+        framework_hooks::ChallengeLayout::points_per_call(
+            CHALLENGE_PERMUTATIONS,
+            <C::CircuitPoseidon as ragu_arithmetic::PoseidonPermutation<C::CircuitField>>::RATE,
+        )
     }
 
     /// Register a new application-defined [`Step`] in this context. The
@@ -180,7 +190,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         // registry would freeze the circuit's shape now, and its shape is not
         // knowable until every step has registered (see
         // [`PendingStep`](step::internal::adapter::PendingStep)).
-        let adapter = Adapter::<C, S, R, HEADER_SIZE>::new(step, None)?;
+        let adapter = Adapter::<C, S, R, HEADER_SIZE>::new(step, None, Self::challenge_points())?;
         self.held_steps.push(Box::new(adapter));
         self.num_application_steps += 1;
 
@@ -221,23 +231,33 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         let rerandomize = Adapter::<C, _, R, HEADER_SIZE>::new(
             step::internal::rerandomize::Rerandomize::<()>::new(),
             Some(params),
+            Self::challenge_points(),
         )?;
         let trivial = Adapter::<C, _, R, HEADER_SIZE>::new(
             step::internal::trivial::Trivial::new(),
             Some(params),
+            Self::challenge_points(),
         )?;
         // The application's slot capacity. Uniform across one application,
         // because the internal circuits read a child's instance as a
         // fixed-width record and any step's proof may be any fuse's child.
         //
-        // **Discovered, never declared**: an application whose steps open two
-        // polynomials pays for two, and the cost of a heavy step falls on the
-        // application that registers it rather than on the framework.
-        let capacity = [rerandomize.layout(), trivial.layout()]
+        // The *slot counts* are discovered, never declared: an application whose
+        // steps open two polynomials pays for two, and the cost of a heavy step
+        // falls on the application that registers it rather than on the
+        // framework. The challenge input width is the exception, below.
+        let mut capacity = [rerandomize.layout(), trivial.layout()]
             .into_iter()
             .chain(self.held_steps.iter().map(|held| held.layout()))
             .reduce(framework_hooks::HookLayout::max_with)
             .expect("the internal steps are always registered");
+
+        // The challenge input width is the one axis that is *declared*, not
+        // discovered: it is a budget the application chooses to spend in
+        // `challenge_binding`, not a fact about any step's body. Every layout
+        // folded above already carries it, since discovery was handed the same
+        // width; this is belt-and-braces for the empty-application case.
+        capacity.challenge.points = Self::challenge_points();
 
         // The held application step adapters can be handed to the registry:
         // their circuits are measured now, with every step known. Registry

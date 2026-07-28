@@ -83,7 +83,10 @@ mod tests {
     fn layout_tiles_the_run() {
         for polys in [1, 3, 8] {
             let capacity = crate::framework_hooks::HookLayout {
-                challenge: crate::framework_hooks::ChallengeLayout { calls: 1 },
+                challenge: crate::framework_hooks::ChallengeLayout {
+                    calls: 1,
+                    points: 2,
+                },
                 poly_query: crate::framework_hooks::PolyQueryLayout { polys, claims: 1 },
             };
             let layout = layout::<EqAffine, R>(capacity);

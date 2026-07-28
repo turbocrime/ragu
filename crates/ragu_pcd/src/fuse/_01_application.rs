@@ -56,8 +56,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // synthesizing at the step's own shape would produce a narrower
         // instance than the registry committed to.
         let (trace, aux) = MultiStage::new(
-            Adapter::<C, S, R, HEADER_SIZE>::new(step, Some(self.params))?
-                .with_capacity(self.capacity())?,
+            Adapter::<C, S, R, HEADER_SIZE>::new(
+                step,
+                Some(self.params),
+                self.capacity().challenge.points,
+            )?
+            .with_capacity(self.capacity())?,
         )
         .trace((
             Alphas {

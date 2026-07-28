@@ -134,11 +134,13 @@ fn test_rerandomize_consistency() {
         super::adapter::Adapter::<Pasta, Rerandomize<Single>, R, HEADER_SIZE>::new(
             Rerandomize::new(),
             Some(Pasta::baked()),
+            2,
         )
         .unwrap();
     let circuit_pair = super::adapter::Adapter::<Pasta, Rerandomize<Pair>, R, HEADER_SIZE>::new(
         Rerandomize::new(),
         Some(Pasta::baked()),
+        2,
     )
     .unwrap();
 

@@ -76,7 +76,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 .proof()
                 .application_challenges()
                 .iter()
-                .any(|c| c.points.len() != crate::CHALLENGE_POINTS_PER_CALL)
+                .any(|c| c.points.len() != capacity.challenge.points)
         {
             return Ok(false);
         }
@@ -336,7 +336,7 @@ mod tests {
 
     fn create_test_app() -> crate::Application<'static, Pasta, TestR, HEADER_SIZE> {
         let pasta = Pasta::baked();
-        ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new()
+        ApplicationBuilder::<Pasta, TestR, HEADER_SIZE, 1>::new()
             .finalize(pasta)
             .expect("failed to create test application")
     }

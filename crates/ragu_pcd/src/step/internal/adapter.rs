@@ -24,7 +24,7 @@ use ragu_primitives::{
 
 use super::super::{Step, StepCtx};
 use crate::{
-    CHALLENGE_POINTS_PER_CALL, Header,
+    Header,
     framework_hooks::{
         Alphas, ChallengeLayout, FrameworkAux, FrameworkHooks, HookLayout, PolyQueryLayout,
         ProofValues,
@@ -46,7 +46,7 @@ pub fn instance_len(header_size: usize, capacity: HookLayout) -> usize {
     header_size * 3
         + capacity.poly_query.polys * 2
         + capacity.poly_query.claims * 3
-        + capacity.challenge.calls * (CHALLENGE_POINTS_PER_CALL * 2 + 1)
+        + capacity.challenge.calls * (capacity.challenge.points * 2 + 1)
 }
 
 /// Discovers the hook-call counts of `step` — how many
@@ -65,14 +65,23 @@ pub fn instance_len(header_size: usize, capacity: HookLayout) -> usize {
 /// time by the determinism guard in [`StepCtx::derive_challenge`].)
 pub(crate) fn discover_hook_layout<C: Cycle, S: Step<C>, const HEADER_SIZE: usize>(
     step: &S,
+    challenge_points: usize,
 ) -> Result<HookLayout> {
     let mut dr: Emulator<Wireless<Empty, C::CircuitField>> = Emulator::counter();
-    // Discovery has no capacity to respect — it is what *establishes* the
-    // counts an application's capacity is then the maximum of — so the caps
-    // are set out of the way. A step whose counts exceed the settled capacity
-    // is rejected at hand-over, with both numbers in hand.
+    // Discovery has no *count* to respect — it is what establishes the counts an
+    // application's capacity is then the maximum of — so those caps are set out
+    // of the way. A step whose counts exceed the settled capacity is rejected at
+    // hand-over, with both numbers in hand.
+    //
+    // The challenge input width is not one of them: it is declared by the
+    // application, known before any step registers, and a `derive_challenge`
+    // call witnesses exactly that many points. A sentinel here would be a
+    // `0..usize::MAX` loop, not a disabled cap.
     let mut hooks = FrameworkHooks::<_, C>::new(HookLayout {
-        challenge: ChallengeLayout { calls: usize::MAX },
+        challenge: ChallengeLayout {
+            calls: usize::MAX,
+            points: challenge_points,
+        },
         poly_query: PolyQueryLayout {
             polys: usize::MAX,
             claims: usize::MAX,
@@ -94,6 +103,7 @@ pub(crate) fn discover_hook_layout<C: Cycle, S: Step<C>, const HEADER_SIZE: usiz
     Ok(HookLayout {
         challenge: ChallengeLayout {
             calls: outputs.challenge_pairs.len(),
+            points: challenge_points,
         },
         poly_query: PolyQueryLayout {
             polys: outputs.witnessed_polys.len(),
@@ -154,8 +164,12 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
     /// The only constructor. `params` is `None` at registration, which runs
     /// before the cycle parameters exist and needs only the circuit's
     /// structure; see the field's documentation.
-    pub fn new(step: S, params: Option<&'params C::Params>) -> Result<Self> {
-        let layout = discover_hook_layout::<C, S, HEADER_SIZE>(&step)?;
+    pub fn new(
+        step: S,
+        params: Option<&'params C::Params>,
+        challenge_points: usize,
+    ) -> Result<Self> {
+        let layout = discover_hook_layout::<C, S, HEADER_SIZE>(&step, challenge_points)?;
         Ok(Adapter {
             step,
             layout,
@@ -525,13 +539,16 @@ mod tests {
     #[test]
     fn instance_len_covers_headers_polys_claims_and_challenges() {
         let capacity = HookLayout {
-            challenge: ChallengeLayout { calls: 2 },
+            challenge: ChallengeLayout {
+                calls: 2,
+                points: 2,
+            },
             poly_query: PolyQueryLayout {
                 polys: 8,
                 claims: 8,
             },
         };
-        let slots = 8 * 2 + 8 * 3 + 2 * (CHALLENGE_POINTS_PER_CALL * 2 + 1);
+        let slots = 8 * 2 + 8 * 3 + 2 * (capacity.challenge.points * 2 + 1);
         assert_eq!(instance_len(1, capacity), 3 + slots);
         assert_eq!(instance_len(4, capacity), 12 + slots);
         assert_eq!(instance_len(10, capacity), 30 + slots);
@@ -553,7 +570,7 @@ mod tests {
         let dr = &mut dr;
 
         let adapter =
-            Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, Some(Pasta::baked()))
+            Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, Some(Pasta::baked()), 2)
                 .expect("adapter construction should succeed");
         let capacity = adapter.capacity;
         let witness = Always::maybe_just(|| (test_alphas(), Fp::from(10u64), Fp::from(20u64), ()));
@@ -573,7 +590,7 @@ mod tests {
         let dr = &mut dr;
 
         let adapter =
-            Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, Some(Pasta::baked()))
+            Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, Some(Pasta::baked()), 2)
                 .expect("adapter construction should succeed");
         let witness = Always::maybe_just(|| (test_alphas(), Fp::from(10u64), Fp::from(20u64), ()));
 
@@ -602,7 +619,7 @@ mod tests {
     #[test]
     fn discovery_finds_no_calls_for_plain_step() {
         let adapter =
-            Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, Some(Pasta::baked()))
+            Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, Some(Pasta::baked()), 2)
                 .expect("discovery should succeed");
         assert_eq!(adapter.challenge_calls(), 0);
     }
@@ -613,6 +630,7 @@ mod tests {
         let adapter = Adapter::<Pasta, ChallengeStep, TestR, HEADER_SIZE>::new(
             ChallengeStep,
             Some(Pasta::baked()),
+            2,
         )
         .expect("discovery should succeed");
         assert_eq!(adapter.challenge_calls(), 1);
@@ -676,13 +694,17 @@ mod tests {
         let adapter = Adapter::<Pasta, TooManyChallenges, TestR, HEADER_SIZE>::new(
             TooManyChallenges,
             Some(Pasta::baked()),
+            2,
         )
         .expect("discovery does not cap");
         assert_eq!(adapter.challenge_calls(), 3);
 
         let error = adapter
             .with_capacity(HookLayout {
-                challenge: ChallengeLayout { calls: 2 },
+                challenge: ChallengeLayout {
+                    calls: 2,
+                    points: 2,
+                },
                 poly_query: PolyQueryLayout::default(),
             })
             .err()
@@ -706,6 +728,7 @@ mod tests {
         let adapter = Adapter::<Pasta, ChallengeStep, TestR, HEADER_SIZE>::new(
             ChallengeStep,
             Some(Pasta::baked()),
+            2,
         )
         .expect("discovery should succeed");
 

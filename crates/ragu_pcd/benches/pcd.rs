@@ -24,7 +24,7 @@ fn register(
     ),
 ) {
     black_box(
-        ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+        ApplicationBuilder::<Pasta, ProductionRank, 4, 1>::new()
             .register(leaf)
             .unwrap()
             .register(hash)
@@ -36,7 +36,7 @@ fn register(
 #[bench::finalize()]
 fn finalize(
     (app, pasta): (
-        ApplicationBuilder<'static, Pasta, ProductionRank, 4>,
+        ApplicationBuilder<'static, Pasta, ProductionRank, 4, 1>,
         &'static <Pasta as Cycle>::Params,
     ),
 ) {

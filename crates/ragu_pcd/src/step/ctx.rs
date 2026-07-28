@@ -158,10 +158,11 @@ where
     /// per `(child, slot)`, so a step's cost does not depend on how many points
     /// it hashed.
     ///
-    /// At most [`CHALLENGE_POINTS_PER_CALL`](crate::CHALLENGE_POINTS_PER_CALL)
-    /// points, an application-level capacity; the remaining positions are
-    /// filled with a fixed non-identity sentinel so the sponge's shape is the
-    /// same for every slot.
+    /// At most
+    /// [`ChallengeLayout::points`](crate::framework_hooks::ChallengeLayout::points),
+    /// the width the application's declared absorb-permutation budget buys; the
+    /// remaining positions are filled with a fixed non-identity sentinel so the
+    /// sponge's shape is the same for every slot.
     ///
     /// # What this binds, and what the caller must
     ///
@@ -182,7 +183,8 @@ where
         &mut self,
         points: &[Point<'dr, D, C::NestedCurve>],
     ) -> Result<Element<'dr, D>> {
-        if points.len() > crate::CHALLENGE_POINTS_PER_CALL {
+        let width = self.hooks.capacity().challenge.points;
+        if points.len() > width {
             return Err(ragu_core::Error::InvalidWitness(
                 "derive_challenge received more points than a challenge slot absorbs".into(),
             ));
@@ -203,11 +205,15 @@ where
         // absorbs a fixed number per slot, so it must see them all.
         let derived = D::try_just(|| {
             let proof_values = proof_values.take();
-            crate::internal::challenge::points_challenge::<C>(proof_values.params, &supplied.take())
+            crate::internal::challenge::points_challenge::<C>(
+                proof_values.params,
+                &supplied.take(),
+                width,
+            )
         })?;
 
-        let mut witnessed = alloc::vec::Vec::with_capacity(crate::CHALLENGE_POINTS_PER_CALL);
-        for index in 0..crate::CHALLENGE_POINTS_PER_CALL {
+        let mut witnessed = alloc::vec::Vec::with_capacity(width);
+        for index in 0..width {
             match points.get(index) {
                 // A supplied point is already a wire in this circuit; reuse it
                 // rather than re-witnessing, so the instance names the very
