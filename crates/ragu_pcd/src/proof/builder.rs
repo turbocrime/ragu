@@ -217,6 +217,7 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
 
     // Application metadata
     circuit_id: Option<CircuitIndex>,
+    children_circuit_ids: Option<[CircuitIndex; 2]>,
     left_header: Option<Vec<C::CircuitField>>,
     right_header: Option<Vec<C::CircuitField>>,
 
@@ -347,6 +348,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             bridge_alpha,
             challenge_alpha,
             circuit_id: None,
+            children_circuit_ids: None,
             left_header: None,
             right_header: None,
             native_application_rx: None,
@@ -432,6 +434,11 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     }
 
     setter!(set_circuit_id, circuit_id, CircuitIndex);
+    setter!(
+        set_children_circuit_ids,
+        children_circuit_ids,
+        [CircuitIndex; 2]
+    );
     setter!(set_left_header, left_header, Vec<C::CircuitField>);
     setter!(set_right_header, right_header, Vec<C::CircuitField>);
 
@@ -888,6 +895,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             bridge_alpha: self.bridge_alpha,
 
             circuit_id: take!(circuit_id),
+            children_circuit_ids: take!(children_circuit_ids),
             left_header: take!(left_header),
             right_header: take!(right_header),
 

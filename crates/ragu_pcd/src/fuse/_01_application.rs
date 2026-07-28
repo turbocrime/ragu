@@ -157,6 +157,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         }
 
         builder.set_circuit_id(S::INDEX.circuit_index(self.num_application_steps)?);
+        builder.set_children_circuit_ids([left_proof.circuit_id(), right_proof.circuit_id()]);
         builder.set_left_header(left_header.into_inner());
         builder.set_right_header(right_header.into_inner());
 

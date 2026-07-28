@@ -177,6 +177,14 @@ pub struct Proof<C: Cycle, R: Rank> {
 
     // Application metadata
     pub(crate) circuit_id: CircuitIndex,
+    /// The circuit indices of the two child proofs this proof fused, in
+    /// (left, right) order. A consumer that must reconstruct this proof's
+    /// nested trace geometry (the parent's `copying` circuit, the verifier)
+    /// resolves these through the application's registry-committed plan
+    /// table; the grandchildren's shapes enter that geometry through the
+    /// endoscaling and preamble blocks. For a trivial proof both entries are
+    /// the trivial step's own index.
+    pub(crate) children_circuit_ids: [CircuitIndex; 2],
     pub(crate) left_header: Vec<C::CircuitField>,
     pub(crate) right_header: Vec<C::CircuitField>,
 
@@ -690,6 +698,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
         let mut builder = ProofBuilder::new(self.params, C::ScalarField::ONE, C::CircuitField::ONE);
 
         builder.set_circuit_id(CircuitIndex::new(0));
+        builder.set_children_circuit_ids([CircuitIndex::new(0), CircuitIndex::new(0)]);
         builder.set_left_header(vec![C::CircuitField::ZERO; HEADER_SIZE]);
         builder.set_right_header(vec![C::CircuitField::ZERO; HEADER_SIZE]);
 
