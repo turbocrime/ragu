@@ -27,7 +27,7 @@ use crate::internal::nested::{
 /// Not every bridge stage is here. `preamble`, `s_prime`, `inner_error` and `f`
 /// are set by the fuse stages, which blind them with an in-circuit challenge
 /// instead — [`bridge_alpha_exponent`] panics on those.
-fn blinded_bridges() -> impl Iterator<Item = RxIndex> {
+fn blinded_bridges(num_polys: usize) -> impl Iterator<Item = RxIndex> {
     // The four `cached_bridge!` stages first, then the per-slot claim bridges,
     // which chain through `Parent` and so cannot use that macro.
     [
@@ -37,13 +37,17 @@ fn blinded_bridges() -> impl Iterator<Item = RxIndex> {
         RxIndex::BridgeEval,
     ]
     .into_iter()
-    .chain((0..crate::NUM_POLY_SLOTS).map(|slot| RxIndex::BridgeClaim(slot as u32)))
+    .chain((0..num_polys).map(|slot| RxIndex::BridgeClaim(slot as u32)))
 }
 
 /// The exponent of `bridge_alpha` for a blinded bridge stage — its position in
 /// [`blinded_bridges`], offset past the unusable zeroth power.
 pub(crate) fn bridge_alpha_exponent(idx: RxIndex) -> u64 {
-    let position = blinded_bridges()
+    // The claim slots come last in the series, so an exponent never depends on
+    // how many there are — only on the position of the entry itself. Passing
+    // the largest possible count keeps every real slot in range without the
+    // capacity having to be threaded to every caller.
+    let position = blinded_bridges(u32::MAX as usize)
         .position(|bridge| bridge == idx)
         .unwrap_or_else(|| panic!("not blinded from bridge_alpha: {idx:?}"));
     position as u64 + 1
@@ -120,7 +124,7 @@ pub(crate) fn claim_bridge_commitment<C: Cycle, R: Rank>(
 }
 
 /// The canonical padding claim for an unused poly-query slot (see
-/// [`NUM_POLY_SLOTS`](crate::NUM_POLY_SLOTS)): its host commitment
+/// the application's poly capacity): its host commitment
 /// and its opening $(x, y) = (0, 1)$.
 ///
 /// A slot cannot be padded with zeros — `commit(0)` is the identity, which no
@@ -225,7 +229,8 @@ mod tests {
     /// deriving the exponent from a position in a single ordering buys.
     #[test]
     fn bridge_alpha_exponents_are_the_expected_series() {
-        let series: Vec<u64> = blinded_bridges().map(bridge_alpha_exponent).collect();
+        const POLYS: usize = 8;
+        let series: Vec<u64> = blinded_bridges(POLYS).map(bridge_alpha_exponent).collect();
         let expected: Vec<u64> = (1..=series.len() as u64).collect();
         assert_eq!(series, expected, "exponents must be 1..=n with no gaps");
 
@@ -237,8 +242,8 @@ mod tests {
         assert_eq!(bridge_alpha_exponent(RxIndex::BridgeEval), 4);
         assert_eq!(bridge_alpha_exponent(RxIndex::BridgeClaim(0)), 5);
         assert_eq!(
-            bridge_alpha_exponent(RxIndex::BridgeClaim(crate::NUM_POLY_SLOTS as u32 - 1)),
-            4 + crate::NUM_POLY_SLOTS as u64
+            bridge_alpha_exponent(RxIndex::BridgeClaim(POLYS as u32 - 1)),
+            4 + POLYS as u64
         );
     }
 

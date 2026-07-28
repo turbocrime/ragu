@@ -175,7 +175,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // on the same index; the two must agree or the circuit cannot open.
         for proof in [left, right] {
             for claim in &proof.application_claims {
-                let slot = (0..crate::NUM_POLY_SLOTS)
+                let slot = (0..proof.application_polys().len())
                     .find(|i| {
                         crate::framework_hooks::field_index::<C::CircuitField>(*i)
                             == claim.poly_slot

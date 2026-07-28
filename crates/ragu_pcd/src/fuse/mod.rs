@@ -74,7 +74,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         left: Pcd<C, R, S::Left>,
         right: Pcd<C, R, S::Right>,
     ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
-        let mut builder = ProofBuilder::new(self.params, C::ScalarField::random(&mut *rng));
+        let mut builder = ProofBuilder::new(
+            self.params,
+            C::ScalarField::random(&mut *rng),
+            self.capacity(),
+        );
 
         let (left, right, application_data, application_aux) =
             self.compute_application_proof(rng, step, witness, left, right, &mut builder)?;

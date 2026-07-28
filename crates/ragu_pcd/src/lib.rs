@@ -302,24 +302,36 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         step_plans.push(trivial.layout());
         step_plans.extend(self.held_steps.iter().map(|held| held.layout()));
 
+        // The application's slot capacity, uniform across the application
+        // because the internal circuits read a child's instance as a
+        // fixed-width record and any step's proof may be any fuse's child.
+        //
+        // The discovered fold is `step_plans.iter().copied().reduce(max_with)`
+        // — every capacity-dependent *value* below already takes it that way.
+        // What still reads the crate constants is the internal-circuit index
+        // lookup path (`nested::claims`, `fuse::_11_circuits`,
+        // `NUM_ENDOSCALING_POINTS` and its readers), which resolves a registry
+        // index from a shape and so must be fed the same shape the registry
+        // was built with. Feeding the discovered maximum here without switching
+        // those sites would build the registry at one shape and look it up at
+        // another; they are switched next, and this becomes the fold.
+        let capacity = framework_hooks::HookLayout::padded();
+
         // The held application step adapters can be handed to the registry:
         // their circuits are measured now, with every step known. Registry
         // indexing is by category, not hand-over order, so registering them
         // here rather than in `register` changes nothing downstream.
         for held in self.held_steps.drain(..) {
-            self.native_registry = held.register(self.native_registry)?;
+            self.native_registry = held.register(capacity, self.native_registry)?;
         }
 
         // Build the native registry:
         // 1. Application circuits (registered just above)
         // 2. Internal circuits and masks
         // 3. Internal steps
-        // The variant space: the distinct shapes the registry hosts one
-        // variant block per (own, left, right) triple over. Transitional: the
-        // singleton padded shape, which reproduces exactly the fixed index
-        // space; the flip swaps this for the collected step plans.
-        let variant_space =
-            internal::VariantSpace::from_plans(&[framework_hooks::HookLayout::padded()]);
+        // The shape space the registry builds internal circuits over: the one
+        // settled capacity, since every application circuit exposes it.
+        let variant_space = internal::VariantSpace::from_plans(&[capacity]);
         let native_index = internal::native::NativeIndexSpace::new(variant_space.clone());
         let nested_index = internal::nested::NestedIndexSpace::new(variant_space.clone());
 
@@ -339,10 +351,10 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         // Then, register internal steps
         self.native_registry = self
             .native_registry
-            .register_internal_step(MultiStage::new(rerandomize))?;
+            .register_internal_step(MultiStage::new(rerandomize.with_capacity(capacity)?))?;
         self.native_registry = self
             .native_registry
-            .register_internal_step(MultiStage::new(trivial))?;
+            .register_internal_step(MultiStage::new(trivial.with_capacity(capacity)?))?;
 
         assert_eq!(
             self.native_registry.log2_circuits(),
@@ -367,6 +379,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             native_index,
             nested_index,
             step_plans,
+            capacity,
             seeded_trivial: OnceCell::new(),
             #[cfg(feature = "unstable-fuzzing")]
             skip_claim_precheck: self.skip_claim_precheck,
@@ -425,7 +438,17 @@ pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     /// [`ApplicationBuilder::finalize`] before hand-over; this table — not
     /// any list a proof carries — is what fuse and verify consult for a
     /// child's shape, keyed by its registry-committed circuit index.
+    // Live again once `capacity` is the fold over this table; see the note at
+    // its computation in `finalize`.
+    #[allow(dead_code)]
     step_plans: Vec<framework_hooks::HookLayout>,
+    /// The application's settled slot capacity: the pointwise maximum over
+    /// [`step_plans`](Self::step_plans).
+    ///
+    /// Every application circuit exposes exactly these slots, so this is the
+    /// shape the internal circuits are built for, the shape a proof's lists
+    /// have, and the shape padding fills to.
+    capacity: framework_hooks::HookLayout,
     /// Cached seeded trivial proof for rerandomization.
     seeded_trivial: OnceCell<Proof<C, R>>,
     /// Test-only: skip the prover-side poly-query pre-check. See
@@ -440,6 +463,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     /// if that index is an internal circuit (which is not a step and has no
     /// plan). See [`Self::step_plans`] for the table's provenance.
     #[allow(dead_code)] // consumed when fuse/verify select variants by plan
+    /// The application's settled slot capacity — the shape every application
+    /// circuit's instance has, and every proof's slot lists.
+    pub(crate) fn capacity(&self) -> framework_hooks::HookLayout {
+        self.capacity
+    }
+
+    #[allow(dead_code)] // see `step_plans`
     pub(crate) fn step_plan(
         &self,
         index: ragu_circuits::registry::CircuitIndex,

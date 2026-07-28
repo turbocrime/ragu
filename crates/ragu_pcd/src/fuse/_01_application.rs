@@ -167,8 +167,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             claim_polys,
             claim_host_commitments,
         );
-        builder.set_application_claims(claims.into_inner());
-        builder.set_application_challenges(challenges.into_inner());
+        builder.set_application_claims(claims);
+        builder.set_application_challenges(challenges);
 
         Ok((left_proof, right_proof, output_data, step_aux))
     }

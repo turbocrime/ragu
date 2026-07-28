@@ -19,12 +19,12 @@ use ragu_core::{
 };
 use ragu_primitives::{
     Element, GadgetExt,
-    vec::{CollectFixed, ConstLen, FixedVec, Len},
+    vec::{CollectFixed, ConstLen, FixedVec},
 };
 
 use super::super::{Step, StepCtx};
 use crate::{
-    CHALLENGE_POINTS_PER_CALL, Header, NUM_CHALLENGE_SLOTS, NUM_POLY_SLOTS, NUM_QUERY_SLOTS,
+    CHALLENGE_POINTS_PER_CALL, Header,
     framework_hooks::{
         Alphas, ChallengeLayout, FrameworkAux, FrameworkHooks, HookLayout, PolyQueryLayout,
         ProofValues,
@@ -42,15 +42,11 @@ use crate::{
 /// elements instead of a whole polynomial's worth — and it is also what makes
 /// it *sound*: a query names its polynomial by index, so there is no second
 /// copy of `com` that could disagree with the first.
-pub struct InstanceLen<const HEADER_SIZE: usize>;
-
-impl<const HEADER_SIZE: usize> Len for InstanceLen<HEADER_SIZE> {
-    fn len() -> usize {
-        HEADER_SIZE * 3
-            + NUM_POLY_SLOTS * 2
-            + NUM_QUERY_SLOTS * 3
-            + NUM_CHALLENGE_SLOTS * (CHALLENGE_POINTS_PER_CALL * 2 + 1)
-    }
+pub fn instance_len(header_size: usize, capacity: HookLayout) -> usize {
+    header_size * 3
+        + capacity.poly_query.polys * 2
+        + capacity.poly_query.claims * 3
+        + capacity.challenge.calls * (CHALLENGE_POINTS_PER_CALL * 2 + 1)
 }
 
 /// Discovers the hook-call counts of `step` — how many
@@ -71,7 +67,17 @@ pub(crate) fn discover_hook_layout<C: Cycle, S: Step<C>, const HEADER_SIZE: usiz
     step: &S,
 ) -> Result<HookLayout> {
     let mut dr: Emulator<Wireless<Empty, C::CircuitField>> = Emulator::counter();
-    let mut hooks = FrameworkHooks::<_, C>::new();
+    // Discovery has no capacity to respect — it is what *establishes* the
+    // counts an application's capacity is then the maximum of — so the caps
+    // are set out of the way. A step whose counts exceed the settled capacity
+    // is rejected at hand-over, with both numbers in hand.
+    let mut hooks = FrameworkHooks::<_, C>::new(HookLayout {
+        challenge: ChallengeLayout { calls: usize::MAX },
+        poly_query: PolyQueryLayout {
+            polys: usize::MAX,
+            claims: usize::MAX,
+        },
+    });
     {
         let mut ctx = StepCtx::<'_, '_, _, C>::new(&mut dr, &mut hooks);
         step.witness::<_, HEADER_SIZE>(&mut ctx, Empty, Empty, Empty)?;
@@ -117,6 +123,14 @@ pub(crate) struct Adapter<'params, C: Cycle, S, R: Rank, const HEADER_SIZE: usiz
     /// structure, so synthesis replays them as a determinism guard — enforced
     /// by [`StepCtx::finish_slots`], not here.
     layout: HookLayout,
+    /// The application's settled slot capacities — what this circuit's
+    /// instance exposes and what [`StepCtx::finish_slots`] pads to.
+    ///
+    /// Not known at construction: it is the maximum over *every* registered
+    /// step's [`layout`](Self::layout), so it is settled only when
+    /// registration closes. [`with_capacity`](Self::with_capacity) supplies it
+    /// before hand-over.
+    capacity: HookLayout,
     /// The cycle's runtime parameters, absent during registration.
     ///
     /// `ApplicationBuilder::register` runs before
@@ -145,9 +159,35 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize>
         Ok(Adapter {
             step,
             layout,
+            // Provisional: a step is its own capacity until registration
+            // closes and `with_capacity` supplies the application's.
+            capacity: layout,
             params,
             _marker: PhantomData,
         })
+    }
+
+    /// Settles this circuit's slot capacities, once registration has closed and
+    /// the maximum over every step is known.
+    ///
+    /// Rejects a capacity the step does not fit in, which would otherwise
+    /// surface as an instance-width mismatch far from its cause.
+    pub(crate) fn with_capacity(mut self, capacity: HookLayout) -> Result<Self> {
+        let fits = self.layout.poly_query.polys <= capacity.poly_query.polys
+            && self.layout.poly_query.claims <= capacity.poly_query.claims
+            && self.layout.challenge.calls <= capacity.challenge.calls;
+        if !fits {
+            return Err(ragu_core::Error::Initialization(
+                alloc::format!(
+                    "step needs {:?} but the application settled on {:?}",
+                    self.layout,
+                    capacity,
+                )
+                .into(),
+            ));
+        }
+        self.capacity = capacity;
+        Ok(self)
     }
 
     /// The number of [`derive_challenge`](StepCtx::derive_challenge) calls the
@@ -186,6 +226,7 @@ pub(crate) trait PendingStep<'params, C: Cycle, R: Rank> {
     /// Hands the adapter to the registry, measuring its circuit now.
     fn register(
         self: Box<Self>,
+        capacity: HookLayout,
         registry: RegistryBuilder<'params, C::CircuitField, R>,
     ) -> Result<RegistryBuilder<'params, C::CircuitField, R>>;
 }
@@ -199,9 +240,10 @@ impl<'params, C: Cycle, S: Step<C> + 'params, R: Rank, const HEADER_SIZE: usize>
 
     fn register(
         self: Box<Self>,
+        capacity: HookLayout,
         registry: RegistryBuilder<'params, C::CircuitField, R>,
     ) -> Result<RegistryBuilder<'params, C::CircuitField, R>> {
-        registry.register_circuit(MultiStage::new(*self))
+        registry.register_circuit(MultiStage::new((*self).with_capacity(capacity)?))
     }
 }
 
@@ -224,7 +266,7 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize>
         <S::Right as Header<C::CircuitField>>::Data,
         S::Witness<'source>,
     );
-    type Output = Kind![C::CircuitField; FixedVec<Element<'_, _>, InstanceLen<HEADER_SIZE>>];
+    type Output = Kind![C::CircuitField; crate::slot_vec::SlotVec<Element<'_, _>>];
     type Aux<'source> = AdapterAux<'source, C, S, HEADER_SIZE>;
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -263,7 +305,8 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize>
             Ok(ProofValues::new(params, alphas.bridge))
         })?;
 
-        let mut hooks = FrameworkHooks::with_expected(self.layout, Maybe::clone(&proof_values));
+        let mut hooks =
+            FrameworkHooks::with_expected(self.layout, self.capacity, Maybe::clone(&proof_values));
         let ((left, right, output), output_data, step_aux) = {
             let mut ctx = StepCtx::<'_, '_, _, C>::new(dr, &mut hooks);
             let body = self
@@ -276,7 +319,7 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize>
         };
         let outputs = hooks.into_outputs();
 
-        let mut elements = Vec::with_capacity(InstanceLen::<HEADER_SIZE>::len());
+        let mut elements = Vec::with_capacity(instance_len(HEADER_SIZE, self.capacity));
         left.write(dr, &mut elements)?;
         right.write(dr, &mut elements)?;
         output.write(dr, &mut elements)?;
@@ -325,7 +368,10 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize>
             })
         })?;
 
-        Ok(WithAux::new(FixedVec::try_from(elements)?, adapter_aux))
+        Ok(WithAux::new(
+            crate::slot_vec::SlotVec::with_len(elements, instance_len(HEADER_SIZE, self.capacity))?,
+            adapter_aux,
+        ))
     }
 }
 
@@ -474,14 +520,31 @@ mod tests {
         }
     }
 
+    /// The instance is three headers plus the application's slots, and every
+    /// term scales with the capacity it is drawn from.
     #[test]
     fn instance_len_covers_headers_polys_claims_and_challenges() {
-        let slots = NUM_POLY_SLOTS * 2
-            + NUM_QUERY_SLOTS * 3
-            + NUM_CHALLENGE_SLOTS * (CHALLENGE_POINTS_PER_CALL * 2 + 1);
-        assert_eq!(InstanceLen::<1>::len(), 3 + slots);
-        assert_eq!(InstanceLen::<4>::len(), 12 + slots);
-        assert_eq!(InstanceLen::<10>::len(), 30 + slots);
+        let capacity = HookLayout {
+            challenge: ChallengeLayout { calls: 2 },
+            poly_query: PolyQueryLayout {
+                polys: 8,
+                claims: 8,
+            },
+        };
+        let slots = 8 * 2 + 8 * 3 + 2 * (CHALLENGE_POINTS_PER_CALL * 2 + 1);
+        assert_eq!(instance_len(1, capacity), 3 + slots);
+        assert_eq!(instance_len(4, capacity), 12 + slots);
+        assert_eq!(instance_len(10, capacity), 30 + slots);
+
+        // Half the polynomial slots, half their contribution.
+        let smaller = HookLayout {
+            poly_query: PolyQueryLayout {
+                polys: 4,
+                ..capacity.poly_query
+            },
+            ..capacity
+        };
+        assert_eq!(instance_len(4, smaller), instance_len(4, capacity) - 8);
     }
 
     #[test]
@@ -492,6 +555,7 @@ mod tests {
         let adapter =
             Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, Some(Pasta::baked()))
                 .expect("adapter construction should succeed");
+        let capacity = adapter.capacity;
         let witness = Always::maybe_just(|| (test_alphas(), Fp::from(10u64), Fp::from(20u64), ()));
 
         let output = MultiStage::new(adapter)
@@ -500,13 +564,7 @@ mod tests {
             .into_output();
 
         // Output should have 3 * HEADER_SIZE elements (left + right + output headers)
-        assert_eq!(
-            output.len(),
-            HEADER_SIZE * 3
-                + NUM_POLY_SLOTS * 2
-                + NUM_QUERY_SLOTS * 3
-                + NUM_CHALLENGE_SLOTS * (CHALLENGE_POINTS_PER_CALL * 2 + 1)
-        );
+        assert_eq!(output.len(), instance_len(HEADER_SIZE, capacity));
     }
 
     #[test]
@@ -562,8 +620,11 @@ mod tests {
 
     /// A step body that derives more challenges than there are slots is
     /// rejected at registration, when the dry run trips the cap.
+    /// Discovery itself never caps — it is what *establishes* the counts an
+    /// application's capacity is the maximum of. A step that does not fit the
+    /// settled capacity is rejected at hand-over, with both shapes named.
     #[test]
-    fn discovery_rejects_more_challenges_than_slots() {
+    fn hand_over_rejects_a_step_that_exceeds_the_capacity() {
         struct TooManyChallenges;
 
         impl Step<Pasta> for TooManyChallenges {
@@ -594,7 +655,7 @@ mod tests {
                 let right_elem = Element::alloc(ctx.dr, allocator, right)?;
 
                 let mut output = left_elem.clone();
-                for _ in 0..crate::NUM_CHALLENGE_SLOTS + 1 {
+                for _ in 0..3 {
                     let challenge = ctx.derive_challenge(&[])?;
                     output = output.add(ctx.dr, &challenge);
                 }
@@ -612,14 +673,22 @@ mod tests {
             }
         }
 
-        let error = Adapter::<Pasta, TooManyChallenges, TestR, HEADER_SIZE>::new(
+        let adapter = Adapter::<Pasta, TooManyChallenges, TestR, HEADER_SIZE>::new(
             TooManyChallenges,
             Some(Pasta::baked()),
         )
-        .err()
-        .expect("the challenge slot cap should reject this step");
+        .expect("discovery does not cap");
+        assert_eq!(adapter.challenge_calls(), 3);
+
+        let error = adapter
+            .with_capacity(HookLayout {
+                challenge: ChallengeLayout { calls: 2 },
+                poly_query: PolyQueryLayout::default(),
+            })
+            .err()
+            .expect("a step that does not fit the capacity should be rejected");
         assert!(
-            alloc::format!("{error}").contains("challenge slots"),
+            alloc::format!("{error}").contains("the application settled on"),
             "unexpected error: {error}"
         );
     }
@@ -640,17 +709,12 @@ mod tests {
         )
         .expect("discovery should succeed");
 
+        let capacity = adapter.capacity;
         let output = MultiStage::new(adapter)
             .witness(dr, Empty)
             .expect("structure-only synthesis should succeed")
             .into_output();
 
-        assert_eq!(
-            output.len(),
-            HEADER_SIZE * 3
-                + NUM_POLY_SLOTS * 2
-                + NUM_QUERY_SLOTS * 3
-                + NUM_CHALLENGE_SLOTS * (CHALLENGE_POINTS_PER_CALL * 2 + 1)
-        );
+        assert_eq!(output.len(), instance_len(HEADER_SIZE, capacity));
     }
 }

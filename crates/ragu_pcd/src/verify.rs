@@ -63,15 +63,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         //
         // Note which count gates which vector: `application_claims` is indexed
         // per *query*, while `claim_polys` and `claim_host_commitments` are
-        // indexed per *polynomial* — the loops below walk them over
-        // `NUM_POLY_SLOTS`. The two counts are equal today, so gating a
-        // poly-indexed vector on the query count would pass unnoticed; it would
-        // stop passing the moment an application configures them differently.
-        if pcd.proof().application_claims().len() != crate::NUM_QUERY_SLOTS
-            || pcd.proof().application_polys().len() != crate::NUM_POLY_SLOTS
-            || pcd.proof().claim_polys.len() != crate::NUM_POLY_SLOTS
-            || pcd.proof().claim_host_commitments().len() != crate::NUM_POLY_SLOTS
-            || pcd.proof().application_challenges().len() != crate::NUM_CHALLENGE_SLOTS
+        // indexed per *polynomial* — the loops below walk them over the poly
+        // capacity. The two counts need not be equal, so gating a poly-indexed
+        // vector on the query capacity would be a latent bug.
+        let capacity = self.capacity();
+        if pcd.proof().application_claims().len() != capacity.poly_query.claims
+            || pcd.proof().application_polys().len() != capacity.poly_query.polys
+            || pcd.proof().claim_polys.len() != capacity.poly_query.polys
+            || pcd.proof().claim_host_commitments().len() != capacity.poly_query.polys
+            || pcd.proof().application_challenges().len() != capacity.challenge.calls
             || pcd
                 .proof()
                 .application_challenges()
@@ -158,7 +158,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // First each polynomial: its carried coefficients must commit to the
         // host commitment the proof records, and that must bridge to the
         // instance-bound nested commitment.
-        let poly_commitments = (0..crate::NUM_POLY_SLOTS).all(|slot| {
+        let poly_commitments = (0..capacity.poly_query.polys).all(|slot| {
             let com = pcd.proof().application_polys()[slot];
             let poly = &pcd.proof().claim_polys[slot];
             let host = pcd.proof().claim_host_commitment(slot);
@@ -179,11 +179,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // the polynomial slots fails the check rather than panicking: it is
         // instance data, so a malformed proof can carry anything there.
         let poly_query_claims = poly_commitments
-            && (0..crate::NUM_QUERY_SLOTS).all(|slot| {
+            && (0..capacity.poly_query.claims).all(|slot| {
                 let crate::ClaimOpening { poly_slot, x, y } =
                     pcd.proof().application_claims()[slot];
 
-                (0..crate::NUM_POLY_SLOTS)
+                (0..capacity.poly_query.polys)
                     .find(|i| {
                         crate::framework_hooks::field_index::<C::CircuitField>(*i) == poly_slot
                     })
@@ -195,7 +195,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // `challenge_binding` circuit, which re-derives every child slot's
         // challenge from its points — so a root proof's own challenges are
         // still unbound and the verifier re-derives each one natively.
-        let derived_challenges = (0..crate::NUM_CHALLENGE_SLOTS).all(|slot| {
+        let derived_challenges = (0..capacity.challenge.calls).all(|slot| {
             let opening = &pcd.proof().application_challenges()[slot];
             crate::internal::challenge::challenge_from_points::<C>(self.params, &opening.points)
                 .is_ok_and(|derived| derived == opening.challenge)

@@ -326,16 +326,23 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     /// `application_polys`).
     claim_polys: Vec<sparse::Polynomial<C::CircuitField, R>>,
     /// The claims' host-curve commitments, in slot order.
-    claim_host_commitments: Option<[C::HostCurve; crate::NUM_POLY_SLOTS]>,
+    claim_host_commitments: Option<Vec<C::HostCurve>>,
+    /// The application's slot capacity — what every list here is sized to.
+    capacity: crate::framework_hooks::HookLayout,
 }
 
 impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     /// Create a new empty builder with the given `bridge_alpha` source for
     /// deriving cached bridge polynomial alphas.
-    pub(crate) fn new(params: &'params C::Params, bridge_alpha: C::ScalarField) -> Self {
+    pub(crate) fn new(
+        params: &'params C::Params,
+        bridge_alpha: C::ScalarField,
+        capacity: crate::framework_hooks::HookLayout,
+    ) -> Self {
         Self {
             params,
             bridge_alpha,
+            capacity,
             circuit_id: None,
             children_circuit_ids: None,
             left_header: None,
@@ -644,8 +651,8 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     /// `set_application_claims` to have been called.
     fn claim_host_commitments(&self) -> Vec<C::HostCurve> {
         self.claim_host_commitments
+            .clone()
             .expect("claim_host_commitments not set before deriving the eval bridge")
-            .to_vec()
     }
 
     setter!(
@@ -715,7 +722,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             self.application_challenges.is_empty(),
             "double-set: application_challenges"
         );
-        assert_eq!(challenges.len(), crate::NUM_CHALLENGE_SLOTS);
+        assert_eq!(challenges.len(), self.capacity.challenge.calls);
         self.application_challenges = challenges;
     }
 
@@ -732,12 +739,12 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             self.application_polys.is_empty(),
             "double-set: application_polys"
         );
-        assert_eq!(coms.len(), crate::NUM_POLY_SLOTS);
-        assert_eq!(claim_polys.len(), crate::NUM_POLY_SLOTS);
-        assert_eq!(claim_host_commitments.len(), crate::NUM_POLY_SLOTS);
+        assert_eq!(coms.len(), self.capacity.poly_query.polys);
+        assert_eq!(claim_polys.len(), self.capacity.poly_query.polys);
+        assert_eq!(claim_host_commitments.len(), self.capacity.poly_query.polys);
         self.application_polys = coms;
         self.claim_polys = claim_polys;
-        self.claim_host_commitments = Some(core::array::from_fn(|i| claim_host_commitments[i]));
+        self.claim_host_commitments = Some(claim_host_commitments);
     }
 
     /// Sets the per-step **queries** for this fuse step, in call order. Each
@@ -751,7 +758,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             self.application_claims.is_empty(),
             "double-set: application_claims"
         );
-        assert_eq!(claims.len(), crate::NUM_QUERY_SLOTS);
+        assert_eq!(claims.len(), self.capacity.poly_query.claims);
         self.application_claims = claims;
     }
 
@@ -824,7 +831,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             };
         }
 
-        let claim_bridge_rxs = (0..crate::NUM_POLY_SLOTS)
+        let claim_bridge_rxs = (0..self.capacity.poly_query.polys)
             .map(|slot| self.claim_bridge_rx(slot))
             .collect::<Result<alloc::vec::Vec<_>>>()?;
 

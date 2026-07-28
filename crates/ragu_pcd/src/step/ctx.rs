@@ -234,11 +234,11 @@ where
     ///
     /// First the determinism guard
     /// ([`FrameworkHooks::check_layout`](crate::framework_hooks::FrameworkHooks)),
-    /// then padding. Every application circuit exposes exactly
-    /// [`NUM_QUERY_SLOTS`](crate::NUM_QUERY_SLOTS) claims and
-    /// [`NUM_CHALLENGE_SLOTS`](crate::NUM_CHALLENGE_SLOTS) challenge pairs,
-    /// whatever the body used, so the instance shape — which the internal
-    /// circuits read as a fixed-width record — never depends on the step.
+    /// then padding. Every application circuit exposes exactly the
+    /// application's settled capacity in claims, polynomials and challenge
+    /// records, whatever the body used, so the instance shape — which the
+    /// internal circuits read as a fixed-width record — never depends on
+    /// *which* step produced the proof.
     ///
     /// Padding goes through the same doors a step body does:
     /// [`witness_polynomial`](Self::witness_polynomial) plus
@@ -259,10 +259,11 @@ where
         self.hooks.check_layout()?;
 
         let allocator = &mut ragu_primitives::allocator::Standard::new();
+        let capacity = self.hooks.capacity();
 
         // Polynomials first, so every query slot has something to name.
         let mut padding_handle = None;
-        while self.hooks.polys_filled() < crate::NUM_POLY_SLOTS {
+        while self.hooks.polys_filled() < capacity.poly_query.polys {
             let proof_values = self.hooks.proof_values();
             let padding = D::try_just(move || {
                 let (host, ..) =
@@ -285,7 +286,7 @@ where
         //
         // Slot 0 serves every padding query: the one-hot in `compute_v` reaches
         // any polynomial equally, so no slot has to be reserved for padding.
-        while self.hooks.claims_filled() < crate::NUM_QUERY_SLOTS {
+        while self.hooks.claims_filled() < capacity.poly_query.claims {
             let slot = 0;
             let x = Element::alloc(
                 self.dr,
@@ -299,7 +300,7 @@ where
 
         // A padding challenge supplies no points at all, so every position
         // falls to `derive_challenge`'s sentinel arm.
-        while self.hooks.challenges_filled() < crate::NUM_CHALLENGE_SLOTS {
+        while self.hooks.challenges_filled() < capacity.challenge.calls {
             self.derive_challenge(&[])?;
         }
 

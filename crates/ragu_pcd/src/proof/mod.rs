@@ -663,7 +663,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
             .native_registry
             .xy(C::CircuitField::ONE, C::CircuitField::ONE);
 
-        let mut builder = ProofBuilder::new(self.params, C::ScalarField::ONE);
+        let mut builder = ProofBuilder::new(self.params, C::ScalarField::ONE, self.capacity());
 
         builder.set_circuit_id(CircuitIndex::new(0));
         builder.set_children_circuit_ids([CircuitIndex::new(0), CircuitIndex::new(0)]);
@@ -675,7 +675,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
         let (padding_host, padding_x, padding_y) =
             crate::internal::challenge::padding_claim::<C>(self.params);
         builder.set_application_polys(
-            (0..crate::NUM_POLY_SLOTS)
+            (0..self.capacity().poly_query.polys)
                 .map(|slot| {
                     crate::internal::challenge::claim_bridge_commitment::<C, R>(
                         self.params,
@@ -689,12 +689,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                     .expect("trivial padding bridge commitment")
                 })
                 .collect(),
-            vec![crate::internal::challenge::padding_poly::<C, R>(); crate::NUM_POLY_SLOTS],
-            vec![padding_host; crate::NUM_POLY_SLOTS],
+            vec![
+                crate::internal::challenge::padding_poly::<C, R>();
+                self.capacity().poly_query.polys
+            ],
+            vec![padding_host; self.capacity().poly_query.polys],
         );
         // Every query names polynomial slot 0, matching the adapter's padding.
         builder.set_application_claims(
-            (0..crate::NUM_QUERY_SLOTS)
+            (0..self.capacity().poly_query.claims)
                 .map(|_| crate::framework_hooks::PolyQueryClaim {
                     poly_slot: C::CircuitField::ZERO,
                     x: padding_x,
@@ -707,7 +710,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
         // the adapter's padding, so the binding circuit can re-derive every
         // slot uniformly.
         builder.set_application_challenges(
-            (0..crate::NUM_CHALLENGE_SLOTS)
+            (0..self.capacity().challenge.calls)
                 .map(|_| {
                     let (points, challenge) =
                         crate::internal::challenge::points_challenge::<C>(self.params, &[])
@@ -807,7 +810,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                 points.push(host_commitment); // AbB
                 points.push(registry_xy_commitment); // RegistryXY
                 points.push(host_commitment); // P placeholder
-                for _ in 0..crate::NUM_POLY_SLOTS {
+                for _ in 0..self.capacity().poly_query.polys {
                     points.push(padding_host_commitment); // claim slots
                 }
             }
@@ -856,7 +859,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                 stashed_ab_b: host_commitment,
                 stashed_registry_xy: registry_xy_commitment,
                 stashed_p: p_commitment,
-                stashed_claims: alloc::vec![padding_host_commitment; crate::NUM_POLY_SLOTS],
+                stashed_claims: alloc::vec![
+                    padding_host_commitment;
+                    self.capacity().poly_query.polys
+                ],
             };
             let rx = nested::stages::preamble::Stage::<C::HostCurve, R>::rx(
                 C::ScalarField::ONE,

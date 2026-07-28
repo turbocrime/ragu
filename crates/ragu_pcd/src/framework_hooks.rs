@@ -12,7 +12,7 @@
 //!   which delegates here. Each claim carries the opened polynomial's
 //!   coefficients so the framework can fold it into the [PCS aggregation].
 //!   Every application circuit exposes exactly
-//!   [`NUM_QUERY_SLOTS`] claim slots as part
+//!   the application's claim capacity in slot form as part
 //!   of its public instance (unused slots hold the canonical padding claim),
 //!   binding the claim wires — the commitment point and the $(x, y)$ opening —
 //!   to the circuit's $k(Y)$ polynomial. The claims a proof raises are then
@@ -28,7 +28,7 @@
 //!   [`StepCtx::derive_challenge`](crate::step::StepCtx::derive_challenge):
 //!   the slot cap, the determinism guard, and the `(points, challenge)` records
 //!   the adapter writes into the application circuit's public instance. Every
-//!   application circuit gets at most [`NUM_CHALLENGE_SLOTS`] slots, each
+//!   application circuit gets the application's challenge capacity in slots, each
 //!   absorbing exactly
 //!   [`CHALLENGE_POINTS_PER_CALL`](crate::CHALLENGE_POINTS_PER_CALL) points.
 //!
@@ -101,12 +101,7 @@ use ragu_core::{
     drivers::{Driver, DriverValue},
     maybe::{Maybe, MaybeKind},
 };
-use ragu_primitives::{
-    Element, Point,
-    vec::{ConstLen, FixedVec},
-};
-
-use crate::{NUM_CHALLENGE_SLOTS, NUM_POLY_SLOTS, NUM_QUERY_SLOTS};
+use ragu_primitives::{Element, Point};
 
 /// A single witnessed polynomial: its commitment and its coefficients.
 ///
@@ -210,7 +205,7 @@ pub struct FrameworkHooks<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     /// produced, in slot order.
     challenge_pairs: Vec<ChallengeWires<'dr, D, C::NestedCurve>>,
     /// Number of [`derive_challenge`](crate::step::StepCtx::derive_challenge) calls so far.
-    /// Each occupies one of the [`NUM_CHALLENGE_SLOTS`] slots; how many points a
+    /// Each occupies one of the application's challenge slots; how many points a
     /// call passed needs no recording, every slot holding the same number.
     challenge_calls: usize,
     /// The hook-call counts discovered by the registration-time dry run,
@@ -223,6 +218,15 @@ pub struct FrameworkHooks<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     expected: Option<HookLayout>,
     /// The proof-level values the hooks commit to. See [`ProofValues`].
     proof_values: DriverValue<D, ProofValues<'dr, C>>,
+    /// The application's slot capacities — the pointwise maximum over every
+    /// registered step's discovered plan, settled at
+    /// [`finalize`](crate::ApplicationBuilder::finalize).
+    ///
+    /// Every application circuit exposes exactly this many slots, whatever its
+    /// own step used, because the internal circuits read a child's instance as
+    /// a fixed-width record. A step that needs fewer pays for the difference
+    /// in padding; a step that needs more is rejected here.
+    capacity: HookLayout,
 }
 
 /// Every hook's output as plain values, for the fuse.
@@ -233,23 +237,20 @@ pub struct FrameworkHooks<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
 /// rather than a handful of sibling fields — and so adding a hook means adding
 /// a field here, which the compiler then forces every reader to acknowledge.
 pub struct FrameworkAux<C: Cycle> {
-    /// The step's witnessed polynomials, padded to exactly [`NUM_POLY_SLOTS`]
-    /// entries, in slot order — matching the instance layout the circuit
+    /// The step's witnessed polynomials, padded to the application's poly
+    /// capacity, in slot order — matching the instance layout the circuit
     /// committed to. Each carries its coefficients, which the fuse folds into
     /// the PCS accumulator.
-    pub polys: FixedVec<WitnessedPoly<C::CircuitField, C::NestedCurve>, ConstLen<NUM_POLY_SLOTS>>,
-    /// The step's opening claims, padded to exactly [`NUM_QUERY_SLOTS`]
-    /// entries, in call order. Each names one of [`polys`](Self::polys). Fuse
+    pub polys: Vec<WitnessedPoly<C::CircuitField, C::NestedCurve>>,
+    /// The step's opening claims, padded to the application's claim capacity,
+    /// in call order. Each names one of [`polys`](Self::polys). Fuse
     /// pre-checks every claim natively, persists the claim instances in the
     /// proof, and the *next* fuse enforces them recursively via the PCS
     /// accumulator.
-    pub claims: FixedVec<PolyQueryClaim<C::CircuitField>, ConstLen<NUM_QUERY_SLOTS>>,
-    /// The derived-challenge records the circuit exposes, padded to exactly
-    /// [`NUM_CHALLENGE_SLOTS`] entries, in slot order.
-    pub challenges: FixedVec<
-        crate::proof::ChallengeOpening<C::NestedCurve, C::CircuitField>,
-        ConstLen<NUM_CHALLENGE_SLOTS>,
-    >,
+    pub claims: Vec<PolyQueryClaim<C::CircuitField>>,
+    /// The derived-challenge records the circuit exposes, padded to the
+    /// application's challenge capacity, in slot order.
+    pub challenges: Vec<crate::proof::ChallengeOpening<C::NestedCurve, C::CircuitField>>,
 }
 
 /// A small non-negative index as a field element.
@@ -257,7 +258,7 @@ pub struct FrameworkAux<C: Cycle> {
 /// Summed from `ONE` rather than converted, so this needs only [`Field`] and
 /// the hook container does not have to demand [`PrimeField`] of every driver it
 /// is generic over. The indices are slot numbers, bounded by
-/// [`NUM_POLY_SLOTS`], so the loop is a handful of additions on values — no
+/// the application's poly capacity, so the loop is a handful of additions — no
 /// gates, and nothing that scales.
 ///
 /// [`PrimeField`]: ragu_arithmetic::ff::PrimeField
@@ -322,14 +323,12 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHookOutputs<'d
         }
         let challenges = collect_values::<D, _>(challenges)?;
 
-        // `StepCtx::finish_slots` padded each to its slot count, so these
-        // conversions cannot fail; the fixed types are what make that guarantee
-        // readable at every consumer, instead of a length assertion at each one.
+        // `StepCtx::finish_slots` padded each to the application's capacity.
         D::try_just(move || {
             Ok(FrameworkAux {
-                polys: FixedVec::try_from(polys.take())?,
-                claims: FixedVec::try_from(claims.take())?,
-                challenges: FixedVec::try_from(challenges.take())?,
+                polys: polys.take(),
+                claims: claims.take(),
+                challenges: challenges.take(),
             })
         })
     }
@@ -512,7 +511,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     /// give. It is also why [`with_expected`](Self::with_expected) spells its
     /// fields out instead of delegating here — the two constructors are for the
     /// two driver kinds, and neither should compile in the other's place.
-    pub fn new() -> Self {
+    pub fn new(capacity: HookLayout) -> Self {
         Self {
             poly_queries: Vec::new(),
             witnessed_polys: Vec::new(),
@@ -520,6 +519,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
             challenge_pairs: Vec::new(),
             expected: None,
             proof_values: <D::MaybeKind as MaybeKind>::empty(),
+            capacity,
         }
     }
 
@@ -533,6 +533,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     /// See [`new`](Self::new) for why this does not delegate to it.
     pub fn with_expected(
         expected: HookLayout,
+        capacity: HookLayout,
         proof_values: DriverValue<D, ProofValues<'dr, C>>,
     ) -> Self {
         Self {
@@ -542,7 +543,14 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
             challenge_pairs: Vec::new(),
             expected: Some(expected),
             proof_values,
+            capacity,
         }
+    }
+
+    /// The application's slot capacities; what
+    /// [`finish_slots`](crate::step::StepCtx) pads to.
+    pub(crate) fn capacity(&self) -> HookLayout {
+        self.capacity
     }
 
     /// The proof-level values the hooks commit to, for the hook bodies that
@@ -561,7 +569,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     /// therefore the generators, that `com` commits to.
     pub(crate) fn next_poly_slot(&self) -> Result<usize> {
         let slot = self.witnessed_polys.len();
-        if slot >= crate::NUM_POLY_SLOTS {
+        if slot >= self.capacity.poly_query.polys {
             return Err(Error::InvalidWitness(
                 "step witnessed more polynomials than there are polynomial slots".into(),
             ));
@@ -584,7 +592,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     /// Takes the next challenge slot, enforcing both the framework cap and the
     /// discovered call count.
     pub(crate) fn take_challenge_slot(&mut self) -> Result<usize> {
-        if self.challenge_calls >= crate::NUM_CHALLENGE_SLOTS {
+        if self.challenge_calls >= self.capacity.challenge.calls {
             return Err(Error::InvalidWitness(
                 "step derived more challenges than there are challenge slots".into(),
             ));
@@ -622,7 +630,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     /// `x`.
     ///
     /// The claim wires occupy one of the application circuit's
-    /// [`NUM_QUERY_SLOTS`] instance slots,
+    /// claim instance slots,
     /// binding them to the circuit's $k(Y)$; the claim itself is recursively
     /// enforced at the next fuse via the PCS accumulator. The fuse that raises
     /// it additionally pre-checks it natively (see
@@ -631,7 +639,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     ///
     /// The number of calls per step body is part of the circuit structure: it
     /// must not depend on witness values and must not exceed
-    /// `NUM_QUERY_SLOTS` (checked by the adapter).
+    /// the application's claim capacity (checked here).
     ///
     /// # Errors
     ///
@@ -651,7 +659,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
         x: Element<'dr, D>,
         y: Element<'dr, D>,
     ) -> Result<()> {
-        if self.poly_queries.len() >= crate::NUM_QUERY_SLOTS {
+        if self.poly_queries.len() >= self.capacity.poly_query.claims {
             return Err(Error::InvalidWitness(
                 "step enforced more poly-queries than there are query slots".into(),
             ));
@@ -750,7 +758,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
 /// not compile on a value-carrying driver.
 impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Default for FrameworkHooks<'dr, D, C> {
     fn default() -> Self {
-        Self::new()
+        Self::new(HookLayout::default())
     }
 }
 
@@ -766,11 +774,15 @@ mod tests {
 
     type Dr<'dr> = Emulator<Wireless<Empty, Fp>>;
 
-    /// The framework caps a step body at `NUM_CHALLENGE_SLOTS` challenges.
+    /// The framework caps a step body at the application's challenge capacity.
     #[test]
     fn challenge_slots_are_capped() {
-        let mut hooks = FrameworkHooks::<Dr<'_>, Pasta>::new();
-        for expected in 0..crate::NUM_CHALLENGE_SLOTS {
+        let capacity = HookLayout {
+            challenge: ChallengeLayout { calls: 2 },
+            poly_query: PolyQueryLayout::default(),
+        };
+        let mut hooks = FrameworkHooks::<Dr<'_>, Pasta>::new(capacity);
+        for expected in 0..capacity.challenge.calls {
             assert_eq!(
                 hooks.take_challenge_slot().expect("within the cap"),
                 expected
@@ -789,9 +801,14 @@ mod tests {
     /// did is rejected, rather than silently synthesizing a larger circuit.
     #[test]
     fn challenge_slots_respect_the_discovered_count() {
+        let expected_layout = HookLayout {
+            challenge: ChallengeLayout { calls: 1 },
+            poly_query: PolyQueryLayout::default(),
+        };
         let mut hooks = FrameworkHooks::<Dr<'_>, Pasta>::with_expected(
+            expected_layout,
             HookLayout {
-                challenge: ChallengeLayout { calls: 1 },
+                challenge: ChallengeLayout { calls: 4 },
                 poly_query: PolyQueryLayout::default(),
             },
             <Empty as MaybeKind>::empty::<ProofValues<'_, Pasta>>(),
