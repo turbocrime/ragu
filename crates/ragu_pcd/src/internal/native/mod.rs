@@ -84,32 +84,33 @@ pub const fn total_circuit_counts(
 }
 
 /// The native fuse stage chains' value-level geometry for children of the
-/// given shape.
+/// given shapes.
 ///
 /// The typed chain diverges after the shared preamble prefix: the **query
 /// chain** is preamble → query → eval, the **error chain** is preamble →
 /// outer_error → inner_error. Each returned layout describes one chain, with
 /// every real stage as one slot, so masks and rx positions can be computed
 /// from values — the same mechanism the challenge-stage run uses. The widths
-/// come from each stage's `num_values` (count-dependent stages) or its typed
-/// `values()` (count-free stages), so the layouts agree with the typed chain
-/// by construction; `native_chain_layouts_tile_typed_chain` pins it.
+/// come from each stage's `num_values` (count-dependent stages, each child at
+/// its own shape) or its typed `values()` (count-free stages), so the layouts
+/// agree with the typed chain by construction;
+/// `native_chain_layouts_tile_typed_chain` pins it. `num_internal_circuits`
+/// sizes the query stage's fixed-registry block.
 ///
 /// Returns `(query_chain, error_chain)`.
 pub fn chain_layouts<C: Cycle, R: Rank, const HEADER_SIZE: usize>(
-    num_polys: usize,
-    num_queries: usize,
-    num_challenges: usize,
+    num_internal_circuits: usize,
+    left: crate::framework_hooks::HookLayout,
+    right: crate::framework_hooks::HookLayout,
 ) -> (
     ragu_circuits::staging::InducedStages,
     ragu_circuits::staging::InducedStages,
 ) {
     use ragu_circuits::staging::InducedStages;
 
-    let preamble_w =
-        stages::preamble::num_values(HEADER_SIZE, num_polys, num_queries, num_challenges);
-    let query_w = stages::query::num_values(num_challenges);
-    let eval_w = stages::eval::num_values(num_polys, num_challenges);
+    let preamble_w = stages::preamble::num_values(HEADER_SIZE, left, right);
+    let query_w = stages::query::num_values(num_internal_circuits, left, right);
+    let eval_w = stages::eval::num_values(left, right);
     let outer_w = <stages::outer_error::Stage<C, R, HEADER_SIZE, RevdotParameters> as
         ragu_circuits::staging::Stage<C::CircuitField, R>>::values();
     let inner_w = <stages::inner_error::Stage<C, R, HEADER_SIZE, RevdotParameters> as
@@ -493,9 +494,10 @@ pub enum RxComponent {
 
 /// Registers internal native circuits and masks into the provided registry.
 ///
-/// The slot counts are the shape the recursion is built for: they drive the
-/// per-slot entries of the registration list and the stage-chain geometry the
-/// masks are cut from.
+/// `capacity` is the shape the recursion is built for: it drives the per-slot
+/// entries of the registration list and the stage-chain geometry the masks
+/// are cut from. While slot padding exists it doubles as both children's
+/// shape.
 ///
 /// Does not register internal steps (rerandomize, trivial); those are
 /// registered by the caller after this function returns.
@@ -503,14 +505,16 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>(
     mut registry: RegistryBuilder<'params, C::CircuitField, R>,
     params: &'params C::Params,
     log2_circuits: u32,
-    num_polys: usize,
-    num_queries: usize,
-    num_challenges: usize,
+    capacity: crate::framework_hooks::HookLayout,
 ) -> Result<RegistryBuilder<'params, C::CircuitField, R>> {
     let initial_internal_circuits = registry.num_internal_circuits();
 
-    let (query_chain, error_chain) =
-        chain_layouts::<C, R, HEADER_SIZE>(num_polys, num_queries, num_challenges);
+    let num_challenges = capacity.challenge.calls;
+    let (query_chain, error_chain) = chain_layouts::<C, R, HEADER_SIZE>(
+        InternalCircuitIndex::num(num_challenges),
+        capacity,
+        capacity,
+    );
 
     for id in InternalCircuitIndex::all(num_challenges) {
         use InternalCircuitIndex::*;

@@ -209,13 +209,22 @@ pub struct Output<'dr, D: Driver<'dr>> {
     pub registry_xy: Element<'dr, D>,
 }
 
-/// This stage's wire width for children carrying `num_polys` claim slots
-/// under a recursion with `num_challenges` challenge slots; the value-level
-/// source of the typed [`values()`](staging::Stage::values).
-pub fn num_values(num_polys: usize, num_challenges: usize) -> usize {
-    // 2 * ChildEvaluations (one evaluation per RxIndex, 4 scalars, one per
-    //   claim slot, one per challenge slot) + current step elements (6)
-    2 * (super::super::RxIndex::num(num_challenges) + 4 + num_polys) + 6
+/// One child's contribution to this stage's wire width: one evaluation per
+/// entry of its rx list (challenge stages at its own count), 4 scalars, and
+/// one evaluation per claim slot at its own count.
+pub fn child_num_values(child: crate::framework_hooks::HookLayout) -> usize {
+    super::super::RxIndex::num(child.challenge.calls) + 4 + child.poly_query.polys
+}
+
+/// This stage's wire width for children of the given shapes; the value-level
+/// source of the typed [`values()`](staging::Stage::values). The two children
+/// contribute independently, each at its own shape, plus the current step's
+/// 6 elements.
+pub fn num_values(
+    left: crate::framework_hooks::HookLayout,
+    right: crate::framework_hooks::HookLayout,
+) -> usize {
+    child_num_values(left) + child_num_values(right) + 6
 }
 
 /// The eval stage of the fuse witness.
@@ -242,7 +251,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     type OutputKind = Kind![C::CircuitField; Output<'_, _>];
 
     fn values() -> usize {
-        num_values(NUM_POLY_SLOTS, crate::NUM_CHALLENGE_SLOTS)
+        num_values(
+            crate::framework_hooks::HookLayout::padded(),
+            crate::framework_hooks::HookLayout::padded(),
+        )
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

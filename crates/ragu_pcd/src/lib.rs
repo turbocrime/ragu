@@ -338,9 +338,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             self.native_registry,
             params,
             log2_circuits,
-            NUM_POLY_SLOTS,
-            NUM_QUERY_SLOTS,
-            NUM_CHALLENGE_SLOTS,
+            framework_hooks::HookLayout::padded(),
         )?;
 
         // Then, register internal steps

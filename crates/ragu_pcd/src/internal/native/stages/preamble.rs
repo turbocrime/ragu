@@ -422,24 +422,30 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usiz
     }
 }
 
-/// This stage's wire width for children of the given shape; the value-level
-/// source of the typed [`values()`](staging::Stage::values).
+/// This stage's wire width for children of the given shapes; the value-level
+/// source of the typed [`values()`](staging::Stage::values). The two children
+/// contribute independently, each at its own shape.
 pub fn num_values(
     header_size: usize,
-    num_polys: usize,
-    num_queries: usize,
-    num_challenges: usize,
+    left: crate::framework_hooks::HookLayout,
+    right: crate::framework_hooks::HookLayout,
 ) -> usize {
-    // 2 proofs * (3 headers * HEADER_SIZE + polynomial slots (2 wires each)
-    //             + query slots (3 wires each)
-    //             + challenge slots (3 wires each)
-    //             + 1 circuit_id + unified instance wires)
-    2 * (3 * header_size
-        + 2 * num_polys
-        + 3 * num_queries
-        + 3 * num_challenges
+    child_num_values(header_size, left) + child_num_values(header_size, right)
+}
+
+/// One child's contribution to this stage's wire width: its three headers,
+/// its slot instances at its own shape, its circuit id, and its unified
+/// instance wires.
+pub fn child_num_values(header_size: usize, child: crate::framework_hooks::HookLayout) -> usize {
+    // 3 headers * HEADER_SIZE + polynomial slots (2 wires each)
+    //   + query slots (3 wires each) + challenge slots (3 wires each)
+    //   + 1 circuit_id + unified instance wires
+    3 * header_size
+        + 2 * child.poly_query.polys
+        + 3 * child.poly_query.claims
+        + 3 * child.challenge.calls
         + 1
-        + unified::NUM_WIRES)
+        + unified::NUM_WIRES
 }
 
 pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize> {
@@ -473,9 +479,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     fn values() -> usize {
         num_values(
             HEADER_SIZE,
-            NUM_POLY_SLOTS,
-            NUM_QUERY_SLOTS,
-            NUM_CHALLENGE_SLOTS,
+            crate::framework_hooks::HookLayout::padded(),
+            crate::framework_hooks::HookLayout::padded(),
         )
     }
 

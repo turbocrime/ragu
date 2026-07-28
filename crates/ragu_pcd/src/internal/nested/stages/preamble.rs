@@ -21,19 +21,26 @@ use crate::{
     slot_vec::SlotVec,
 };
 
-/// Number of curve points in this stage for children carrying `num_polys`
-/// poly-query claim slots each: the native preamble commitment plus, per
-/// child, the `_10_p` components (one per [`RxIndex`] — challenge stages
-/// included — plus `a`, `b`, `registry_xy` and `p`) and the stashed
-/// poly-query claim commitments.
-pub const fn num_points(num_polys: usize, num_challenges: usize) -> usize {
-    1 + 2 * (RxIndex::num(num_challenges) + 4 + num_polys)
+/// Number of curve points in this stage for children of the given shapes:
+/// the native preamble commitment plus, per child, the `_10_p` components
+/// (one per [`RxIndex`] entry at the child's own challenge count — plus `a`,
+/// `b`, `registry_xy` and `p`) and the stashed poly-query claim commitments
+/// at the child's own poly count.
+pub const fn num_points(
+    left: crate::framework_hooks::HookLayout,
+    right: crate::framework_hooks::HookLayout,
+) -> usize {
+    use crate::internal::nested::child_endoscaling_points;
+    1 + child_endoscaling_points(left) + child_endoscaling_points(right)
 }
 
-/// This stage's wire width for children of the given shape; the value-level
+/// This stage's wire width for children of the given shapes; the value-level
 /// source of the typed [`values()`](ragu_circuits::staging::Stage::values).
-pub const fn num_values(num_polys: usize, num_challenges: usize) -> usize {
-    num_points(num_polys, num_challenges) * 2
+pub const fn num_values(
+    left: crate::framework_hooks::HookLayout,
+    right: crate::framework_hooks::HookLayout,
+) -> usize {
+    num_points(left, right) * 2
 }
 
 /// Witness data for a single child proof in the preamble bridge stage.
@@ -296,7 +303,10 @@ impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stag
     type OutputKind = Kind![C::Base; Output<'_, _, C>];
 
     fn values() -> usize {
-        num_values(NUM_POLY_SLOTS, NUM_CHALLENGE_SLOTS)
+        num_values(
+            crate::framework_hooks::HookLayout::padded(),
+            crate::framework_hooks::HookLayout::padded(),
+        )
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(

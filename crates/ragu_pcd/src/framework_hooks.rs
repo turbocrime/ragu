@@ -505,6 +505,22 @@ pub struct PolyQueryLayout {
 }
 
 impl HookLayout {
+    /// The padded shape every proof currently carries: the crate's slot
+    /// capacities. Transitional — while slot padding exists, a child's
+    /// effective shape is this rather than its discovered plan, so this is
+    /// what shape-parameterized geometry is fed. It dies with the padding.
+    pub(crate) const fn padded() -> Self {
+        Self {
+            challenge: ChallengeLayout {
+                calls: crate::NUM_CHALLENGE_SLOTS,
+            },
+            poly_query: PolyQueryLayout {
+                polys: crate::NUM_POLY_SLOTS,
+                claims: crate::NUM_QUERY_SLOTS,
+            },
+        }
+    }
+
     /// The pointwise maximum of two layouts.
     ///
     /// How an application's slot capacity is settled: fold this over every

@@ -281,14 +281,24 @@ pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize> {
     _marker: PhantomData<(C, R)>,
 }
 
-/// This stage's wire width for a recursion with `num_challenges` challenge
-/// slots; the value-level source of the typed
-/// [`values()`](staging::Stage::values).
-pub fn num_values(num_challenges: usize) -> usize {
-    // InternalCircuitIndex::num + registry_wxy (1)
-    //   + 2 * ChildEvaluations (one rx evaluation per RxIndex, one per
-    //     challenge slot, and 5 scalars)
-    InternalCircuitIndex::num(num_challenges) + 1 + 2 * (RxIndex::num(num_challenges) + 5)
+/// One child's contribution to this stage's wire width: one rx evaluation
+/// per entry of its rx list (challenge stages at its own count) and 5
+/// scalars.
+pub fn child_num_values(child: crate::framework_hooks::HookLayout) -> usize {
+    RxIndex::num(child.challenge.calls) + 5
+}
+
+/// This stage's wire width; the value-level source of the typed
+/// [`values()`](staging::Stage::values). `num_internal_circuits` is the size
+/// of the recursion's internal circuit list (one fixed-registry evaluation
+/// each); the two children contribute independently, each at its own shape.
+pub fn num_values(
+    num_internal_circuits: usize,
+    left: crate::framework_hooks::HookLayout,
+    right: crate::framework_hooks::HookLayout,
+) -> usize {
+    // num_internal_circuits + registry_wxy (1) + per-child evaluations
+    num_internal_circuits + 1 + child_num_values(left) + child_num_values(right)
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField, R>
@@ -299,7 +309,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     type OutputKind = Kind![C::CircuitField; Output<'_, _>];
 
     fn values() -> usize {
-        num_values(crate::NUM_CHALLENGE_SLOTS)
+        num_values(
+            InternalCircuitIndex::NUM,
+            crate::framework_hooks::HookLayout::padded(),
+            crate::framework_hooks::HookLayout::padded(),
+        )
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

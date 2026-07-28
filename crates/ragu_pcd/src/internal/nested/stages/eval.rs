@@ -15,11 +15,11 @@ use ragu_primitives::{Point, io::Write};
 
 use crate::{NUM_CHALLENGE_SLOTS, NUM_POLY_SLOTS, slot_vec::SlotVec};
 
-/// This stage's wire width for a step carrying `num_polys` poly slots and
-/// `num_challenges` challenge slots; the value-level source of the typed
+/// This stage's wire width for a step of shape `own` (the *current* step's
+/// slots, not a child's); the value-level source of the typed
 /// [`values()`](ragu_circuits::staging::Stage::values).
-pub const fn num_values(num_polys: usize, num_challenges: usize) -> usize {
-    2 * (1 + num_polys + num_challenges)
+pub const fn num_values(own: crate::framework_hooks::HookLayout) -> usize {
+    2 * (1 + own.poly_query.polys + own.challenge.calls)
 }
 
 /// Witness data for this bridge stage.
@@ -79,7 +79,7 @@ impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stag
     type OutputKind = Kind![C::Base; Output<'_, _, C>];
 
     fn values() -> usize {
-        num_values(NUM_POLY_SLOTS, NUM_CHALLENGE_SLOTS)
+        num_values(crate::framework_hooks::HookLayout::padded())
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
