@@ -32,19 +32,16 @@ use ragu_primitives::vec::Len;
 
 use super::host_bridge;
 
-/// The claim-slot count for the *typed* [`Run`] only.
+/// The claim-slot count the *typed* [`Run`] would need, which no type knows.
 ///
-/// A `Stage`'s associated `values()` takes no arguments, so the run has to
-/// name some length there. The real one is the application's poly capacity,
-/// which every construction takes as a value through [`layout`]; this is only
-/// what the typed self-consistency check measures against.
+/// The real count is the application's poly capacity, which every
+/// construction takes as a value through [`layout`]. See
+/// [`shape_dependent_stage`](crate::internal::shape_dependent_stage).
 pub struct Slots;
 
 impl Len for Slots {
     fn len() -> usize {
-        crate::framework_hooks::HookLayout::typed_placeholder()
-            .poly_query
-            .polys
+        crate::internal::shape_dependent_stage()
     }
 }
 
@@ -67,43 +64,44 @@ pub fn layout<C: CurveAffine, R: Rank>(
 
 #[cfg(test)]
 mod tests {
-    use ragu_circuits::staging::{Stage, StageExt};
     use ragu_pasta::EqAffine;
 
     use super::*;
     use crate::internal::tests::{R, assert_stage_values};
 
-    /// The field the nested stages are defined over.
-    type F = <EqAffine as CurveAffine>::Base;
-
     #[test]
     fn stage_values_matches_wire_count() {
+        // Only the slot has a type-level width. The run's is the application's
+        // poly capacity, so it is checked as a layout below, not as a `Stage`.
         assert_stage_values(&Slot::<EqAffine, R>::default());
-        assert_stage_values(&Run::<EqAffine, R>::default());
     }
 
-    /// The layout tiles the run exactly at the placeholder shape: one slot per
-    /// claim, starting where the run starts and ending where it ends.
-    ///
-    /// Only the placeholder shape can be checked against the typed run, since
-    /// that is the shape the typed side names. Real geometry is checked where
-    /// it is used, by `configure_induced_sized` against the chain layout.
+    /// The layout tiles the run: one slot per claim, each two gates wide,
+    /// anchored where the nested chain ends — at whatever capacity it is
+    /// asked for, not at one blessed shape.
     #[test]
     fn layout_tiles_the_run() {
-        let placeholder = crate::framework_hooks::HookLayout::typed_placeholder();
-        let layout = layout::<EqAffine, R>(placeholder);
+        for polys in [1, 3, 8] {
+            let capacity = crate::framework_hooks::HookLayout {
+                challenge: crate::framework_hooks::ChallengeLayout { calls: 1 },
+                poly_query: crate::framework_hooks::PolyQueryLayout { polys, claims: 1 },
+            };
+            let layout = layout::<EqAffine, R>(capacity);
 
-        assert_eq!(layout.len(), placeholder.poly_query.polys);
-        assert_eq!(
-            layout.skip_gates(0),
-            <Run<EqAffine, R> as Stage<F, R>>::skip_gates(),
-            "the first slot does not start where the run does"
-        );
-        assert_eq!(
-            layout.final_skip_gates(),
-            <Run<EqAffine, R> as Stage<F, R>>::skip_gates()
-                + <Run<EqAffine, R> as StageExt<F, R>>::num_gates(),
-            "the slots do not fill the run"
-        );
+            assert_eq!(layout.len(), polys, "one slot per polynomial");
+            assert_eq!(
+                layout.skip_gates(0),
+                crate::internal::nested::chain_layout::<EqAffine, R>(capacity, capacity, capacity)
+                    .final_skip_gates(),
+                "the first slot does not start where the chain ends"
+            );
+            for slot in 0..polys {
+                assert_eq!(
+                    layout.skip_gates(slot),
+                    layout.skip_gates(0) + slot,
+                    "slot {slot} is not one gate past its predecessor"
+                );
+            }
+        }
     }
 }

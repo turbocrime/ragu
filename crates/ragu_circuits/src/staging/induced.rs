@@ -33,7 +33,7 @@
 //! Layouts are anchored for exactly this reason: [`InducedStages::after`] takes
 //! the run's position from the typed stage that spans it, so the layout
 //! describes a suffix of the trace rather than restating the prefix. See
-//! [`StageBuilder::configure_induced`](super::StageBuilder::configure_induced),
+//! [`configure_induced_sized`](super::StageBuilder::configure_induced_sized),
 //! which reserves a run and checks the layout against the span it was given.
 //!
 //! * [`skip_gates`](InducedStages::skip_gates) / [`num_gates`](InducedStages::num_gates)
@@ -89,10 +89,8 @@ impl InducedStages {
     /// Creates a layout anchored at an explicit start gate (including the
     /// SYSTEM gate) — for a run whose position comes from a value-level chain
     /// rather than a typed stage. The value-anchored sibling of
-    /// [`after`](Self::after), for the same reason
-    /// `configure_induced_sized` exists beside `configure_induced`: when the
-    /// stages before the run have value-level widths, no type knows where the
-    /// run begins.
+    /// [`after`](Self::after): when the stages before the run have value-level
+    /// widths, no type knows where the run begins, so the caller says where.
     pub fn anchored(skip_gates: usize, widths: Vec<usize>) -> Self {
         Self { skip_gates, widths }
     }
@@ -438,7 +436,11 @@ mod tests {
         let mut induced_dr: Emulator<Wireless<Empty, Fp>> = Emulator::counter();
         let (induced, _) =
             StageBuilder::<'_, '_, _, R, (), TypedFour>::new(&mut induced_dr, |_| {})
-                .configure_induced::<TypedFour, _>(TypedTwo, &layout)?;
+                .configure_induced_sized::<TypedFour, _>(
+                    TypedTwo,
+                    &layout,
+                    <TypedFour as Stage<Fp, R>>::skip_gates(),
+                )?;
 
         assert_eq!(induced.len(), 2, "one guard per slot");
         assert_eq!(
@@ -450,11 +452,11 @@ mod tests {
         Ok(())
     }
 
-    /// A layout that does not tile its typed stage is rejected before any wire
-    /// is allocated — the check that keeps the value-level and type-level
-    /// geometries from drifting apart.
+    /// A layout that does not start where the caller says it does is rejected
+    /// before any wire is allocated — the check that keeps the value-level and
+    /// type-level geometries from drifting apart.
     #[test]
-    fn induced_run_must_tile_its_typed_stage() {
+    fn induced_run_must_start_where_the_caller_says() {
         use ragu_core::{
             drivers::emulator::{Emulator, Wireless},
             maybe::Empty,
@@ -462,16 +464,15 @@ mod tests {
 
         use crate::staging::StageBuilder;
 
-        // Three slots where the typed stage spans only two gates.
-        let layout = InducedStages::new(alloc::vec![2, 2, 2]);
+        let layout = InducedStages::new(alloc::vec![2, 2]);
 
         let mut dr: Emulator<Wireless<Empty, Fp>> = Emulator::counter();
         let result = StageBuilder::<'_, '_, _, R, (), TypedFour>::new(&mut dr, |_| {})
-            .configure_induced::<TypedFour, _>(TypedTwo, &layout);
+            .configure_induced_sized::<TypedFour, _>(TypedTwo, &layout, layout.skip_gates(0) + 1);
 
         assert!(
             result.is_err(),
-            "an over-long run was accepted into a shorter typed span"
+            "a run anchored at the wrong gate was accepted"
         );
     }
 

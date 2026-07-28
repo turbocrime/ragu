@@ -187,7 +187,7 @@ where
                 "derive_challenge received more points than a challenge slot absorbs".into(),
             ));
         }
-        self.hooks.take_challenge_slot()?;
+        self.hooks.reserve_challenge_slot()?;
 
         let proof_values = self.hooks.proof_values();
         let supplied = D::try_just(|| {

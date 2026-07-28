@@ -30,29 +30,9 @@ pub mod circuits {
 
 use crate::internal::{Side, endoscalar};
 
-/// Number of curve points accumulated during `compute_p` for nested field
-/// endoscaling verification.
-///
-/// This is the sum of per-child commitment components (for both proofs: one
-/// per [`RxIndex`](crate::internal::native::RxIndex) — challenge stages
-/// included — plus `a`, `b`, `registry_xy`, `p`, and the poly-query claim host
-/// commitments), current-step stage proof components, and the `f.commitment`
-/// base polynomial. See `_10_p` for the canonical accumulation order.
-///
-/// The endoscaling circuits process these points across
-/// [`NUM_ENDOSCALING_STEPS`] steps.
-/// The point count at the typed placeholder shape — for
-/// [`PointsStage`](crate::internal::endoscalar::PointsStage)'s typed
-/// `values()` and `Default`, which take no shape. Every real construction is
-/// sized by [`num_endoscaling_points`] at the application's capacity.
-pub const NUM_ENDOSCALING_POINTS: usize = num_endoscaling_points(
-    crate::framework_hooks::HookLayout::typed_placeholder(),
-    crate::framework_hooks::HookLayout::typed_placeholder(),
-);
-
 /// One child's contribution to the `_10_p` commitment walk: one point per
-/// entry of its rx list (challenge stages at its own count), plus `a`, `b`,
-/// `registry_xy`, `p`, and its stashed poly-query claim commitments.
+/// entry of its rx list, plus `a`, `b`, `registry_xy`, `p`, and its stashed
+/// poly-query claim commitments.
 ///
 /// Shared between [`num_endoscaling_points`] and the nested preamble's
 /// `num_points` — both walk the same per-child block.
@@ -60,9 +40,14 @@ pub const fn child_endoscaling_points(child: crate::framework_hooks::HookLayout)
     crate::internal::native::RxIndex::NUM + 4 + child.poly_query.polys
 }
 
-/// [`NUM_ENDOSCALING_POINTS`] for children of the given shapes: the base
-/// point, each child's block at its own shape, and the current step's six
-/// stage components.
+/// Number of curve points accumulated during `compute_p` for nested-field
+/// endoscaling verification, for children of the given shapes: the
+/// `f.commitment` base point, each child's block at its own shape (see
+/// [`child_endoscaling_points`]), and the current step's six stage
+/// components. See `_10_p` for the canonical accumulation order.
+///
+/// The endoscaling circuits process these points across
+/// [`num_endoscaling_steps`] steps.
 pub const fn num_endoscaling_points(
     left: crate::framework_hooks::HookLayout,
     right: crate::framework_hooks::HookLayout,
@@ -70,7 +55,9 @@ pub const fn num_endoscaling_points(
     1 + child_endoscaling_points(left) + child_endoscaling_points(right) + 6
 }
 
-/// [`NUM_ENDOSCALING_STEPS`] for children of the given shapes.
+/// The number of endoscaling step circuits a fuse runs for children of the
+/// given shapes: what [`endoscalar::num_steps`] makes of
+/// [`num_endoscaling_points`].
 pub const fn num_endoscaling_steps(
     left: crate::framework_hooks::HookLayout,
     right: crate::framework_hooks::HookLayout,
@@ -86,9 +73,9 @@ pub const fn num_endoscaling_steps(
 /// and challenge bridge runs (whose layouts live with their `Run` types). The
 /// points and preamble stages carry the *children's* blocks, the eval stage
 /// the current step's own slots. The widths come from each stage's
-/// `num_values` (count-dependent stages) or its typed `values()` (count-free
-/// stages), so the layout agrees with the typed chain by construction;
-/// `nested_chain_layout_tiles_typed_chain` pins it.
+/// `num_values` (capacity-dependent stages) or its typed `values()` (the
+/// stages whose width really is a property of their type);
+/// `chain_layouts_tile_at_every_capacity` pins that the result is contiguous.
 pub fn chain_layout<HC: ragu_arithmetic::CurveAffine, R: Rank>(
     own: crate::framework_hooks::HookLayout,
     left: crate::framework_hooks::HookLayout,

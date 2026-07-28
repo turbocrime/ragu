@@ -85,7 +85,6 @@ pub struct RegistryBuilder<'params, F: PrimeField, R: Rank> {
     bonding: Vec<Box<dyn WiringObject<F, R> + 'params>>,
     internal_steps: Vec<Box<dyn WiringObject<F, R> + 'params>>,
     application_steps: Vec<Box<dyn WiringObject<F, R> + 'params>>,
-    application_masks: Vec<Box<dyn WiringObject<F, R> + 'params>>,
 }
 
 impl<F: FromUniformBytes<64>, R: Rank> Default for RegistryBuilder<'_, F, R> {
@@ -102,7 +101,6 @@ impl<'params, F: FromUniformBytes<64>, R: Rank> RegistryBuilder<'params, F, R> {
             bonding: Vec::new(),
             internal_steps: Vec::new(),
             application_steps: Vec::new(),
-            application_masks: Vec::new(),
         }
     }
 
@@ -113,10 +111,7 @@ impl<'params, F: FromUniformBytes<64>, R: Rank> RegistryBuilder<'params, F, R> {
 
     /// Returns the total number of circuits across all categories.
     pub fn num_circuits(&self) -> usize {
-        self.num_internal_circuits()
-            + self.internal_steps.len()
-            + self.application_steps.len()
-            + self.application_masks.len()
+        self.num_internal_circuits() + self.internal_steps.len() + self.application_steps.len()
     }
 
     /// Returns the log2 of the smallest power-of-2 domain size that fits all circuits.
@@ -160,12 +155,6 @@ impl<'params, F: FromUniformBytes<64>, R: Rank> RegistryBuilder<'params, F, R> {
         self
     }
 
-    /// Registers an application-level bonding mask.
-    pub fn register_application_mask(mut self, mask: BondingObject<'params, F, R>) -> Self {
-        self.application_masks.push(mask.into_inner());
-        self
-    }
-
     /// Builds the [`Registry`].
     ///
     /// Circuits are concatenated in the following order for proper indexing:
@@ -173,12 +162,9 @@ impl<'params, F: FromUniformBytes<64>, R: Rank> RegistryBuilder<'params, F, R> {
     /// 2. Bonding: bonding polynomials
     /// 3. Internal steps: Internal step circuits (e.g. rerandomize, trivial)
     /// 4. Application steps: User-defined step circuits
-    /// 5. Application masks: stage masks induced by application steps
     ///
     /// This concatenation order must match `InternalCircuitIndex::ALL` in
     /// `ragu_pcd`, which derives [`CircuitIndex`] from position in the array.
-    /// Application masks come last because their count varies per
-    /// application, so everything with a fixed index stays put.
     pub fn finalize(self) -> Result<Registry<'params, F, R>>
     where
         F: FromUniformBytes<64>,
@@ -199,7 +185,6 @@ impl<'params, F: FromUniformBytes<64>, R: Rank> RegistryBuilder<'params, F, R> {
             .chain(self.bonding)
             .chain(self.internal_steps)
             .chain(self.application_steps)
-            .chain(self.application_masks)
             .collect();
 
         // Compute floor plans for each circuit.

@@ -19,7 +19,7 @@ use ragu_circuits::{
     CircuitExt,
     polynomials::{Rank, sparse},
     registry::CircuitIndex,
-    staging::{MultiStage, StageExt},
+    staging::MultiStage,
 };
 use ragu_core::Result;
 use ragu_primitives::extract_endoscalar;
@@ -880,19 +880,25 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                     self.capacity().poly_query.polys
                 ],
             };
-            let rx = StageExt::<C::ScalarField, R>::rx_configured(
-                &nested::stages::preamble::Stage::<C::HostCurve, R>::with_shapes(
-                    self.capacity(),
-                    self.capacity(),
-                ),
-                C::ScalarField::ONE,
-                &nested::stages::preamble::Witness {
-                    native_preamble: host_commitment,
-                    left: trivial_child_witness.clone(),
-                    right: trivial_child_witness,
-                },
-            )
-            .expect("trivial preamble rx");
+            // Placed through the value-level chain: the preamble sits after
+            // the points stage, whose width follows the capacity, so no type
+            // knows where it starts.
+            let rx = self
+                .nested_chain_layout()
+                .rx_configured(
+                    2,
+                    C::ScalarField::ONE,
+                    &nested::stages::preamble::Stage::<C::HostCurve, R>::with_shapes(
+                        self.capacity(),
+                        self.capacity(),
+                    ),
+                    &nested::stages::preamble::Witness {
+                        native_preamble: host_commitment,
+                        left: trivial_child_witness.clone(),
+                        right: trivial_child_witness,
+                    },
+                )
+                .expect("trivial preamble rx");
             let commitment = rx.commit_to_affine(nested_gen);
             builder.set_bridge_preamble_rx(rx, commitment);
         }

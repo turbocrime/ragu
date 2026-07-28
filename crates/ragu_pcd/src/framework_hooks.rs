@@ -40,9 +40,10 @@
 //! witness, on a counting emulator) with a container created by
 //! [`new`](FrameworkHooks::new) (**discovery mode**), recording the
 //! `derive_challenge` call count and the poly-query claim count. Real synthesis
-//! goes through [`with_expected`](FrameworkHooks::with_expected), which replays
-//! the discovered count as a per-call determinism guard: a body whose call
-//! sequence diverges from the dry run fails with [`Error::InvalidWitness`]
+//! goes through [`with_expected`](FrameworkHooks::with_expected), and its
+//! `check_layout` compares what the body actually did against what was
+//! discovered, on every axis: a body whose call
+//! counts diverge from the dry run fails with [`Error::InvalidWitness`]
 //! instead of silently synthesizing a different circuit.
 //!
 //! How many *points* a call passes is not discovered, and need not be: every
@@ -202,15 +203,14 @@ pub struct FrameworkHooks<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     witnessed_polys: Vec<PolyWires<'dr, D, C::NestedCurve>>,
     /// The `(points, challenge)` record each
     /// [`derive_challenge`](crate::step::StepCtx::derive_challenge) call
-    /// produced, in slot order.
+    /// produced, in slot order. Its length *is* the call count — how many
+    /// points a call passed needs no recording, every slot holding the same
+    /// number.
     challenge_pairs: Vec<ChallengeWires<'dr, D, C::NestedCurve>>,
-    /// Number of [`derive_challenge`](crate::step::StepCtx::derive_challenge) calls so far.
-    /// Each occupies one of the application's challenge slots; how many points a
-    /// call passed needs no recording, every slot holding the same number.
-    challenge_calls: usize,
     /// The hook-call counts discovered by the registration-time dry run,
-    /// replayed as determinism guards. `None` in discovery mode, which is the
-    /// pass that establishes them (see the [module documentation](self)).
+    /// checked once by [`check_layout`](Self::check_layout). `None` in
+    /// discovery mode, which is the pass that establishes them (see the
+    /// [module documentation](self)).
     ///
     /// An `Option`, not a [`DriverValue`] like [`proof_values`](Self::proof_values):
     /// the dry run and keygen are *both* structure-only, so this absence is not
@@ -383,26 +383,6 @@ pub struct PolyQueryLayout {
 }
 
 impl HookLayout {
-    /// A fixed placeholder shape, for the typed staging path only.
-    ///
-    /// A `Stage`'s associated `values()` takes no arguments, so a
-    /// shape-dependent stage has to name *some* shape there. Nothing real is
-    /// built through it: every construction that ends up in a registry goes
-    /// through `with_shapes`/`configure_stage_sized` and is fed the
-    /// application's capacity. What `values()` is still good for is the
-    /// self-consistency check — `assert_stage_values` builds the stage at this
-    /// same shape and counts its wires — so the value only has to be fixed,
-    /// not meaningful.
-    pub(crate) const fn typed_placeholder() -> Self {
-        Self {
-            challenge: ChallengeLayout { calls: 2 },
-            poly_query: PolyQueryLayout {
-                polys: 8,
-                claims: 8,
-            },
-        }
-    }
-
     /// The pointwise maximum of two layouts.
     ///
     /// How an application's slot capacity is settled: fold this over every
@@ -492,12 +472,9 @@ pub struct FrameworkHookOutputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::
     /// Opening claims raised via [`FrameworkHooks::enforce_polynomial_query`],
     /// in call order. Each names one of [`witnessed_polys`](Self::witnessed_polys).
     pub poly_queries: Vec<QueryWires<'dr, D>>,
-    /// Number of [`StepCtx::derive_challenge`](crate::step::StepCtx::derive_challenge) calls. The
-    /// registration-time dry run reads this to discover the call count; the
-    /// adapter compares it against that count after real synthesis.
-    pub challenge_calls: usize,
     /// The `(points, challenge)` record per `derive_challenge` call, in slot
-    /// order.
+    /// order. Its length is the call count the registration-time dry run
+    /// discovers.
     pub challenge_pairs: Vec<ChallengeWires<'dr, D, C::NestedCurve>>,
 }
 
@@ -519,7 +496,6 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
         Self {
             poly_queries: Vec::new(),
             witnessed_polys: Vec::new(),
-            challenge_calls: 0,
             challenge_pairs: Vec::new(),
             expected: None,
             proof_values: <D::MaybeKind as MaybeKind>::empty(),
@@ -531,8 +507,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     /// count discovered at registration time, and the proof-level values the
     /// hooks commit. Each
     /// [`derive_challenge`](crate::step::StepCtx::derive_challenge) call is
-    /// checked against the count, so a body that makes more calls than the dry
-    /// run did fails at the offending call.
+    /// checked against the count by `check_layout` once the body has run.
     ///
     /// See [`new`](Self::new) for why this does not delegate to it.
     pub fn with_expected(
@@ -543,7 +518,6 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
         Self {
             poly_queries: Vec::new(),
             witnessed_polys: Vec::new(),
-            challenge_calls: 0,
             challenge_pairs: Vec::new(),
             expected: Some(expected),
             proof_values,
@@ -593,26 +567,20 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
         Ok(())
     }
 
-    /// Takes the next challenge slot, enforcing both the framework cap and the
-    /// discovered call count.
-    pub(crate) fn take_challenge_slot(&mut self) -> Result<usize> {
-        if self.challenge_calls >= self.capacity.challenge.calls {
+    /// Checks that another challenge slot is available, before the caller does
+    /// the work of filling it.
+    ///
+    /// The challenge twin of [`next_poly_slot`](Self::next_poly_slot):
+    /// reserving and recording are separate calls so the failure comes before
+    /// the sponge runs, and the count itself lives in one place —
+    /// `challenge_pairs`.
+    pub(crate) fn reserve_challenge_slot(&self) -> Result<()> {
+        if self.challenge_pairs.len() >= self.capacity.challenge.calls {
             return Err(Error::InvalidWitness(
                 "step derived more challenges than there are challenge slots".into(),
             ));
         }
-        if let Some(expected) = self.expected.map(|l| l.challenge.calls)
-            && self.challenge_calls >= expected
-        {
-            return Err(Error::InvalidWitness(
-                "derive_challenge called more times than the discovered call count; \
-                 circuit structure must not depend on witness values"
-                    .into(),
-            ));
-        }
-        let slot = self.challenge_calls;
-        self.challenge_calls += 1;
-        Ok(slot)
+        Ok(())
     }
 
     /// Records a derived challenge's `(points, challenge)` record. The adapter
@@ -717,30 +685,44 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     /// Checks that the step body made exactly the hook calls the registration
     /// dry run discovered, and spends the guard.
     ///
-    /// Every discovered call must have happened, or the synthesized circuit
-    /// would differ from the registered structure. This complements the
-    /// per-call checks inside
-    /// [`take_challenge_slot`](Self::take_challenge_slot) and
-    /// [`next_poly_slot`](Self::next_poly_slot), which catch the excess;
-    /// this catches the shortfall.
+    /// This is the whole determinism rule, in one place and on all three axes:
+    /// the synthesized circuit must have the structure that was registered, so
+    /// every discovered call must have happened and no more. The `reserve_*`
+    /// methods bound the counts against the application's *capacity*, which is
+    /// a different question — that a step fits — and they answer it early,
+    /// before the work of filling a slot.
     ///
     /// The guard is cleared once checked, because the padding that follows
     /// calls the very same hooks a body does — and it is supposed to exceed the
     /// body's count.
     pub(crate) fn check_layout(&mut self) -> Result<()> {
-        if let Some(expected) = self.expected.take() {
-            if self.challenge_calls != expected.challenge.calls {
+        let Some(expected) = self.expected.take() else {
+            return Ok(());
+        };
+        for (actual, discovered, hook) in [
+            (
+                self.challenge_pairs.len(),
+                expected.challenge.calls,
+                "derive_challenge",
+            ),
+            (
+                self.witnessed_polys.len(),
+                expected.poly_query.polys,
+                "witness_polynomial",
+            ),
+            (
+                self.poly_queries.len(),
+                expected.poly_query.claims,
+                "enforce_poly_query",
+            ),
+        ] {
+            if actual != discovered {
                 return Err(Error::InvalidWitness(
-                    "derive_challenge called fewer times than the discovered call count; \
-                     circuit structure must not depend on witness values"
-                        .into(),
-                ));
-            }
-            if self.poly_queries.len() != expected.poly_query.claims {
-                return Err(Error::InvalidWitness(
-                    "enforce_poly_query call count diverged from the discovered claim count; \
-                     circuit structure must not depend on witness values"
-                        .into(),
+                    alloc::format!(
+                        "{hook} was called {actual} times but registration discovered \
+                         {discovered}; circuit structure must not depend on witness values"
+                    )
+                    .into(),
                 ));
             }
         }
@@ -752,7 +734,6 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
         FrameworkHookOutputs {
             witnessed_polys: self.witnessed_polys,
             poly_queries: self.poly_queries,
-            challenge_calls: self.challenge_calls,
             challenge_pairs: self.challenge_pairs,
         }
     }
@@ -781,50 +762,96 @@ mod tests {
     /// The framework caps a step body at the application's challenge capacity.
     #[test]
     fn challenge_slots_are_capped() {
-        let capacity = HookLayout {
-            challenge: ChallengeLayout { calls: 2 },
-            poly_query: PolyQueryLayout::default(),
+        let with_capacity = |calls| {
+            FrameworkHooks::<Dr<'_>, Pasta>::new(HookLayout {
+                challenge: ChallengeLayout { calls },
+                poly_query: PolyQueryLayout::default(),
+            })
         };
-        let mut hooks = FrameworkHooks::<Dr<'_>, Pasta>::new(capacity);
-        for expected in 0..capacity.challenge.calls {
-            assert_eq!(
-                hooks.take_challenge_slot().expect("within the cap"),
-                expected
-            );
-        }
-        let error = hooks
-            .take_challenge_slot()
-            .expect_err("the call past the cap should fail");
+
+        with_capacity(1)
+            .reserve_challenge_slot()
+            .expect("a slot is available");
+
+        let error = with_capacity(0)
+            .reserve_challenge_slot()
+            .expect_err("a step with no challenge slots cannot derive one");
         assert!(
             alloc::format!("{error}").contains("challenge slots"),
             "unexpected error: {error}"
         );
     }
 
-    /// A body that derives more challenges than the registration-time dry run
-    /// did is rejected, rather than silently synthesizing a larger circuit.
+    /// A body whose hook counts differ from the registration-time dry run is
+    /// rejected, rather than silently synthesizing a different circuit. One
+    /// check covers all three axes; this pins the shortfall on each.
     #[test]
-    fn challenge_slots_respect_the_discovered_count() {
-        let expected_layout = HookLayout {
+    fn check_layout_rejects_a_body_that_diverges_from_discovery() {
+        for (discovered, hook) in [
+            (
+                HookLayout {
+                    challenge: ChallengeLayout { calls: 1 },
+                    poly_query: PolyQueryLayout::default(),
+                },
+                "derive_challenge",
+            ),
+            (
+                HookLayout {
+                    challenge: ChallengeLayout::default(),
+                    poly_query: PolyQueryLayout {
+                        polys: 1,
+                        claims: 0,
+                    },
+                },
+                "witness_polynomial",
+            ),
+            (
+                HookLayout {
+                    challenge: ChallengeLayout::default(),
+                    poly_query: PolyQueryLayout {
+                        polys: 0,
+                        claims: 1,
+                    },
+                },
+                "enforce_poly_query",
+            ),
+        ] {
+            // A body that made no calls at all, against a plan expecting one.
+            let mut hooks = FrameworkHooks::<Dr<'_>, Pasta>::with_expected(
+                discovered,
+                discovered,
+                <Empty as MaybeKind>::empty::<ProofValues<'_, Pasta>>(),
+            );
+            let error = hooks
+                .check_layout()
+                .expect_err("a missing call should be rejected");
+            let message = alloc::format!("{error}");
+            assert!(message.contains(hook), "unexpected error: {message}");
+            assert!(
+                message.contains("called 0 times but registration discovered 1"),
+                "unexpected error: {message}"
+            );
+        }
+    }
+
+    /// The guard is spent once checked, so the padding that follows — which
+    /// calls the same hooks, and is supposed to exceed the body's count — is
+    /// not re-judged against the body's plan.
+    #[test]
+    fn check_layout_is_spent_once() {
+        let discovered = HookLayout {
             challenge: ChallengeLayout { calls: 1 },
             poly_query: PolyQueryLayout::default(),
         };
         let mut hooks = FrameworkHooks::<Dr<'_>, Pasta>::with_expected(
-            expected_layout,
-            HookLayout {
-                challenge: ChallengeLayout { calls: 4 },
-                poly_query: PolyQueryLayout::default(),
-            },
+            discovered,
+            discovered,
             <Empty as MaybeKind>::empty::<ProofValues<'_, Pasta>>(),
         );
-        hooks.take_challenge_slot().expect("the discovered call");
-        let error = hooks
-            .take_challenge_slot()
-            .expect_err("an undiscovered call should fail");
-        assert!(
-            alloc::format!("{error}").contains("discovered call count"),
-            "unexpected error: {error}"
-        );
+        hooks
+            .check_layout()
+            .expect_err("first check judges the body");
+        hooks.check_layout().expect("the guard is spent");
     }
 
     /// A challenge record's instance region is the same width for every slot:

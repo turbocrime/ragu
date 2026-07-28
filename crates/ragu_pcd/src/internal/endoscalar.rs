@@ -153,12 +153,6 @@ impl<C: CurveAffine> Clone for PointsWitness<C> {
     }
 }
 
-impl<C: CurveAffine> Default for PointsStage<C> {
-    fn default() -> Self {
-        Self::with_num_points(crate::internal::nested::NUM_ENDOSCALING_POINTS)
-    }
-}
-
 impl<C: CurveAffine, R: Rank> Clone for EndoscalingStep<C, R> {
     fn clone(&self) -> Self {
         Self {
@@ -201,7 +195,7 @@ impl<C: CurveAffine, R: Rank> Stage<C::Base, R> for PointsStage<C> {
     type Parent = EndoscalarStage;
 
     fn values() -> usize {
-        points_stage_num_values(crate::internal::nested::NUM_ENDOSCALING_POINTS)
+        crate::internal::shape_dependent_stage()
     }
 
     type Witness<'source> = &'source PointsWitness<C>;

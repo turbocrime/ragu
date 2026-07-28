@@ -93,7 +93,7 @@ pub(crate) fn discover_hook_layout<C: Cycle, S: Step<C>, const HEADER_SIZE: usiz
     // does not use.
     Ok(HookLayout {
         challenge: ChallengeLayout {
-            calls: outputs.challenge_calls,
+            calls: outputs.challenge_pairs.len(),
         },
         poly_query: PolyQueryLayout {
             polys: outputs.witnessed_polys.len(),

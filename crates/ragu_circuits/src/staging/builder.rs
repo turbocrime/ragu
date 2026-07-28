@@ -198,9 +198,9 @@ impl<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R> + 'dr> StageGuard<'dr, D, R
 /// A [`StageGuard`] for one slot of an induced run, whose position within the
 /// run came from a value-level layout rather than a `Parent` type chain.
 ///
-/// Produced by [`StageBuilder::configure_induced`]. Consumed exactly like a
-/// [`StageGuard`] — the wires are already reserved, so nothing downstream of
-/// reservation differs.
+/// Produced by [`StageBuilder::configure_induced_sized`]. Consumed exactly
+/// like a [`StageGuard`] — the wires are already reserved, so nothing
+/// downstream of reservation differs.
 #[must_use = "InducedGuard must be consumed via `enforced` or `unenforced`"]
 pub struct InducedGuard<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R>> {
     stage: S,
@@ -364,93 +364,31 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
     /// typed stage `Next`.
     ///
     /// [`configure_stage`](Self::configure_stage) reads its geometry from
-    /// `Next::values()` and `Next::num_gates()`, which the `Parent = Current`
-    /// bound places in the chain. That works when the stage *count* is a
-    /// property of a Rust type. When it is instead a property of the
-    /// application being built, the chain cannot be written down slot by slot
-    /// — but it can still be written down as a whole: `Next` spans every slot,
+    /// `Next::values()` and `Next::num_gates()`. That works when the stage
+    /// *count* is a property of a Rust type. When it is instead a property of
+    /// the application being built, the chain cannot be written down slot by
+    /// slot — but it can be written down as a whole: `Next` spans every slot,
     /// and [`InducedStages`](super::InducedStages) says where inside that span
-    /// the boundaries fall.
-    ///
-    /// That is what keeps a run ordinary. `Next` sits in the `Parent` chain
-    /// like any other stage, so `skip_gates` stays correct for everything
-    /// after it and typed stages — including
-    /// [`MultiStageCircuit::Last`](super::MultiStageCircuit::Last) — may follow
-    /// a run with no special handling. The typestate advances to `Next`
-    /// exactly as it would have.
+    /// the boundaries fall. `Next` stays in the `Parent` chain like any other
+    /// stage, so typed stages may follow a run with no special handling.
     ///
     /// `stage` supplies only the witness body and is cloned per slot, so one
     /// concrete type serves the whole family: each slot's width comes from the
     /// layout, not from the type, and the type's own chain position is unused.
     ///
-    /// # Errors
-    ///
-    /// Returns [`GateBoundExceeded`](ragu_core::Error::GateBoundExceeded) if
-    /// `layout` does not tile `Next` exactly — if it starts at a different gate
-    /// than `Next` does, or if its slots do not sum to `Next`'s span. This is
-    /// the check that ties the value-level layout to the type-level one, and it
-    /// is what lets the rest of the staging system keep trusting types: the
-    /// caller may choose the slot count freely, but a layout that would place
-    /// committed wires outside the span its mask covers is rejected here,
-    /// before any wire is allocated.
-    ///
-    /// A slot whose witness allocates an odd number of wires is padded to a
-    /// whole gate, exactly as [`configure_stage`](Self::configure_stage) pads a
-    /// typed stage; the layout must budget for that padding, since it is what
-    /// the slot's own mask will cover.
-    pub fn configure_induced<Next, S>(
-        mut self,
-        stage: S,
-        layout: &super::InducedStages,
-    ) -> Result<(
-        Vec<InducedGuard<'dr, D, R, S>>,
-        StageBuilder<'a, 'dr, D, R, Next, Target>,
-    )>
-    where
-        Next: Stage<D::F, R, Parent = Current>,
-        S: Stage<D::F, R> + Clone + 'dr,
-    {
-        // The run must tile the typed stage that stands for it: same start
-        // gate, same end gate. Either mismatch would put a slot's wires
-        // somewhere its mask does not cover.
-        if layout.skip_gates(0) != Next::skip_gates()
-            || layout.final_skip_gates() != Next::skip_gates() + Next::num_gates()
-        {
-            return Err(ragu_core::Error::GateBoundExceeded {
-                limit: Next::num_gates(),
-            });
-        }
-
-        let mut guards = Vec::with_capacity(layout.len());
-        for slot in 0..layout.len() {
-            guards.push(self.reserve_slot(
-                stage.clone(),
-                layout.width(slot),
-                layout.num_gates(slot),
-            )?);
-        }
-
-        Ok((
-            guards,
-            StageBuilder {
-                driver: self.driver,
-                on_finish: self.on_finish,
-                _marker: PhantomData,
-            },
-        ))
-    }
-
-    /// As [`configure_induced`](Self::configure_induced), with the run's
-    /// expected start gate supplied as a value instead of read from
-    /// `Next::skip_gates()`.
-    ///
-    /// The value-width twin of
-    /// [`configure_stage_sized`](Self::configure_stage_sized): when the stages
+    /// The run's expected start gate is supplied as a value rather than read
+    /// from `Next::skip_gates()` — the value-width twin of
+    /// [`configure_stage_sized`](Self::configure_stage_sized). When the stages
     /// before the run have value-level widths, the typed chain no longer knows
     /// where the run begins, so the caller — who built the value-level chain —
     /// says where, and the layout is checked against that instead. The run's
     /// span is the layout's own; the caller owns the obligation that
     /// everything after the run computes positions from the same layout.
+    ///
+    /// A slot whose witness allocates an odd number of wires is padded to a
+    /// whole gate, exactly as [`configure_stage`](Self::configure_stage) pads a
+    /// typed stage; the layout must budget for that padding, since it is what
+    /// the slot's own mask will cover.
     ///
     /// # Errors
     ///

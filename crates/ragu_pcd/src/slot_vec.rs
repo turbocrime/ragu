@@ -4,27 +4,28 @@
 //! [`FixedVec`](ragu_primitives::vec::FixedVec) carries its length in a
 //! [`Len`](ragu_primitives::vec::Len) type so that every instance of a given
 //! Rust type has the same wire count. That is the right shape when the length
-//! is a property of the *type*. In this crate, several wire-group lengths are
-//! properties of the *application*: they come from each step's discovered
-//! plan, settled during registration, and differ between applications (and,
-//! for per-shape circuit variants, between steps) without differing at Rust
+//! is a property of the *type*. In this crate the wire-group lengths are
+//! properties of the *application*: they come from the capacity settled during
+//! registration, which differs between applications without differing at Rust
 //! compile time.
 //!
 //! [`SlotVec`] implements [`Gadget`] for that case. The length discipline is:
 //!
 //! * The length is always a circuit-construction parameter — it comes from the
-//!   plan that configured the circuit being synthesized, never from witness
-//!   data. Two `SlotVec`s meet in a correspondence (equality enforcement,
-//!   wire mapping) only when both were built by circuits configured from the
-//!   same plan, so their lengths agree by construction; the element-wise
-//!   operations below `debug_assert` that agreement rather than enforce it.
+//!   capacity that configured the circuit being synthesized, never from witness
+//!   data.
+//! * Two `SlotVec`s meet in a correspondence (equality enforcement, wire
+//!   mapping) only when both were built at that same capacity, so their
+//!   lengths agree by construction — and the element-wise operations below
+//!   *check* that rather than assume it, because they `zip`, and a `zip` over
+//!   a mismatch would enforce equality on a prefix and report success.
 //! * Fungibility — every instance of a gadget type having the same wire
 //!   count — is an API contract of the broader gadget ecosystem, not a
 //!   safety invariant of [`GadgetKind`] (see that trait's safety
 //!   documentation: the sole safety obligation is `Send` propagation).
 //!   `SlotVec` is deliberately not fungible as a Rust type; it is fungible
-//!   *per plan*, which is the granularity at which this crate's circuits are
-//!   constructed and registered.
+//!   *per capacity*, which is the granularity at which this crate's circuits
+//!   are constructed and registered.
 
 use alloc::vec::Vec;
 use core::{
@@ -121,6 +122,24 @@ impl<F: Field, G: Write<F>> Write<F> for SlotVec<PhantomData<G>> {
     }
 }
 
+/// Rejects two `SlotVec`s of different lengths meeting in a correspondence.
+///
+/// The pairwise walks below `zip`, which stops at the shorter side — so a
+/// mismatch would enforce equality on a prefix and report success. Lengths
+/// agree by construction (both sides come from the same settled capacity), so
+/// this can only fire on a construction bug; it is an error rather than a
+/// `debug_assert` because a release build silently checking fewer wires than
+/// it claims to is not a failure mode this crate can afford.
+fn same_len(a: usize, b: usize) -> Result<()> {
+    if a != b {
+        return Err(Error::VectorLengthMismatch {
+            expected: a,
+            actual: b,
+        });
+    }
+    Ok(())
+}
+
 impl<F: Field, G: GadgetEquals<F>> GadgetEquals<F> for SlotVec<PhantomData<G>> {
     fn enforce_equal_gadget<
         'dr,
@@ -131,11 +150,7 @@ impl<F: Field, G: GadgetEquals<F>> GadgetEquals<F> for SlotVec<PhantomData<G>> {
         a: &Bound<'dr, D2, Self>,
         b: &Bound<'dr, D2, Self>,
     ) -> Result<()> {
-        debug_assert_eq!(
-            a.len(),
-            b.len(),
-            "SlotVecs meeting in an equality were built from different plans"
-        );
+        same_len(a.len(), b.len())?;
         for (a, b) in a.iter().zip(b.iter()) {
             G::enforce_equal_gadget(dr, a, b)?;
         }
@@ -181,11 +196,7 @@ unsafe impl<F: Field, G: GadgetKind<F>> GadgetKind<F> for SlotVec<PhantomData<G>
         a: &Bound<'dr, D2, Self>,
         b: &Bound<'dr, D2, Self>,
     ) -> Result<()> {
-        debug_assert_eq!(
-            a.len(),
-            b.len(),
-            "SlotVecs meeting in a correspondence were built from different plans"
-        );
+        same_len(a.len(), b.len())?;
         for (a, b) in a.iter().zip(b.iter()) {
             G::enforce_conservative_equal_gadget(eq, a, b)?;
         }

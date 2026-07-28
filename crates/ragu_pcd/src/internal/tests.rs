@@ -1,8 +1,5 @@
-use native::{
-    InternalCircuitIndex, InternalCircuitValues, RevdotParameters, RxIndex, RxValues,
-    stages::{eval, inner_error, outer_error, preamble, query},
-};
-use ragu_circuits::staging::{Stage, StageExt};
+use native::{InternalCircuitIndex, InternalCircuitValues, RxIndex, RxValues};
+use ragu_circuits::staging::Stage;
 use ragu_pasta::{Pasta, fp, fq};
 
 use super::*;
@@ -17,7 +14,8 @@ use ragu_core::{
     maybe::Empty,
 };
 
-pub fn assert_stage_values<F, R, S>(stage: &S)
+/// The number of wires `stage` actually allocates.
+pub fn stage_wire_count<F, R, S>(stage: &S) -> usize
 where
     F: PrimeField,
     R: Rank,
@@ -26,15 +24,42 @@ where
         Gadget<'dr, Emulator<Wireless<Empty, F>>>,
 {
     let mut emulator = Emulator::counter();
-    let output = stage
+    stage
         .witness(&mut emulator, Empty)
-        .expect("allocation should succeed");
+        .expect("allocation should succeed")
+        .num_wires()
+        .expect("wire counting should succeed")
+}
 
+/// A stage whose width its type knows allocates exactly `Stage::values()`
+/// wires.
+///
+/// Only for stages that are genuinely shape-free. A stage sized by the
+/// application has no `values()` to check against — assert its wire count
+/// against its `num_values(capacity)` directly, as the shaped stages' own
+/// tests do.
+pub fn assert_stage_values<F, R, S>(stage: &S)
+where
+    F: PrimeField,
+    R: Rank,
+    S: Stage<F, R>,
+    for<'dr> Bound<'dr, Emulator<Wireless<Empty, F>>, S::OutputKind>:
+        Gadget<'dr, Emulator<Wireless<Empty, F>>>,
+{
     assert_eq!(
-        output.num_wires().expect("wire counting should succeed"),
+        stage_wire_count(stage),
         S::values(),
         "Stage::values() does not match actual wire count"
     );
+}
+
+/// A capacity with the given poly count, for shaped-stage tests.
+#[cfg(test)]
+pub fn capacity_with_polys(polys: usize) -> crate::framework_hooks::HookLayout {
+    crate::framework_hooks::HookLayout {
+        challenge: crate::framework_hooks::ChallengeLayout { calls: 1 },
+        poly_query: crate::framework_hooks::PolyQueryLayout { polys, claims: 1 },
+    }
 }
 
 // When changing HEADER_SIZE, update the constraint counts by running:
@@ -61,12 +86,6 @@ pub const HEADER_SIZE: usize = 90;
 // circuits. This ensures the tests work correctly even when application
 // steps are present.
 const NUM_APP_STEPS: usize = 6000;
-
-type Preamble = preamble::Stage<Pasta, R, HEADER_SIZE>;
-type OuterError = outer_error::Stage<Pasta, R, HEADER_SIZE, RevdotParameters>;
-type InnerError = inner_error::Stage<Pasta, R, HEADER_SIZE, RevdotParameters>;
-type Query = query::Stage<Pasta, R, HEADER_SIZE>;
-type Eval = eval::Stage<Pasta, R, HEADER_SIZE>;
 
 #[rustfmt::skip]
 #[test]
@@ -111,95 +130,70 @@ fn test_internal_circuit_constraint_counts() {
     check_constraints!(ChallengeBindingCircuit, mul = 332, lin = 71);
 }
 
+/// Pins the native stages' gate geometry at a stated capacity.
+///
+/// A drift detector for circuit size: a stage that grows pushes everything
+/// after it, and these numbers say by how much. The capacity has to be named
+/// because the geometry is a function of it — there is no single "the" layout
+/// any more, which is the point of the branch these numbers were re-pinned on.
 #[rustfmt::skip]
 #[test]
 fn test_internal_stage_parameters() {
+    let (query_chain, error_chain) = stage_parameter_chains();
+
     macro_rules! check_stage {
-        ($Stage:ty, skip = $skip:expr, num = $num:expr) => {{
-            assert_eq!(<$Stage>::skip_gates(), $skip, "{}: skip", stringify!($Stage));
-            assert_eq!(<$Stage as StageExt<_, _>>::num_gates(), $num, "{}: num", stringify!($Stage));
+        ($chain:expr, $stage:expr, $name:literal, skip = $skip:expr, num = $num:expr) => {{
+            assert_eq!($chain.skip_gates($stage), $skip, "{}: skip", $name);
+            assert_eq!($chain.num_gates($stage), $num, "{}: num", $name);
         }};
     }
 
-    check_stage!(Preamble, skip =   1, num = 350);
-    check_stage!(OuterError,  skip = 351, num = 186);
-    check_stage!(InnerError,  skip = 537, num = 399);
-    check_stage!(Query,   skip = 351, num =  25);
-    check_stage!(Eval,    skip = 376, num =  27);
+    check_stage!(query_chain, 0, "Preamble",   skip =   1, num = 324);
+    check_stage!(error_chain, 1, "OuterError", skip = 325, num = 186);
+    check_stage!(error_chain, 2, "InnerError", skip = 511, num = 399);
+    check_stage!(query_chain, 1, "Query",      skip = 325, num =  25);
+    check_stage!(query_chain, 2, "Eval",       skip = 350, num =  27);
 }
 
-/// Helper test to print current constraint counts in copy-pasteable format.
-/// Run with: `cargo test -p ragu_pcd --release print_internal_circuit -- --nocapture`
-#[test]
-fn print_internal_circuit_constraint_counts() {
-    use alloc::format;
-    use std::println;
-
-    let pasta = Pasta::baked();
-
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
-        .register_dummy_circuits(NUM_APP_STEPS)
-        .unwrap()
-        .finalize(pasta)
-        .unwrap();
-
-    let variants = [
-        ("Hashes1Circuit", InternalCircuitIndex::Hashes1Circuit),
-        ("Hashes2Circuit", InternalCircuitIndex::Hashes2Circuit),
-        (
-            "InnerCollapseCircuit",
-            InternalCircuitIndex::InnerCollapseCircuit,
-        ),
-        (
-            "OuterCollapseCircuit",
-            InternalCircuitIndex::OuterCollapseCircuit,
-        ),
-        ("ComputeVCircuit", InternalCircuitIndex::ComputeVCircuit),
-        (
-            "ChallengeBindingCircuit",
-            InternalCircuitIndex::ChallengeBindingCircuit,
-        ),
-    ];
-
-    println!("\n// Copy-paste the following into test_internal_circuit_constraint_counts:");
-    for (name, variant) in variants {
-        let circuit_index = variant.circuit_index();
-        let (mul, lin) = app.native_registry.constraint_counts(circuit_index);
-        println!(
-            "        check_constraints!({:<24} mul = {:<4}, lin = {});",
-            format!("{},", name),
-            mul,
-            lin
-        );
-    }
+/// The chains `test_internal_stage_parameters` pins, at a capacity of eight
+/// polynomial slots.
+fn stage_parameter_chains() -> (
+    ragu_circuits::staging::InducedStages,
+    ragu_circuits::staging::InducedStages,
+) {
+    let capacity = capacity_with_polys(8);
+    native::chain_layouts::<Pasta, R, HEADER_SIZE>(InternalCircuitIndex::NUM, capacity, capacity)
 }
 
 /// Helper test to print current stage parameters in copy-pasteable format.
 /// Run with: `cargo test -p ragu_pcd --release print_internal_stage -- --nocapture`
 #[test]
 fn print_internal_stage_parameters() {
-    use alloc::format;
     use std::println;
 
-    macro_rules! print_stage {
-        ($Stage:ty) => {{
-            let skip = <$Stage>::skip_gates();
-            let num = <$Stage as StageExt<_, _>>::num_gates();
-            println!(
-                "        check_stage!({:<8} skip = {:>3}, num = {:>3});",
-                format!("{},", stringify!($Stage)),
-                skip,
-                num
-            );
-        }};
-    }
+    let (query_chain, error_chain) = stage_parameter_chains();
 
     println!("\n// Copy-paste the following into test_internal_stage_parameters:");
-    print_stage!(Preamble);
-    print_stage!(OuterError);
-    print_stage!(InnerError);
-    print_stage!(Query);
-    print_stage!(Eval);
+    for (chain, stage, name) in [
+        (&query_chain, 0, "Preamble"),
+        (&error_chain, 1, "OuterError"),
+        (&error_chain, 2, "InnerError"),
+        (&query_chain, 1, "Query"),
+        (&query_chain, 2, "Eval"),
+    ] {
+        println!(
+            "    check_stage!({}, {}, {:<13} skip = {:>3}, num = {:>3});",
+            if core::ptr::eq(chain, &query_chain) {
+                "query_chain"
+            } else {
+                "error_chain"
+            },
+            stage,
+            alloc::format!("\"{name}\","),
+            chain.skip_gates(stage),
+            chain.num_gates(stage)
+        );
+    }
 }
 
 /// Verifies the native registry digest matches the expected value.
@@ -373,137 +367,44 @@ fn print_registry_digests() {
     );
 }
 
-/// The value-level chain layouts describe exactly the geometry the typed
-/// `Parent` chains do — every stage's start gate, gate span, and each chain
-/// prefix's final-trace start. The masks `register_all` cuts from the layouts
-/// are functions of precisely these numbers, so this equality is what keeps
-/// them identical to the typed masks they replaced.
+/// Both chain layouts tile — every stage starts where its predecessor ended —
+/// at every capacity, on both curves.
+///
+/// The masks `register_all` cuts are functions of precisely these offsets, so
+/// a chain that stopped tiling would silently misplace every stage after the
+/// break. Checked across capacities on purpose: the bug this guards against is
+/// geometry that is right at one blessed shape and wrong at every other, which
+/// is exactly what asserting against a fixed placeholder could not catch.
 #[test]
-fn native_chain_layouts_tile_typed_chain() {
-    use ragu_circuits::staging::{Stage, StageExt};
+fn chain_layouts_tile_at_every_capacity() {
     use ragu_pasta::Pasta;
 
-    use crate::internal::native::{RevdotParameters, chain_layouts, stages};
-
-    type Preamble = stages::preamble::Stage<Pasta, R, HEADER_SIZE>;
-    type Query = stages::query::Stage<Pasta, R, HEADER_SIZE>;
-    type Eval = stages::eval::Stage<Pasta, R, HEADER_SIZE>;
-    type Outer = stages::outer_error::Stage<Pasta, R, HEADER_SIZE, RevdotParameters>;
-    type Inner = stages::inner_error::Stage<Pasta, R, HEADER_SIZE, RevdotParameters>;
-    type F = <Pasta as ragu_arithmetic::Cycle>::CircuitField;
-
-    let padded = crate::framework_hooks::HookLayout::typed_placeholder();
-    let (query_chain, error_chain) = chain_layouts::<Pasta, R, HEADER_SIZE>(
-        crate::internal::native::InternalCircuitIndex::NUM,
-        padded,
-        padded,
-    );
-
-    for (chain, skips, nums) in [
-        (
-            &query_chain,
-            [
-                <Preamble as Stage<F, R>>::skip_gates(),
-                <Query as Stage<F, R>>::skip_gates(),
-                <Eval as Stage<F, R>>::skip_gates(),
-            ],
-            [
-                <Preamble as StageExt<F, R>>::num_gates(),
-                <Query as StageExt<F, R>>::num_gates(),
-                <Eval as StageExt<F, R>>::num_gates(),
-            ],
-        ),
-        (
-            &error_chain,
-            [
-                <Preamble as Stage<F, R>>::skip_gates(),
-                <Outer as Stage<F, R>>::skip_gates(),
-                <Inner as Stage<F, R>>::skip_gates(),
-            ],
-            [
-                <Preamble as StageExt<F, R>>::num_gates(),
-                <Outer as StageExt<F, R>>::num_gates(),
-                <Inner as StageExt<F, R>>::num_gates(),
-            ],
-        ),
-    ] {
-        for (stage, (skip, num)) in skips.iter().zip(nums.iter()).enumerate() {
-            assert_eq!(chain.skip_gates(stage), *skip, "stage {stage} start");
-            assert_eq!(chain.num_gates(stage), *num, "stage {stage} span");
-            assert_eq!(
-                chain.skip_gates(stage + 1),
-                skip + num,
-                "final trace after stage {stage}"
-            );
-        }
-    }
-}
-
-/// The nested chain layout describes exactly the geometry the typed `Parent`
-/// chain does — same role as `native_chain_layouts_tile_typed_chain`, for the
-/// nested side's masks.
-#[test]
-fn nested_chain_layout_tiles_typed_chain() {
-    use ragu_circuits::staging::{Stage, StageExt};
-    use ragu_pasta::Pasta;
-
-    use crate::internal::{
-        endoscalar::{EndoscalarStage, PointsStage},
-        nested::{chain_layout, stages},
-    };
+    use crate::framework_hooks::{ChallengeLayout, HookLayout, PolyQueryLayout};
 
     type Host = <Pasta as ragu_arithmetic::Cycle>::HostCurve;
-    type F = <Pasta as ragu_arithmetic::Cycle>::ScalarField;
 
-    let padded = crate::framework_hooks::HookLayout::typed_placeholder();
-    let chain = chain_layout::<Host, R>(padded, padded, padded);
+    for polys in [0, 1, 4, 8] {
+        let capacity = HookLayout {
+            challenge: ChallengeLayout { calls: 1 },
+            poly_query: PolyQueryLayout { polys, claims: 1 },
+        };
+        let (query_chain, error_chain) =
+            crate::internal::native::chain_layouts::<Pasta, R, HEADER_SIZE>(
+                crate::internal::native::InternalCircuitIndex::NUM,
+                capacity,
+                capacity,
+            );
+        let nested = crate::internal::nested::chain_layout::<Host, R>(capacity, capacity, capacity);
 
-    let expected: [(usize, usize); 10] = [
-        (
-            <EndoscalarStage as Stage<F, R>>::skip_gates(),
-            <EndoscalarStage as StageExt<F, R>>::num_gates(),
-        ),
-        (
-            <PointsStage<Host> as Stage<F, R>>::skip_gates(),
-            <PointsStage<Host> as StageExt<F, R>>::num_gates(),
-        ),
-        (
-            <stages::preamble::Stage<Host, R> as Stage<F, R>>::skip_gates(),
-            <stages::preamble::Stage<Host, R> as StageExt<F, R>>::num_gates(),
-        ),
-        (
-            <stages::s_prime::Stage<Host, R> as Stage<F, R>>::skip_gates(),
-            <stages::s_prime::Stage<Host, R> as StageExt<F, R>>::num_gates(),
-        ),
-        (
-            <stages::inner_error::Stage<Host, R> as Stage<F, R>>::skip_gates(),
-            <stages::inner_error::Stage<Host, R> as StageExt<F, R>>::num_gates(),
-        ),
-        (
-            <stages::outer_error::Stage<Host, R> as Stage<F, R>>::skip_gates(),
-            <stages::outer_error::Stage<Host, R> as StageExt<F, R>>::num_gates(),
-        ),
-        (
-            <stages::ab::Stage<Host, R> as Stage<F, R>>::skip_gates(),
-            <stages::ab::Stage<Host, R> as StageExt<F, R>>::num_gates(),
-        ),
-        (
-            <stages::query::Stage<Host, R> as Stage<F, R>>::skip_gates(),
-            <stages::query::Stage<Host, R> as StageExt<F, R>>::num_gates(),
-        ),
-        (
-            <stages::f::Stage<Host, R> as Stage<F, R>>::skip_gates(),
-            <stages::f::Stage<Host, R> as StageExt<F, R>>::num_gates(),
-        ),
-        (
-            <stages::eval::Stage<Host, R> as Stage<F, R>>::skip_gates(),
-            <stages::eval::Stage<Host, R> as StageExt<F, R>>::num_gates(),
-        ),
-    ];
-
-    for (stage, (skip, num)) in expected.iter().enumerate() {
-        assert_eq!(chain.skip_gates(stage), *skip, "stage {stage} start");
-        assert_eq!(chain.num_gates(stage), *num, "stage {stage} span");
+        for chain in [&query_chain, &error_chain, &nested] {
+            for stage in 0..chain.len() {
+                assert_eq!(
+                    chain.skip_gates(stage + 1),
+                    chain.skip_gates(stage) + chain.num_gates(stage),
+                    "not contiguous after stage {stage} at polys={polys}"
+                );
+            }
+        }
     }
 }
 

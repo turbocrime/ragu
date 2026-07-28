@@ -284,25 +284,13 @@ impl<C: CurveAffine, R> Stage<C, R> {
     }
 }
 
-impl<C: CurveAffine, R> Default for Stage<C, R> {
-    fn default() -> Self {
-        Self::with_shapes(
-            crate::framework_hooks::HookLayout::typed_placeholder(),
-            crate::framework_hooks::HookLayout::typed_placeholder(),
-        )
-    }
-}
-
 impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R> {
     type Parent = PointsStage<C>;
     type Witness<'source> = &'source Witness<C>;
     type OutputKind = Kind![C::Base; Output<'_, _, C>];
 
     fn values() -> usize {
-        num_values(
-            crate::framework_hooks::HookLayout::typed_placeholder(),
-            crate::framework_hooks::HookLayout::typed_placeholder(),
-        )
+        crate::internal::shape_dependent_stage()
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -334,10 +322,18 @@ mod tests {
     use ragu_pasta::EqAffine;
 
     use super::*;
-    use crate::internal::tests::{R, assert_stage_values};
+    use crate::internal::tests::{R, capacity_with_polys, stage_wire_count};
 
+    /// `num_values` predicts the wire count at every shape, not just one.
     #[test]
-    fn stage_values_matches_wire_count() {
-        assert_stage_values(&Stage::<EqAffine, R>::default());
+    fn num_values_matches_wire_count() {
+        for polys in [0, 1, 4, 8] {
+            let capacity = capacity_with_polys(polys);
+            assert_eq!(
+                stage_wire_count(&Stage::<EqAffine, R>::with_shapes(capacity, capacity)),
+                num_values(capacity, capacity),
+                "polys={polys}"
+            );
+        }
     }
 }

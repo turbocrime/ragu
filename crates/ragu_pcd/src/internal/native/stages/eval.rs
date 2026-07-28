@@ -249,15 +249,6 @@ impl<C: Cycle, R, const HEADER_SIZE: usize> Stage<C, R, HEADER_SIZE> {
     }
 }
 
-impl<C: Cycle, R, const HEADER_SIZE: usize> Default for Stage<C, R, HEADER_SIZE> {
-    fn default() -> Self {
-        Self::with_shapes(
-            crate::framework_hooks::HookLayout::typed_placeholder(),
-            crate::framework_hooks::HookLayout::typed_placeholder(),
-        )
-    }
-}
-
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField, R>
     for Stage<C, R, HEADER_SIZE>
 {
@@ -266,10 +257,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     type OutputKind = Kind![C::CircuitField; Output<'_, _>];
 
     fn values() -> usize {
-        num_values(
-            crate::framework_hooks::HookLayout::typed_placeholder(),
-            crate::framework_hooks::HookLayout::typed_placeholder(),
-        )
+        crate::internal::shape_dependent_stage()
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -329,10 +317,20 @@ mod tests {
     use ragu_pasta::Pasta;
 
     use super::*;
-    use crate::internal::tests::{HEADER_SIZE, R, assert_stage_values};
+    use crate::internal::tests::{HEADER_SIZE, R, capacity_with_polys, stage_wire_count};
 
+    /// `num_values` predicts the wire count at every shape, not just one.
     #[test]
-    fn stage_values_matches_wire_count() {
-        assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }>::default());
+    fn num_values_matches_wire_count() {
+        for polys in [0, 1, 4, 8] {
+            let capacity = capacity_with_polys(polys);
+            assert_eq!(
+                stage_wire_count(&Stage::<Pasta, R, { HEADER_SIZE }>::with_shapes(
+                    capacity, capacity
+                )),
+                num_values(capacity, capacity),
+                "polys={polys}"
+            );
+        }
     }
 }
