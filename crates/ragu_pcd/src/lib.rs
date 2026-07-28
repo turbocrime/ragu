@@ -291,6 +291,11 @@ impl<
         capacity.challenge.points = Self::challenge_points();
         capacity.poly_query.polys = POLYS;
 
+        let (total_circuits, log2_circuits) = internal::native::total_circuit_counts(
+            self.num_application_steps,
+            internal::native::InternalCircuitIndex::NUM,
+        );
+
         // The held application step adapters can be handed to the registry:
         // their circuits are measured now, with every step known. Registry
         // indexing is by category, not hand-over order, so registering them
@@ -306,11 +311,7 @@ impl<
         //
         // Internal circuits are built for the one settled capacity, since
         // every application circuit exposes exactly it.
-        let (total_circuits, log2_circuits) = internal::native::total_circuit_counts(
-            self.num_application_steps,
-            internal::native::InternalCircuitIndex::NUM,
-        );
-
+        //
         // First, register internal circuits and masks
         self.native_registry = internal::native::register_all::<C, R, HEADER_SIZE>(
             self.native_registry,

@@ -292,14 +292,27 @@ where
         //
         // Slot 0 serves every padding query: the one-hot in `compute_v` reaches
         // any polynomial equally, so no slot has to be reserved for padding.
+        // Every padding query is the *same* query — slot 0 opened at $x = 0$ —
+        // so it is witnessed once and its wires are reused for every unused
+        // slot. Allocating a fresh pair per slot would make a step's circuit
+        // grow with the application's claim capacity, which is the one thing a
+        // capacity defined as "whatever space is left" must not do.
+        let slot = 0;
+        let mut padding_query: Option<(Element<'dr, D>, Element<'dr, D>)> = None;
         while self.hooks.claims_filled() < capacity.poly_query.claims {
-            let slot = 0;
-            let x = Element::alloc(
-                self.dr,
-                allocator,
-                D::just(|| <D::F as ragu_arithmetic::ff::Field>::ZERO),
-            )?;
-            let y = Element::alloc(self.dr, allocator, self.hooks.poly_at_zero(slot))?;
+            let (x, y) = match &padding_query {
+                Some((x, y)) => (x.clone(), y.clone()),
+                None => {
+                    let x = Element::alloc(
+                        self.dr,
+                        allocator,
+                        D::just(|| <D::F as ragu_arithmetic::ff::Field>::ZERO),
+                    )?;
+                    let y = Element::alloc(self.dr, allocator, self.hooks.poly_at_zero(slot))?;
+                    padding_query = Some((x.clone(), y.clone()));
+                    (x, y)
+                }
+            };
             self.hooks.enforce_polynomial_query(self.dr, slot, x, y)?;
         }
         drop(padding_handle);
