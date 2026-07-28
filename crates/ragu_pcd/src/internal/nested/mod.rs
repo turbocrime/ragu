@@ -137,6 +137,184 @@ pub fn challenge_run_layout<HC: ragu_arithmetic::CurveAffine, R: Rank>(
     )
 }
 
+/// The nested internal-circuit index space for a variant registry.
+///
+/// Layout (circuits before bondings, matching `RegistryBuilder::finalize()`):
+/// the endoscaling step circuits, one run per ordered (left, right) pair
+/// (their count is a function of the children's shapes only); then one
+/// bonding block per (own, left, right) triple — the endoscalar, points, and
+/// points-final masks, the eight fixed bridge masks, the claim and challenge
+/// bridge slot masks at `own`'s counts, the loading circuit, and the two
+/// copying circuits (which walk a *child* of that triple).
+#[derive(Clone, Debug)]
+pub(crate) struct NestedIndexSpace {
+    space: crate::internal::VariantSpace,
+    /// Endoscaling-step index of each pair's first step circuit, plus the
+    /// total as a final entry.
+    endo_offsets: Vec<usize>,
+    /// Bonding index of each triple's block start (relative to the first
+    /// bonding), plus the total as a final entry.
+    block_offsets: Vec<usize>,
+}
+
+/// Positions inside a triple's bonding block, before the per-slot masks.
+const BLOCK_FIXED: [InternalCircuitIndex; 11] = [
+    InternalCircuitIndex::EndoscalarStage,
+    InternalCircuitIndex::PointsStage,
+    InternalCircuitIndex::PointsFinalStaged,
+    InternalCircuitIndex::BridgePreamble,
+    InternalCircuitIndex::BridgeSPrime,
+    InternalCircuitIndex::BridgeInnerError,
+    InternalCircuitIndex::BridgeOuterError,
+    InternalCircuitIndex::BridgeAB,
+    InternalCircuitIndex::BridgeQuery,
+    InternalCircuitIndex::BridgeF,
+    InternalCircuitIndex::BridgeEval,
+];
+
+#[allow(dead_code)] // the flip's consumer-switch commit takes these up
+impl NestedIndexSpace {
+    pub(crate) fn new(space: crate::internal::VariantSpace) -> Self {
+        let mut endo_offsets = Vec::with_capacity(space.num_pairs() + 1);
+        let mut acc = 0;
+        for (l, r) in space.pairs() {
+            endo_offsets.push(acc);
+            acc += num_endoscaling_steps(l, r);
+        }
+        endo_offsets.push(acc);
+
+        let mut block_offsets = Vec::with_capacity(space.num_triples() + 1);
+        let mut acc = 0;
+        for (own, _, _) in space.triples() {
+            block_offsets.push(acc);
+            acc += Self::block_len(own);
+        }
+        block_offsets.push(acc);
+
+        Self {
+            space,
+            endo_offsets,
+            block_offsets,
+        }
+    }
+
+    pub(crate) fn space(&self) -> &crate::internal::VariantSpace {
+        &self.space
+    }
+
+    /// One triple's bonding-block length.
+    fn block_len(own: crate::framework_hooks::HookLayout) -> usize {
+        BLOCK_FIXED.len() + own.poly_query.polys + own.challenge.calls + 3
+    }
+
+    /// Total nested internal circuits and bondings.
+    pub(crate) fn num_internal(&self) -> usize {
+        self.num_circuits() + self.block_offsets[self.space.num_triples()]
+    }
+
+    /// Total endoscaling step circuits (the circuits-section length).
+    fn num_circuits(&self) -> usize {
+        self.endo_offsets[self.space.num_pairs()]
+    }
+
+    /// Registry index of an endoscaling step circuit for children of the
+    /// given shapes.
+    pub(crate) fn endoscaling_step_index(
+        &self,
+        left: crate::framework_hooks::HookLayout,
+        right: crate::framework_hooks::HookLayout,
+        step: usize,
+    ) -> CircuitIndex {
+        let pair = self.space.pair_index(left, right);
+        assert!(step < self.endo_offsets[pair + 1] - self.endo_offsets[pair]);
+        CircuitIndex::new(self.endo_offsets[pair] + step)
+    }
+
+    /// Bonding index of the given triple's block start.
+    fn block_start(
+        &self,
+        own: crate::framework_hooks::HookLayout,
+        left: crate::framework_hooks::HookLayout,
+        right: crate::framework_hooks::HookLayout,
+    ) -> usize {
+        self.num_circuits() + self.block_offsets[self.space.triple_index(own, left, right)]
+    }
+
+    /// Registry index of a fixed (non-slot) mask or circuit in a triple's
+    /// block.
+    ///
+    /// # Panics
+    ///
+    /// Panics for slot-indexed or side-indexed categories (use the dedicated
+    /// methods) or for shapes outside the space.
+    pub(crate) fn circuit_index(
+        &self,
+        category: InternalCircuitIndex,
+        own: crate::framework_hooks::HookLayout,
+        left: crate::framework_hooks::HookLayout,
+        right: crate::framework_hooks::HookLayout,
+    ) -> CircuitIndex {
+        let start = self.block_start(own, left, right);
+        if let Some(pos) = BLOCK_FIXED.iter().position(|&c| c == category) {
+            return CircuitIndex::new(start + pos);
+        }
+        if category == InternalCircuitIndex::Loading {
+            return CircuitIndex::new(
+                start + BLOCK_FIXED.len() + own.poly_query.polys + own.challenge.calls,
+            );
+        }
+        unreachable!("slot- and side-indexed categories have dedicated methods");
+    }
+
+    /// Registry index of a claim-bridge slot mask in a triple's block.
+    pub(crate) fn claim_slot_index(
+        &self,
+        own: crate::framework_hooks::HookLayout,
+        left: crate::framework_hooks::HookLayout,
+        right: crate::framework_hooks::HookLayout,
+        slot: usize,
+    ) -> CircuitIndex {
+        assert!(slot < own.poly_query.polys);
+        CircuitIndex::new(self.block_start(own, left, right) + BLOCK_FIXED.len() + slot)
+    }
+
+    /// Registry index of a challenge-bridge slot mask in a triple's block.
+    pub(crate) fn challenge_slot_index(
+        &self,
+        own: crate::framework_hooks::HookLayout,
+        left: crate::framework_hooks::HookLayout,
+        right: crate::framework_hooks::HookLayout,
+        slot: usize,
+    ) -> CircuitIndex {
+        assert!(slot < own.challenge.calls);
+        CircuitIndex::new(
+            self.block_start(own, left, right) + BLOCK_FIXED.len() + own.poly_query.polys + slot,
+        )
+    }
+
+    /// Registry index of a copying circuit that walks a child of the given
+    /// triple.
+    pub(crate) fn copying_index(
+        &self,
+        side: Side,
+        child: crate::framework_hooks::HookLayout,
+        child_left: crate::framework_hooks::HookLayout,
+        child_right: crate::framework_hooks::HookLayout,
+    ) -> CircuitIndex {
+        let side_offset = match side {
+            Side::Left => 1,
+            Side::Right => 2,
+        };
+        CircuitIndex::new(
+            self.block_start(child, child_left, child_right)
+                + BLOCK_FIXED.len()
+                + child.poly_query.polys
+                + child.challenge.calls
+                + side_offset,
+        )
+    }
+}
+
 /// Index of internal nested circuits registered into the registry.
 ///
 /// These correspond to the wiring objects registered in [`register_all`].
@@ -403,87 +581,68 @@ pub mod stages {
     pub mod s_prime;
 }
 
-/// Registers internal nested circuits into the provided registry.
+/// Registers internal nested circuits into the provided registry: the
+/// endoscaling step circuits per ordered (left, right) pair, then one bonding
+/// block per (own, left, right) triple — in exactly the order
+/// [`NestedIndexSpace`] resolves indices.
 ///
 /// Circuits are registered as internal to ensure they occupy prefix indices
 /// before application steps.
 pub fn register_all<'params, C: Cycle, R: Rank>(
     mut registry: RegistryBuilder<'params, C::ScalarField, R>,
+    index_space: &NestedIndexSpace,
 ) -> Result<RegistryBuilder<'params, C::ScalarField, R>> {
     let initial_internal_circuits = registry.num_internal_circuits();
+    let space = index_space.space();
 
-    let chain = chain_layout::<C::HostCurve, R>(
-        crate::framework_hooks::HookLayout::padded(),
-        crate::framework_hooks::HookLayout::padded(),
-        crate::framework_hooks::HookLayout::padded(),
-    );
+    // Circuits first, then bondings - matching RegistryBuilder::finalize()'s
+    // concatenation order and NestedIndexSpace's layout.
+    for (left, right) in space.pairs() {
+        let num_points = num_endoscaling_points(left, right);
+        for step in 0..num_endoscaling_steps(left, right) {
+            let step_circuit =
+                endoscalar::EndoscalingStep::<C::HostCurve, R>::new(step, num_points);
+            registry = registry.register_internal_circuit(MultiStage::new(step_circuit))?;
+        }
+    }
 
-    // Circuits first, then masks — matching RegistryBuilder::finalize()
-    // concatenation order and InternalCircuitIndex::circuit_index().
-    for id in InternalCircuitIndex::all(
-        crate::framework_hooks::HookLayout::padded(),
-        crate::framework_hooks::HookLayout::padded(),
-        crate::framework_hooks::HookLayout::padded(),
-    ) {
-        use InternalCircuitIndex::*;
-        registry = match id {
-            EndoscalingStep(step) => {
-                let step_circuit = endoscalar::EndoscalingStep::<C::HostCurve, R>::new(
-                    step as usize,
-                    NUM_ENDOSCALING_POINTS,
-                );
-                let staged = MultiStage::new(step_circuit);
-                registry.register_internal_circuit(staged)?
-            }
-            EndoscalarStage => registry.register_bonding(chain.mask::<C::ScalarField, R>(0)?),
-            PointsStage => registry.register_bonding(chain.mask::<C::ScalarField, R>(1)?),
-            PointsFinalStaged => {
-                registry.register_bonding(chain.final_mask_through::<C::ScalarField, R>(1)?)
-            }
-            BridgePreamble => registry.register_bonding(chain.mask::<C::ScalarField, R>(2)?),
-            BridgeSPrime => registry.register_bonding(chain.mask::<C::ScalarField, R>(3)?),
-            BridgeInnerError => registry.register_bonding(chain.mask::<C::ScalarField, R>(4)?),
-            BridgeOuterError => registry.register_bonding(chain.mask::<C::ScalarField, R>(5)?),
-            BridgeAB => registry.register_bonding(chain.mask::<C::ScalarField, R>(6)?),
-            BridgeQuery => registry.register_bonding(chain.mask::<C::ScalarField, R>(7)?),
-            BridgeF => registry.register_bonding(chain.mask::<C::ScalarField, R>(8)?),
-            BridgeEval => registry.register_bonding(chain.mask::<C::ScalarField, R>(9)?),
-            BridgeChallenge(slot) => registry.register_bonding(
-                stages::challenge_bridge::layout::<C::HostCurve, R>()
-                    .mask::<C::ScalarField, R>(slot as usize)?,
-            ),
-            BridgeClaim(slot) => registry.register_bonding(
-                stages::claim_bridge::layout::<C::HostCurve, R>()
-                    .mask::<C::ScalarField, R>(slot as usize)?,
-            ),
-            Loading => {
-                let circuit = circuits::loading::Circuit::<C::HostCurve, R>::new(
-                    crate::framework_hooks::HookLayout::padded(),
-                    crate::framework_hooks::HookLayout::padded(),
-                    crate::framework_hooks::HookLayout::padded(),
-                );
-                registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?)
-            }
-            Copying(side) => {
-                let circuit = circuits::copying::Circuit::<C::HostCurve, R>::new(
-                    side,
-                    crate::framework_hooks::HookLayout::padded(),
-                    crate::framework_hooks::HookLayout::padded(),
-                    crate::framework_hooks::HookLayout::padded(),
-                );
-                registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?)
-            }
-        };
+    for (own, left, right) in space.triples() {
+        let chain = chain_layout::<C::HostCurve, R>(own, left, right);
+        let claim_layout = claim_run_layout::<C::HostCurve, R>(own, left, right);
+        let challenge_layout = challenge_run_layout::<C::HostCurve, R>(own, left, right);
+
+        // The fixed block, in BLOCK_FIXED order: endoscalar, points, points
+        // final, then the eight bridge masks in chain order.
+        registry = registry.register_bonding(chain.mask::<C::ScalarField, R>(0)?);
+        registry = registry.register_bonding(chain.mask::<C::ScalarField, R>(1)?);
+        registry = registry.register_bonding(chain.final_mask_through::<C::ScalarField, R>(1)?);
+        for stage in 2..=9 {
+            registry = registry.register_bonding(chain.mask::<C::ScalarField, R>(stage)?);
+        }
+
+        for slot in 0..own.poly_query.polys {
+            registry = registry.register_bonding(claim_layout.mask::<C::ScalarField, R>(slot)?);
+        }
+        for slot in 0..own.challenge.calls {
+            registry = registry.register_bonding(challenge_layout.mask::<C::ScalarField, R>(slot)?);
+        }
+
+        let circuit = circuits::loading::Circuit::<C::HostCurve, R>::new(own, left, right);
+        registry = registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?);
+
+        for side in [Side::Left, Side::Right] {
+            // A copying circuit registered in triple t's block walks a CHILD
+            // of triple t: the child's own shape is `own`, the grandchildren's
+            // are `left` and `right`.
+            let circuit =
+                circuits::copying::Circuit::<C::HostCurve, R>::new(side, own, left, right);
+            registry = registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?);
+        }
     }
 
     assert_eq!(
         registry.num_internal_circuits(),
-        initial_internal_circuits
-            + InternalCircuitIndex::num(
-                crate::framework_hooks::HookLayout::padded(),
-                crate::framework_hooks::HookLayout::padded(),
-                crate::framework_hooks::HookLayout::padded()
-            ),
+        initial_internal_circuits + index_space.num_internal(),
         "internal circuit count mismatch"
     );
 

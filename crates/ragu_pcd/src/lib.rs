@@ -337,6 +337,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         let variant_space =
             internal::VariantSpace::from_plans(&[framework_hooks::HookLayout::padded()]);
         let native_index = internal::native::NativeIndexSpace::new(variant_space.clone());
+        let nested_index = internal::nested::NestedIndexSpace::new(variant_space.clone());
 
         let (total_circuits, log2_circuits) = internal::native::total_circuit_counts(
             self.num_application_steps,
@@ -371,7 +372,8 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         );
 
         // Register nested internal circuits (no application steps, no headers).
-        self.nested_registry = internal::nested::register_all::<C, R>(self.nested_registry)?;
+        self.nested_registry =
+            internal::nested::register_all::<C, R>(self.nested_registry, &nested_index)?;
 
         Ok(Application {
             native_registry: self.native_registry.finalize()?,
@@ -379,6 +381,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             params,
             num_application_steps: self.num_application_steps,
             native_index,
+            nested_index,
             step_plans,
             seeded_trivial: OnceCell::new(),
             #[cfg(feature = "unstable-fuzzing")]
@@ -428,6 +431,9 @@ pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     /// was built over. Every variant lookup — fuse, verify, claims — resolves
     /// through this.
     native_index: internal::native::NativeIndexSpace,
+    /// The nested twin of [`native_index`](Self::native_index).
+    #[allow(dead_code)] // the flip's consumer-switch commit takes this up
+    nested_index: internal::nested::NestedIndexSpace,
     /// Every step's discovered plan, in circuit-index order within the step
     /// block: internal steps (rerandomize, trivial) first, then application
     /// steps in registration order. Index `i` here corresponds to circuit
