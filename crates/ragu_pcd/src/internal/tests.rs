@@ -418,7 +418,7 @@ fn nested_chain_layout_tiles_typed_chain() {
 
     use crate::internal::{
         endoscalar::{EndoscalarStage, PointsStage},
-        nested::{EndoPoints, chain_layout, stages},
+        nested::{chain_layout, stages},
     };
 
     type Host = <Pasta as ragu_arithmetic::Cycle>::HostCurve;
@@ -433,8 +433,8 @@ fn nested_chain_layout_tiles_typed_chain() {
             <EndoscalarStage as StageExt<F, R>>::num_gates(),
         ),
         (
-            <PointsStage<Host, EndoPoints> as Stage<F, R>>::skip_gates(),
-            <PointsStage<Host, EndoPoints> as StageExt<F, R>>::num_gates(),
+            <PointsStage<Host> as Stage<F, R>>::skip_gates(),
+            <PointsStage<Host> as StageExt<F, R>>::num_gates(),
         ),
         (
             <stages::preamble::Stage<Host, R> as Stage<F, R>>::skip_gates(),

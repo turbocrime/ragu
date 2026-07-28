@@ -74,25 +74,6 @@ pub const fn num_endoscaling_steps(
     endoscalar::num_steps(num_endoscaling_points(left, right))
 }
 
-/// [`NUM_ENDOSCALING_POINTS`] as a [`Len`](ragu_primitives::vec::Len), which is
-/// how the endoscaling types
-/// take their point count.
-///
-/// They cannot take it as a const generic: the count is a function of the
-/// polynomial-slot count, and passing a computed expression as a const generic
-/// argument needs `generic_const_exprs`.
-/// [`Len::len`](ragu_primitives::vec::Len::len) is an ordinary function,
-/// so it may compute whatever it likes — the same escape hatch
-/// [`InputsLen`](endoscalar::InputsLen) and
-/// [`NumStepsLen`](endoscalar::NumStepsLen) already use.
-pub struct EndoPoints;
-
-impl ragu_primitives::vec::Len for EndoPoints {
-    fn len() -> usize {
-        NUM_ENDOSCALING_POINTS
-    }
-}
-
 /// Number of endoscaling steps, derived from [`NUM_ENDOSCALING_POINTS`] via
 /// [`endoscalar::num_steps`].
 const NUM_ENDOSCALING_STEPS: usize = endoscalar::num_steps(NUM_ENDOSCALING_POINTS);
@@ -420,8 +401,10 @@ pub fn register_all<'params, C: Cycle, R: Rank>(
         use InternalCircuitIndex::*;
         registry = match id {
             EndoscalingStep(step) => {
-                let step_circuit =
-                    endoscalar::EndoscalingStep::<C::HostCurve, R, EndoPoints>::new(step as usize);
+                let step_circuit = endoscalar::EndoscalingStep::<C::HostCurve, R>::new(
+                    step as usize,
+                    NUM_ENDOSCALING_POINTS,
+                );
                 let staged = MultiStage::new(step_circuit);
                 registry.register_internal_circuit(staged)?
             }

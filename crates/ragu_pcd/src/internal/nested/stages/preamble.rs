@@ -17,7 +17,7 @@ use ragu_primitives::{Point, io::Write};
 
 use crate::{
     Proof,
-    internal::{endoscalar::PointsStage, native::RxIndex, nested::EndoPoints},
+    internal::{endoscalar::PointsStage, native::RxIndex},
     slot_vec::SlotVec,
 };
 
@@ -311,7 +311,7 @@ impl<C: CurveAffine, R> Default for Stage<C, R> {
 }
 
 impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R> {
-    type Parent = PointsStage<C, EndoPoints>;
+    type Parent = PointsStage<C>;
     type Witness<'source> = &'source Witness<C>;
     type OutputKind = Kind![C::Base; Output<'_, _, C>];
 

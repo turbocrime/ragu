@@ -22,18 +22,17 @@ use ragu_circuits::{
     staging::{MultiStage, StageExt},
 };
 use ragu_core::Result;
-use ragu_primitives::{extract_endoscalar, vec::Len};
+use ragu_primitives::extract_endoscalar;
 
 use crate::{
     header::Header,
     internal::{
         endoscalar::{
-            EndoscalarStage, EndoscalingStep, EndoscalingStepWitness, NumStepsLen, PointsStage,
-            PointsWitness,
+            EndoscalarStage, EndoscalingStep, EndoscalingStepWitness, PointsStage, PointsWitness,
         },
         native::{RxComponent, RxIndex},
         nested,
-        nested::{ChildBridgeKind, EndoPoints, NUM_ENDOSCALING_POINTS},
+        nested::{ChildBridgeKind, NUM_ENDOSCALING_POINTS},
     },
 };
 
@@ -627,19 +626,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
     ) -> Result<C::HostCurve> {
         assert_eq!(points.len(), NUM_ENDOSCALING_POINTS);
 
-        let witness = PointsWitness::<C::HostCurve, EndoPoints>::new(beta_endo, points);
+        let witness = PointsWitness::<C::HostCurve>::new(beta_endo, points);
 
         let endoscalar_rx =
             <EndoscalarStage as StageExt<C::ScalarField, R>>::rx(endoscalar_alpha, beta_endo)?;
-        let points_rx = <PointsStage<C::HostCurve, EndoPoints> as StageExt<C::ScalarField, R>>::rx(
-            points_alpha,
-            &witness,
-        )?;
+        let points_rx =
+            <PointsStage<C::HostCurve> as StageExt<C::ScalarField, R>>::rx(points_alpha, &witness)?;
 
-        let num_steps = NumStepsLen::<EndoPoints>::len();
+        let num_steps = crate::internal::endoscalar::num_steps(NUM_ENDOSCALING_POINTS);
         let mut step_rxs = Vec::with_capacity(num_steps);
         for step in 0..num_steps {
-            let step_circuit = EndoscalingStep::<C::HostCurve, R, EndoPoints>::new(step);
+            let step_circuit =
+                EndoscalingStep::<C::HostCurve, R>::new(step, NUM_ENDOSCALING_POINTS);
             let staged = MultiStage::new(step_circuit);
             let step_trace = staged
                 .trace(EndoscalingStepWitness {

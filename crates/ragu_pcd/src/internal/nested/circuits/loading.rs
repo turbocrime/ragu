@@ -34,18 +34,18 @@ use ragu_primitives::{GadgetExt as _, Point};
 use crate::internal::{
     endoscalar::{EndoscalarStage, Points, PointsStage},
     native::RxIndex,
-    nested::{EndoPoints, stages},
+    nested::stages,
 };
 
 /// A cursor over [`PointsStage`] inputs that enforces equality against
 /// corresponding bridge stage elements.
 struct Walker<'pts, 'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
-    points: &'pts Points<'dr, D, C, EndoPoints>,
+    points: &'pts Points<'dr, D, C>,
     index: usize,
 }
 
 impl<'pts, 'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> Walker<'pts, 'dr, D, C> {
-    fn new(points: &'pts Points<'dr, D, C, EndoPoints>) -> Self {
+    fn new(points: &'pts Points<'dr, D, C>) -> Self {
         Self { points, index: 0 }
     }
 
@@ -100,7 +100,7 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         _witness: DriverValue<D, ()>,
     ) -> Result<WithAux<Bound<'dr, D, ()>, DriverValue<D, ()>>> {
         let dr = dr.skip_stage::<EndoscalarStage>()?;
-        let (points_guard, dr) = dr.add_stage::<PointsStage<C, EndoPoints>>()?;
+        let (points_guard, dr) = dr.add_stage::<PointsStage<C>>()?;
         let (preamble_guard, dr) = dr.add_stage::<stages::preamble::Stage<C, R>>()?;
         let (s_prime_guard, dr) = dr.add_stage::<stages::s_prime::Stage<C, R>>()?;
         let (inner_error_guard, dr) = dr.add_stage::<stages::inner_error::Stage<C, R>>()?;
