@@ -22,7 +22,7 @@ use ragu_primitives::{
 
 use crate::{
     NUM_CHALLENGE_SLOTS, NUM_POLY_SLOTS, NUM_QUERY_SLOTS, Proof, header::Header,
-    internal::native::unified, step::internal::padded,
+    internal::native::unified, slot_vec::SlotVec, step::internal::padded,
 };
 
 type HeaderVec<'dr, D, const HEADER_SIZE: usize> = FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>>;
@@ -128,19 +128,20 @@ pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const
     /// Output header of this child proof.
     #[ragu(gadget)]
     pub output_header: HeaderVec<'dr, D, HEADER_SIZE>,
-    /// The poly-query claim instances this child proof raised, in slot order
-    /// (always [`NUM_QUERY_SLOTS`] entries; unused slots hold the
-    /// canonical padding claim).
+    /// The poly-query claim instances this child proof raised, in slot order.
+    /// Length is the configuring query-slot count; unused slots hold the
+    /// canonical padding claim.
     #[ragu(gadget)]
-    pub claims: FixedVec<ClaimInstance<'dr, D>, ConstLen<NUM_QUERY_SLOTS>>,
-    /// The polynomials this child proof witnessed, in slot order (always
-    /// [`NUM_POLY_SLOTS`] entries; unused slots hold the canonical padding
-    /// polynomial). A claim above names one of these by index.
+    pub claims: SlotVec<ClaimInstance<'dr, D>>,
+    /// The polynomials this child proof witnessed, in slot order. Length is
+    /// the configuring poly-slot count; unused slots hold the canonical
+    /// padding polynomial. A claim above names one of these by index.
     #[ragu(gadget)]
-    pub polys: FixedVec<PolyInstance<'dr, D, C>, ConstLen<NUM_POLY_SLOTS>>,
+    pub polys: SlotVec<PolyInstance<'dr, D, C>>,
     /// The derived-challenge pairs the child's circuit exposed, in slot order.
+    /// Length is the configuring challenge-slot count.
     #[ragu(gadget)]
-    pub challenges: FixedVec<ChallengeInstance<'dr, D, C>, ConstLen<NUM_CHALLENGE_SLOTS>>,
+    pub challenges: SlotVec<ChallengeInstance<'dr, D, C>>,
     #[ragu(gadget)]
     pub circuit_id: Element<'dr, D>,
     #[ragu(gadget)]
@@ -225,11 +226,18 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
 impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usize>
     ProofInputs<'dr, D, C, HEADER_SIZE>
 {
-    /// Allocate ProofInputs from a proof reference and pre-computed output header.
+    /// Allocate ProofInputs from a proof reference and pre-computed output
+    /// header. The slot counts are circuit-construction parameters (from the
+    /// configuring plan): they fix the wire shape regardless of whether a
+    /// witness is present, and the proof's own slot lists are checked against
+    /// them.
     pub fn alloc<R: Rank>(
         dr: &mut D,
         proof: DriverValue<D, &Proof<C, R>>,
         output_header: DriverValue<D, &FixedVec<D::F, ConstLen<HEADER_SIZE>>>,
+        num_polys: usize,
+        num_queries: usize,
+        num_challenges: usize,
     ) -> Result<Self> {
         fn alloc_header<'dr, D: Driver<'dr>, const N: usize>(
             dr: &mut D,
@@ -260,15 +268,16 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
             output_header: alloc_header(dr, allocator, output_header.as_ref().map(|h| &h[..]))?,
             polys: {
                 D::try_just(|| {
-                    if proof.as_ref().take().application_polys().len() != NUM_POLY_SLOTS {
+                    if proof.as_ref().take().application_polys().len() != num_polys {
                         return Err(Error::MalformedEncoding(
-                            "proof does not carry exactly NUM_POLY_SLOTS polynomial commitments"
+                            "proof does not carry exactly the configured number of polynomial \
+                             commitments"
                                 .into(),
                         ));
                     }
                     Ok(())
                 })?;
-                (0..NUM_POLY_SLOTS)
+                (0..num_polys)
                     .map(|i| {
                         Ok(PolyInstance {
                             com: Point::alloc(
@@ -277,18 +286,19 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                             )?,
                         })
                     })
-                    .try_collect_fixed()?
+                    .collect::<Result<_>>()?
             },
             claims: {
                 D::try_just(|| {
-                    if proof.as_ref().take().application_claims().len() != NUM_QUERY_SLOTS {
+                    if proof.as_ref().take().application_claims().len() != num_queries {
                         return Err(Error::MalformedEncoding(
-                            "proof does not carry exactly NUM_QUERY_SLOTS claim instances".into(),
+                            "proof does not carry exactly the configured number of claim instances"
+                                .into(),
                         ));
                     }
                     Ok(())
                 })?;
-                (0..NUM_QUERY_SLOTS)
+                (0..num_queries)
                     .map(|i| {
                         Ok(ClaimInstance {
                             poly_slot: Element::alloc(
@@ -308,19 +318,20 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                             )?,
                         })
                     })
-                    .try_collect_fixed()?
+                    .collect::<Result<_>>()?
             },
             challenges: {
                 D::try_just(|| {
-                    if proof.as_ref().take().application_challenges().len() != NUM_CHALLENGE_SLOTS {
+                    if proof.as_ref().take().application_challenges().len() != num_challenges {
                         return Err(Error::MalformedEncoding(
-                            "proof does not carry exactly NUM_CHALLENGE_SLOTS challenge pairs"
+                            "proof does not carry exactly the configured number of challenge \
+                             pairs"
                                 .into(),
                         ));
                     }
                     Ok(())
                 })?;
-                (0..NUM_CHALLENGE_SLOTS)
+                (0..num_challenges)
                     .map(|i| {
                         Ok(ChallengeInstance {
                             point: Point::alloc(
@@ -336,7 +347,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                             )?,
                         })
                     })
-                    .try_collect_fixed()?
+                    .collect::<Result<_>>()?
             },
             circuit_id: Element::alloc(
                 dr,
@@ -348,11 +359,14 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
     }
 
     /// Allocate ProofInputs from a proof reference and some unprocessed header
-    /// data.
+    /// data. Slot counts as in [`alloc`](Self::alloc).
     pub fn alloc_for_verify<R: Rank, H: Header<C::CircuitField>>(
         dr: &mut D,
         proof: DriverValue<D, &Proof<C, R>>,
         header_data: DriverValue<D, H::Data>,
+        num_polys: usize,
+        num_queries: usize,
+        num_challenges: usize,
     ) -> Result<Self> {
         let header_data = D::try_just(|| {
             use ragu_core::drivers::emulator::{Emulator, Wireless};
@@ -370,7 +384,14 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                 .collect_fixed()
         })?;
 
-        Self::alloc(dr, proof, header_data.as_ref())
+        Self::alloc(
+            dr,
+            proof,
+            header_data.as_ref(),
+            num_polys,
+            num_queries,
+            num_challenges,
+        )
     }
 }
 
@@ -401,9 +422,25 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usiz
     }
 }
 
-#[derive(Default)]
 pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize> {
+    /// Number of polynomial slots each child carries.
+    num_polys: usize,
+    /// Number of poly-query claim slots each child carries.
+    num_queries: usize,
+    /// Number of challenge slots each child carries.
+    num_challenges: usize,
     _marker: PhantomData<(C, R)>,
+}
+
+impl<C: Cycle, R, const HEADER_SIZE: usize> Default for Stage<C, R, HEADER_SIZE> {
+    fn default() -> Self {
+        Stage {
+            num_polys: NUM_POLY_SLOTS,
+            num_queries: NUM_QUERY_SLOTS,
+            num_challenges: NUM_CHALLENGE_SLOTS,
+            _marker: PhantomData,
+        }
+    }
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField, R>
@@ -438,12 +475,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
             dr,
             witness.as_ref().map(|w| w.left.proof),
             witness.as_ref().map(|w| &w.left.output_header),
+            self.num_polys,
+            self.num_queries,
+            self.num_challenges,
         )?;
 
         let right = ProofInputs::alloc(
             dr,
             witness.as_ref().map(|w| w.right.proof),
             witness.as_ref().map(|w| &w.right.output_header),
+            self.num_polys,
+            self.num_queries,
+            self.num_challenges,
         )?;
 
         Ok(Output { left, right })
