@@ -287,8 +287,8 @@ impl<C: CurveAffine, R> Stage<C, R> {
 impl<C: CurveAffine, R> Default for Stage<C, R> {
     fn default() -> Self {
         Self::with_shapes(
-            crate::framework_hooks::HookLayout::padded(),
-            crate::framework_hooks::HookLayout::padded(),
+            crate::framework_hooks::HookLayout::typed_placeholder(),
+            crate::framework_hooks::HookLayout::typed_placeholder(),
         )
     }
 }
@@ -300,8 +300,8 @@ impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stag
 
     fn values() -> usize {
         num_values(
-            crate::framework_hooks::HookLayout::padded(),
-            crate::framework_hooks::HookLayout::padded(),
+            crate::framework_hooks::HookLayout::typed_placeholder(),
+            crate::framework_hooks::HookLayout::typed_placeholder(),
         )
     }
 

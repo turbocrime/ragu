@@ -82,7 +82,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let y = *y.value().take();
         let z = *z.value().take();
 
-        let mut claims_builder = claims::Builder::new(&self.native_registry, y, z);
+        let mut claims_builder = claims::Builder::new(&self.native_registry, y, z, self.capacity());
         native::claims::build(source, &mut claims_builder)?;
 
         let inner_error_witness =

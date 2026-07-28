@@ -52,8 +52,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         >::new(
             self.params,
             total_circuit_counts(self.num_application_steps, self.native_index.num_internal()).1,
-            crate::framework_hooks::HookLayout::padded(),
-            crate::framework_hooks::HookLayout::padded(),
+            self.capacity(),
+            self.capacity(),
         )
         .trace(native::circuits::hashes_1::Witness {
             unified,
@@ -73,9 +73,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             HEADER_SIZE,
             native::RevdotParameters,
         >::new(
-            self.params,
-            crate::framework_hooks::HookLayout::padded(),
-            crate::framework_hooks::HookLayout::padded(),
+            self.params, self.capacity(), self.capacity()
         )
         .trace(native::circuits::hashes_2::Witness {
             unified,
@@ -93,10 +91,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             R,
             HEADER_SIZE,
             native::RevdotParameters,
-        >::new(
-            crate::framework_hooks::HookLayout::padded(),
-            crate::framework_hooks::HookLayout::padded(),
-        )
+        >::new(self.capacity(), self.capacity())
         .trace(native::circuits::inner_collapse::Witness {
             preamble_witness,
             unified,
@@ -115,10 +110,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             R,
             HEADER_SIZE,
             native::RevdotParameters,
-        >::new(
-            crate::framework_hooks::HookLayout::padded(),
-            crate::framework_hooks::HookLayout::padded(),
-        )
+        >::new(self.capacity(), self.capacity())
         .trace(native::circuits::outer_collapse::Witness {
             unified,
             preamble_witness,
@@ -133,8 +125,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         let (compute_v_trace, unified) =
             native::circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new(
-                crate::framework_hooks::HookLayout::padded(),
-                crate::framework_hooks::HookLayout::padded(),
+                self.capacity(),
+                self.capacity(),
             )
             .trace(native::circuits::compute_v::Witness {
                 unified,
@@ -152,8 +144,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let (challenge_binding_trace, unified) =
             native::circuits::challenge_binding::Circuit::<C, R, HEADER_SIZE>::new(
                 self.params,
-                crate::framework_hooks::HookLayout::padded(),
-                crate::framework_hooks::HookLayout::padded(),
+                self.capacity(),
+                self.capacity(),
             )
             .trace(native::circuits::challenge_binding::Witness {
                 unified,

@@ -252,8 +252,8 @@ impl<C: Cycle, R, const HEADER_SIZE: usize> Stage<C, R, HEADER_SIZE> {
 impl<C: Cycle, R, const HEADER_SIZE: usize> Default for Stage<C, R, HEADER_SIZE> {
     fn default() -> Self {
         Self::with_shapes(
-            crate::framework_hooks::HookLayout::padded(),
-            crate::framework_hooks::HookLayout::padded(),
+            crate::framework_hooks::HookLayout::typed_placeholder(),
+            crate::framework_hooks::HookLayout::typed_placeholder(),
         )
     }
 }
@@ -267,8 +267,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
 
     fn values() -> usize {
         num_values(
-            crate::framework_hooks::HookLayout::padded(),
-            crate::framework_hooks::HookLayout::padded(),
+            crate::framework_hooks::HookLayout::typed_placeholder(),
+            crate::framework_hooks::HookLayout::typed_placeholder(),
         )
     }
 

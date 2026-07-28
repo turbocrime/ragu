@@ -87,10 +87,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 let (proof, data, y) = witness.cast();
                 let y = Element::alloc(dr, &mut (), y)?;
                 let proof_inputs = ProofInputs::<_, C, HEADER_SIZE>::alloc_for_verify::<R, H>(
-                    dr,
-                    proof,
-                    data,
-                    crate::framework_hooks::HookLayout::padded(),
+                    dr, proof, data, capacity,
                 )?;
 
                 let (unified_ky, unified_bridge_ky) = proof_inputs.unified_ky_values(dr, &y)?;
@@ -103,7 +100,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
 
         // Build a and b polynomials for each revdot claim.
         let source = native::SingleProofSource { proof: pcd.proof() };
-        let mut builder = claims::Builder::new(&self.native_registry, y, z);
+        let mut builder = claims::Builder::new(&self.native_registry, y, z, capacity);
         native_claims::build(&source, &mut builder)?;
 
         // Check all native revdot claims.
@@ -130,11 +127,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             let y_nested = C::ScalarField::random(&mut rng);
             let z_nested = C::ScalarField::random(&mut rng);
             let mut nested_builder =
-                claims::Builder::new(&self.nested_registry, y_nested, z_nested);
-            nested_claims::build(&nested_source, &mut nested_builder)?;
+                claims::Builder::new(&self.nested_registry, y_nested, z_nested, capacity);
+            nested_claims::build(&nested_source, &mut nested_builder, capacity)?;
 
             let ky_source = nested::SingleProofKySource::<C::ScalarField>::new();
-            nested::ky_values(&ky_source)
+            nested::ky_values(&ky_source, capacity)
                 .zip(nested_builder.a.iter().zip(nested_builder.b.iter()))
                 .all(|(ky, (a, b))| a.revdot(b) == ky)
         };

@@ -62,6 +62,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let b = fold_revdot::fold_inner::<_, _, native::RevdotParameters>(&claims.b, mu_nu);
         drop(claims);
 
+        let capacity = self.capacity();
         let (ky, collapsed) = Emulator::emulate_wireless(
             (
                 preamble_witness,
@@ -74,8 +75,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 let (preamble_witness, inner_error_terms, y, mu, nu) = witness.cast();
                 let allocator = &mut ();
 
-                let preamble = native::stages::preamble::Stage::<C, R, HEADER_SIZE>::default()
-                    .witness(dr, preamble_witness.as_ref().map(|w| *w))?;
+                let preamble = native::stages::preamble::Stage::<C, R, HEADER_SIZE>::with_shapes(
+                    capacity, capacity,
+                )
+                .witness(dr, preamble_witness.as_ref().map(|w| *w))?;
 
                 let y = Element::alloc(dr, allocator, y)?;
                 let (left_unified_ky, left_unified_bridge_ky) =

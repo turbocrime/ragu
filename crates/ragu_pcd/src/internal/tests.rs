@@ -378,7 +378,7 @@ fn native_chain_layouts_tile_typed_chain() {
     type Inner = stages::inner_error::Stage<Pasta, R, HEADER_SIZE, RevdotParameters>;
     type F = <Pasta as ragu_arithmetic::Cycle>::CircuitField;
 
-    let padded = crate::framework_hooks::HookLayout::padded();
+    let padded = crate::framework_hooks::HookLayout::typed_placeholder();
     let (query_chain, error_chain) = chain_layouts::<Pasta, R, HEADER_SIZE>(
         crate::internal::native::InternalCircuitIndex::NUM,
         padded,
@@ -441,7 +441,7 @@ fn nested_chain_layout_tiles_typed_chain() {
     type Host = <Pasta as ragu_arithmetic::Cycle>::HostCurve;
     type F = <Pasta as ragu_arithmetic::Cycle>::ScalarField;
 
-    let padded = crate::framework_hooks::HookLayout::padded();
+    let padded = crate::framework_hooks::HookLayout::typed_placeholder();
     let chain = chain_layout::<Host, R>(padded, padded, padded);
 
     let expected: [(usize, usize); 10] = [

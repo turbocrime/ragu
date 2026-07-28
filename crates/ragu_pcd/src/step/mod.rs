@@ -117,10 +117,11 @@ impl Index {
 #[test]
 fn test_index_map() -> Result<()> {
     let num_application_steps = 10;
-    let num_internal = crate::internal::native::NativeIndexSpace::new(
-        crate::internal::VariantSpace::from_plans(&[crate::framework_hooks::HookLayout::padded()]),
-    )
-    .num_internal();
+    let num_internal =
+        crate::internal::native::NativeIndexSpace::new(crate::internal::VariantSpace::from_plans(
+            &[crate::framework_hooks::HookLayout::typed_placeholder()],
+        ))
+        .num_internal();
     let app_offset = NUM_INTERNAL_STEPS + num_internal;
 
     // Internal steps come after internal circuits

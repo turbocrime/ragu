@@ -41,9 +41,13 @@ use crate::internal::{Side, endoscalar};
 ///
 /// The endoscaling circuits process these points across
 /// [`NUM_ENDOSCALING_STEPS`] steps.
+/// The point count at the typed placeholder shape — for
+/// [`PointsStage`](crate::internal::endoscalar::PointsStage)'s typed
+/// `values()` and `Default`, which take no shape. Every real construction is
+/// sized by [`num_endoscaling_points`] at the application's capacity.
 pub const NUM_ENDOSCALING_POINTS: usize = num_endoscaling_points(
-    crate::framework_hooks::HookLayout::padded(),
-    crate::framework_hooks::HookLayout::padded(),
+    crate::framework_hooks::HookLayout::typed_placeholder(),
+    crate::framework_hooks::HookLayout::typed_placeholder(),
 );
 
 /// One child's contribution to the `_10_p` commitment walk: one point per
@@ -76,6 +80,7 @@ pub const fn num_endoscaling_steps(
 
 /// Number of endoscaling steps, derived from [`NUM_ENDOSCALING_POINTS`] via
 /// [`endoscalar::num_steps`].
+#[allow(dead_code)] // documentation anchor; the value path uses num_endoscaling_steps
 const NUM_ENDOSCALING_STEPS: usize = endoscalar::num_steps(NUM_ENDOSCALING_POINTS);
 
 /// The nested stage chain's value-level geometry for a step of shape `own`

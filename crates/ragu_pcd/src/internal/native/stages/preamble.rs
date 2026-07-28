@@ -47,7 +47,7 @@ pub struct ClaimInstance<'dr, D: Driver<'dr>> {
 /// polynomial-slot region of that instance.
 ///
 /// One per polynomial, not one per query — see
-/// [`InstanceLen`](crate::step::internal::adapter::InstanceLen).
+/// [`instance_len`](crate::step::internal::adapter::instance_len).
 #[derive(Gadget, Consistent)]
 pub struct PolyInstance<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     #[ragu(gadget)]
@@ -188,7 +188,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
     /// Returns `application_ky` = k(y) for `(children.left, children.right,
     /// output_header, polys, claims)` — the polynomial slots follow the
     /// headers and the query slots follow those, matching the instance layout
-    /// the adapter writes (`step::internal::adapter::InstanceLen`). This is
+    /// the adapter writes (`step::internal::adapter::instance_len`). This is
     /// what binds the witnessed polynomials and claim instances to the child's
     /// committed application rx.
     pub fn application_ky(&self, dr: &mut D, y: &Element<'dr, D>) -> Result<Element<'dr, D>> {
@@ -272,9 +272,12 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                 D::try_just(|| {
                     if proof.as_ref().take().application_polys().len() != num_polys {
                         return Err(Error::MalformedEncoding(
-                            "proof does not carry exactly the configured number of polynomial \
-                             commitments"
-                                .into(),
+                            alloc::format!(
+                                "proof carries {} polynomial commitments, not the configured {}",
+                                proof.as_ref().take().application_polys().len(),
+                                num_polys,
+                            )
+                            .into(),
                         ));
                     }
                     Ok(())
@@ -473,8 +476,8 @@ impl<C: Cycle, R, const HEADER_SIZE: usize> Stage<C, R, HEADER_SIZE> {
 impl<C: Cycle, R, const HEADER_SIZE: usize> Default for Stage<C, R, HEADER_SIZE> {
     fn default() -> Self {
         Self::with_shapes(
-            crate::framework_hooks::HookLayout::padded(),
-            crate::framework_hooks::HookLayout::padded(),
+            crate::framework_hooks::HookLayout::typed_placeholder(),
+            crate::framework_hooks::HookLayout::typed_placeholder(),
         )
     }
 }
@@ -489,8 +492,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     fn values() -> usize {
         num_values(
             HEADER_SIZE,
-            crate::framework_hooks::HookLayout::padded(),
-            crate::framework_hooks::HookLayout::padded(),
+            crate::framework_hooks::HookLayout::typed_placeholder(),
+            crate::framework_hooks::HookLayout::typed_placeholder(),
         )
     }
 

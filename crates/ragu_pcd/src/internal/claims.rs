@@ -89,6 +89,9 @@ pub struct Builder<'m, 'rx, A, F: PrimeField, R: Rank> {
     pub a: Vec<A>,
     /// The accumulated `b` polynomials for revdot claims.
     pub b: Vec<Cow<'rx, sparse::Polynomial<F, R>>>,
+    /// The application's slot capacity — the shape its registry was built
+    /// with, and so the shape a nested claim resolves its circuit index from.
+    pub capacity: crate::framework_hooks::HookLayout,
 }
 
 impl<'m, 'rx, A, F: PrimeField, R: Rank> Builder<'m, 'rx, A, F, R>
@@ -96,7 +99,12 @@ where
     A: Borrow<sparse::Polynomial<F, R>>,
 {
     /// Create a new claim builder.
-    pub fn new(registry: &'m Registry<'m, F, R>, y: F, z: F) -> Self {
+    pub fn new(
+        registry: &'m Registry<'m, F, R>,
+        y: F,
+        z: F,
+        capacity: crate::framework_hooks::HookLayout,
+    ) -> Self {
         Self {
             registry,
             y,
@@ -104,6 +112,7 @@ where
             tz: R::tz(z),
             a: Vec::new(),
             b: Vec::new(),
+            capacity,
         }
     }
 

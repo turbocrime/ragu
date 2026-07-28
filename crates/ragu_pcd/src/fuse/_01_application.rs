@@ -52,10 +52,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     )> {
         let (left_proof, left_data) = left.into_parts();
         let (right_proof, right_data) = right.into_parts();
-        let (trace, aux) = MultiStage::new(Adapter::<C, S, R, HEADER_SIZE>::new(
-            step,
-            Some(self.params),
-        )?)
+        // The same circuit registration measured, so the same capacity:
+        // synthesizing at the step's own shape would produce a narrower
+        // instance than the registry committed to.
+        let (trace, aux) = MultiStage::new(
+            Adapter::<C, S, R, HEADER_SIZE>::new(step, Some(self.params))?
+                .with_capacity(self.capacity())?,
+        )
         .trace((
             Alphas {
                 bridge: builder.bridge_alpha(),

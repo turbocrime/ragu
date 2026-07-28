@@ -383,18 +383,22 @@ pub struct PolyQueryLayout {
 }
 
 impl HookLayout {
-    /// The padded shape every proof currently carries: the crate's slot
-    /// capacities. Transitional — while slot padding exists, a child's
-    /// effective shape is this rather than its discovered plan, so this is
-    /// what shape-parameterized geometry is fed. It dies with the padding.
-    pub(crate) const fn padded() -> Self {
+    /// A fixed placeholder shape, for the typed staging path only.
+    ///
+    /// A `Stage`'s associated `values()` takes no arguments, so a
+    /// shape-dependent stage has to name *some* shape there. Nothing real is
+    /// built through it: every construction that ends up in a registry goes
+    /// through `with_shapes`/`configure_stage_sized` and is fed the
+    /// application's capacity. What `values()` is still good for is the
+    /// self-consistency check — `assert_stage_values` builds the stage at this
+    /// same shape and counts its wires — so the value only has to be fixed,
+    /// not meaningful.
+    pub(crate) const fn typed_placeholder() -> Self {
         Self {
-            challenge: ChallengeLayout {
-                calls: crate::NUM_CHALLENGE_SLOTS,
-            },
+            challenge: ChallengeLayout { calls: 2 },
             poly_query: PolyQueryLayout {
-                polys: crate::NUM_POLY_SLOTS,
-                claims: crate::NUM_QUERY_SLOTS,
+                polys: 8,
+                claims: 8,
             },
         }
     }

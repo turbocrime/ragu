@@ -22,10 +22,7 @@ use ragu_primitives::{Element, extract_endoscalar, lift_endoscalar};
 use super::{NativeF, NativeSPrime, RegistryWy};
 use crate::{
     Application, Proof,
-    internal::{
-        native::{RxComponent, RxIndex},
-        nested::NUM_ENDOSCALING_POINTS,
-    },
+    internal::native::{RxComponent, RxIndex},
     proof::ProofBuilder,
 };
 
@@ -130,7 +127,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         // and delegate to the shared endoscaling helper, which also
         // sets `nested_endoscalar_rx`, `nested_points_rx`, and
         // `nested_endoscaling_step_rxs` on the builder.
-        let mut points = Vec::with_capacity(NUM_ENDOSCALING_POINTS);
+        let mut points = Vec::with_capacity(crate::internal::nested::num_endoscaling_points(
+            self.capacity(),
+            self.capacity(),
+        ));
         points.push(f.commitment);
         points.extend_from_slice(&commitments);
 

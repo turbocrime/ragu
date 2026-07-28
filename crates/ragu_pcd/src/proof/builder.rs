@@ -606,16 +606,31 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         { native_query: native_query_commitment(), registry_xy: native_registry_xy_commitment() }
     );
 
-    cached_bridge!(
-        bridge_eval_rx,
-        bridge_eval_commitment,
-        nested::RxIndex::BridgeEval,
-        eval,
-        {
-            native_eval: native_eval_commitment(),
-            claims: claim_host_commitments()
+    /// The eval bridge, written out rather than through [`cached_bridge!`]:
+    /// its stage is shaped by the application's claim capacity, and the macro
+    /// builds its stage through `Stage::rx`, whose `Default` is the typed
+    /// placeholder shape.
+    pub(crate) fn bridge_eval_rx(&self) -> Result<&sparse::Polynomial<C::ScalarField, R>> {
+        if let Some(rx) = self.bridge_eval_rx.get() {
+            return Ok(rx);
         }
-    );
+        let rx = StageExt::<C::ScalarField, R>::rx_configured(
+            &nested::stages::eval::Stage::<C::HostCurve, R>::with_shape(self.capacity),
+            self.bridge_alpha_power(nested::RxIndex::BridgeEval),
+            &nested::stages::eval::Witness {
+                native_eval: self.native_eval_commitment(),
+                claims: self.claim_host_commitments(),
+            },
+        )?;
+        Ok(self.bridge_eval_rx.get_or_init(|| rx))
+    }
+
+    pub(crate) fn bridge_eval_commitment(&self) -> Result<C::NestedCurve> {
+        let rx = self.bridge_eval_rx()?;
+        Ok(*self
+            .bridge_eval_commitment
+            .get_or_init(|| rx.commit_to_affine(C::nested_generators(self.params))))
+    }
 
     /// Derives the bridge stage rx for poly-query claim `slot`.
     ///

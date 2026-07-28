@@ -32,7 +32,7 @@ use crate::{
         },
         native::{RxComponent, RxIndex},
         nested,
-        nested::{ChildBridgeKind, NUM_ENDOSCALING_POINTS},
+        nested::ChildBridgeKind,
     },
 };
 
@@ -600,20 +600,27 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
         points_alpha: C::ScalarField,
         builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<C::HostCurve> {
-        assert_eq!(points.len(), NUM_ENDOSCALING_POINTS);
+        let num_points =
+            crate::internal::nested::num_endoscaling_points(self.capacity(), self.capacity());
+        assert_eq!(points.len(), num_points);
 
         let witness = PointsWitness::<C::HostCurve>::new(beta_endo, points);
 
         let endoscalar_rx =
             <EndoscalarStage as StageExt<C::ScalarField, R>>::rx(endoscalar_alpha, beta_endo)?;
-        let points_rx =
-            <PointsStage<C::HostCurve> as StageExt<C::ScalarField, R>>::rx(points_alpha, &witness)?;
+        // Sized explicitly rather than through `StageExt::rx`, whose `Default`
+        // is the typed placeholder: this stage's width follows the
+        // application's capacity.
+        let points_rx = StageExt::<C::ScalarField, R>::rx_configured(
+            &PointsStage::<C::HostCurve>::with_num_points(num_points),
+            points_alpha,
+            &witness,
+        )?;
 
-        let num_steps = crate::internal::endoscalar::num_steps(NUM_ENDOSCALING_POINTS);
+        let num_steps = crate::internal::endoscalar::num_steps(num_points);
         let mut step_rxs = Vec::with_capacity(num_steps);
         for step in 0..num_steps {
-            let step_circuit =
-                EndoscalingStep::<C::HostCurve, R>::new(step, NUM_ENDOSCALING_POINTS);
+            let step_circuit = EndoscalingStep::<C::HostCurve, R>::new(step, num_points);
             let staged = MultiStage::new(step_circuit);
             let step_trace = staged
                 .trace(EndoscalingStepWitness {
@@ -624,9 +631,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
             let step_rx = self.nested_registry.assemble(
                 &step_trace,
                 nested::InternalCircuitIndex::EndoscalingStep(step as u32).circuit_index(
-                    crate::framework_hooks::HookLayout::padded(),
-                    crate::framework_hooks::HookLayout::padded(),
-                    crate::framework_hooks::HookLayout::padded(),
+                    self.capacity(),
+                    self.capacity(),
+                    self.capacity(),
                 ),
                 rng,
             )?;
@@ -640,7 +647,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
         Ok(*witness
             .interstitials
             .last()
-            .expect("NUM_ENDOSCALING_POINTS guarantees at least one interstitial"))
+            .expect("the point list guarantees at least one interstitial"))
     }
 
     pub(crate) fn trivial_pcd(&self) -> Pcd<C, R, ()> {
@@ -792,7 +799,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
         // cannot silently drift from the real prover path.
         let beta_endo = extract_endoscalar(C::CircuitField::ONE);
         let p_commitment = {
-            let mut points = Vec::with_capacity(NUM_ENDOSCALING_POINTS);
+            let mut points = Vec::with_capacity(crate::internal::nested::num_endoscaling_points(
+                self.capacity(),
+                self.capacity(),
+            ));
 
             // Initial: native_f commitment.
             points.push(host_commitment);
@@ -864,7 +874,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                     self.capacity().poly_query.polys
                 ],
             };
-            let rx = nested::stages::preamble::Stage::<C::HostCurve, R>::rx(
+            let rx = StageExt::<C::ScalarField, R>::rx_configured(
+                &nested::stages::preamble::Stage::<C::HostCurve, R>::with_shapes(
+                    self.capacity(),
+                    self.capacity(),
+                ),
                 C::ScalarField::ONE,
                 &nested::stages::preamble::Witness {
                     native_preamble: host_commitment,

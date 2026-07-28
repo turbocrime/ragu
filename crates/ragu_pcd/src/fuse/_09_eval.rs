@@ -44,7 +44,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 registry_xy: builder.native_registry_xy_poly().eval(u),
             },
         };
-        let rx = native::stages::eval::Stage::<C, R, HEADER_SIZE>::rx(
+        let rx = StageExt::<C::CircuitField, R>::rx_configured(
+            &native::stages::eval::Stage::<C, R, HEADER_SIZE>::with_shapes(
+                self.capacity(),
+                self.capacity(),
+            ),
             C::CircuitField::random(&mut *rng),
             &eval_witness,
         )?;

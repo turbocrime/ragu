@@ -302,20 +302,26 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
         step_plans.push(trivial.layout());
         step_plans.extend(self.held_steps.iter().map(|held| held.layout()));
 
-        // The application's slot capacity, uniform across the application
+        // The application's slot capacity. Uniform across one application,
         // because the internal circuits read a child's instance as a
         // fixed-width record and any step's proof may be any fuse's child.
         //
-        // The discovered fold is `step_plans.iter().copied().reduce(max_with)`
-        // — every capacity-dependent *value* below already takes it that way.
-        // What still reads the crate constants is the internal-circuit index
-        // lookup path (`nested::claims`, `fuse::_11_circuits`,
-        // `NUM_ENDOSCALING_POINTS` and its readers), which resolves a registry
-        // index from a shape and so must be fed the same shape the registry
-        // was built with. Feeding the discovered maximum here without switching
-        // those sites would build the registry at one shape and look it up at
-        // another; they are switched next, and this becomes the fold.
-        let capacity = framework_hooks::HookLayout::padded();
+        // This *wants* to be the pointwise maximum over the plans just
+        // collected — `step_plans.iter().copied().reduce(max_with)` — and
+        // every geometry below already takes it as a value, so that one line
+        // is the whole switch. What still blocks it is
+        // [`RevdotParameters`](internal::native::RevdotParameters): the
+        // two-layer revdot fold is a fixed 19x7 of *types*, sized for the
+        // claim count these constants produce. Shrinking the capacity changes
+        // how many revdot claims the collapse circuits fold, so the groups
+        // shift and the folded claims stop verifying — measured, not assumed:
+        // at (polys 8, claims 8, calls 0) the nested claims pass and the
+        // native ones fail; at (1, 1, 1) both fail; at these constants
+        // everything passes.
+        //
+        // So the fold parameters have to follow the capacity as values before
+        // the maximum can be fed here. That is the next commit.
+        let capacity = framework_hooks::HookLayout::typed_placeholder();
 
         // The held application step adapters can be handed to the registry:
         // their circuits are measured now, with every step known. Registry
@@ -438,9 +444,6 @@ pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     /// [`ApplicationBuilder::finalize`] before hand-over; this table — not
     /// any list a proof carries — is what fuse and verify consult for a
     /// child's shape, keyed by its registry-committed circuit index.
-    // Live again once `capacity` is the fold over this table; see the note at
-    // its computation in `finalize`.
-    #[allow(dead_code)]
     step_plans: Vec<framework_hooks::HookLayout>,
     /// The application's settled slot capacity: the pointwise maximum over
     /// [`step_plans`](Self::step_plans).
@@ -469,7 +472,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         self.capacity
     }
 
-    #[allow(dead_code)] // see `step_plans`
+    #[allow(dead_code)] // the per-step consumer arrives with per-step exactness
     pub(crate) fn step_plan(
         &self,
         index: ragu_circuits::registry::CircuitIndex,

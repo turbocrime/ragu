@@ -40,7 +40,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             builder.right_header(),
         )?;
 
-        let rx = native::stages::preamble::Stage::<C, R, HEADER_SIZE>::rx(
+        let rx = StageExt::<C::CircuitField, R>::rx_configured(
+            &native::stages::preamble::Stage::<C, R, HEADER_SIZE>::with_shapes(
+                self.capacity(),
+                self.capacity(),
+            ),
             C::CircuitField::random(&mut *rng),
             &preamble_witness,
         )?;
@@ -57,7 +61,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         right: &Proof<C, R>,
         builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<()> {
-        let bridge_rx = nested::stages::preamble::Stage::<C::HostCurve, R>::rx(
+        let bridge_rx = StageExt::<C::ScalarField, R>::rx_configured(
+            &nested::stages::preamble::Stage::<C::HostCurve, R>::with_shapes(
+                self.capacity(),
+                self.capacity(),
+            ),
             C::ScalarField::random(&mut *rng),
             &nested::stages::preamble::Witness {
                 native_preamble: builder.native_preamble_commitment(),
