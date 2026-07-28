@@ -306,6 +306,59 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
         ))
     }
 
+    /// As [`configure_stage`](Self::configure_stage), with the stage's slot
+    /// count supplied as a value instead of read from `Next::values()`.
+    ///
+    /// This is the typed door's value-width variant: the `Parent = Current`
+    /// typestate still orders the chain, but the *width* comes from the
+    /// caller — for circuits whose stage widths are a property of the
+    /// application (per-shape variants), `Next::values()` describes only one
+    /// of the widths in use. The caller owns the obligation that every
+    /// consumer of this trace (its mask, its rx, the stages that follow)
+    /// computes positions from the same value; the value-level layouts that
+    /// feed masks and rx are built from exactly these widths.
+    pub fn configure_stage_sized<Next: Stage<D::F, R, Parent = Current> + 'dr>(
+        self,
+        stage: Next,
+        num_slots: usize,
+    ) -> Result<(
+        StageGuard<'dr, D, R, Next>,
+        StageBuilder<'a, 'dr, D, R, Next, Target>,
+    )> {
+        let num_gates = num_slots.div_ceil(2);
+
+        let mut emulator = Emulator::counter();
+        let mut num_wires = stage.witness(&mut emulator, Empty)?.num_wires()?;
+
+        if num_wires > num_slots {
+            return Err(ragu_core::Error::GateBoundExceeded { limit: num_gates });
+        }
+
+        let allocator = &mut Standard::new();
+        let mut wires = Vec::with_capacity(num_wires);
+        for _ in 0..num_wires {
+            wires.push(allocator.alloc(self.driver, || Ok(Coeff::Zero))?);
+        }
+
+        while (num_wires / 2) < num_gates {
+            allocator.alloc(self.driver, || Ok(Coeff::Zero))?;
+            num_wires += 1;
+        }
+
+        Ok((
+            StageGuard {
+                stage,
+                stage_wires: wires,
+                _marker: PhantomData,
+            },
+            StageBuilder {
+                driver: self.driver,
+                on_finish: self.on_finish,
+                _marker: PhantomData,
+            },
+        ))
+    }
+
     /// Reserves a **run** of stages whose slot boundaries come from a
     /// value-level layout, while the run as a whole occupies one ordinary
     /// typed stage `Next`.
@@ -365,6 +418,60 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
         {
             return Err(ragu_core::Error::GateBoundExceeded {
                 limit: Next::num_gates(),
+            });
+        }
+
+        let mut guards = Vec::with_capacity(layout.len());
+        for slot in 0..layout.len() {
+            guards.push(self.reserve_slot(
+                stage.clone(),
+                layout.width(slot),
+                layout.num_gates(slot),
+            )?);
+        }
+
+        Ok((
+            guards,
+            StageBuilder {
+                driver: self.driver,
+                on_finish: self.on_finish,
+                _marker: PhantomData,
+            },
+        ))
+    }
+
+    /// As [`configure_induced`](Self::configure_induced), with the run's
+    /// expected start gate supplied as a value instead of read from
+    /// `Next::skip_gates()`.
+    ///
+    /// The value-width twin of
+    /// [`configure_stage_sized`](Self::configure_stage_sized): when the stages
+    /// before the run have value-level widths, the typed chain no longer knows
+    /// where the run begins, so the caller — who built the value-level chain —
+    /// says where, and the layout is checked against that instead. The run's
+    /// span is the layout's own; the caller owns the obligation that
+    /// everything after the run computes positions from the same layout.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GateBoundExceeded`](ragu_core::Error::GateBoundExceeded) if
+    /// the layout's first slot does not start at `start_gate`.
+    pub fn configure_induced_sized<Next, S>(
+        mut self,
+        stage: S,
+        layout: &super::InducedStages,
+        start_gate: usize,
+    ) -> Result<(
+        Vec<InducedGuard<'dr, D, R, S>>,
+        StageBuilder<'a, 'dr, D, R, Next, Target>,
+    )>
+    where
+        Next: Stage<D::F, R, Parent = Current>,
+        S: Stage<D::F, R> + Clone + 'dr,
+    {
+        if layout.skip_gates(0) != start_gate {
+            return Err(ragu_core::Error::GateBoundExceeded {
+                limit: layout.final_skip_gates() - layout.skip_gates(0),
             });
         }
 

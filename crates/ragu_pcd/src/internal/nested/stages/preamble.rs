@@ -16,7 +16,7 @@ use ragu_core::{
 use ragu_primitives::{Point, io::Write};
 
 use crate::{
-    NUM_CHALLENGE_SLOTS, NUM_POLY_SLOTS, Proof,
+    Proof,
     internal::{endoscalar::PointsStage, native::RxIndex, nested::EndoPoints},
     slot_vec::SlotVec,
 };
@@ -118,14 +118,14 @@ impl<C: CurveAffine> ChildWitness<C> {
             stashed_outer_error: proof.native_rx_commitment(RxIndex::OuterError),
             stashed_query: proof.native_rx_commitment(RxIndex::Query),
             stashed_eval: proof.native_rx_commitment(RxIndex::Eval),
-            stashed_challenge_stages: (0..NUM_CHALLENGE_SLOTS)
+            stashed_challenge_stages: (0..proof.application_challenges().len())
                 .map(|i| proof.native_rx_commitment(RxIndex::ChallengeStage(i as u32)))
                 .collect(),
             stashed_ab_a: proof.native_commitment(RxComponent::AbA),
             stashed_ab_b: proof.native_commitment(RxComponent::AbB),
             stashed_registry_xy: proof.native_registry_xy_commitment(),
             stashed_p: proof.native_p_commitment(),
-            stashed_claims: (0..NUM_POLY_SLOTS)
+            stashed_claims: (0..proof.application_polys().len())
                 .map(|i| proof.claim_host_commitment(i))
                 .collect(),
         }
@@ -280,20 +280,33 @@ pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
 }
 
 pub struct Stage<C: CurveAffine, R> {
-    /// Number of poly-query claim slots each child carries.
-    num_polys: usize,
-    /// Number of challenge-stage slots each child carries.
-    num_challenges: usize,
+    /// The left child's shape.
+    left: crate::framework_hooks::HookLayout,
+    /// The right child's shape.
+    right: crate::framework_hooks::HookLayout,
     _marker: PhantomData<(C, R)>,
+}
+
+impl<C: CurveAffine, R> Stage<C, R> {
+    /// A stage instance for children of the given shapes.
+    pub fn with_shapes(
+        left: crate::framework_hooks::HookLayout,
+        right: crate::framework_hooks::HookLayout,
+    ) -> Self {
+        Stage {
+            left,
+            right,
+            _marker: PhantomData,
+        }
+    }
 }
 
 impl<C: CurveAffine, R> Default for Stage<C, R> {
     fn default() -> Self {
-        Stage {
-            num_polys: NUM_POLY_SLOTS,
-            num_challenges: NUM_CHALLENGE_SLOTS,
-            _marker: PhantomData,
-        }
+        Self::with_shapes(
+            crate::framework_hooks::HookLayout::padded(),
+            crate::framework_hooks::HookLayout::padded(),
+        )
     }
 }
 
@@ -322,14 +335,14 @@ impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stag
             left: ChildOutput::alloc(
                 dr,
                 witness.as_ref().map(|w| &w.left),
-                self.num_polys,
-                self.num_challenges,
+                self.left.poly_query.polys,
+                self.left.challenge.calls,
             )?,
             right: ChildOutput::alloc(
                 dr,
                 witness.as_ref().map(|w| &w.right),
-                self.num_polys,
-                self.num_challenges,
+                self.right.poly_query.polys,
+                self.right.challenge.calls,
             )?,
         })
     }

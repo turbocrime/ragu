@@ -13,7 +13,7 @@ use ragu_core::{
 };
 use ragu_primitives::{Point, io::Write};
 
-use crate::{NUM_CHALLENGE_SLOTS, NUM_POLY_SLOTS, slot_vec::SlotVec};
+use crate::slot_vec::SlotVec;
 
 /// This stage's wire width for a step of shape `own` (the *current* step's
 /// slots, not a child's); the value-level source of the typed
@@ -56,20 +56,25 @@ pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
 }
 
 pub struct Stage<C: CurveAffine, R> {
-    /// Number of poly-query claim slots this stage instance carries.
-    num_polys: usize,
-    /// Number of challenge-stage slots this stage instance carries.
-    num_challenges: usize,
+    /// The current step's own shape: its poly and challenge counts size this
+    /// stage's slots.
+    own: crate::framework_hooks::HookLayout,
     _marker: PhantomData<(C, R)>,
+}
+
+impl<C: CurveAffine, R> Stage<C, R> {
+    /// A stage instance for a step of the given shape.
+    pub fn with_shape(own: crate::framework_hooks::HookLayout) -> Self {
+        Stage {
+            own,
+            _marker: PhantomData,
+        }
+    }
 }
 
 impl<C: CurveAffine, R> Default for Stage<C, R> {
     fn default() -> Self {
-        Stage {
-            num_polys: NUM_POLY_SLOTS,
-            num_challenges: NUM_CHALLENGE_SLOTS,
-            _marker: PhantomData,
-        }
+        Self::with_shape(crate::framework_hooks::HookLayout::padded())
     }
 }
 
@@ -92,10 +97,10 @@ impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stag
     {
         Ok(Output {
             native_eval: Point::alloc(dr, witness.as_ref().map(|w| w.native_eval))?,
-            claims: (0..self.num_polys)
+            claims: (0..self.own.poly_query.polys)
                 .map(|i| Point::alloc(dr, witness.as_ref().map(|w| w.claims[i])))
                 .collect::<Result<_>>()?,
-            challenge_stages: (0..self.num_challenges)
+            challenge_stages: (0..self.own.challenge.calls)
                 .map(|i| Point::alloc(dr, witness.as_ref().map(|w| w.challenge_stages[i])))
                 .collect::<Result<_>>()?,
         })
