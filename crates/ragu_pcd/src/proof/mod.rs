@@ -158,7 +158,7 @@ pub struct ClaimOpening<F> {
 #[derive(Clone, Debug)]
 pub struct ChallengeOpening<Curve, F> {
     /// The slot's input points, exactly
-    /// [`ChallengeLayout::points`](crate::framework_hooks::ChallengeLayout::points)
+    /// [`ChallengeLayout::width`](crate::framework_hooks::ChallengeLayout::width)
     /// of them — the step's, then the sentinel in each position it left empty.
     pub points: alloc::vec::Vec<Curve>,
     /// The challenge, hashed from [`points`](Self::points).
@@ -717,7 +717,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> crate::Application<'_, C, R, H
                         crate::internal::challenge::points_challenge::<C>(
                             self.params,
                             &[],
-                            self.capacity().challenge.points,
+                            self.capacity().challenge.width,
                         )
                         .expect("trivial padding challenge");
                     ChallengeOpening { points, challenge }

@@ -46,7 +46,7 @@ pub fn instance_len(header_size: usize, capacity: HookLayout) -> usize {
     header_size * 3
         + capacity.poly_query.polys * 2
         + capacity.poly_query.claims * 3
-        + capacity.challenge.calls * (capacity.challenge.points * 2 + 1)
+        + capacity.challenge.calls * (capacity.challenge.width * 2 + 1)
 }
 
 /// Discovers the hook-call counts of `step` — how many
@@ -80,7 +80,7 @@ pub(crate) fn discover_hook_layout<C: Cycle, S: Step<C>, const HEADER_SIZE: usiz
     let mut hooks = FrameworkHooks::<_, C>::new(HookLayout {
         challenge: ChallengeLayout {
             calls: usize::MAX,
-            points: challenge_points,
+            width: challenge_points,
         },
         poly_query: PolyQueryLayout {
             polys: usize::MAX,
@@ -103,7 +103,7 @@ pub(crate) fn discover_hook_layout<C: Cycle, S: Step<C>, const HEADER_SIZE: usiz
     Ok(HookLayout {
         challenge: ChallengeLayout {
             calls: outputs.challenge_pairs.len(),
-            points: challenge_points,
+            width: challenge_points,
         },
         poly_query: PolyQueryLayout {
             polys: outputs.witnessed_polys.len(),
@@ -541,14 +541,14 @@ mod tests {
         let capacity = HookLayout {
             challenge: ChallengeLayout {
                 calls: 2,
-                points: 2,
+                width: 2,
             },
             poly_query: PolyQueryLayout {
                 polys: 8,
                 claims: 8,
             },
         };
-        let slots = 8 * 2 + 8 * 3 + 2 * (capacity.challenge.points * 2 + 1);
+        let slots = 8 * 2 + 8 * 3 + 2 * (capacity.challenge.width * 2 + 1);
         assert_eq!(instance_len(1, capacity), 3 + slots);
         assert_eq!(instance_len(4, capacity), 12 + slots);
         assert_eq!(instance_len(10, capacity), 30 + slots);
@@ -703,7 +703,7 @@ mod tests {
             .with_capacity(HookLayout {
                 challenge: ChallengeLayout {
                     calls: 2,
-                    points: 2,
+                    width: 2,
                 },
                 poly_query: PolyQueryLayout::default(),
             })

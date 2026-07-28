@@ -85,17 +85,17 @@ pub(crate) const RAGU_TAG: &[u8] = b"FIXME";
 
 /// Builder for an [`Application`] for proof-carrying data.
 ///
-/// `CHALLENGE_PERMUTATIONS` is how many absorb permutations the application is
-/// willing to pay for in each
-/// [`derive_challenge`](step::StepCtx::derive_challenge) call. It fixes the
-/// widest input a call may pass — a point is two coordinates, so one
-/// permutation buys `RATE / 2` points — and that width is what every challenge
-/// slot's instance region holds, with unfilled positions taking a sentinel.
+/// `CHALLENGE_WIDTH` is the widest input a
+/// [`derive_challenge`](step::StepCtx::derive_challenge) call may pass, in
+/// curve points. Every challenge slot's instance region holds exactly that
+/// many, with the positions a caller leaves empty taking a sentinel.
 ///
-/// The cost is paid by the internal `challenge_binding` circuit, once per
-/// `(child, slot)`, out of the framework's budget rather than the step's. It is
-/// declared rather than discovered because it is a budget the application
-/// chooses to spend, not a fact about any step's body.
+/// Points are the natural unit here: a caller passes points, and the instance
+/// stores points. What the width *costs* is derived from it —
+/// [`ChallengeLayout::permutations`](framework_hooks::ChallengeLayout::permutations)
+/// gives the `⌈2·width / RATE⌉` absorb permutations, paid by the internal
+/// `challenge_binding` circuit once per `(child, slot)` rather than out of any
+/// step's gate budget.
 ///
 /// `POLYS` is how many polynomials any one step may witness. Declared for the
 /// same reason: a polynomial slot is the expensive axis — a bridge stage, a
@@ -112,10 +112,21 @@ pub(crate) const RAGU_TAG: &[u8] = b"FIXME";
 /// [`GateBoundExceeded`](ragu_core::Error::GateBoundExceeded); there is no
 /// arithmetic to do in advance, just a number to lower.
 ///
-/// Declaring it is what lets a step's circuit be measured the moment it
-/// registers. Folding it from the steps instead would mean no circuit's shape
-/// is final until the last step has arrived, since the shape includes an
-/// instance whose width counts claim slots.
+/// `CHALLENGES` is how many [`derive_challenge`](step::StepCtx::derive_challenge)
+/// calls any one step may make — the *number* of calls, where
+/// `CHALLENGE_PERMUTATIONS` fixes how wide each one is.
+///
+/// Together with `HEADER_SIZE` these four are the whole of an application
+/// circuit's instance width:
+///
+/// ```text
+/// 3·HEADER_SIZE + 2·POLYS + 3·CLAIMS + CHALLENGES·(2·points + 1)
+/// ```
+///
+/// Every term is declared, so a step's circuit shape is final the moment it
+/// registers. That is the point of declaring them: hand-over to the registry
+/// *measures* a circuit, and a shape folded from the steps is not settled until
+/// the last step has arrived.
 pub struct ApplicationBuilder<
     'params,
     C: Cycle,
@@ -123,7 +134,8 @@ pub struct ApplicationBuilder<
     const HEADER_SIZE: usize,
     const POLYS: usize,
     const CLAIMS: usize,
-    const CHALLENGE_PERMUTATIONS: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
 > {
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
@@ -150,8 +162,9 @@ impl<
     const HEADER_SIZE: usize,
     const POLYS: usize,
     const CLAIMS: usize,
-    const CHALLENGE_PERMUTATIONS: usize,
-> Default for ApplicationBuilder<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGE_PERMUTATIONS>
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> Default for ApplicationBuilder<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
 {
     fn default() -> Self {
         Self::new()
@@ -165,8 +178,9 @@ impl<
     const HEADER_SIZE: usize,
     const POLYS: usize,
     const CLAIMS: usize,
-    const CHALLENGE_PERMUTATIONS: usize,
-> ApplicationBuilder<'params, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGE_PERMUTATIONS>
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> ApplicationBuilder<'params, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
 {
     /// Create an empty [`ApplicationBuilder`] for proof-carrying data. The
     /// cycle's runtime parameters are not needed until
@@ -187,16 +201,11 @@ impl<
     /// The widest input a [`derive_challenge`](step::StepCtx::derive_challenge)
     /// call may pass, in curve points.
     ///
-    /// Derived from the declared `CHALLENGE_PERMUTATIONS` and the cycle's
-    /// Poseidon rate — the application declares the permutations it will pay
-    /// for, and the width is what they buy. Known before any step registers,
-    /// which is what lets the registration dry run witness the right number of
-    /// points.
-    fn challenge_points() -> usize {
-        framework_hooks::ChallengeLayout::points_per_call(
-            CHALLENGE_PERMUTATIONS,
-            <C::CircuitPoseidon as ragu_arithmetic::PoseidonPermutation<C::CircuitField>>::RATE,
-        )
+    /// The declared `CHALLENGE_WIDTH`, verbatim. Known before any step
+    /// registers, which is what lets the registration dry run witness the right
+    /// number of points.
+    fn challenge_width() -> usize {
+        CHALLENGE_WIDTH
     }
 
     /// Register a new application-defined [`Step`] in this context. The
@@ -225,7 +234,7 @@ impl<
         // registry would freeze the circuit's shape now, and its shape is not
         // knowable until every step has registered (see
         // [`PendingStep`](step::internal::adapter::PendingStep)).
-        let adapter = Adapter::<C, S, R, HEADER_SIZE>::new(step, None, Self::challenge_points())?;
+        let adapter = Adapter::<C, S, R, HEADER_SIZE>::new(step, None, Self::challenge_width())?;
         self.held_steps.push(Box::new(adapter));
         self.num_application_steps += 1;
 
@@ -266,12 +275,12 @@ impl<
         let rerandomize = Adapter::<C, _, R, HEADER_SIZE>::new(
             step::internal::rerandomize::Rerandomize::<()>::new(),
             Some(params),
-            Self::challenge_points(),
+            Self::challenge_width(),
         )?;
         let trivial = Adapter::<C, _, R, HEADER_SIZE>::new(
             step::internal::trivial::Trivial::new(),
             Some(params),
-            Self::challenge_points(),
+            Self::challenge_width(),
         )?;
         // The application's slot capacity. Uniform across one application,
         // because the internal circuits read a child's instance as a
@@ -297,7 +306,8 @@ impl<
         // The fold above still runs, and `Adapter::with_capacity` still checks
         // each step against the result, so a step needing more polynomials than
         // the application declared is rejected with both numbers in hand.
-        capacity.challenge.points = Self::challenge_points();
+        capacity.challenge.width = Self::challenge_width();
+        capacity.challenge.calls = CHALLENGES;
         capacity.poly_query.polys = POLYS;
         capacity.poly_query.claims = CLAIMS;
 

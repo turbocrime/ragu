@@ -161,7 +161,7 @@ pub(crate) fn padding_poly<C: Cycle, R: Rank>() -> sparse::Polynomial<C::Circuit
 /// the zeroth nested generator.
 ///
 /// A challenge slot's sponge absorbs a full complement of
-/// [`ChallengeLayout::points`](crate::framework_hooks::ChallengeLayout::points)
+/// [`ChallengeLayout::width`](crate::framework_hooks::ChallengeLayout::width)
 /// whether or not the caller supplied them all, so the prover, the root
 /// verifier, and the `challenge_binding` circuit agree on the sponge's shape
 /// by construction. Like [`padding_claim`], a fixed generator can never be

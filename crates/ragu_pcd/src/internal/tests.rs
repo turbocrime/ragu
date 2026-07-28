@@ -59,7 +59,7 @@ pub fn capacity_with_polys(polys: usize) -> crate::framework_hooks::HookLayout {
     crate::framework_hooks::HookLayout {
         challenge: crate::framework_hooks::ChallengeLayout {
             calls: 1,
-            points: 2,
+            width: 2,
         },
         poly_query: crate::framework_hooks::PolyQueryLayout { polys, claims: 1 },
     }
@@ -97,7 +97,7 @@ const NUM_APP_STEPS: usize = 6000;
 fn test_internal_circuit_constraint_counts() {
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 0, 0, 1>::new()
+    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 0, 0, 0, 2>::new()
         .register_dummy_circuits(NUM_APP_STEPS)
         .unwrap()
         .finalize(pasta)
@@ -210,7 +210,7 @@ fn print_internal_stage_parameters() {
 fn test_native_registry_digest() {
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 0, 0, 1>::new()
+    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 0, 0, 0, 2>::new()
         .register_dummy_circuits(NUM_APP_STEPS)
         .unwrap()
         .finalize(pasta)
@@ -242,7 +242,7 @@ fn test_native_registry_digest() {
     // the per-count final-trace masks, and the `ChallengeStage` rx components
     // — which shrinks `RxIndex::ALL`, and with it every stage that carries one
     // evaluation per rx component. What grew is the instance: a slot now
-    // carries `2 * challenge.points + 1` elements where it carried
+    // carries `2 * challenge.width + 1` elements where it carried
     // three, so the preamble stage and its readers widen by two per slot per
     // child.
     //
@@ -272,7 +272,7 @@ fn test_native_registry_digest() {
 fn test_nested_registry_digest() {
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 0, 0, 1>::new()
+    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 0, 0, 0, 2>::new()
         .register_dummy_circuits(NUM_APP_STEPS)
         .unwrap()
         .finalize(pasta)
@@ -330,7 +330,7 @@ fn print_registry_digests() {
 
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 0, 0, 1>::new()
+    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 0, 0, 0, 2>::new()
         .register_dummy_circuits(NUM_APP_STEPS)
         .unwrap()
         .finalize(pasta)
@@ -392,7 +392,7 @@ fn chain_layouts_tile_at_every_capacity() {
         let capacity = HookLayout {
             challenge: ChallengeLayout {
                 calls: 1,
-                points: 2,
+                width: 2,
             },
             poly_query: PolyQueryLayout { polys, claims: 1 },
         };
@@ -567,12 +567,12 @@ mod capacity_is_per_application {
         let pasta = Pasta::baked();
         // The declared polynomial capacity is the difference between these two
         // applications: `Light` witnesses none, `Heavy` witnesses two.
-        let light = ApplicationBuilder::<Pasta, R, HS, 0, 0, 1>::new()
+        let light = ApplicationBuilder::<Pasta, R, HS, 0, 0, 0, 2>::new()
             .register(Light)
             .unwrap()
             .finalize(pasta)
             .unwrap();
-        let heavy = ApplicationBuilder::<Pasta, R, HS, 2, 3, 1>::new()
+        let heavy = ApplicationBuilder::<Pasta, R, HS, 2, 3, 1, 2>::new()
             .register(Heavy)
             .unwrap()
             .finalize(pasta)
@@ -586,8 +586,8 @@ mod capacity_is_per_application {
         assert_eq!(light.capacity().poly_query.claims, 0);
         assert_eq!(heavy.capacity().poly_query.claims, 3);
         assert_eq!(
-            light.capacity().challenge.points,
-            framework_hooks::ChallengeLayout::points_per_call(1, 4)
+            light.capacity().challenge.width,
+            2
         );
 
         // Discovered: how many challenges a step actually derives. The last

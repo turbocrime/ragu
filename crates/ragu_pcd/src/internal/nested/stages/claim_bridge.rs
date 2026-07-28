@@ -85,7 +85,7 @@ mod tests {
             let capacity = crate::framework_hooks::HookLayout {
                 challenge: crate::framework_hooks::ChallengeLayout {
                     calls: 1,
-                    points: 2,
+                    width: 2,
                 },
                 poly_query: crate::framework_hooks::PolyQueryLayout { polys, claims: 1 },
             };

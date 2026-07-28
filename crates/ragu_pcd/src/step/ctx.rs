@@ -212,7 +212,7 @@ where
     /// it hashed.
     ///
     /// At most
-    /// [`ChallengeLayout::points`](crate::framework_hooks::ChallengeLayout::points),
+    /// [`ChallengeLayout::width`](crate::framework_hooks::ChallengeLayout::width),
     /// the width the application's declared absorb-permutation budget buys; the
     /// remaining positions are filled with a fixed non-identity sentinel so the
     /// sponge's shape is the same for every slot.
@@ -236,7 +236,7 @@ where
         &mut self,
         points: &[Point<'dr, D, C::NestedCurve>],
     ) -> Result<Element<'dr, D>> {
-        let width = self.hooks.capacity().challenge.points;
+        let width = self.hooks.capacity().challenge.width;
         if points.len() > width {
             return Err(ragu_core::Error::InvalidWitness(
                 "derive_challenge received more points than a challenge slot absorbs".into(),

@@ -241,7 +241,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
         let num_polys = shape.poly_query.polys;
         let num_queries = shape.poly_query.claims;
         let num_challenges = shape.challenge.calls;
-        let challenge_points = shape.challenge.points;
+        let challenge_points = shape.challenge.width;
         fn alloc_header<'dr, D: Driver<'dr>, const N: usize>(
             dr: &mut D,
             allocator: &mut (),
@@ -447,7 +447,7 @@ pub fn child_num_values(header_size: usize, child: crate::framework_hooks::HookL
     3 * header_size
         + 2 * child.poly_query.polys
         + 3 * child.poly_query.claims
-        + (2 * child.challenge.points + 1) * child.challenge.calls
+        + (2 * child.challenge.width + 1) * child.challenge.calls
         + 1
         + unified::NUM_WIRES
 }

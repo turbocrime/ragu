@@ -59,7 +59,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             Adapter::<C, S, R, HEADER_SIZE>::new(
                 step,
                 Some(self.params),
-                self.capacity().challenge.points,
+                self.capacity().challenge.width,
             )?
             .with_capacity(self.capacity())?,
         )
