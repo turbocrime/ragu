@@ -399,7 +399,6 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for EndoscalingStep<
         let (point_guards, dr) = dr.configure_induced_sized::<PointsStage<C, R>, _>(
             PointSlotStage::<C, R>::default(),
             &layout,
-            layout.skip_gates(0),
         )?;
         let dr = dr.finish();
 

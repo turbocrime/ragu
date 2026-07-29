@@ -119,7 +119,6 @@ impl<C: Cycle, R: Rank> PolyCommitment<C, R> {
 pub struct PolyHandle<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> {
     bridge_com: Point<'dr, D, C::NestedCurve>,
     polynomial: DriverValue<D, sparse::Polynomial<D::F, R>>,
-    slot: usize,
 }
 
 impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> PolyHandle<'dr, D, C, R> {
@@ -127,20 +126,11 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> PolyHandle<'dr
     pub(crate) fn new(
         bridge_com: Point<'dr, D, C::NestedCurve>,
         polynomial: DriverValue<D, sparse::Polynomial<D::F, R>>,
-        slot: usize,
     ) -> Self {
         Self {
             bridge_com,
             polynomial,
-            slot,
         }
-    }
-
-    /// The claim slot this handle was assigned when it was witnessed. Fixes
-    /// which bridge stage — and therefore which generators — `bridge_com`
-    /// commits to, so the claim must occupy this instance slot too.
-    pub(crate) fn slot(&self) -> usize {
-        self.slot
     }
 
     /// The in-circuit bridge commitment, for use in challenges, hashing, etc.

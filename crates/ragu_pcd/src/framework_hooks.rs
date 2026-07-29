@@ -439,8 +439,10 @@ pub struct FrameworkHookOutputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::
     /// in call order — the in-circuit commitment plus the witness-only
     /// coefficient values.
     pub witnessed_polys: Vec<PolyWires<'dr, D, C::NestedCurve>>,
-    /// Opening claims raised via [`FrameworkHooks::enforce_polynomial_query`],
-    /// in call order. Each names one of [`witnessed_polys`](Self::witnessed_polys).
+    /// Opening claims raised via
+    /// [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query),
+    /// in call order. Each carries the `bridge_com` of one of
+    /// [`witnessed_polys`](Self::witnessed_polys) — the same wire, not a copy.
     pub poly_queries: Vec<QueryWires<'dr, D, C::NestedCurve>>,
     /// The `(points, challenge)` record per `derive_challenge` call, in slot
     /// order. Padded to the application's declared challenge capacity by
@@ -497,19 +499,28 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
         Ok(slot)
     }
 
-    /// Records a witnessed polynomial in the slot
-    /// [`next_poly_slot`](Self::next_poly_slot) just returned.
+    /// Records a witnessed polynomial in `slot`, which
+    /// [`next_poly_slot`](Self::next_poly_slot) returned to the caller.
+    ///
+    /// Takes the slot rather than re-deriving it: the caller already holds it —
+    /// it needs it to pick the bridge stage before the commitment exists — so
+    /// asking again would be a second capacity check whose answer is already
+    /// known. The debug assertion pins that the two agree.
     pub(crate) fn record_polynomial(
         &mut self,
+        slot: usize,
         bridge_com: Point<'dr, D, C::NestedCurve>,
         coefficients: DriverValue<D, Vec<D::F>>,
-    ) -> Result<()> {
-        self.next_poly_slot()?;
+    ) {
+        debug_assert_eq!(
+            slot,
+            self.witnessed_polys.len(),
+            "a polynomial must be recorded in the slot next_poly_slot returned"
+        );
         self.witnessed_polys.push(PolyWires {
             bridge_com,
             coefficients,
         });
-        Ok(())
     }
 
     /// Checks that another challenge slot is available, before the caller does
@@ -558,14 +569,15 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     /// must not depend on witness values and must not exceed
     /// the application's claim capacity (checked here).
     ///
-    /// # The claim carries the commitment, and takes it from the slot
+    /// # The claim carries the commitment, and never a slot index
     ///
-    /// `poly_slot` says *which* of the step's polynomials is opened, and the
-    /// claim records that polynomial's commitment — read out of the step's own
-    /// witnessed polynomials here rather than accepted from the caller. That is
-    /// what makes the recorded `bridge_com` necessarily one of this step's
-    /// polynomials, and it is why the claim's `bridge_com` and the polynomial
-    /// region's are the same [`Point`] rather than two copies that could drift.
+    /// `bridge_com` is the [`Point`] the caller's
+    /// [`PolyHandle`](crate::PolyHandle) holds, so the claim's `bridge_com` and
+    /// the polynomial region's are the *same wire*, not two copies that could
+    /// drift. Provenance holds by construction: a `PolyHandle` can only come
+    /// from [`witness_polynomial`](crate::step::StepCtx::witness_polynomial), so
+    /// there is no slot index to resolve and nothing to check that a resolution
+    /// went to a polynomial this step actually witnessed.
     ///
     /// Claims may be raised in any order and several may open one polynomial;
     /// a repeat opening costs a claim slot and no polynomial slot.
@@ -573,11 +585,10 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     /// # Errors
     ///
     /// Returns [`Error::InvalidWitness`] if the step has already filled every
-    /// claim slot the application declared, or if `poly_slot` names a
-    /// polynomial this step never witnessed.
-    pub fn enforce_polynomial_query(
+    /// claim slot the application declared.
+    pub(crate) fn enforce_polynomial_query(
         &mut self,
-        poly_slot: usize,
+        bridge_com: Point<'dr, D, C::NestedCurve>,
         x: Element<'dr, D>,
         y: Element<'dr, D>,
     ) -> Result<()> {
@@ -586,17 +597,40 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
                 "step enforced more poly-queries than there are query slots".into(),
             ));
         }
-        let Some(poly) = self.witnessed_polys.get(poly_slot) else {
-            return Err(Error::InvalidWitness(
-                "poly-query names a polynomial slot that was never witnessed".into(),
-            ));
-        };
-        self.poly_queries.push(QueryWires {
-            bridge_com: poly.bridge_com.clone(),
-            x,
-            y,
-        });
+        self.poly_queries.push(QueryWires { bridge_com, x, y });
         Ok(())
+    }
+
+    /// Fills one unused claim slot with the canonical padding query.
+    ///
+    /// Separate from [`enforce_polynomial_query`](Self::enforce_polynomial_query)
+    /// because padding has no [`PolyHandle`](crate::PolyHandle) to name — it runs
+    /// after the step body, against slot 0, whose `bridge_com` this container
+    /// already holds. Keeping the lookup here means the *step-facing* path never
+    /// takes a slot index, which is the point: an index is a name that has to be
+    /// resolved, and a resolution that goes wrong denotes a different polynomial
+    /// silently.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidWitness`] if no claim slot is free, or if no
+    /// polynomial slot was ever filled — a claim has to name a polynomial.
+    pub(crate) fn enforce_padding_query(
+        &mut self,
+        x: Element<'dr, D>,
+        y: Element<'dr, D>,
+    ) -> Result<()> {
+        let bridge_com = self
+            .witnessed_polys
+            .first()
+            .ok_or_else(|| {
+                Error::InvalidWitness(
+                    "a padding claim requires a polynomial slot to name".into(),
+                )
+            })?
+            .bridge_com
+            .clone();
+        self.enforce_polynomial_query(bridge_com, x, y)
     }
 
     /// The number of poly-query claim slots filled so far, and the number of
@@ -616,20 +650,28 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
         self.witnessed_polys.len()
     }
 
-    /// The value of polynomial `slot` at $x = 0$ — its constant term.
+    /// The value of the first witnessed polynomial at $x = 0$ — its constant
+    /// term.
     ///
     /// [`StepCtx::finish_slots`](crate::step::StepCtx) uses this to make a
     /// padding query trivially true without special-casing it downstream: the
-    /// claim it raises is a real opening of a real polynomial.
+    /// claim it raises is a real opening of a real polynomial, and it pairs with
+    /// the `bridge_com` [`enforce_padding_query`](Self::enforce_padding_query)
+    /// reads from the same slot.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `slot` has not been witnessed.
-    pub(crate) fn poly_at_zero(&self, slot: usize) -> DriverValue<D, D::F> {
-        self.witnessed_polys[slot]
+    /// Returns [`Error::InvalidWitness`] if no polynomial was ever witnessed.
+    pub(crate) fn first_poly_at_zero(&self) -> Result<DriverValue<D, D::F>> {
+        Ok(self
+            .witnessed_polys
+            .first()
+            .ok_or_else(|| {
+                Error::InvalidWitness("a padding claim requires a polynomial slot to name".into())
+            })?
             .coefficients
             .as_ref()
-            .map(|coefficients| coefficients.first().copied().unwrap_or(D::F::ZERO))
+            .map(|coefficients| coefficients.first().copied().unwrap_or(D::F::ZERO)))
     }
 
     /// Consumes the container and returns every hook's accumulated output.

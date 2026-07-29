@@ -27,6 +27,13 @@ use crate::internal::nested::{
 /// Not every bridge stage is here. `preamble`, `s_prime`, `inner_error` and `f`
 /// are set by the fuse stages, which blind them with an in-circuit challenge
 /// instead — [`bridge_alpha_exponent`] panics on those.
+///
+/// This is the *specification* of the ordering, not the implementation of it:
+/// [`bridge_alpha_exponent`] computes a position directly, and
+/// `bridge_alpha_exponents_are_the_expected_series` checks it against this iterator. Keeping the
+/// ordering written out as a series is what makes "no two bridge stages share a
+/// blind" checkable rather than merely asserted.
+#[cfg(test)]
 fn blinded_bridges(num_polys: usize) -> impl Iterator<Item = RxIndex> {
     // The four `cached_bridge!` stages first, then the per-slot claim bridges,
     // which chain through `Parent` and so cannot use that macro.
@@ -40,17 +47,27 @@ fn blinded_bridges(num_polys: usize) -> impl Iterator<Item = RxIndex> {
     .chain((0..num_polys).map(|slot| RxIndex::BridgeClaim(slot as u32)))
 }
 
+/// How many entries [`blinded_bridges`] yields before the per-slot claim
+/// bridges: the four `cached_bridge!` stages.
+const NUM_CACHED_BRIDGES: u64 = 4;
+
 /// The exponent of `bridge_alpha` for a blinded bridge stage — its position in
 /// [`blinded_bridges`], offset past the unusable zeroth power.
+///
+/// Computed directly rather than by searching the series. The claim slots come
+/// last, so an exponent never depends on how many there are — only on the
+/// position of the entry itself, which is why this needs no capacity and can
+/// stay a free function every caller reaches. `bridge_alpha_exponents_are_the_expected_series` pins
+/// this against [`blinded_bridges`] so the two orderings cannot drift.
 pub(crate) fn bridge_alpha_exponent(idx: RxIndex) -> u64 {
-    // The claim slots come last in the series, so an exponent never depends on
-    // how many there are — only on the position of the entry itself. Passing
-    // the largest possible count keeps every real slot in range without the
-    // capacity having to be threaded to every caller.
-    let position = blinded_bridges(u32::MAX as usize)
-        .position(|bridge| bridge == idx)
-        .unwrap_or_else(|| panic!("not blinded from bridge_alpha: {idx:?}"));
-    position as u64 + 1
+    match idx {
+        RxIndex::BridgeOuterError => 1,
+        RxIndex::BridgeAB => 2,
+        RxIndex::BridgeQuery => 3,
+        RxIndex::BridgeEval => 4,
+        RxIndex::BridgeClaim(slot) => NUM_CACHED_BRIDGES + u64::from(slot) + 1,
+        _ => panic!("not blinded from bridge_alpha: {idx:?}"),
+    }
 }
 
 /// Commits a bridge stage rx on the nested generators.
@@ -80,7 +97,7 @@ pub(crate) fn host_commitment<C: Cycle, R: Rank>(
 /// The stage blind for poly-query claim `slot`, derived from the proof's
 /// shared `bridge_alpha` source. Must agree everywhere the claim bridge is
 /// built (the prover-side `StepCtx` and the `ProofBuilder`), or the claim's
-/// `com` would not match the rx the proof carries.
+/// `bridge_com` would not match the rx the proof carries.
 pub(crate) fn claim_bridge_alpha<C: Cycle>(
     bridge_alpha: C::ScalarField,
     slot: usize,
@@ -111,7 +128,7 @@ pub(crate) fn claim_bridge_rx<C: Cycle, R: Rank>(
 }
 
 /// The nested-curve commitment to claim `slot`'s bridge stage — the value a
-/// claim carries as its `com`.
+/// claim carries as its `bridge_com`.
 pub(crate) fn claim_bridge_commitment<C: Cycle, R: Rank>(
     params: &C::Params,
     slot: usize,
@@ -225,8 +242,11 @@ mod tests {
     /// onward, and two stages colliding on one blind would be silent too. This
     /// test is the only thing that would notice.
     ///
-    /// Distinctness follows from the series being `1..=n`, which is what
-    /// deriving the exponent from a position in a single ordering buys.
+    /// Distinctness follows from mapping the whole series through
+    /// [`bridge_alpha_exponent`] and getting `1..=n` with no gaps: that is only
+    /// possible if every entry lands on its own exponent. This is also what ties
+    /// the direct computation in `bridge_alpha_exponent` to the ordering
+    /// [`blinded_bridges`] declares, so the two cannot drift apart.
     #[test]
     fn bridge_alpha_exponents_are_the_expected_series() {
         const POLYS: usize = 8;

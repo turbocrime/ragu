@@ -46,10 +46,24 @@ pub type Run<C, R> = crate::internal::Run<C, R, super::eval::Stage<C, R>>;
 pub type Slot<C, R> = host_bridge::Stage<C, R, ()>;
 
 /// The layout subdividing [`Run`] into one slot per claim.
+///
+/// A free function taking `capacity` rather than a method on
+/// [`ProofBuilder`](crate::proof::ProofBuilder), because it has two callers
+/// holding different state and both must produce a bit-identical commitment:
+/// `ProofBuilder::claim_bridge_rx` has the builder, while
+/// `StepCtx::witness_polynomial` runs during witnessing with no builder at all,
+/// only the capacity off its hooks. Caching this on the builder would fix one
+/// path and reintroduce the divergence this shape prevents.
+///
+/// Builds only the claims run. `NestedLayouts::new` would eagerly build the
+/// chain plus all four runs — points, preamble, eval, claims — and discard
+/// three; `claim_run_layout` takes the chain and produces just this one.
 pub fn layout<C: CurveAffine, R: Rank>(
     capacity: crate::framework_hooks::HookLayout,
 ) -> InducedStages {
-    crate::internal::nested::NestedLayouts::new::<C, R>(capacity).claims
+    use crate::internal::nested::{chain_layout, claim_run_layout};
+
+    claim_run_layout::<C, R>(&chain_layout::<C, R>(capacity), capacity)
 }
 
 #[cfg(test)]

@@ -66,7 +66,7 @@ use ragu_primitives::{
     consistent::Consistent,
 };
 
-use super::{Stage, StageExt};
+use super::Stage;
 use crate::polynomials::Rank;
 
 /// Builder object for synthesizing a multi-stage circuit witness.
@@ -80,6 +80,15 @@ pub struct StageBuilder<
 > {
     driver: &'a mut D,
     on_finish: fn(&mut D),
+    /// The next gate this builder will reserve at — advanced by every
+    /// [`reserve_slot`](StageBuilder::reserve_slot), which after
+    /// [`configure_stage`](StageBuilder::configure_stage) was folded into it is
+    /// the single place wires are allocated.
+    ///
+    /// This exists so [`configure_induced_sized`](StageBuilder::configure_induced_sized)
+    /// can check a run's layout against where the builder *actually is*, rather
+    /// than against a value the caller derived from that same layout.
+    gate: usize,
     _marker: PhantomData<(&'dr (), R, Current, Target)>,
 }
 
@@ -91,6 +100,11 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Target: Stage<D::F, R>>
         StageBuilder {
             driver,
             on_finish,
+            // Where the base stage `()` ends: it skips the SYSTEM gate and
+            // occupies nothing. Taken from the `Stage` impl rather than written
+            // as `1` so this cursor and `InducedStages::skip_gates`, which
+            // mirrors the same recursion, stay directly comparable.
+            gate: <() as Stage<D::F, R>>::skip_gates(),
             _marker: PhantomData,
         }
     }
@@ -204,47 +218,28 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
     /// not compute the witness. Call [`StageGuard::unenforced`] or
     /// [`StageGuard::enforced`] on the returned guard to provide the witness
     /// and obtain the output gadget.
+    /// This is [`reserve_slot`](Self::reserve_slot) at the stage's declared
+    /// width, plus the typestate transition. The two agree by definition:
+    /// `reserve_slot` derives its gate count as `num_slots.div_ceil(2)` and
+    /// [`super::StageExt::num_gates`] *is* `values().div_ceil(2)`, so passing
+    /// `Next::values()` reproduces the typed geometry exactly — including the
+    /// `limit` in the [`GateBoundExceeded`](ragu_core::Error::GateBoundExceeded)
+    /// it raises.
     pub fn configure_stage<Next: Stage<D::F, R, Parent = Current> + 'dr>(
-        self,
+        mut self,
         stage: Next,
     ) -> Result<(
         StageGuard<'dr, D, R, Next>,
         StageBuilder<'a, 'dr, D, R, Next, Target>,
     )> {
-        // Invoke wireless emulator with dummy witness to get gadget structure.
-        // The emulator never actually reads the witness values.
-        let mut emulator = Emulator::counter();
-        let mut num_wires = stage.witness(&mut emulator, Empty)?.num_wires()?;
-
-        // Check bounds
-        if num_wires > Next::values() {
-            return Err(ragu_core::Error::GateBoundExceeded {
-                limit: Next::num_gates(),
-            });
-        }
-
-        // Collect stage wires
-        let allocator = &mut Standard::new();
-        let mut wires = Vec::with_capacity(num_wires);
-        for _ in 0..num_wires {
-            wires.push(allocator.alloc(self.driver, || Ok(Coeff::Zero))?);
-        }
-
-        // Padding
-        while (num_wires / 2) < Next::num_gates() {
-            allocator.alloc(self.driver, || Ok(Coeff::Zero))?;
-            num_wires += 1;
-        }
+        let guard = self.reserve_slot(stage, Next::values())?;
 
         Ok((
-            StageGuard {
-                stage,
-                stage_wires: wires,
-                _marker: PhantomData,
-            },
+            guard,
             StageBuilder {
                 driver: self.driver,
                 on_finish: self.on_finish,
+                gate: self.gate,
                 _marker: PhantomData,
             },
         ))
@@ -276,6 +271,7 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
             StageBuilder {
                 driver: self.driver,
                 on_finish: self.on_finish,
+                gate: self.gate,
                 _marker: PhantomData,
             },
         ))
@@ -298,14 +294,11 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
     /// concrete type serves the whole family: each slot's width comes from the
     /// layout, not from the type, and the type's own chain position is unused.
     ///
-    /// The run's expected start gate is supplied as a value rather than read
-    /// from `Next::skip_gates()` — the value-width twin of
-    /// [`configure_stage_sized`](Self::configure_stage_sized). When the stages
-    /// before the run have value-level widths, the typed chain no longer knows
-    /// where the run begins, so the caller — who built the value-level chain —
-    /// says where, and the layout is checked against that instead. The run's
-    /// span is the layout's own; the caller owns the obligation that
-    /// everything after the run computes positions from the same layout.
+    /// When the stages before the run have value-level widths, the typed chain
+    /// no longer knows where the run begins — so the run's start is checked
+    /// against this builder's own gate cursor, which is where wires have
+    /// actually been reserved to. The caller still owns the obligation that
+    /// everything *after* the run computes positions from the same layout.
     ///
     /// A slot whose witness allocates an odd number of wires is padded to a
     /// whole gate, exactly as [`configure_stage`](Self::configure_stage) pads a
@@ -314,13 +307,13 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
     ///
     /// # Errors
     ///
-    /// Returns [`GateBoundExceeded`](ragu_core::Error::GateBoundExceeded) if
-    /// the layout's first slot does not start at `start_gate`.
+    /// Returns [`GateBoundExceeded`](ragu_core::Error::GateBoundExceeded) if the
+    /// layout does not begin where this builder has reserved to, or if the run
+    /// does not end where the layout says it does.
     pub fn configure_induced_sized<Next, S>(
         mut self,
         stage: S,
         layout: &super::InducedStages,
-        start_gate: usize,
     ) -> Result<(
         Vec<StageGuard<'dr, D, R, S>>,
         StageBuilder<'a, 'dr, D, R, Next, Target>,
@@ -329,7 +322,7 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
         Next: Stage<D::F, R, Parent = Current>,
         S: Stage<D::F, R> + Clone + 'dr,
     {
-        if layout.skip_gates(0) != start_gate {
+        if layout.skip_gates(0) != self.gate {
             return Err(ragu_core::Error::GateBoundExceeded {
                 limit: layout.final_skip_gates() - layout.skip_gates(0),
             });
@@ -340,11 +333,18 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
             guards.push(self.reserve_slot(stage.clone(), layout.width(slot))?);
         }
 
+        // No end-of-run check here, deliberately: `reserve_slot` advances the
+        // cursor by `width.div_ceil(2)` per slot and `final_skip_gates` is
+        // `skip_gates(0)` plus that same sum, so comparing them would be
+        // comparing the layout to itself — the vacuous shape this cursor exists
+        // to replace. The start check is the one with two independent sides.
+
         Ok((
             guards,
             StageBuilder {
                 driver: self.driver,
                 on_finish: self.on_finish,
+                gate: self.gate,
                 _marker: PhantomData,
             },
         ))
@@ -384,6 +384,10 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
             allocator.alloc(self.driver, || Ok(Coeff::Zero))?;
             num_wires += 1;
         }
+
+        // The only place this builder reserves gates, so the only place the
+        // cursor has to move.
+        self.gate += num_gates;
 
         Ok(StageGuard {
             stage,

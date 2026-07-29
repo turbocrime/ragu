@@ -112,13 +112,11 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         let (point_guards, dr) = dr.configure_induced_sized::<PointsStage<C, R>, _>(
             PointSlotStage::<C, R>::default(),
             &layouts.points,
-            layouts.points.skip_gates(0),
         )?;
         let (preamble_guards, dr) = dr
             .configure_induced_sized::<stages::preamble::Stage<C, R>, _>(
                 stages::preamble::Slot::<C, R>::default(),
                 &layouts.preamble,
-                layouts.preamble.skip_gates(0),
             )?;
         let (s_prime_guard, dr) = dr.configure_stage_sized(
             stages::s_prime::Stage::<C, R>::default(),
@@ -147,12 +145,10 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         let (eval_guards, dr) = dr.configure_induced_sized::<stages::eval::Stage<C, R>, _>(
             stages::eval::Slot::<C, R>::default(),
             &layouts.eval,
-            layouts.eval.skip_gates(0),
         )?;
         let (claim_guards, dr) = dr.configure_induced_sized::<stages::claim_bridge::Run<C, R>, _>(
             stages::claim_bridge::Slot::<C, R>::default(),
             &layouts.claims,
-            layouts.claims.skip_gates(0),
         )?;
         let dr = dr.finish();
 

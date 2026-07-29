@@ -262,6 +262,10 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     bridge_ab_rx: OnceCell<sparse::Polynomial<C::ScalarField, R>>,
     bridge_query_rx: OnceCell<sparse::Polynomial<C::ScalarField, R>>,
     bridge_eval_rx: OnceCell<sparse::Polynomial<C::ScalarField, R>>,
+    /// The chain every bridge rx above is placed through. Derived from
+    /// `capacity` alone, so it is cached like everything else here rather than
+    /// rebuilt per bridge — `chain_layout` is a ten-element allocation.
+    nested_chain: OnceCell<ragu_circuits::staging::InducedStages>,
 
     // Nested endoscaling data
     nested_endoscaling_step_rxs: Option<Vec<sparse::Polynomial<C::ScalarField, R>>>,
@@ -385,6 +389,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             bridge_ab_rx: OnceCell::new(),
             bridge_query_rx: OnceCell::new(),
             bridge_eval_rx: OnceCell::new(),
+            nested_chain: OnceCell::new(),
             nested_endoscaling_step_rxs: None,
             nested_endoscalar_rx: None,
             nested_points_rx: None,
@@ -624,8 +629,9 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
 
     /// The nested bridge chain's value-level geometry at this proof's
     /// capacity. Every bridge rx is placed through it.
-    fn nested_chain(&self) -> ragu_circuits::staging::InducedStages {
-        nested::chain_layout::<C::HostCurve, R>(self.capacity)
+    fn nested_chain(&self) -> &ragu_circuits::staging::InducedStages {
+        self.nested_chain
+            .get_or_init(|| nested::chain_layout::<C::HostCurve, R>(self.capacity))
     }
 
     /// The eval bridge, written out rather than through [`cached_bridge!`]:
@@ -638,7 +644,9 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         }
         let witness = nested::stages::eval::Witness {
             native_eval: self.native_eval_commitment(),
-            claims: self.claim_host_commitments(),
+            // `eval::Witness` owns its list, so this is the one site that needs
+            // the clone — once per proof, where it is visible.
+            claims: self.claim_host_commitments().to_vec(),
         };
         let rx = self.nested_chain().rx(
             nested::ChainStage::Eval.index(),
@@ -687,9 +695,12 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
 
     /// The claim host commitments, for the eval bridge stage witness. Requires
     /// `set_application_claims` to have been called.
-    fn claim_host_commitments(&self) -> Vec<C::HostCurve> {
+    /// Borrowed rather than cloned: `claim_bridge_rx` wants one `Copy` element
+    /// per slot, so returning an owned `Vec` cloned the whole list per slot.
+    /// The one caller that needs ownership takes it at its own site.
+    fn claim_host_commitments(&self) -> &[C::HostCurve] {
         self.claim_host_commitments
-            .clone()
+            .as_deref()
             .expect("claim_host_commitments not set before deriving the eval bridge")
     }
 

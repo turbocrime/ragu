@@ -136,9 +136,12 @@ where
         })?;
         let bridge_com = Point::alloc(self.dr, bridge_com_value)?;
         let polynomial = commitment.map(PolyCommitment::into_polynomial);
-        let handle = PolyHandle::new(bridge_com, polynomial, slot);
-        self.hooks
-            .record_polynomial(handle.bridge_commitment().clone(), handle.coefficients())?;
+        let handle = PolyHandle::new(bridge_com, polynomial);
+        self.hooks.record_polynomial(
+            slot,
+            handle.bridge_commitment().clone(),
+            handle.coefficients(),
+        );
         Ok(handle)
     }
 
@@ -202,7 +205,8 @@ where
         x: Element<'dr, D>,
         y: Element<'dr, D>,
     ) -> Result<()> {
-        self.hooks.enforce_polynomial_query(commitment.slot(), x, y)
+        self.hooks
+            .enforce_polynomial_query(commitment.bridge_commitment().clone(), x, y)
     }
 
     /// Derives a sound Fiat–Shamir challenge from `points`.
@@ -354,7 +358,6 @@ where
         // slot. Allocating a fresh pair per slot would make a step's circuit
         // grow with the application's claim capacity, which is the one thing a
         // capacity defined as "whatever space is left" must not do.
-        let slot = 0;
         let mut padding_query: Option<(Element<'dr, D>, Element<'dr, D>)> = None;
         while self.hooks.claims_filled() < capacity.poly_query.claims {
             let (x, y) = match &padding_query {
@@ -365,12 +368,12 @@ where
                         allocator,
                         D::just(|| <D::F as ragu_arithmetic::ff::Field>::ZERO),
                     )?;
-                    let y = Element::alloc(self.dr, allocator, self.hooks.poly_at_zero(slot))?;
+                    let y = Element::alloc(self.dr, allocator, self.hooks.first_poly_at_zero()?)?;
                     padding_query = Some((x.clone(), y.clone()));
                     (x, y)
                 }
             };
-            self.hooks.enforce_polynomial_query(slot, x, y)?;
+            self.hooks.enforce_padding_query(x, y)?;
         }
 
         // A padding challenge supplies no points at all, so every position

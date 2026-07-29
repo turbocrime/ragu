@@ -440,11 +440,7 @@ mod tests {
         let mut induced_dr: Emulator<Wireless<Empty, Fp>> = Emulator::counter();
         let (induced, _) =
             StageBuilder::<'_, '_, _, R, (), TypedFour>::new(&mut induced_dr, |_| {})
-                .configure_induced_sized::<TypedFour, _>(
-                    TypedTwo,
-                    &layout,
-                    <TypedFour as Stage<Fp, R>>::skip_gates(),
-                )?;
+                .configure_induced_sized::<TypedFour, _>(TypedTwo, &layout)?;
 
         assert_eq!(induced.len(), 2, "one guard per slot");
         assert_eq!(
@@ -456,11 +452,16 @@ mod tests {
         Ok(())
     }
 
-    /// A layout that does not start where the caller says it does is rejected
-    /// before any wire is allocated — the check that keeps the value-level and
-    /// type-level geometries from drifting apart.
+    /// A layout that does not begin where the builder has actually reserved to
+    /// is rejected before any wire is allocated — the check that keeps the
+    /// value-level and type-level geometries from drifting apart.
+    ///
+    /// The wrong gate has to come from the *layout* here. There is no
+    /// `start_gate` argument to pass a wrong value to: the builder tracks its
+    /// own cursor, so the only way to be misaligned is to actually be
+    /// misaligned.
     #[test]
-    fn induced_run_must_start_where_the_caller_says() {
+    fn induced_run_must_start_where_the_builder_is() {
         use ragu_core::{
             drivers::emulator::{Emulator, Wireless},
             maybe::Empty,
@@ -468,15 +469,51 @@ mod tests {
 
         use crate::staging::StageBuilder;
 
-        let layout = InducedStages::new(alloc::vec![2, 2]);
+        // A fresh builder sits at the SYSTEM gate; anchor the run one gate past
+        // it.
+        let anchored_too_late =
+            InducedStages::anchored(<() as Stage<Fp, R>>::skip_gates() + 1, alloc::vec![2, 2]);
 
         let mut dr: Emulator<Wireless<Empty, Fp>> = Emulator::counter();
         let result = StageBuilder::<'_, '_, _, R, (), TypedFour>::new(&mut dr, |_| {})
-            .configure_induced_sized::<TypedFour, _>(TypedTwo, &layout, layout.skip_gates(0) + 1);
+            .configure_induced_sized::<TypedFour, _>(TypedTwo, &anchored_too_late);
 
         assert!(
             result.is_err(),
-            "a run anchored at the wrong gate was accepted"
+            "a run anchored past the builder's cursor was accepted"
+        );
+    }
+
+    /// A run that follows an earlier stage must be anchored past it: the cursor
+    /// has moved, so a layout still anchored at the SYSTEM gate is rejected.
+    ///
+    /// This is the case the old `start_gate` parameter could not catch. Every
+    /// production caller passed `layout.skip_gates(0)`, so the check compared the
+    /// layout to itself and a layout anchored anywhere at all was accepted.
+    #[test]
+    fn induced_run_must_account_for_stages_before_it() {
+        use ragu_core::{
+            drivers::emulator::{Emulator, Wireless},
+            maybe::Empty,
+        };
+
+        use crate::staging::StageBuilder;
+
+        // Anchored at the SYSTEM gate, as if nothing preceded the run.
+        let at_the_start = InducedStages::new(alloc::vec![2, 2]);
+
+        let mut dr: Emulator<Wireless<Empty, Fp>> = Emulator::counter();
+        let builder = StageBuilder::<'_, '_, _, R, (), TypedThree>::new(&mut dr, |_| {});
+        let (_, builder) = builder
+            .add_stage::<TypedFour>()
+            .expect("the typed stage reserves");
+
+        // `TypedThree` chains after `TypedFour`, so the run stands where it does.
+        let result = builder.configure_induced_sized::<TypedThree, _>(TypedTwo, &at_the_start);
+
+        assert!(
+            result.is_err(),
+            "a run that ignored the stage before it was accepted"
         );
     }
 
