@@ -34,14 +34,12 @@ pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
 }
 
 #[derive(Default)]
-pub struct Stage<C: CurveAffine, R, const POLYS: usize> {
+pub struct Stage<C: CurveAffine, R> {
     _marker: PhantomData<(C, R)>,
 }
 
-impl<C: CurveAffine, R: Rank, const POLYS: usize> ragu_circuits::staging::Stage<C::Base, R>
-    for Stage<C, R, POLYS>
-{
-    type Parent = super::ab::Stage<C, R, POLYS>;
+impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R> {
+    type Parent = super::ab::Stage<C, R>;
     type Witness<'source> = &'source Witness<C>;
     type OutputKind = Kind![C::Base; Output<'_, _, C>];
 
@@ -73,6 +71,6 @@ mod tests {
 
     #[test]
     fn stage_values_matches_wire_count() {
-        assert_stage_values(&Stage::<EqAffine, R, 1>::default());
+        assert_stage_values(&Stage::<EqAffine, R>::default());
     }
 }

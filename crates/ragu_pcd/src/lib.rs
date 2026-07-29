@@ -160,7 +160,8 @@ impl<
     const CLAIMS: usize,
     const CHALLENGES: usize,
     const CHALLENGE_WIDTH: usize,
-> Default for ApplicationBuilder<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+> Default
+    for ApplicationBuilder<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
 {
     fn default() -> Self {
         Self::new()
@@ -255,7 +256,7 @@ impl<
                 None,
                 Self::challenge_width(),
             )?
-                .with_capacity(Self::capacity())?,
+            .with_capacity(Self::capacity())?,
         ))?;
         self.num_application_steps += 1;
 
@@ -287,24 +288,25 @@ impl<
     pub fn finalize(
         mut self,
         params: &'params C::Params,
-    ) -> Result<
-        Application<'params, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>,
-    > {
+    ) -> Result<Application<'params, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>>
+    {
         // Registration is closed, so the shape set is settled: collect every
         // step's discovered plan before hand-over freezes the circuits. The
         // internal steps are constructed here too (their discovery dry run is
         // structure-only), so their plans join the table in circuit-index
         // order: internal steps first, then application steps.
-        let rerandomize = Adapter::<C, _, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>::new(
-            step::internal::rerandomize::Rerandomize::<()>::new(),
-            Some(params),
-            Self::challenge_width(),
-        )?;
-        let trivial = Adapter::<C, _, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>::new(
-            step::internal::trivial::Trivial::new(),
-            Some(params),
-            Self::challenge_width(),
-        )?;
+        let rerandomize =
+            Adapter::<C, _, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>::new(
+                step::internal::rerandomize::Rerandomize::<()>::new(),
+                Some(params),
+                Self::challenge_width(),
+            )?;
+        let trivial =
+            Adapter::<C, _, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>::new(
+                step::internal::trivial::Trivial::new(),
+                Some(params),
+                Self::challenge_width(),
+            )?;
         // The application's slot capacity. Uniform across one application,
         // because the internal circuits read a child's instance as a
         // fixed-width record and any step's proof may be any fuse's child.
@@ -337,12 +339,7 @@ impl<
             CLAIMS,
             CHALLENGES,
             CHALLENGE_WIDTH,
-        >(
-            self.native_registry,
-            params,
-            log2_circuits,
-            capacity,
-        )?;
+        >(self.native_registry, params, log2_circuits, capacity)?;
 
         // Then, register internal steps
         self.native_registry = self
@@ -365,7 +362,7 @@ impl<
 
         // Register nested internal circuits (no application steps, no headers).
         self.nested_registry =
-            internal::nested::register_all::<C, R, POLYS>(self.nested_registry, capacity)?;
+            internal::nested::register_all::<C, R>(self.nested_registry, capacity)?;
 
         Ok(Application {
             native_registry: self.native_registry.finalize()?,

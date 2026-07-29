@@ -793,10 +793,7 @@ mod tests {
         for (discovered, hook) in [
             (
                 HookLayout {
-                    challenge: ChallengeLayout {
-                        calls: 1,
-                        width: 2,
-                    },
+                    challenge: ChallengeLayout { calls: 1, width: 2 },
                     poly_query: PolyQueryLayout::default(),
                 },
                 "derive_challenge",
@@ -846,10 +843,7 @@ mod tests {
     #[test]
     fn check_layout_is_spent_once() {
         let discovered = HookLayout {
-            challenge: ChallengeLayout {
-                calls: 1,
-                width: 2,
-            },
+            challenge: ChallengeLayout { calls: 1, width: 2 },
             poly_query: PolyQueryLayout::default(),
         };
         let mut hooks = FrameworkHooks::<Dr<'_>, Pasta>::with_expected(

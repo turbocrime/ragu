@@ -29,12 +29,12 @@ use ragu_primitives::GadgetExt as _;
 
 use crate::internal::{
     Side,
-    endoscalar::{EndoscalarStage, PointsStage},
-    nested::{EndoscalingPointsLen, stages},
+    endoscalar::{EndoscalarStage, PointSlotStage, Points, PointsStage},
+    nested::stages,
 };
 
 /// Copying circuit that relates the current preamble to a child's stages.
-pub struct Circuit<C: CurveAffine, R: Rank, const POLYS: usize> {
+pub struct Circuit<C: CurveAffine, R: Rank> {
     side: Side,
     /// The walked *child's* own shape — this circuit traverses the child's
     /// trace, so its geometry is the child's triple, grandchildren included.
@@ -46,7 +46,7 @@ pub struct Circuit<C: CurveAffine, R: Rank, const POLYS: usize> {
     _marker: PhantomData<(C, R)>,
 }
 
-impl<C: CurveAffine, R: Rank, const POLYS: usize> Circuit<C, R, POLYS> {
+impl<C: CurveAffine, R: Rank> Circuit<C, R> {
     pub fn new(
         side: Side,
         child: crate::framework_hooks::HookLayout,
@@ -63,10 +63,8 @@ impl<C: CurveAffine, R: Rank, const POLYS: usize> Circuit<C, R, POLYS> {
     }
 }
 
-impl<C: CurveAffine, R: Rank, const POLYS: usize> MultiStageCircuit<C::Base, R>
-    for Circuit<C, R, POLYS>
-{
-    type Last = stages::eval::Stage<C, R, POLYS>;
+impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
+    type Last = stages::eval::Stage<C, R>;
     type Instance<'source> = ();
     type Witness<'source> = ();
     type Output = ();
@@ -95,38 +93,54 @@ impl<C: CurveAffine, R: Rank, const POLYS: usize> MultiStageCircuit<C::Base, R>
             self.child_right,
         );
 
+        // As in `loading`: the three shape-carrying stages are runs of
+        // one-point slots inside the spans `chain` gives them.
+        let num_points =
+            crate::internal::nested::num_endoscaling_points(self.child_left, self.child_right);
+        let points_layout = crate::internal::nested::run_layout(
+            &chain,
+            1,
+            crate::internal::endoscalar::points_stage_num_slots(num_points),
+        );
+        let preamble_layout = crate::internal::nested::run_layout(
+            &chain,
+            2,
+            stages::preamble::num_slots(self.child_left, self.child_right),
+        );
+        let eval_layout =
+            crate::internal::nested::run_layout(&chain, 9, stages::eval::num_slots(self.child));
+
         let dr = dr.skip_stage_sized(EndoscalarStage, chain.width(0))?;
-        let (points_guard, dr) = dr.configure_stage_sized(
-            PointsStage::<C, EndoscalingPointsLen<POLYS>>::default(),
-            chain.width(1),
+        let (point_guards, dr) = dr.configure_induced_sized::<PointsStage<C, R>, _>(
+            PointSlotStage::<C, R>::default(),
+            &points_layout,
+            points_layout.skip_gates(0),
         )?;
-        let (preamble_guard, dr) = dr.configure_stage_sized(
-            stages::preamble::Stage::<C, R, POLYS>::default(),
-            chain.width(2),
-        )?;
-        let (s_prime_guard, dr) = dr.configure_stage_sized(
-            stages::s_prime::Stage::<C, R, POLYS>::default(),
-            chain.width(3),
-        )?;
+        let (preamble_guards, dr) = dr
+            .configure_induced_sized::<stages::preamble::Stage<C, R>, _>(
+                stages::preamble::Slot::<C, R>::default(),
+                &preamble_layout,
+                preamble_layout.skip_gates(0),
+            )?;
+        let (s_prime_guard, dr) =
+            dr.configure_stage_sized(stages::s_prime::Stage::<C, R>::default(), chain.width(3))?;
         let (inner_error_guard, dr) = dr.configure_stage_sized(
-            stages::inner_error::Stage::<C, R, POLYS>::default(),
+            stages::inner_error::Stage::<C, R>::default(),
             chain.width(4),
         )?;
         let (outer_error_guard, dr) = dr.configure_stage_sized(
-            stages::outer_error::Stage::<C, R, POLYS>::default(),
+            stages::outer_error::Stage::<C, R>::default(),
             chain.width(5),
         )?;
         let (ab_guard, dr) =
-            dr.configure_stage_sized(stages::ab::Stage::<C, R, POLYS>::default(), chain.width(6))?;
-        let (query_guard, dr) = dr.configure_stage_sized(
-            stages::query::Stage::<C, R, POLYS>::default(),
-            chain.width(7),
-        )?;
-        let dr =
-            dr.skip_stage_sized(stages::f::Stage::<C, R, POLYS>::default(), chain.width(8))?;
-        let (eval_guard, dr) = dr.configure_stage_sized(
-            stages::eval::Stage::<C, R, POLYS>::default(),
-            chain.width(9),
+            dr.configure_stage_sized(stages::ab::Stage::<C, R>::default(), chain.width(6))?;
+        let (query_guard, dr) =
+            dr.configure_stage_sized(stages::query::Stage::<C, R>::default(), chain.width(7))?;
+        let dr = dr.skip_stage_sized(stages::f::Stage::<C, R>::default(), chain.width(8))?;
+        let (eval_guards, dr) = dr.configure_induced_sized::<stages::eval::Stage<C, R>, _>(
+            stages::eval::Slot::<C, R>::default(),
+            &eval_layout,
+            eval_layout.skip_gates(0),
         )?;
         let dr = dr.finish();
 
@@ -137,14 +151,33 @@ impl<C: CurveAffine, R: Rank, const POLYS: usize> MultiStageCircuit<C::Base, R>
                 _witness.as_ref().map(|_| unreachable!())
             };
         }
-        let points = points_guard.unenforced(dr, w!())?;
-        let preamble = preamble_guard.unenforced(dr, w!())?;
+        let points = Points::from_slots(
+            point_guards
+                .into_iter()
+                .map(|guard| Ok(guard.unenforced(dr, w!())?.point))
+                .collect::<Result<alloc::vec::Vec<_>>>()?,
+            num_points,
+        )?;
+        let preamble = stages::preamble::Output::from_slots(
+            preamble_guards
+                .into_iter()
+                .map(|guard| Ok(guard.unenforced(dr, w!())?.host))
+                .collect::<Result<alloc::vec::Vec<_>>>()?,
+            self.child_left.poly_query.polys,
+            self.child_right.poly_query.polys,
+        )?;
         let s_prime = s_prime_guard.unenforced(dr, w!())?;
         let inner_error = inner_error_guard.unenforced(dr, w!())?;
         let outer_error = outer_error_guard.unenforced(dr, w!())?;
         let ab = ab_guard.unenforced(dr, w!())?;
         let query = query_guard.unenforced(dr, w!())?;
-        let eval = eval_guard.unenforced(dr, w!())?;
+        let eval = stages::eval::Output::from_slots(
+            eval_guards
+                .into_iter()
+                .map(|guard| Ok(guard.unenforced(dr, w!())?.host))
+                .collect::<Result<alloc::vec::Vec<_>>>()?,
+            self.child.poly_query.polys,
+        )?;
 
         // Select the child corresponding to this circuit's side.
         let child = match self.side {

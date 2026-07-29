@@ -46,7 +46,7 @@ impl<
         alpha: &Element<'dr, D>,
         s_prime: &NativeSPrime<C, R>,
         registry_wy: &RegistryWy<C, R>,
-        builder: &mut ProofBuilder<'_, C, R, POLYS>,
+        builder: &mut ProofBuilder<'_, C, R>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
     ) -> Result<NativeF<C, R>>
@@ -77,12 +77,12 @@ impl<
         &self,
         rng: &mut RNG,
         native: &NativeF<C, R>,
-        builder: &mut ProofBuilder<'_, C, R, POLYS>,
+        builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<()> {
         let bridge_rx = self.nested_chain_layout().rx_configured(
             8,
             C::ScalarField::random(&mut *rng),
-            &nested::stages::f::Stage::<C::HostCurve, R, POLYS>::default(),
+            &nested::stages::f::Stage::<C::HostCurve, R>::default(),
             &nested::stages::f::Witness {
                 native_f: native.commitment,
             },
@@ -101,7 +101,7 @@ impl<
         alpha: &Element<'dr, D>,
         s_prime: &NativeSPrime<C, R>,
         registry_wy: &RegistryWy<C, R>,
-        builder: &ProofBuilder<'_, C, R, POLYS>,
+        builder: &ProofBuilder<'_, C, R>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
     ) -> Result<NativeF<C, R>>

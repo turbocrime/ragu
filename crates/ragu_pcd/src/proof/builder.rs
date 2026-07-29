@@ -187,7 +187,7 @@ macro_rules! cached_bridge {
             let rx = self.nested_chain().rx_configured(
                 $pos,
                 self.bridge_alpha_power($idx),
-                &nested::stages::$stage::Stage::<C::HostCurve, R, POLYS>::default(),
+                &nested::stages::$stage::Stage::<C::HostCurve, R>::default(),
                 &nested::stages::$stage::Witness {
                     $($wit_field: self.$getter()),*
                 },
@@ -211,7 +211,7 @@ macro_rules! cached_bridge {
 /// Native commitment caches are computed lazily from polynomials on first
 /// access. Special commitments (`a`, `b`, `p`) must be provided explicitly
 /// because they are computed via non-standard techniques.
-pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, const POLYS: usize> {
+pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     params: &'params C::Params,
 
     /// Shared alpha source for the four cached bridge commitments.
@@ -335,7 +335,7 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, const POLYS: usize> {
     capacity: crate::framework_hooks::HookLayout,
 }
 
-impl<'params, C: Cycle, R: Rank, const POLYS: usize> ProofBuilder<'params, C, R, POLYS> {
+impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     /// Create a new empty builder with the given `bridge_alpha` source for
     /// deriving cached bridge polynomial alphas.
     pub(crate) fn new(
@@ -614,21 +614,21 @@ impl<'params, C: Cycle, R: Rank, const POLYS: usize> ProofBuilder<'params, C, R,
     }
 
     /// The eval bridge, written out rather than through [`cached_bridge!`]:
-    /// its stage is shaped by the application's claim capacity, and the macro
-    /// builds its stage through `Stage::rx`, whose `Default` is the typed
-    /// placeholder shape.
+    /// its stage is an induced run of one-point slots, so its wires come from
+    /// the slot list rather than from a stage body. The run is still one
+    /// commitment, so this is the same rx the fixed-vector gadget produced.
     pub(crate) fn bridge_eval_rx(&self) -> Result<&sparse::Polynomial<C::ScalarField, R>> {
         if let Some(rx) = self.bridge_eval_rx.get() {
             return Ok(rx);
         }
-        let rx = self.nested_chain().rx_configured(
+        let witness = nested::stages::eval::Witness {
+            native_eval: self.native_eval_commitment(),
+            claims: self.claim_host_commitments(),
+        };
+        let rx = self.nested_chain().rx(
             9,
             self.bridge_alpha_power(nested::RxIndex::BridgeEval),
-            &nested::stages::eval::Stage::<C::HostCurve, R, POLYS>::default(),
-            &nested::stages::eval::Witness {
-                native_eval: self.native_eval_commitment(),
-                claims: self.claim_host_commitments(),
-            },
+            &crate::internal::point_run_values(&witness.slot_points())?,
         )?;
         Ok(self.bridge_eval_rx.get_or_init(|| rx))
     }

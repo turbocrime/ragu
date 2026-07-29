@@ -337,9 +337,7 @@ mod tests {
         fn check<const POLYS: usize>() {
             let capacity = capacity_with_polys(POLYS);
             assert_eq!(
-                stage_wire_count(
-                    &Stage::<Pasta, R, { HEADER_SIZE }, POLYS, 1, 1, 2>::default()
-                ),
+                stage_wire_count(&Stage::<Pasta, R, { HEADER_SIZE }, POLYS, 1, 1, 2>::default()),
                 num_values(capacity, capacity),
                 "polys={POLYS}"
             );

@@ -39,7 +39,7 @@ impl<
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
         source: &FuseProofSource<'rx, C, R>,
-        builder: &mut ProofBuilder<'_, C, R, POLYS>,
+        builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<(
         native::stages::inner_error::Witness<C, native::RevdotParameters>,
         FuseBuilder<'_, 'rx, C::CircuitField, R>,
@@ -58,12 +58,12 @@ impl<
         &self,
         rng: &mut RNG,
         registry_wy: &RegistryWy<C, R>,
-        builder: &mut ProofBuilder<'_, C, R, POLYS>,
+        builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<()> {
         let bridge_rx = self.nested_chain_layout().rx_configured(
             4,
             C::ScalarField::random(&mut *rng),
-            &nested::stages::inner_error::Stage::<C::HostCurve, R, POLYS>::default(),
+            &nested::stages::inner_error::Stage::<C::HostCurve, R>::default(),
             &nested::stages::inner_error::Witness {
                 native_inner_error: builder.native_inner_error_commitment(),
                 registry_wy: registry_wy.commitment,
@@ -81,7 +81,7 @@ impl<
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
         source: &FuseProofSource<'rx, C, R>,
-        builder: &mut ProofBuilder<'_, C, R, POLYS>,
+        builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<(
         native::stages::inner_error::Witness<C, native::RevdotParameters>,
         FuseBuilder<'_, 'rx, C::CircuitField, R>,
@@ -103,22 +103,21 @@ impl<
                     &claims_builder.b,
                 ),
             };
-        let native_rx =
-            self.native_chain_layouts().1.rx_configured(
-                2,
-                C::CircuitField::random(&mut *rng),
-                &native::stages::inner_error::Stage::<
-                    C,
-                    R,
-                    HEADER_SIZE,
-                    POLYS,
-                    CLAIMS,
-                    CHALLENGES,
-                    CHALLENGE_WIDTH,
-                    native::RevdotParameters,
-                >::default(),
-                &inner_error_witness,
-            )?;
+        let native_rx = self.native_chain_layouts().1.rx_configured(
+            2,
+            C::CircuitField::random(&mut *rng),
+            &native::stages::inner_error::Stage::<
+                C,
+                R,
+                HEADER_SIZE,
+                POLYS,
+                CLAIMS,
+                CHALLENGES,
+                CHALLENGE_WIDTH,
+                native::RevdotParameters,
+            >::default(),
+            &inner_error_witness,
+        )?;
 
         builder.set_native_inner_error_rx(native_rx);
 

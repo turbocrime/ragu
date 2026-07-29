@@ -10,22 +10,13 @@ use ragu_circuits::polynomials::Rank;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
-    gadgets::{Bound, Gadget, Kind},
-    maybe::Maybe,
+    gadgets::{Bound, Kind},
 };
-use ragu_primitives::{
-    Point,
-    io::Write,
-    vec::{CollectFixed, ConstLen, FixedVec, Len},
-};
+use ragu_primitives::Point;
 
 use crate::{
     Proof,
-    internal::{
-        endoscalar::PointsStage,
-        native::RxIndex,
-        nested::{EndoscalingPointsLen, child_endoscaling_points_for},
-    },
+    internal::{endoscalar::PointsStage, native::RxIndex},
 };
 
 /// Number of curve points in this stage for children of the given shapes:
@@ -140,67 +131,60 @@ pub struct Witness<C: CurveAffine> {
     pub right: ChildWitness<C>,
 }
 
-/// Output gadget for a single child proof in the preamble bridge stage.
-#[derive(Gadget, Write)]
-pub struct ChildOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, const POLYS: usize> {
+/// One child proof's points in the preamble bridge stage, as the circuit body
+/// names them.
+///
+/// Deliberately **not** a gadget. The stage places its points as an induced run
+/// of one-point slots, so this struct never crosses a stage boundary as a unit
+/// — which is what lets `stashed_claims` be an ordinary [`Vec`] while the
+/// sixteen fixed points keep their names. The child's poly count stays a value.
+///
+/// Field order is the slot order [`ChildWitness::slot_points`] emits and
+/// [`from_slots`](Self::from_slots) consumes. All three are one list; changing
+/// one without the others silently moves wires.
+pub struct ChildOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     // Field order matches `_10_p` accumulation order.
     /// Point commitment from the child's application circuit.
-    #[ragu(gadget)]
     pub application: Point<'dr, D, C>,
     /// Point commitment from the child's first hashes circuit.
-    #[ragu(gadget)]
     pub hashes_1: Point<'dr, D, C>,
     /// Point commitment from the child's second hashes circuit.
-    #[ragu(gadget)]
     pub hashes_2: Point<'dr, D, C>,
     /// Point commitment from the child's inner collapse circuit.
-    #[ragu(gadget)]
     pub inner_collapse: Point<'dr, D, C>,
     /// Point commitment from the child's outer collapse circuit.
-    #[ragu(gadget)]
     pub outer_collapse: Point<'dr, D, C>,
     /// Point commitment from the child's compute_v circuit.
-    #[ragu(gadget)]
     pub compute_v: Point<'dr, D, C>,
     /// Point commitment from the child's challenge binding circuit.
-    #[ragu(gadget)]
     pub challenge_binding: Point<'dr, D, C>,
 
     /// Stashed commitment from the child's preamble bridge stage.
-    #[ragu(gadget)]
     pub stashed_preamble: Point<'dr, D, C>,
     /// Stashed commitment from the child's inner error bridge stage.
-    #[ragu(gadget)]
     pub stashed_inner_error: Point<'dr, D, C>,
     /// Stashed commitment from the child's outer error bridge stage.
-    #[ragu(gadget)]
     pub stashed_outer_error: Point<'dr, D, C>,
     /// Stashed commitment from the child's query bridge stage.
-    #[ragu(gadget)]
     pub stashed_query: Point<'dr, D, C>,
     /// Stashed commitment from the child's eval bridge stage.
-    #[ragu(gadget)]
     pub stashed_eval: Point<'dr, D, C>,
     /// Stashed `a` commitment from the child's AB bridge stage.
-    #[ragu(gadget)]
     pub stashed_ab_a: Point<'dr, D, C>,
     /// Stashed `b` commitment from the child's AB bridge stage.
-    #[ragu(gadget)]
     pub stashed_ab_b: Point<'dr, D, C>,
     /// Stashed registry XY commitment from the child.
-    #[ragu(gadget)]
     pub stashed_registry_xy: Point<'dr, D, C>,
     /// Stashed accumulated P commitment from the child.
-    #[ragu(gadget)]
     pub stashed_p: Point<'dr, D, C>,
     /// Stashed poly-query claim host commitments from the child, in slot
-    /// order.
-    #[ragu(gadget)]
-    pub stashed_claims: FixedVec<Point<'dr, D, C>, ConstLen<POLYS>>,
+    /// order. One per polynomial the child witnessed — a count the application
+    /// fixes, so a `Vec` rather than a length in the type.
+    pub stashed_claims: Vec<Point<'dr, D, C>>,
 }
 
-impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, const POLYS: usize> core::ops::Index<RxIndex>
-    for ChildOutput<'dr, D, C, POLYS>
+impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> core::ops::Index<RxIndex>
+    for ChildOutput<'dr, D, C>
 {
     type Output = Point<'dr, D, C>;
 
@@ -223,56 +207,143 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, const POLYS: usize> core:
     }
 }
 
-impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, const POLYS: usize>
-    ChildOutput<'dr, D, C, POLYS>
-{
-    fn alloc(dr: &mut D, witness: DriverValue<D, &ChildWitness<C>>) -> Result<Self> {
+impl<C: CurveAffine> ChildWitness<C> {
+    /// This child's points in slot order — the flat list the run places, and
+    /// the order [`ChildOutput::from_slots`] reads them back in.
+    fn slot_points(&self) -> Vec<C> {
+        let mut points = alloc::vec![
+            self.application,
+            self.hashes_1,
+            self.hashes_2,
+            self.inner_collapse,
+            self.outer_collapse,
+            self.compute_v,
+            self.challenge_binding,
+            self.stashed_preamble,
+            self.stashed_inner_error,
+            self.stashed_outer_error,
+            self.stashed_query,
+            self.stashed_eval,
+            self.stashed_ab_a,
+            self.stashed_ab_b,
+            self.stashed_registry_xy,
+            self.stashed_p,
+        ];
+        points.extend_from_slice(&self.stashed_claims);
+        points
+    }
+}
+
+impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> ChildOutput<'dr, D, C> {
+    /// Rebuild the named view from the run's slots, in the order
+    /// [`ChildWitness::slot_points`] emitted them.
+    ///
+    /// `polys` is how many claim slots follow the sixteen fixed points. It
+    /// comes from the same layout that sized the run, so a mismatch is a
+    /// short iterator, which is what
+    /// [`MalformedEncoding`](ragu_core::Error::MalformedEncoding) reports.
+    fn from_slots(
+        slots: &mut impl Iterator<Item = Point<'dr, D, C>>,
+        polys: usize,
+    ) -> Result<Self> {
+        let mut next = || {
+            slots.next().ok_or_else(|| {
+                ragu_core::Error::MalformedEncoding(
+                    "the preamble run yielded fewer slots than the layout sized it for".into(),
+                )
+            })
+        };
+
         Ok(ChildOutput {
-            application: Point::alloc(dr, witness.as_ref().map(|w| w.application))?,
-            hashes_1: Point::alloc(dr, witness.as_ref().map(|w| w.hashes_1))?,
-            hashes_2: Point::alloc(dr, witness.as_ref().map(|w| w.hashes_2))?,
-            inner_collapse: Point::alloc(dr, witness.as_ref().map(|w| w.inner_collapse))?,
-            outer_collapse: Point::alloc(dr, witness.as_ref().map(|w| w.outer_collapse))?,
-            compute_v: Point::alloc(dr, witness.as_ref().map(|w| w.compute_v))?,
-            challenge_binding: Point::alloc(dr, witness.as_ref().map(|w| w.challenge_binding))?,
-            stashed_preamble: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_preamble))?,
-            stashed_inner_error: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_inner_error))?,
-            stashed_outer_error: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_outer_error))?,
-            stashed_query: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_query))?,
-            stashed_eval: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_eval))?,
-            stashed_ab_a: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_ab_a))?,
-            stashed_ab_b: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_ab_b))?,
-            stashed_registry_xy: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_registry_xy))?,
-            stashed_p: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_p))?,
-            stashed_claims: ConstLen::<POLYS>::range()
-                .map(|i| Point::alloc(dr, witness.as_ref().map(|w| w.stashed_claims[i])))
-                .try_collect_fixed()?,
+            application: next()?,
+            hashes_1: next()?,
+            hashes_2: next()?,
+            inner_collapse: next()?,
+            outer_collapse: next()?,
+            compute_v: next()?,
+            challenge_binding: next()?,
+            stashed_preamble: next()?,
+            stashed_inner_error: next()?,
+            stashed_outer_error: next()?,
+            stashed_query: next()?,
+            stashed_eval: next()?,
+            stashed_ab_a: next()?,
+            stashed_ab_b: next()?,
+            stashed_registry_xy: next()?,
+            stashed_p: next()?,
+            stashed_claims: (0..polys).map(|_| next()).collect::<Result<Vec<_>>>()?,
         })
     }
 }
 
-/// Prover-internal output gadget for the preamble bridge stage.
+/// The preamble bridge stage's points, as the circuit body names them.
 ///
-/// This is stage communication data, not part of the circuit's public instance.
-#[derive(Gadget, Write)]
-pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, const POLYS: usize> {
+/// Stage communication data, not part of the circuit's public instance, and —
+/// like [`ChildOutput`] — not a gadget: the body assembles it from the run's
+/// slots.
+pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     /// Point commitment from the native preamble stage.
-    #[ragu(gadget)]
     pub native_preamble: Point<'dr, D, C>,
-    /// Output gadget for the left child proof.
-    #[ragu(gadget)]
-    pub left: ChildOutput<'dr, D, C, POLYS>,
-    /// Output gadget for the right child proof.
-    #[ragu(gadget)]
-    pub right: ChildOutput<'dr, D, C, POLYS>,
+    /// Points from the left child proof.
+    pub left: ChildOutput<'dr, D, C>,
+    /// Points from the right child proof.
+    pub right: ChildOutput<'dr, D, C>,
 }
 
-/// Both children are the application's shape, so one `POLYS` sizes both.
-pub struct Stage<C: CurveAffine, R, const POLYS: usize> {
+impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> Output<'dr, D, C> {
+    /// Rebuild the named view from the run's slots: `native_preamble`, then
+    /// the left child's block, then the right child's.
+    ///
+    /// Each child's block is sized by *its own* poly count, matching how
+    /// [`num_points`] measures the span — the two children need not be the
+    /// same shape.
+    pub fn from_slots(
+        slots: impl IntoIterator<Item = Point<'dr, D, C>>,
+        left_polys: usize,
+        right_polys: usize,
+    ) -> Result<Self> {
+        let slots = &mut slots.into_iter();
+        Ok(Output {
+            native_preamble: slots.next().ok_or_else(|| {
+                ragu_core::Error::MalformedEncoding("the preamble run yielded no slots".into())
+            })?,
+            left: ChildOutput::from_slots(slots, left_polys)?,
+            right: ChildOutput::from_slots(slots, right_polys)?,
+        })
+    }
+}
+
+/// This stage's slot count for children of the given shapes: one slot per
+/// point of [`num_points`].
+pub const fn num_slots(
+    left: crate::framework_hooks::HookLayout,
+    right: crate::framework_hooks::HookLayout,
+) -> usize {
+    num_points(left, right)
+}
+
+/// The witness body for one slot of the run: a single host-curve point.
+///
+/// Its own chain position is unused — where a slot's wires land comes from the
+/// layout, not from this type — so one type serves every point in the stage.
+pub type Slot<C, R> = super::host_bridge::Stage<C, R, ()>;
+
+/// The preamble bridge, spanning one run of one-point slots.
+///
+/// How many points there are depends on the children's poly counts, which is a
+/// property of the application, so the run's width is a value (see
+/// [`num_values`]) and this type carries no slot count. It exists to hold the
+/// run's position in the `Parent` chain; the framework reaches the layout and
+/// [`Slot`] instead, never this stage's own geometry.
+///
+/// The whole run is masked and committed as **one** stage, exactly as it was
+/// when it held a fixed vector — the subdivision decides where wires land, not
+/// how many commitments there are.
+pub struct Stage<C: CurveAffine, R> {
     _marker: PhantomData<(C, R)>,
 }
 
-impl<C: CurveAffine, R, const POLYS: usize> Default for Stage<C, R, POLYS> {
+impl<C: CurveAffine, R> Default for Stage<C, R> {
     fn default() -> Self {
         Stage {
             _marker: PhantomData,
@@ -280,30 +351,39 @@ impl<C: CurveAffine, R, const POLYS: usize> Default for Stage<C, R, POLYS> {
     }
 }
 
-impl<C: CurveAffine, R: Rank, const POLYS: usize> ragu_circuits::staging::Stage<C::Base, R>
-    for Stage<C, R, POLYS>
-{
-    type Parent = PointsStage<C, EndoscalingPointsLen<POLYS>>;
+impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R> {
+    type Parent = PointsStage<C, R>;
     type Witness<'source> = &'source Witness<C>;
-    type OutputKind = Kind![C::Base; Output<'_, _, C, POLYS>];
+    type OutputKind = Kind![C::Base; super::host_bridge::Output<'_, _, C>];
 
     fn values() -> usize {
-        2 * (1 + 2 * child_endoscaling_points_for(POLYS))
+        crate::internal::shape_dependent_stage()
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
         &self,
-        dr: &mut D,
-        witness: DriverValue<D, Self::Witness<'source>>,
+        _dr: &mut D,
+        _witness: DriverValue<D, Self::Witness<'source>>,
     ) -> Result<Bound<'dr, D, Self::OutputKind>>
     where
         Self: 'dr,
     {
-        Ok(Output {
-            native_preamble: Point::alloc(dr, witness.as_ref().map(|w| w.native_preamble))?,
-            left: ChildOutput::alloc(dr, witness.as_ref().map(|w| &w.left))?,
-            right: ChildOutput::alloc(dr, witness.as_ref().map(|w| &w.right))?,
-        })
+        crate::internal::shape_dependent_stage()
+    }
+}
+
+impl<C: CurveAffine> Witness<C> {
+    /// This stage's points in slot order — the flat list the run places, and
+    /// the list [`Output::from_slots`] reads back.
+    ///
+    /// This is also what the rx path feeds
+    /// [`InducedStages::rx`](ragu_circuits::staging::InducedStages::rx), so the
+    /// order here is the wire order the commitment covers.
+    pub fn slot_points(&self) -> Vec<C> {
+        let mut points = alloc::vec![self.native_preamble];
+        points.extend(self.left.slot_points());
+        points.extend(self.right.slot_points());
+        points
     }
 }
 
@@ -314,20 +394,58 @@ mod tests {
     use super::*;
     use crate::internal::tests::{R, capacity_with_polys, stage_wire_count};
 
-    /// `num_values` predicts the wire count at every shape, not just one.
+    /// The run's total width is exactly its slots' — the span this stage
+    /// occupies in the chain has to be what the subdivision tiles, or every
+    /// stage after it starts at the wrong gate.
     #[test]
-    fn num_values_matches_wire_count() {
-        fn check<const POLYS: usize>() {
-            let capacity = capacity_with_polys(POLYS);
+    fn num_values_matches_slots() {
+        for polys in [0, 1, 4, 8] {
+            let capacity = capacity_with_polys(polys);
             assert_eq!(
-                stage_wire_count(&Stage::<EqAffine, R, POLYS>::default()),
                 num_values(capacity, capacity),
-                "polys={POLYS}"
+                num_slots(capacity, capacity) * stage_wire_count(&Slot::<EqAffine, R>::default()),
+                "polys={polys}"
             );
         }
-        check::<0>();
-        check::<1>();
-        check::<4>();
-        check::<8>();
+    }
+
+    /// The witness emits exactly the slots the layout sizes, and
+    /// `Output::from_slots` reads back exactly that many. These two orders are
+    /// the same list stated twice; this is what pins them together.
+    #[test]
+    fn slot_points_matches_slot_count() {
+        for polys in [0, 1, 4, 8] {
+            let capacity = capacity_with_polys(polys);
+            let child = ChildWitness::<EqAffine> {
+                application: EqAffine::default(),
+                hashes_1: EqAffine::default(),
+                hashes_2: EqAffine::default(),
+                inner_collapse: EqAffine::default(),
+                outer_collapse: EqAffine::default(),
+                compute_v: EqAffine::default(),
+                challenge_binding: EqAffine::default(),
+                stashed_preamble: EqAffine::default(),
+                stashed_inner_error: EqAffine::default(),
+                stashed_outer_error: EqAffine::default(),
+                stashed_query: EqAffine::default(),
+                stashed_eval: EqAffine::default(),
+                stashed_ab_a: EqAffine::default(),
+                stashed_ab_b: EqAffine::default(),
+                stashed_registry_xy: EqAffine::default(),
+                stashed_p: EqAffine::default(),
+                stashed_claims: alloc::vec![EqAffine::default(); polys],
+            };
+            let witness = Witness {
+                native_preamble: EqAffine::default(),
+                left: child.clone(),
+                right: child,
+            };
+
+            assert_eq!(
+                witness.slot_points().len(),
+                num_slots(capacity, capacity),
+                "polys={polys}"
+            );
+        }
     }
 }

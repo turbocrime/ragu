@@ -8,14 +8,9 @@ use ragu_circuits::polynomials::Rank;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
-    gadgets::{Bound, Gadget, Kind},
-    maybe::Maybe,
+    gadgets::{Bound, Kind},
 };
-use ragu_primitives::{
-    Point,
-    io::Write,
-    vec::{CollectFixed, ConstLen, FixedVec, Len},
-};
+use ragu_primitives::Point;
 
 /// This stage's wire width for a step of shape `own` (the *current* step's
 /// slots, not a child's); the value-level source of the typed
@@ -37,25 +32,79 @@ pub struct Witness<C: CurveAffine> {
     pub claims: Vec<C>,
 }
 
-/// Prover-internal output gadget for this bridge stage.
+/// This stage's points, as the circuit body names them.
 ///
-/// This is stage communication data, not part of the circuit's
-/// public instance.
-#[derive(Gadget, Write)]
-pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, const POLYS: usize> {
-    #[ragu(gadget)]
+/// Deliberately **not** a gadget: [`Stage`] places these as an induced run of
+/// one-point slots, so this struct never crosses a stage boundary as a unit —
+/// which is what lets the step's poly count stay a value.
+pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     pub native_eval: Point<'dr, D, C>,
     /// The current step's poly-query claim host commitments, in slot order.
-    #[ragu(gadget)]
-    pub claims: FixedVec<Point<'dr, D, C>, ConstLen<POLYS>>,
+    pub claims: Vec<Point<'dr, D, C>>,
 }
 
-/// The current step's poly count sizes this stage's slots.
-pub struct Stage<C: CurveAffine, R, const POLYS: usize> {
+impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> Output<'dr, D, C> {
+    /// Rebuild the named view from the run's slots: `native_eval`, then one
+    /// slot per claim, in the order [`Witness::slot_points`] emitted them.
+    pub fn from_slots(
+        slots: impl IntoIterator<Item = Point<'dr, D, C>>,
+        polys: usize,
+    ) -> Result<Self> {
+        let slots = &mut slots.into_iter();
+        let mut next = || {
+            slots.next().ok_or_else(|| {
+                ragu_core::Error::MalformedEncoding(
+                    "the eval run yielded fewer slots than the layout sized it for".into(),
+                )
+            })
+        };
+
+        Ok(Output {
+            native_eval: next()?,
+            claims: (0..polys).map(|_| next()).collect::<Result<Vec<_>>>()?,
+        })
+    }
+}
+
+impl<C: CurveAffine> Witness<C> {
+    /// This stage's points in slot order — the flat list the run places, the
+    /// list [`Output::from_slots`] reads back, and what the rx path feeds
+    /// [`InducedStages::rx`](ragu_circuits::staging::InducedStages::rx).
+    pub fn slot_points(&self) -> Vec<C> {
+        let mut points = Vec::with_capacity(1 + self.claims.len());
+        points.push(self.native_eval);
+        points.extend_from_slice(&self.claims);
+        points
+    }
+}
+
+/// This stage's slot count for a step of shape `own`: `native_eval`, then one
+/// slot per poly-query claim.
+pub const fn num_slots(own: crate::framework_hooks::HookLayout) -> usize {
+    1 + own.poly_query.polys
+}
+
+/// The witness body for one slot of the run: a single host-curve point.
+pub type Slot<C, R> = super::host_bridge::Stage<C, R, ()>;
+
+/// The eval bridge, spanning one run of one-point slots.
+///
+/// How many claims there are is a property of the application, so the run's
+/// width is a value (see [`num_values`]) and this type carries no slot count.
+/// It holds the run's position in the `Parent` chain; the framework reaches
+/// the layout and [`Slot`] instead, never this stage's own geometry.
+///
+/// The whole run is masked and committed as **one** stage, exactly as it was
+/// when it held a fixed vector — the subdivision decides where wires land, not
+/// how many commitments there are. That matters here: a per-slot commitment
+/// would defeat the point of this stage, which is a *single* stashed copy the
+/// parent's copying circuit can check (see [`super::claim_bridge`], which
+/// deliberately does the opposite).
+pub struct Stage<C: CurveAffine, R> {
     _marker: PhantomData<(C, R)>,
 }
 
-impl<C: CurveAffine, R, const POLYS: usize> Default for Stage<C, R, POLYS> {
+impl<C: CurveAffine, R> Default for Stage<C, R> {
     fn default() -> Self {
         Stage {
             _marker: PhantomData,
@@ -63,31 +112,24 @@ impl<C: CurveAffine, R, const POLYS: usize> Default for Stage<C, R, POLYS> {
     }
 }
 
-impl<C: CurveAffine, R: Rank, const POLYS: usize> ragu_circuits::staging::Stage<C::Base, R>
-    for Stage<C, R, POLYS>
-{
-    type Parent = super::f::Stage<C, R, POLYS>;
+impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R> {
+    type Parent = super::f::Stage<C, R>;
     type Witness<'source> = &'source Witness<C>;
-    type OutputKind = Kind![C::Base; Output<'_, _, C, POLYS>];
+    type OutputKind = Kind![C::Base; super::host_bridge::Output<'_, _, C>];
 
     fn values() -> usize {
-        2 * (1 + POLYS)
+        crate::internal::shape_dependent_stage()
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
         &self,
-        dr: &mut D,
-        witness: DriverValue<D, Self::Witness<'source>>,
+        _dr: &mut D,
+        _witness: DriverValue<D, Self::Witness<'source>>,
     ) -> Result<Bound<'dr, D, Self::OutputKind>>
     where
         Self: 'dr,
     {
-        Ok(Output {
-            native_eval: Point::alloc(dr, witness.as_ref().map(|w| w.native_eval))?,
-            claims: ConstLen::<POLYS>::range()
-                .map(|i| Point::alloc(dr, witness.as_ref().map(|w| w.claims[i])))
-                .try_collect_fixed()?,
-        })
+        crate::internal::shape_dependent_stage()
     }
 }
 
@@ -98,19 +140,18 @@ mod tests {
     use super::*;
     use crate::internal::tests::{R, capacity_with_polys, stage_wire_count};
 
-    /// `num_values` predicts the wire count at every shape, not just one.
+    /// The run's total width is exactly its slots' — the span this stage
+    /// occupies in the chain has to be what the subdivision tiles, or the
+    /// claim-bridge run after it starts at the wrong gate.
     #[test]
-    fn num_values_matches_wire_count() {
-        fn check<const POLYS: usize>() {
+    fn num_values_matches_slots() {
+        for polys in [0, 1, 4, 8] {
+            let capacity = capacity_with_polys(polys);
             assert_eq!(
-                stage_wire_count(&Stage::<EqAffine, R, POLYS>::default()),
-                num_values(capacity_with_polys(POLYS)),
-                "polys={POLYS}"
+                num_values(capacity),
+                num_slots(capacity) * stage_wire_count(&Slot::<EqAffine, R>::default()),
+                "polys={polys}"
             );
         }
-        check::<0>();
-        check::<1>();
-        check::<4>();
-        check::<8>();
     }
 }

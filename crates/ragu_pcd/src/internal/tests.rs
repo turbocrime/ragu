@@ -57,10 +57,7 @@ where
 #[cfg(test)]
 pub fn capacity_with_polys(polys: usize) -> crate::framework_hooks::HookLayout {
     crate::framework_hooks::HookLayout {
-        challenge: crate::framework_hooks::ChallengeLayout {
-            calls: 1,
-            width: 2,
-        },
+        challenge: crate::framework_hooks::ChallengeLayout { calls: 1, width: 2 },
         poly_query: crate::framework_hooks::PolyQueryLayout { polys, claims: 1 },
     }
 }
@@ -394,10 +391,7 @@ fn chain_layouts_tile_at_every_capacity() {
 
     for polys in [0, 1, 4, 8] {
         let capacity = HookLayout {
-            challenge: ChallengeLayout {
-                calls: 1,
-                width: 2,
-            },
+            challenge: ChallengeLayout { calls: 1, width: 2 },
             poly_query: PolyQueryLayout { polys, claims: 1 },
         };
         let (query_chain, error_chain) =
@@ -592,10 +586,7 @@ mod capacity_is_per_application {
         assert_eq!(heavy.capacity().poly_query.polys, 2);
         assert_eq!(light.capacity().poly_query.claims, 0);
         assert_eq!(heavy.capacity().poly_query.claims, 3);
-        assert_eq!(
-            light.capacity().challenge.width,
-            2
-        );
+        assert_eq!(light.capacity().challenge.width, 2);
 
         // Discovered: how many challenges a step actually derives. The last
         // axis still folded from the steps rather than declared.

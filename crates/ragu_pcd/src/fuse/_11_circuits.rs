@@ -26,7 +26,7 @@ impl<
         inner_error_witness: &native::stages::inner_error::Witness<C, native::RevdotParameters>,
         query_witness: &native::stages::query::Witness<C>,
         eval_witness: &native::stages::eval::Witness<C::CircuitField>,
-        builder: &mut ProofBuilder<'_, C, R, POLYS>,
+        builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<()> {
         let unified = native::unified::Instance {
             bridge_preamble_commitment: builder.bridge_preamble_commitment(),
@@ -148,44 +148,42 @@ impl<
             &mut *rng,
         )?;
 
-        let (compute_v_trace, unified) =
-            native::circuits::compute_v::Circuit::<
-                C,
-                R,
-                HEADER_SIZE,
-                POLYS,
-                CLAIMS,
-                CHALLENGES,
-                CHALLENGE_WIDTH,
-            >::new()
-            .trace(native::circuits::compute_v::Witness {
-                unified,
-                preamble_witness,
-                query_witness,
-                eval_witness,
-            })?
-            .into_parts();
+        let (compute_v_trace, unified) = native::circuits::compute_v::Circuit::<
+            C,
+            R,
+            HEADER_SIZE,
+            POLYS,
+            CLAIMS,
+            CHALLENGES,
+            CHALLENGE_WIDTH,
+        >::new()
+        .trace(native::circuits::compute_v::Witness {
+            unified,
+            preamble_witness,
+            query_witness,
+            eval_witness,
+        })?
+        .into_parts();
         let compute_v_rx = self.native_registry.assemble(
             &compute_v_trace,
             native::InternalCircuitIndex::ComputeVCircuit.circuit_index(),
             &mut *rng,
         )?;
 
-        let (challenge_binding_trace, unified) =
-            native::circuits::challenge_binding::Circuit::<
-                C,
-                R,
-                HEADER_SIZE,
-                POLYS,
-                CLAIMS,
-                CHALLENGES,
-                CHALLENGE_WIDTH,
-            >::new(self.params)
-            .trace(native::circuits::challenge_binding::Witness {
-                unified,
-                preamble_witness,
-            })?
-            .into_parts();
+        let (challenge_binding_trace, unified) = native::circuits::challenge_binding::Circuit::<
+            C,
+            R,
+            HEADER_SIZE,
+            POLYS,
+            CLAIMS,
+            CHALLENGES,
+            CHALLENGE_WIDTH,
+        >::new(self.params)
+        .trace(native::circuits::challenge_binding::Witness {
+            unified,
+            preamble_witness,
+        })?
+        .into_parts();
         let challenge_binding_rx = self.native_registry.assemble(
             &challenge_binding_trace,
             native::InternalCircuitIndex::ChallengeBindingCircuit.circuit_index(),

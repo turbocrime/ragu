@@ -28,23 +28,15 @@
 
 use ragu_arithmetic::CurveAffine;
 use ragu_circuits::{polynomials::Rank, staging::InducedStages};
-use ragu_primitives::vec::Len;
 
 use super::host_bridge;
 
-/// The claim-slot count: the application's poly capacity, as a [`Len`].
-pub struct Slots<const POLYS: usize>;
-
-impl<const POLYS: usize> Len for Slots<POLYS> {
-    fn len() -> usize {
-        POLYS
-    }
-}
-
 /// The claim-bridge family: every slot, as one stage chained after
 /// [`super::eval`].
-pub type Run<C, R, const POLYS: usize> =
-    host_bridge::Run<C, R, super::eval::Stage<C, R, POLYS>, Slots<POLYS>>;
+///
+/// How many slots there are is the application's poly capacity — a value, read
+/// from [`layout`] — so it appears nowhere in this type.
+pub type Run<C, R> = host_bridge::Run<C, R, super::eval::Stage<C, R>>;
 
 /// The witness body for a single claim slot.
 ///
@@ -80,10 +72,7 @@ mod tests {
     fn layout_tiles_the_run() {
         for polys in [1, 3, 8] {
             let capacity = crate::framework_hooks::HookLayout {
-                challenge: crate::framework_hooks::ChallengeLayout {
-                    calls: 1,
-                    width: 2,
-                },
+                challenge: crate::framework_hooks::ChallengeLayout { calls: 1, width: 2 },
                 poly_query: crate::framework_hooks::PolyQueryLayout { polys, claims: 1 },
             };
             let layout = layout::<EqAffine, R>(capacity);

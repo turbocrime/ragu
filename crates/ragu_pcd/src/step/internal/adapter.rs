@@ -550,10 +550,7 @@ mod tests {
     #[test]
     fn instance_len_covers_headers_polys_claims_and_challenges() {
         let capacity = HookLayout {
-            challenge: ChallengeLayout {
-                calls: 2,
-                width: 2,
-            },
+            challenge: ChallengeLayout { calls: 2, width: 2 },
             poly_query: PolyQueryLayout {
                 polys: 8,
                 claims: 8,
@@ -580,13 +577,12 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        let adapter =
-            Adapter::<Pasta, TestStep, TestR, HEADER_SIZE, 0, 0, 0, 2>::new(
-                TestStep,
-                Some(Pasta::baked()),
-                2,
-            )
-            .expect("adapter construction should succeed");
+        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE, 0, 0, 0, 2>::new(
+            TestStep,
+            Some(Pasta::baked()),
+            2,
+        )
+        .expect("adapter construction should succeed");
         let capacity = adapter.capacity;
         let witness = Always::maybe_just(|| (test_alphas(), Fp::from(10u64), Fp::from(20u64), ()));
 
@@ -604,13 +600,12 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        let adapter =
-            Adapter::<Pasta, TestStep, TestR, HEADER_SIZE, 0, 0, 0, 2>::new(
-                TestStep,
-                Some(Pasta::baked()),
-                2,
-            )
-            .expect("adapter construction should succeed");
+        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE, 0, 0, 0, 2>::new(
+            TestStep,
+            Some(Pasta::baked()),
+            2,
+        )
+        .expect("adapter construction should succeed");
         let witness = Always::maybe_just(|| (test_alphas(), Fp::from(10u64), Fp::from(20u64), ()));
 
         let aux = MultiStage::new(adapter)
@@ -637,13 +632,12 @@ mod tests {
     /// A step without `derive_challenge` calls discovers no calls.
     #[test]
     fn discovery_finds_no_calls_for_plain_step() {
-        let adapter =
-            Adapter::<Pasta, TestStep, TestR, HEADER_SIZE, 0, 0, 0, 2>::new(
-                TestStep,
-                Some(Pasta::baked()),
-                2,
-            )
-            .expect("discovery should succeed");
+        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE, 0, 0, 0, 2>::new(
+            TestStep,
+            Some(Pasta::baked()),
+            2,
+        )
+        .expect("discovery should succeed");
         assert_eq!(adapter.challenge_calls(), 0);
     }
 
@@ -724,10 +718,7 @@ mod tests {
 
         let error = adapter
             .with_capacity(HookLayout {
-                challenge: ChallengeLayout {
-                    calls: 2,
-                    width: 2,
-                },
+                challenge: ChallengeLayout { calls: 2, width: 2 },
                 poly_query: PolyQueryLayout::default(),
             })
             .err()

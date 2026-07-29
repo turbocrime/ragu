@@ -69,8 +69,16 @@ impl<
 > staging::Stage<C::CircuitField, R>
     for Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH, FP>
 {
-    type Parent =
-        super::outer_error::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH, FP>;
+    type Parent = super::outer_error::Stage<
+        C,
+        R,
+        HEADER_SIZE,
+        POLYS,
+        CLAIMS,
+        CHALLENGES,
+        CHALLENGE_WIDTH,
+        FP,
+    >;
     type Witness<'source> = &'source Witness<C, FP>;
     type OutputKind = Kind![C::CircuitField; Output<'_, _, FP>];
 
@@ -111,8 +119,15 @@ mod tests {
 
     #[test]
     fn stage_values_matches_wire_count() {
-        assert_stage_values(
-            &Stage::<Pasta, R, { HEADER_SIZE }, 1, 1, 1, 2, RevdotParameters>::default(),
-        );
+        assert_stage_values(&Stage::<
+            Pasta,
+            R,
+            { HEADER_SIZE },
+            1,
+            1,
+            1,
+            2,
+            RevdotParameters,
+        >::default());
     }
 }

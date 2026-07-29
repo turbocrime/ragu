@@ -254,17 +254,16 @@ impl<
             CHALLENGES,
             CHALLENGE_WIDTH,
         >>()?;
-        let (outer_error, builder) =
-            builder.add_stage::<native_outer_error::Stage<
-                C,
-                R,
-                HEADER_SIZE,
-                POLYS,
-                CLAIMS,
-                CHALLENGES,
-                CHALLENGE_WIDTH,
-                FP,
-            >>()?;
+        let (outer_error, builder) = builder.add_stage::<native_outer_error::Stage<
+            C,
+            R,
+            HEADER_SIZE,
+            POLYS,
+            CLAIMS,
+            CHALLENGES,
+            CHALLENGE_WIDTH,
+            FP,
+        >>()?;
         let dr = builder.finish();
 
         let preamble = preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;

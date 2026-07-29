@@ -27,9 +27,7 @@ use ragu_primitives::extract_endoscalar;
 use crate::{
     header::Header,
     internal::{
-        endoscalar::{
-            EndoscalarStage, EndoscalingStep, EndoscalingStepWitness, PointsStage, PointsWitness,
-        },
+        endoscalar::{EndoscalarStage, EndoscalingStep, EndoscalingStepWitness, PointsWitness},
         native::{RxComponent, RxIndex},
         nested,
         nested::ChildBridgeKind,
@@ -599,7 +597,7 @@ impl<
         points: &[C::HostCurve],
         endoscalar_alpha: C::ScalarField,
         points_alpha: C::ScalarField,
-        builder: &mut ProofBuilder<'_, C, R, POLYS>,
+        builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<C::HostCurve> {
         let num_points =
             crate::internal::nested::num_endoscaling_points(self.capacity(), self.capacity());
@@ -613,18 +611,20 @@ impl<
         let chain = self.nested_chain_layout();
         let endoscalar_rx =
             chain.rx_configured(0, endoscalar_alpha, &EndoscalarStage, beta_endo)?;
-        let points_rx = chain.rx_configured(
+        // The points stage is an induced run, so its wires come from the slot
+        // list rather than from a stage body — `rx` over the flat values is
+        // what `rx_configured` would have computed from the old fixed-vector
+        // gadget, and the run is still one commitment.
+        let points_rx = chain.rx(
             1,
             points_alpha,
-            &PointsStage::<C::HostCurve, nested::EndoscalingPointsLen<POLYS>>::default(),
-            &witness,
+            &crate::internal::point_run_values(&witness.slot_points())?,
         )?;
 
         let num_steps = crate::internal::endoscalar::num_steps(num_points);
         let mut step_rxs = Vec::with_capacity(num_steps);
         for step in 0..num_steps {
-            let step_circuit =
-                EndoscalingStep::<C::HostCurve, R, nested::EndoscalingPointsLen<POLYS>>::new(step);
+            let step_circuit = EndoscalingStep::<C::HostCurve, R>::new(step, num_points);
             let staged = MultiStage::new(step_circuit);
             let step_trace = staged
                 .trace(EndoscalingStepWitness {
@@ -723,13 +723,12 @@ impl<
         builder.set_application_challenges(
             (0..self.capacity().challenge.calls)
                 .map(|_| {
-                    let (points, challenge) =
-                        crate::internal::challenge::points_challenge::<C>(
-                            self.params,
-                            &[],
-                            self.capacity().challenge.width,
-                        )
-                        .expect("trivial padding challenge");
+                    let (points, challenge) = crate::internal::challenge::points_challenge::<C>(
+                        self.params,
+                        &[],
+                        self.capacity().challenge.width,
+                    )
+                    .expect("trivial padding challenge");
                     ChallengeOpening { points, challenge }
                 })
                 .collect(),
@@ -771,7 +770,7 @@ impl<
                 .rx_configured(
                     3,
                     C::ScalarField::ONE,
-                    &nested::stages::s_prime::Stage::<C::HostCurve, R, POLYS>::default(),
+                    &nested::stages::s_prime::Stage::<C::HostCurve, R>::default(),
                     &nested::stages::s_prime::Witness {
                         registry_wx0: host_commitment,
                         registry_wx1: host_commitment,
@@ -788,7 +787,7 @@ impl<
                 .rx_configured(
                     4,
                     C::ScalarField::ONE,
-                    &nested::stages::inner_error::Stage::<C::HostCurve, R, POLYS>::default(),
+                    &nested::stages::inner_error::Stage::<C::HostCurve, R>::default(),
                     &nested::stages::inner_error::Witness {
                         native_inner_error: host_commitment,
                         registry_wy: host_commitment,
@@ -804,7 +803,7 @@ impl<
                 .rx_configured(
                     8,
                     C::ScalarField::ONE,
-                    &nested::stages::f::Stage::<C::HostCurve, R, POLYS>::default(),
+                    &nested::stages::f::Stage::<C::HostCurve, R>::default(),
                     &nested::stages::f::Witness {
                         native_f: host_commitment,
                     },
@@ -896,18 +895,20 @@ impl<
             };
             // Placed through the value-level chain: the preamble sits after
             // the points stage, whose width follows the capacity, so no type
-            // knows where it starts.
+            // knows where it starts. Its wires come from the slot list, since
+            // the stage is an induced run rather than one gadget body.
+            let witness = nested::stages::preamble::Witness {
+                native_preamble: host_commitment,
+                left: trivial_child_witness.clone(),
+                right: trivial_child_witness,
+            };
             let rx = self
                 .nested_chain_layout()
-                .rx_configured(
+                .rx(
                     2,
                     C::ScalarField::ONE,
-                    &nested::stages::preamble::Stage::<C::HostCurve, R, POLYS>::default(),
-                    &nested::stages::preamble::Witness {
-                        native_preamble: host_commitment,
-                        left: trivial_child_witness.clone(),
-                        right: trivial_child_witness,
-                    },
+                    &crate::internal::point_run_values(&witness.slot_points())
+                        .expect("trivial preamble slot values"),
                 )
                 .expect("trivial preamble rx");
             let commitment = rx.commit_to_affine(nested_gen);

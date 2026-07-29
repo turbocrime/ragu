@@ -109,10 +109,26 @@ pub fn chain_layouts<
     let preamble_w = stages::preamble::num_values(HEADER_SIZE, left, right);
     let query_w = stages::query::num_values(num_internal_circuits);
     let eval_w = stages::eval::num_values(left, right);
-    let outer_w = <stages::outer_error::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH, RevdotParameters> as
-        ragu_circuits::staging::Stage<C::CircuitField, R>>::values();
-    let inner_w = <stages::inner_error::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH, RevdotParameters> as
-        ragu_circuits::staging::Stage<C::CircuitField, R>>::values();
+    let outer_w = <stages::outer_error::Stage<
+        C,
+        R,
+        HEADER_SIZE,
+        POLYS,
+        CLAIMS,
+        CHALLENGES,
+        CHALLENGE_WIDTH,
+        RevdotParameters,
+    > as ragu_circuits::staging::Stage<C::CircuitField, R>>::values();
+    let inner_w = <stages::inner_error::Stage<
+        C,
+        R,
+        HEADER_SIZE,
+        POLYS,
+        CLAIMS,
+        CHALLENGES,
+        CHALLENGE_WIDTH,
+        RevdotParameters,
+    > as ragu_circuits::staging::Stage<C::CircuitField, R>>::values();
 
     (
         InducedStages::new(alloc::vec![preamble_w, query_w, eval_w]),
@@ -458,18 +474,15 @@ pub fn register_all<
             CHALLENGE_WIDTH,
             RevdotParameters,
         >::new())?;
-        registry =
-            registry.register_internal_circuit(
-                circuits::compute_v::Circuit::<
-                    C,
-                    R,
-                    HEADER_SIZE,
-                    POLYS,
-                    CLAIMS,
-                    CHALLENGES,
-                    CHALLENGE_WIDTH,
-                >::new(),
-            )?;
+        registry = registry.register_internal_circuit(circuits::compute_v::Circuit::<
+            C,
+            R,
+            HEADER_SIZE,
+            POLYS,
+            CLAIMS,
+            CHALLENGES,
+            CHALLENGE_WIDTH,
+        >::new())?;
         registry = registry.register_internal_circuit(circuits::challenge_binding::Circuit::<
             C,
             R,

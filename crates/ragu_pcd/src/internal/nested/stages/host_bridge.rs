@@ -20,11 +20,9 @@ use ragu_core::{
     gadgets::{Bound, Gadget, Kind},
     maybe::Maybe,
 };
-use ragu_primitives::{
-    Point,
-    io::Write,
-    vec::{FixedVec, Len},
-};
+use ragu_primitives::{Point, io::Write};
+
+use crate::internal::shape_dependent_stage;
 
 /// Number of curve points in each bridge stage: one host commitment.
 const NUM: usize = 1;
@@ -93,8 +91,7 @@ impl<C: CurveAffine, R: Rank, P: ragu_circuits::staging::Stage<C::Base, R>>
     }
 }
 
-/// A whole family of [`Stage`] slots, spanning `L::len()` of them, chained
-/// after `P`.
+/// A whole family of [`Stage`] slots chained after `P`.
 ///
 /// A family whose length is a property of the application cannot be a chain of
 /// aliases — but it does not have to be. `Run` is the family's single entry in
@@ -105,21 +102,29 @@ impl<C: CurveAffine, R: Rank, P: ragu_circuits::staging::Stage<C::Base, R>>
 ///
 /// This is exact rather than approximate. Each slot is [`NUM`] points, so
 /// `2 * NUM` wires, so a whole number of gates with nothing wasted to padding;
-/// a run of `L::len()` slots therefore spans precisely the gates that a chain
-/// of `L::len()` aliases would have. Everything after the run — including the
-/// circuit's [`Last`](ragu_circuits::staging::MultiStageCircuit::Last) stage —
-/// chains onto `Run` and computes the same `skip_gates` it always did, with no
+/// a run of `n` slots therefore spans precisely the gates that a chain of `n`
+/// aliases would have. Everything after the run — including the circuit's
+/// [`Last`](ragu_circuits::staging::MultiStageCircuit::Last) stage — chains
+/// onto `Run` and computes the same `skip_gates` it always did, with no
 /// knowledge that the span is subdivided. `ragu_circuits`' own
 /// `induced_run_matches_typed_chain` test pins that equivalence.
 ///
-/// `L` carries the slot count as a type so the count stays a compile-time fact
-/// even when it is not a literal — the escape hatch [`Len`] documents for
-/// exactly this case.
-pub struct Run<C, R, P, L> {
-    _marker: PhantomData<(C, R, P, L)>,
+/// # The run carries no slot count
+///
+/// `Run` exists only to occupy a position in the `Parent` chain.
+/// [`configure_induced_sized`](ragu_circuits::staging::StageBuilder::configure_induced_sized)
+/// reserves each slot from the *layout*, and each slot's wires are produced by
+/// [`Stage`]; the run's own [`values`](ragu_circuits::staging::Stage::values),
+/// [`OutputKind`](ragu_circuits::staging::Stage::OutputKind) and
+/// [`witness`](ragu_circuits::staging::Stage::witness) are never reached. So
+/// the slot count stays a value — it is a property of the application, which
+/// is what [`shape_dependent_stage`] says — and downstream stages inherit no
+/// parameter from it.
+pub struct Run<C, R, P> {
+    _marker: PhantomData<(C, R, P)>,
 }
 
-impl<C, R, P, L> Default for Run<C, R, P, L> {
+impl<C, R, P> Default for Run<C, R, P> {
     fn default() -> Self {
         Self {
             _marker: PhantomData,
@@ -127,30 +132,25 @@ impl<C, R, P, L> Default for Run<C, R, P, L> {
     }
 }
 
-impl<C: CurveAffine, R: Rank, P: ragu_circuits::staging::Stage<C::Base, R>, L: Len>
-    ragu_circuits::staging::Stage<C::Base, R> for Run<C, R, P, L>
+impl<C: CurveAffine, R: Rank, P: ragu_circuits::staging::Stage<C::Base, R>>
+    ragu_circuits::staging::Stage<C::Base, R> for Run<C, R, P>
 {
     type Parent = P;
     type Witness<'source> = &'source [C];
-    type OutputKind = Kind![C::Base; FixedVec<Point<'_, _, C>, L>];
+    type OutputKind = Kind![C::Base; Output<'_, _, C>];
 
     fn values() -> usize {
-        NUM * 2 * L::len()
+        shape_dependent_stage()
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
         &self,
-        dr: &mut D,
-        witness: DriverValue<D, Self::Witness<'source>>,
+        _dr: &mut D,
+        _witness: DriverValue<D, Self::Witness<'source>>,
     ) -> Result<Bound<'dr, D, Self::OutputKind>>
     where
         Self: 'dr,
     {
-        let mut points = alloc::vec::Vec::with_capacity(L::len());
-        for slot in 0..L::len() {
-            points.push(Point::alloc(dr, witness.as_ref().map(|w| w[slot]))?);
-        }
-
-        FixedVec::new(points)
+        shape_dependent_stage()
     }
 }

@@ -28,7 +28,7 @@ impl<
         rng: &mut RNG,
         left: &'a Proof<C, R>,
         right: &'a Proof<C, R>,
-        builder: &mut ProofBuilder<'_, C, R, POLYS>,
+        builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<native::stages::preamble::Witness<'a, C, R, HEADER_SIZE>> {
         let preamble_witness = self.compute_native_preamble(rng, left, right, builder)?;
         self.compute_bridge_preamble(rng, left, right, builder)?;
@@ -40,7 +40,7 @@ impl<
         rng: &mut RNG,
         left: &'a Proof<C, R>,
         right: &'a Proof<C, R>,
-        builder: &mut ProofBuilder<'_, C, R, POLYS>,
+        builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<native::stages::preamble::Witness<'a, C, R, HEADER_SIZE>> {
         let preamble_witness = native::stages::preamble::Witness::new(
             left,
@@ -75,17 +75,20 @@ impl<
         rng: &mut RNG,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
-        builder: &mut ProofBuilder<'_, C, R, POLYS>,
+        builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<()> {
-        let bridge_rx = self.nested_chain_layout().rx_configured(
+        // The preamble stage is an induced run, so its wires come from the
+        // slot list rather than from a stage body. The run is still one
+        // commitment, so this is the same rx the fixed-vector gadget produced.
+        let witness = nested::stages::preamble::Witness {
+            native_preamble: builder.native_preamble_commitment(),
+            left: nested::stages::preamble::ChildWitness::from_proof(left),
+            right: nested::stages::preamble::ChildWitness::from_proof(right),
+        };
+        let bridge_rx = self.nested_chain_layout().rx(
             2,
             C::ScalarField::random(&mut *rng),
-            &nested::stages::preamble::Stage::<C::HostCurve, R, POLYS>::default(),
-            &nested::stages::preamble::Witness {
-                native_preamble: builder.native_preamble_commitment(),
-                left: nested::stages::preamble::ChildWitness::from_proof(left),
-                right: nested::stages::preamble::ChildWitness::from_proof(right),
-            },
+            &crate::internal::point_run_values(&witness.slot_points())?,
         )?;
         let bridge_commitment = bridge_rx.commit_to_affine(C::nested_generators(self.params));
         builder.set_bridge_preamble_rx(bridge_rx, bridge_commitment);

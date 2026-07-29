@@ -149,8 +149,7 @@ pub struct ProofInputs<
     pub polys: FixedVec<PolyInstance<'dr, D, C>, ConstLen<POLYS>>,
     /// The derived-challenge pairs the child's circuit exposed, in slot order.
     #[ragu(gadget)]
-    pub challenges:
-        FixedVec<ChallengeInstance<'dr, D, C, CHALLENGE_WIDTH>, ConstLen<CHALLENGES>>,
+    pub challenges: FixedVec<ChallengeInstance<'dr, D, C, CHALLENGE_WIDTH>, ConstLen<CHALLENGES>>,
     #[ragu(gadget)]
     pub circuit_id: Element<'dr, D>,
     #[ragu(gadget)]
@@ -586,9 +585,7 @@ mod tests {
         fn check<const POLYS: usize>() {
             let capacity = capacity_with_polys(POLYS);
             assert_eq!(
-                stage_wire_count(
-                    &Stage::<Pasta, R, { HEADER_SIZE }, POLYS, 1, 1, 2>::default()
-                ),
+                stage_wire_count(&Stage::<Pasta, R, { HEADER_SIZE }, POLYS, 1, 1, 2>::default()),
                 num_values(HEADER_SIZE, capacity, capacity),
                 "polys={POLYS}"
             );
