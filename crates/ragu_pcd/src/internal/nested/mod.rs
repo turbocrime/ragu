@@ -40,8 +40,12 @@ pub const fn child_endoscaling_points(child: crate::framework_hooks::HookLayout)
     child_endoscaling_points_for(child.poly_query.polys)
 }
 
-/// [`child_endoscaling_points`] straight from a poly count, for the
-/// compile-time path where the shape is a const rather than a value.
+/// [`child_endoscaling_points`] straight from a poly count, for callers holding
+/// the count without the surrounding [`HookLayout`](crate::framework_hooks::HookLayout).
+///
+/// This is the single statement of the per-child block's decomposition: the 13
+/// native rx commitments, four extras (`ab_a`, `ab_b`, `registry_xy`, `p`), and
+/// one stashed claim per polynomial slot.
 pub const fn child_endoscaling_points_for(polys: usize) -> usize {
     crate::internal::native::RxIndex::NUM + 4 + polys
 }

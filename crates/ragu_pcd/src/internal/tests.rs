@@ -375,8 +375,8 @@ fn test_native_registry_digest() {
     // child.
     //
     // Changed again — and now **per application** — when the slot capacity
-    // became the discovered maximum over the registered steps rather than a
-    // framework constant. This digest is *this test application's*: its dummy
+    // became a set of declared const parameters rather than a framework
+    // constant. This digest is *this test application's*: its dummy
     // steps witness no polynomials, raise no claims and derive no challenges,
     // so every slot-dependent width collapses. `challenge_binding` in
     // particular falls from 1534 gates to 332, because an application that
@@ -626,12 +626,13 @@ fn test_rx_index_all_exhaustive() {
 /// The branch's acceptance gate: a light application's recursion is
 /// **measurably smaller** than a heavy one's.
 ///
-/// Two applications, identical but for what their single step does. The light
-/// one witnesses nothing and derives nothing; the heavy one witnesses two
-/// polynomials, opens one of them twice, and derives a challenge. Every
-/// internal circuit the heavy application registers must be strictly larger,
-/// because its capacity is discovered from that step rather than fixed by the
-/// framework — which is the whole point of the exercise.
+/// Two applications, identical but for the capacity they declare and what their
+/// single step does with it. The light one witnesses nothing and derives
+/// nothing; the heavy one witnesses two polynomials, opens one of them twice,
+/// and derives a challenge. Every internal circuit the heavy application
+/// registers must be strictly larger, because its capacity comes from its own
+/// declaration rather than from a framework constant — which is the whole point
+/// of the exercise.
 ///
 /// A framework constant would make these two identical.
 mod capacity_is_per_application {
@@ -728,8 +729,8 @@ mod capacity_is_per_application {
     });
 
     step!(Heavy, |ctx| {
-        // Discovery runs on a structure-only driver, so what matters here is
-        // the hook calls, not the values they carry.
+        // This step is only ever registered, never proved, so what matters here
+        // is that the hook calls happen — not the values they carry.
         let commitment = D::try_just(|| {
             Err::<crate::poly_commitment::PolyCommitment<Pasta, R>, _>(Error::InvalidWitness(
                 "the capacity test never builds a proof".into(),
@@ -779,8 +780,7 @@ mod capacity_is_per_application {
         assert_eq!(heavy.capacity().poly_query.claims, 3);
         assert_eq!(light.capacity().challenge.width, 2);
 
-        // Discovered: how many challenges a step actually derives. The last
-        // axis still folded from the steps rather than declared.
+        // How many challenge slots each application declared.
         assert_eq!(light.capacity().challenge.calls, 0);
         assert_eq!(heavy.capacity().challenge.calls, 1);
 

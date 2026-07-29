@@ -1,15 +1,21 @@
 //! Framework-side state surfaced to [`Step::witness`](crate::step::Step::witness) impls.
 //!
 //! [`FrameworkHooks`] bundles the framework's hook-specific state that a step
-//! body interacts with through [`StepCtx`](crate::step::StepCtx). It carries two
-//! hooks:
+//! body interacts with through [`StepCtx`](crate::step::StepCtx). It carries
+//! three hooks, one per `Vec` of wires it accumulates:
 //!
-//! * [`enforce_polynomial_query`](FrameworkHooks::enforce_polynomial_query) — a
-//!   polynomial-query claim sink: steps that need to verify a
+//! * [`StepCtx::witness_polynomial`](crate::step::StepCtx::witness_polynomial) —
+//!   the polynomial slots.
+//!   Witnessing a polynomial allocates its bridge commitment as a [`Point`] and
+//!   retains the coefficients as a value; the polynomial itself never enters the
+//!   circuit. This is the expensive axis — one bridge stage, one commitment, one
+//!   MSM and one endoscaling point per slot — and it is what a claim then names.
+//!
+//! * [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query) —
+//!   a polynomial-query claim sink: steps that need to verify a
 //!   polynomial-commitment opening — i.e. that the polynomial committed to by
-//!   `com` evaluates to `y` at point `x` — reach it via
-//!   [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query),
-//!   which delegates here. Each claim carries the opened polynomial's
+//!   `com` evaluates to `y` at point `x` — reach it there, and it delegates
+//!   here. Each claim carries the opened polynomial's
 //!   coefficients so the framework can fold it into the [PCS aggregation].
 //!   Every application circuit exposes exactly
 //!   the application's claim capacity in slot form as part

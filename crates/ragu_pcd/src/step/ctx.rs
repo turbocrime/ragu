@@ -3,11 +3,11 @@
 //! Bundles the framework-side state — the [`Driver`] and the
 //! [`FrameworkHooks`] container — so that reusable sub-components called from a
 //! step body can take a single `&mut StepCtx` rather than juggling individual
-//! arguments. The poly-query claim sink is
-//! exposed via [`enforce_poly_query`](StepCtx::enforce_poly_query) and the
-//! challenge hook via [`derive_challenge`](StepCtx::derive_challenge). New
-//! framework hooks added in the future (e.g. transcript threading) belong on
-//! [`FrameworkHooks`] as well.
+//! arguments. The three hooks are exposed as
+//! [`witness_polynomial`](StepCtx::witness_polynomial),
+//! [`enforce_poly_query`](StepCtx::enforce_poly_query) and
+//! [`derive_challenge`](StepCtx::derive_challenge). New framework hooks added in
+//! the future (e.g. transcript threading) belong on [`FrameworkHooks`] as well.
 
 use ragu_arithmetic::Cycle;
 use ragu_circuits::polynomials::Rank;

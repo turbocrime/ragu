@@ -117,15 +117,20 @@ pub(crate) const RAGU_TAG: &[u8] = b"FIXME";
 /// arithmetic to do in advance, just a number to lower.
 ///
 /// `CHALLENGES` is how many [`derive_challenge`](step::StepCtx::derive_challenge)
-/// calls any one step may make — the *number* of calls, where
-/// `CHALLENGE_PERMUTATIONS` fixes how wide each one is.
+/// calls any one step may make — the *number* of calls, where `CHALLENGE_WIDTH`
+/// fixes how wide each one is.
 ///
-/// Together with `HEADER_SIZE` these four are the whole of an application
+/// Together with `HEADER_SIZE` these five are the whole of an application
 /// circuit's instance width:
 ///
 /// ```text
-/// 3·HEADER_SIZE + 2·POLYS + 3·CLAIMS + CHALLENGES·(2·points + 1)
+/// 3·HEADER_SIZE + 2·POLYS + 4·CLAIMS + CHALLENGES·(2·CHALLENGE_WIDTH + 1)
 /// ```
+///
+/// A polynomial slot is its bridge commitment, one point, two wires. A claim is
+/// that commitment again plus the $(x, y)$ opening, four wires. A challenge slot
+/// is `CHALLENGE_WIDTH` points plus the challenge itself. The single statement
+/// of this is `InstanceLen::len`.
 ///
 /// Every term is declared, so a step's circuit shape is final the moment it
 /// registers. That is the point of declaring them: hand-over to the registry
@@ -229,10 +234,9 @@ impl<
         self.prevent_duplicate_suffixes::<S::Left>()?;
         self.prevent_duplicate_suffixes::<S::Right>()?;
 
-        // Building the adapter dry-runs the witness body to discover the step's
-        // hook-call counts. That dry run is structure-only, so it needs no cycle
-        // parameters — which is what lets registration happen here, before
-        // `finalize` supplies them.
+        // Building the adapter needs no cycle parameters — it stores the step,
+        // the declared capacity and a marker — which is what lets registration
+        // happen here, before `finalize` supplies them.
         //
         // Hand-over is immediate: it freezes the circuit's shape, and the shape
         // is settled, because every term of the instance comes from a declared
@@ -304,10 +308,10 @@ impl<
         // because the internal circuits read a child's instance as a
         // fixed-width record and any step's proof may be any fuse's child.
         //
-        // The *slot counts* are discovered, never declared: an application whose
-        // steps open two polynomials pays for two, and the cost of a heavy step
-        // falls on the application that registers it rather than on the
-        // framework. The challenge input width is the exception, below.
+        // The slot counts are declared, never discovered: they come from this
+        // type's const parameters, so the cost of a heavy step falls on the
+        // application that declares the slots rather than on the framework, and
+        // a step's circuit shape is final the moment it registers.
         let capacity = Self::capacity();
 
         let (total_circuits, log2_circuits) = internal::native::total_circuit_counts(
@@ -416,9 +420,8 @@ pub struct Application<
     nested_registry: Registry<'params, C::ScalarField, R>,
     params: &'params C::Params,
     num_application_steps: usize,
-    /// The application's settled slot capacity: the pointwise maximum over
-    /// its registered steps' discovered plans, folded by
-    /// [`ApplicationBuilder::finalize`].
+    /// The application's slot capacity, read off this type's const parameters
+    /// by [`Self::capacity`].
     ///
     /// Every application circuit exposes exactly these slots, so this is the
     /// shape the internal circuits are built for, the shape a proof's lists

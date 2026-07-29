@@ -67,10 +67,6 @@ gungraun = { workspace = true }
 ragu_testing = { path = "../ragu_testing", version = "0.0.0" }
 proptest = { workspace = true }
 
-[[test]]
-name = "recursive_claims"
-required-features = ["unstable-fuzzing"]
-
 [[bench]]
 name = "pcd"
 harness = false
