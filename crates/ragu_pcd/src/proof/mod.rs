@@ -604,8 +604,7 @@ impl<
         points_alpha: C::ScalarField,
         builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<C::HostCurve> {
-        let num_points =
-            crate::internal::nested::num_endoscaling_points(self.capacity(), self.capacity());
+        let num_points = crate::internal::nested::num_endoscaling_points(self.capacity());
         assert_eq!(points.len(), num_points);
 
         let witness = PointsWitness::<C::HostCurve>::new(beta_endo, points);
@@ -639,11 +638,8 @@ impl<
                 .into_output();
             let step_rx = self.nested_registry.assemble(
                 &step_trace,
-                nested::InternalCircuitIndex::EndoscalingStep(step as u32).circuit_index(
-                    self.capacity(),
-                    self.capacity(),
-                    self.capacity(),
-                ),
+                nested::InternalCircuitIndex::EndoscalingStep(step as u32)
+                    .circuit_index(self.capacity()),
                 rng,
             )?;
             step_rxs.push(step_rx);
@@ -825,7 +821,6 @@ impl<
         let beta_endo = extract_endoscalar(C::CircuitField::ONE);
         let p_commitment = {
             let mut points = Vec::with_capacity(crate::internal::nested::num_endoscaling_points(
-                self.capacity(),
                 self.capacity(),
             ));
 

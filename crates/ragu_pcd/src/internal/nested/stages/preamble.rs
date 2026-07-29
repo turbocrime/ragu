@@ -19,26 +19,20 @@ use crate::{
     internal::{endoscalar::PointsStage, native::RxIndex},
 };
 
-/// Number of curve points in this stage for children of the given shapes:
-/// the native preamble commitment plus, per child, the `_10_p` components
-/// (one per [`RxIndex`] entry at the child's own challenge count — plus `a`,
-/// `b`, `registry_xy` and `p`) and the stashed poly-query claim commitments
-/// at the child's own poly count.
-pub const fn num_points(
-    left: crate::framework_hooks::HookLayout,
-    right: crate::framework_hooks::HookLayout,
-) -> usize {
+/// Number of curve points in this stage: the native preamble commitment plus,
+/// per child, the `_10_p` components (one per [`RxIndex`] entry — plus `a`,
+/// `b`, `registry_xy` and `p`) and the stashed poly-query claim commitments.
+///
+/// Both children present the application's capacity, so one value sizes both.
+pub const fn num_points(capacity: crate::framework_hooks::HookLayout) -> usize {
     use crate::internal::nested::child_endoscaling_points;
-    1 + child_endoscaling_points(left) + child_endoscaling_points(right)
+    1 + 2 * child_endoscaling_points(capacity)
 }
 
-/// This stage's wire width for children of the given shapes; the value-level
-/// source of the typed [`values()`](ragu_circuits::staging::Stage::values).
-pub const fn num_values(
-    left: crate::framework_hooks::HookLayout,
-    right: crate::framework_hooks::HookLayout,
-) -> usize {
-    num_points(left, right) * 2
+/// This stage's wire width; the value-level source of the typed
+/// [`values()`](ragu_circuits::staging::Stage::values).
+pub const fn num_values(capacity: crate::framework_hooks::HookLayout) -> usize {
+    num_points(capacity) * 2
 }
 
 /// Witness data for a single child proof in the preamble bridge stage.
@@ -321,13 +315,9 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> Output<'dr, D, C> {
     }
 }
 
-/// This stage's slot count for children of the given shapes: one slot per
-/// point of [`num_points`].
-pub const fn num_slots(
-    left: crate::framework_hooks::HookLayout,
-    right: crate::framework_hooks::HookLayout,
-) -> usize {
-    num_points(left, right)
+/// This stage's slot count: one slot per point of [`num_points`].
+pub const fn num_slots(capacity: crate::framework_hooks::HookLayout) -> usize {
+    num_points(capacity)
 }
 
 /// The witness body for one slot of the run: a single host-curve point.
@@ -410,8 +400,8 @@ mod tests {
         for polys in [0, 1, 4, 8] {
             let capacity = capacity_with_polys(polys);
             assert_eq!(
-                num_values(capacity, capacity),
-                num_slots(capacity, capacity) * stage_wire_count(&Slot::<EqAffine, R>::default()),
+                num_values(capacity),
+                num_slots(capacity) * stage_wire_count(&Slot::<EqAffine, R>::default()),
                 "polys={polys}"
             );
         }
@@ -452,7 +442,7 @@ mod tests {
 
             assert_eq!(
                 witness.slot_points().len(),
-                num_slots(capacity, capacity),
+                num_slots(capacity),
                 "polys={polys}"
             );
         }

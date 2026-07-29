@@ -48,7 +48,8 @@ pub type Slot<C, R> = host_bridge::Stage<C, R, ()>;
 pub fn layout<C: CurveAffine, R: Rank>(
     capacity: crate::framework_hooks::HookLayout,
 ) -> InducedStages {
-    crate::internal::nested::claim_run_layout::<C, R>(capacity, capacity, capacity)
+    let chain = crate::internal::nested::chain_layout::<C, R>(capacity);
+    crate::internal::nested::claim_run_layout(&chain, capacity)
 }
 
 #[cfg(test)]
@@ -80,8 +81,7 @@ mod tests {
             assert_eq!(layout.len(), polys, "one slot per polynomial");
             assert_eq!(
                 layout.skip_gates(0),
-                crate::internal::nested::chain_layout::<EqAffine, R>(capacity, capacity, capacity)
-                    .final_skip_gates(),
+                crate::internal::nested::chain_layout::<EqAffine, R>(capacity).final_skip_gates(),
                 "the first slot does not start where the chain ends"
             );
             for slot in 0..polys {

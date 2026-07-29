@@ -68,25 +68,16 @@ impl<'pts, 'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> Walker<'pts, 'dr, D
 
 /// Loading circuit that loads the entire nested stage hierarchy.
 pub struct Circuit<C: CurveAffine, R: Rank> {
-    /// The current step's own shape (its bridge runs and eval stashes).
-    own: crate::framework_hooks::HookLayout,
-    /// The left child's shape.
-    left: crate::framework_hooks::HookLayout,
-    /// The right child's shape.
-    right: crate::framework_hooks::HookLayout,
+    /// The application's capacity — the shape of the current step, its bridge
+    /// runs and eval stashes, and both children alike.
+    capacity: crate::framework_hooks::HookLayout,
     _marker: PhantomData<(C, R)>,
 }
 
 impl<C: CurveAffine, R: Rank> Circuit<C, R> {
-    pub fn new(
-        own: crate::framework_hooks::HookLayout,
-        left: crate::framework_hooks::HookLayout,
-        right: crate::framework_hooks::HookLayout,
-    ) -> Self {
+    pub fn new(capacity: crate::framework_hooks::HookLayout) -> Self {
         Self {
-            own,
-            left,
-            right,
+            capacity,
             _marker: PhantomData,
         }
     }
@@ -112,29 +103,33 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         dr: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
         _witness: DriverValue<D, ()>,
     ) -> Result<WithAux<Bound<'dr, D, ()>, DriverValue<D, ()>>> {
-        let claim_layout =
-            crate::internal::nested::claim_run_layout::<C, R>(self.own, self.left, self.right);
+        use crate::internal::nested::ChainStage;
 
         // As in `copying`: every position comes from the value-level chain.
-        let chain = crate::internal::nested::chain_layout::<C, R>(self.own, self.left, self.right);
+        let chain = crate::internal::nested::chain_layout::<C, R>(self.capacity);
+        let claim_layout = crate::internal::nested::claim_run_layout(&chain, self.capacity);
 
         // The three shape-carrying stages are runs of one-point slots inside
         // the spans `chain` already gives them; the rest are ordinary stages.
-        let num_points = crate::internal::nested::num_endoscaling_points(self.left, self.right);
+        let num_points = crate::internal::nested::num_endoscaling_points(self.capacity);
         let points_layout = crate::internal::nested::run_layout(
             &chain,
-            1,
+            ChainStage::Points,
             crate::internal::endoscalar::points_stage_num_slots(num_points),
         );
         let preamble_layout = crate::internal::nested::run_layout(
             &chain,
-            2,
-            stages::preamble::num_slots(self.left, self.right),
+            ChainStage::Preamble,
+            stages::preamble::num_slots(self.capacity),
         );
-        let eval_layout =
-            crate::internal::nested::run_layout(&chain, 9, stages::eval::num_slots(self.own));
+        let eval_layout = crate::internal::nested::run_layout(
+            &chain,
+            ChainStage::Eval,
+            stages::eval::num_slots(self.capacity),
+        );
 
-        let dr = dr.skip_stage_sized(EndoscalarStage, chain.width(0))?;
+        let dr =
+            dr.skip_stage_sized(EndoscalarStage, chain.width(ChainStage::Endoscalar.index()))?;
         let (point_guards, dr) = dr.configure_induced_sized::<PointsStage<C, R>, _>(
             PointSlotStage::<C, R>::default(),
             &points_layout,
@@ -146,22 +141,30 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
                 &preamble_layout,
                 preamble_layout.skip_gates(0),
             )?;
-        let (s_prime_guard, dr) =
-            dr.configure_stage_sized(stages::s_prime::Stage::<C, R>::default(), chain.width(3))?;
+        let (s_prime_guard, dr) = dr.configure_stage_sized(
+            stages::s_prime::Stage::<C, R>::default(),
+            chain.width(ChainStage::SPrime.index()),
+        )?;
         let (inner_error_guard, dr) = dr.configure_stage_sized(
             stages::inner_error::Stage::<C, R>::default(),
-            chain.width(4),
+            chain.width(ChainStage::InnerError.index()),
         )?;
         let dr = dr.skip_stage_sized(
             stages::outer_error::Stage::<C, R>::default(),
-            chain.width(5),
+            chain.width(ChainStage::OuterError.index()),
         )?;
-        let (ab_guard, dr) =
-            dr.configure_stage_sized(stages::ab::Stage::<C, R>::default(), chain.width(6))?;
-        let (query_guard, dr) =
-            dr.configure_stage_sized(stages::query::Stage::<C, R>::default(), chain.width(7))?;
-        let (f_guard, dr) =
-            dr.configure_stage_sized(stages::f::Stage::<C, R>::default(), chain.width(8))?;
+        let (ab_guard, dr) = dr.configure_stage_sized(
+            stages::ab::Stage::<C, R>::default(),
+            chain.width(ChainStage::Ab.index()),
+        )?;
+        let (query_guard, dr) = dr.configure_stage_sized(
+            stages::query::Stage::<C, R>::default(),
+            chain.width(ChainStage::Query.index()),
+        )?;
+        let (f_guard, dr) = dr.configure_stage_sized(
+            stages::f::Stage::<C, R>::default(),
+            chain.width(ChainStage::F.index()),
+        )?;
         let (eval_guards, dr) = dr.configure_induced_sized::<stages::eval::Stage<C, R>, _>(
             stages::eval::Slot::<C, R>::default(),
             &eval_layout,
@@ -193,8 +196,8 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
                 .into_iter()
                 .map(|guard| Ok(guard.unenforced(dr, w!())?.host))
                 .collect::<Result<alloc::vec::Vec<_>>>()?,
-            self.left.poly_query.polys,
-            self.right.poly_query.polys,
+            self.capacity.poly_query.polys,
+            self.capacity.poly_query.polys,
         )?;
         let s_prime = s_prime_guard.unenforced(dr, w!())?;
         let inner_error = inner_error_guard.unenforced(dr, w!())?;
@@ -206,7 +209,7 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
                 .into_iter()
                 .map(|guard| Ok(guard.unenforced(dr, w!())?.host))
                 .collect::<Result<alloc::vec::Vec<_>>>()?,
-            self.own.poly_query.polys,
+            self.capacity.poly_query.polys,
         )?;
         let claim_bridges = claim_guards
             .into_iter()

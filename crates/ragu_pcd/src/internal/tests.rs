@@ -459,7 +459,7 @@ fn nested_chain_layout_tiles_at_every_capacity() {
             challenge: ChallengeLayout { calls: 1, width: 2 },
             poly_query: PolyQueryLayout { polys, claims: 1 },
         };
-        let nested = crate::internal::nested::chain_layout::<Host, R>(capacity, capacity, capacity);
+        let nested = crate::internal::nested::chain_layout::<Host, R>(capacity);
 
         for stage in 0..nested.len() {
             assert_eq!(
@@ -468,6 +468,39 @@ fn nested_chain_layout_tiles_at_every_capacity() {
                 "not contiguous after stage {stage} at polys={polys}"
             );
         }
+    }
+}
+
+/// `ChainStage`'s discriminants are the indices `chain_layout` builds.
+///
+/// The runs and the mask registration address the chain through
+/// [`ChainStage`](crate::internal::nested::ChainStage) rather than through bare
+/// integers, which is only safe while the two orders agree. Nothing else
+/// enforces that: `chain_layout` pushes widths into a `Vec`, so a stage
+/// inserted in one place and not the other compiles fine and silently
+/// misplaces every stage after it.
+#[test]
+fn nested_chain_positions_match_layout() {
+    use ragu_pasta::Pasta;
+
+    use crate::internal::nested::ChainStage;
+
+    type Host = <Pasta as ragu_arithmetic::Cycle>::HostCurve;
+
+    let chain = crate::internal::nested::chain_layout::<Host, R>(capacity_with_polys(4));
+
+    assert_eq!(
+        chain.len(),
+        ChainStage::ALL.len(),
+        "the chain and `ChainStage::ALL` disagree on how many stages there are"
+    );
+    for (position, stage) in ChainStage::ALL.iter().enumerate() {
+        assert_eq!(
+            stage.index(),
+            position,
+            "{stage:?} is at position {position} of ALL but reports index {}",
+            stage.index()
+        );
     }
 }
 

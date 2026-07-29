@@ -458,11 +458,7 @@ impl<
     /// whose length is a const. The native chain has no run in it, so it needs
     /// none of this — see [`internal::native::chain`].
     pub(crate) fn nested_chain_layout(&self) -> ragu_circuits::staging::InducedStages {
-        internal::nested::chain_layout::<C::HostCurve, R>(
-            self.capacity,
-            self.capacity,
-            self.capacity,
-        )
+        internal::nested::chain_layout::<C::HostCurve, R>(self.capacity)
     }
 
     /// Seed a new computation by running a step with trivial inputs.

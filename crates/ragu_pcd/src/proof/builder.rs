@@ -621,7 +621,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     /// The nested bridge chain's value-level geometry at this proof's
     /// capacity. Every bridge rx is placed through it.
     fn nested_chain(&self) -> ragu_circuits::staging::InducedStages {
-        nested::chain_layout::<C::HostCurve, R>(self.capacity, self.capacity, self.capacity)
+        nested::chain_layout::<C::HostCurve, R>(self.capacity)
     }
 
     /// The eval bridge, written out rather than through [`cached_bridge!`]:
