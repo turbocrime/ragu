@@ -28,6 +28,59 @@ pub mod stages {
     pub mod slots;
 }
 
+/// The native fuse's stage chain, named once so the registration list and the
+/// fuse steps that write each stage agree by construction.
+///
+/// `Parent` makes this a tree rooted at [`chain::Preamble`]: the error branch runs
+/// preamble → outer_error → {inner_error, challenges}, and the query branch
+/// runs preamble → query → eval. Every width is a compile-time `values()`, so
+/// masks and rx positions come off the types — no value-level layout is
+/// involved.
+pub mod chain {
+    use super::{RevdotParameters, stages};
+
+    /// preamble — the shared root of every branch.
+    pub type Preamble<C, R, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: usize> =
+        stages::preamble::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>;
+
+    /// outer_error — the error branch's first stage.
+    pub type OuterError<C, R, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: usize> =
+        stages::outer_error::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, RevdotParameters>;
+
+    /// inner_error — an error-branch leaf.
+    pub type InnerError<C, R, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: usize> =
+        stages::inner_error::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, RevdotParameters>;
+
+    /// The challenge slots — the other error-branch leaf, sibling of
+    /// [`InnerError`].
+    pub type Challenges<
+        C,
+        R,
+        const HEADER_SIZE: usize,
+        const POLYS: usize,
+        const CLAIMS: usize,
+        const CHALLENGES: usize,
+        const CHALLENGE_WIDTH: usize,
+    > = stages::slots::ChallengesStage<
+        C,
+        R,
+        HEADER_SIZE,
+        POLYS,
+        CLAIMS,
+        CHALLENGES,
+        CHALLENGE_WIDTH,
+        RevdotParameters,
+    >;
+
+    /// query — the query branch's first stage.
+    pub type Query<C, R, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: usize> =
+        stages::query::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>;
+
+    /// eval — the query branch's leaf.
+    pub type Eval<C, R, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: usize> =
+        stages::eval::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>;
+}
+
 pub mod circuits {
     pub mod challenge_binding;
     pub mod compute_v;
@@ -75,72 +128,6 @@ pub fn total_circuit_counts(
     let total_circuits = num_application_steps + step::NUM_INTERNAL_STEPS + num_internal_circuits;
     let log2_circuits = total_circuits.next_power_of_two().trailing_zeros();
     (total_circuits, log2_circuits)
-}
-
-/// The native fuse stage chains' value-level geometry for children of the
-/// given shapes.
-///
-/// The typed chain diverges after the shared preamble prefix: the **query
-/// chain** is preamble → query → eval, the **error chain** is preamble →
-/// outer_error → inner_error. Each returned layout describes one chain, with
-/// every real stage as one slot, so masks and rx positions can be computed
-/// from values — the same mechanism the nested bridge runs use. The widths
-/// come from each stage's `num_values` (count-dependent stages, each child at
-/// its own shape) or its typed `values()` (count-free stages), so the layouts
-/// agree with the typed chain by construction;
-/// `native_chain_layouts_tile_typed_chain` pins it. `num_internal_circuits`
-/// sizes the query stage's fixed-registry block.
-///
-/// Returns `(query_chain, error_chain)`.
-pub fn chain_layouts<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
->(
-    num_internal_circuits: usize,
-    left: crate::framework_hooks::HookLayout,
-    right: crate::framework_hooks::HookLayout,
-) -> (
-    ragu_circuits::staging::InducedStages,
-    ragu_circuits::staging::InducedStages,
-    ragu_circuits::staging::InducedStages,
-) {
-    use ragu_circuits::staging::InducedStages;
-
-    let preamble_w = stages::preamble::num_values(HEADER_SIZE, left, right);
-    let query_w = stages::query::num_values(num_internal_circuits);
-    let eval_w = stages::eval::num_values(left, right);
-    let outer_w = <stages::outer_error::Stage<
-        C,
-        R,
-        HEADER_SIZE,
-        POLYS,
-        CLAIMS,
-        RevdotParameters,
-    > as ragu_circuits::staging::Stage<C::CircuitField, R>>::values();
-    let inner_w = <stages::inner_error::Stage<
-        C,
-        R,
-        HEADER_SIZE,
-        POLYS,
-        CLAIMS,
-        RevdotParameters,
-    > as ragu_circuits::staging::Stage<C::CircuitField, R>>::values();
-    let challenges_w = stages::slots::num_values(CHALLENGES, CHALLENGE_WIDTH);
-
-    (
-        InducedStages::new(alloc::vec![preamble_w, query_w, eval_w]),
-        InducedStages::new(alloc::vec![preamble_w, outer_w, inner_w]),
-        // The challenge branch: a sibling of `inner_error`, not an extension of
-        // the error chain. It starts where `inner_error` does, so the two
-        // circuits that read challenge slots are not charged for a stage they
-        // do not use — see [`stages::slots`].
-        InducedStages::new(alloc::vec![preamble_w, outer_w, challenges_w]),
-    )
 }
 
 impl InternalCircuitIndex {
@@ -428,8 +415,8 @@ pub enum RxComponent {
 /// Registers internal native circuits and masks into the provided registry,
 /// in exactly [`InternalCircuitIndex::ALL`] order.
 ///
-/// Every circuit here is built for the application's settled `capacity`: the
-/// slot shape every one of its steps exposes, children included. That is why
+/// Every circuit here is built for the slot counts the application declared:
+/// the shape every one of its steps exposes, children included. That is why
 /// there is one of each rather than a family keyed by child shape.
 ///
 /// Does not register internal steps (rerandomize, trivial); those are
@@ -447,10 +434,8 @@ pub fn register_all<
     mut registry: RegistryBuilder<'params, C::CircuitField, R>,
     params: &'params C::Params,
     log2_circuits: u32,
-    capacity: crate::framework_hooks::HookLayout,
 ) -> Result<RegistryBuilder<'params, C::CircuitField, R>> {
     let initial_internal_circuits = registry.num_internal_circuits();
-    let (left, right) = (capacity, capacity);
 
     // Circuits first, then masks - matching RegistryBuilder::finalize()'s
     // concatenation order and `InternalCircuitIndex::ALL`.
@@ -508,27 +493,44 @@ pub fn register_all<
     }
 
     {
-        let (query_chain, error_chain, challenge_chain) =
-            chain_layouts::<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>(
-                InternalCircuitIndex::NUM,
-                left,
-                right,
-            );
-        // Stage masks, then final-trace masks, in TRIPLE_MASKS order.
-        registry = registry.register_bonding(query_chain.mask::<C::CircuitField, R>(0)?);
-        registry = registry.register_bonding(error_chain.mask::<C::CircuitField, R>(2)?);
-        registry = registry.register_bonding(error_chain.mask::<C::CircuitField, R>(1)?);
-        registry = registry.register_bonding(query_chain.mask::<C::CircuitField, R>(1)?);
-        registry = registry.register_bonding(query_chain.mask::<C::CircuitField, R>(2)?);
-        registry = registry.register_bonding(challenge_chain.mask::<C::CircuitField, R>(2)?);
+        use chain::{Challenges, Eval, InnerError, OuterError, Preamble, Query};
+        use ragu_circuits::staging::StageExt as _;
+
+        // Stage masks, then final-trace masks, in `InternalCircuitIndex::ALL`
+        // order. Every stage's geometry follows from its `Parent` chain and its
+        // `values()`, both compile-time, so the masks come straight off the
+        // types.
+        registry = registry.register_bonding(Preamble::<C, R, HEADER_SIZE, POLYS, CLAIMS>::mask()?);
         registry =
-            registry.register_bonding(error_chain.final_mask_through::<C::CircuitField, R>(2)?);
+            registry.register_bonding(InnerError::<C, R, HEADER_SIZE, POLYS, CLAIMS>::mask()?);
         registry =
-            registry.register_bonding(error_chain.final_mask_through::<C::CircuitField, R>(1)?);
+            registry.register_bonding(OuterError::<C, R, HEADER_SIZE, POLYS, CLAIMS>::mask()?);
+        registry = registry.register_bonding(Query::<C, R, HEADER_SIZE, POLYS, CLAIMS>::mask()?);
+        registry = registry.register_bonding(Eval::<C, R, HEADER_SIZE, POLYS, CLAIMS>::mask()?);
+        registry = registry.register_bonding(Challenges::<
+            C,
+            R,
+            HEADER_SIZE,
+            POLYS,
+            CLAIMS,
+            CHALLENGES,
+            CHALLENGE_WIDTH,
+        >::mask()?);
+        registry = registry
+            .register_bonding(InnerError::<C, R, HEADER_SIZE, POLYS, CLAIMS>::final_mask()?);
+        registry = registry
+            .register_bonding(OuterError::<C, R, HEADER_SIZE, POLYS, CLAIMS>::final_mask()?);
         registry =
-            registry.register_bonding(query_chain.final_mask_through::<C::CircuitField, R>(2)?);
-        registry =
-            registry.register_bonding(challenge_chain.final_mask_through::<C::CircuitField, R>(2)?);
+            registry.register_bonding(Eval::<C, R, HEADER_SIZE, POLYS, CLAIMS>::final_mask()?);
+        registry = registry.register_bonding(Challenges::<
+            C,
+            R,
+            HEADER_SIZE,
+            POLYS,
+            CLAIMS,
+            CHALLENGES,
+            CHALLENGE_WIDTH,
+        >::final_mask()?);
     }
 
     assert_eq!(

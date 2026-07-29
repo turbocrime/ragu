@@ -8,7 +8,7 @@
 //! restriction.
 
 use ragu_arithmetic::{CryptoRngCore, Cycle, ff::Field};
-use ragu_circuits::{polynomials::Rank, registry::RegistryAt};
+use ragu_circuits::{polynomials::Rank, registry::RegistryAt, staging::StageExt as _};
 use ragu_core::{Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::Element;
 
@@ -103,17 +103,8 @@ impl<
                     &claims_builder.b,
                 ),
             };
-        let native_rx = self.native_chain_layouts().1.rx_configured(
-            2,
+        let native_rx = native::chain::InnerError::<C, R, HEADER_SIZE, POLYS, CLAIMS>::rx(
             C::CircuitField::random(&mut *rng),
-            &native::stages::inner_error::Stage::<
-                C,
-                R,
-                HEADER_SIZE,
-                POLYS,
-                CLAIMS,
-                native::RevdotParameters,
-            >::default(),
             &inner_error_witness,
         )?;
 

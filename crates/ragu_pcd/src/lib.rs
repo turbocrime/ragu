@@ -332,7 +332,7 @@ impl<
             CLAIMS,
             CHALLENGES,
             CHALLENGE_WIDTH,
-        >(self.native_registry, params, log2_circuits, capacity)?;
+        >(self.native_registry, params, log2_circuits)?;
 
         // Then, register internal steps
         self.native_registry = self
@@ -450,41 +450,16 @@ impl<
     }
 
     /// The nested bridge chain's value-level geometry at this application's
-    /// capacity. See [`native_chain_layouts`](Self::native_chain_layouts) for
-    /// why a stage's position cannot come from its type.
+    /// capacity.
+    ///
+    /// The nested chain is the one place a stage's position cannot come from
+    /// its type: it holds a *run* of per-slot bridge stages, and stable Rust
+    /// cannot build a [`Parent`](ragu_circuits::staging::Stage::Parent) chain
+    /// whose length is a const. The native chain has no run in it, so it needs
+    /// none of this — see [`internal::native::chain`].
     pub(crate) fn nested_chain_layout(&self) -> ragu_circuits::staging::InducedStages {
         internal::nested::chain_layout::<C::HostCurve, R>(
             self.capacity,
-            self.capacity,
-            self.capacity,
-        )
-    }
-
-    /// The native fuse chains' value-level geometry at this application's
-    /// capacity — `(query_chain, error_chain)`.
-    ///
-    /// Every native stage rx a fuse builds is placed through these rather than
-    /// through the typed `Stage::skip_gates()`, which derives its offsets from
-    /// `values()` and so from the placeholder shape. Where a stage sits
-    /// depends on how wide the stages before it are, and that is a property of
-    /// the application, not of a Rust type.
-    pub(crate) fn native_chain_layouts(
-        &self,
-    ) -> (
-        ragu_circuits::staging::InducedStages,
-        ragu_circuits::staging::InducedStages,
-        ragu_circuits::staging::InducedStages,
-    ) {
-        internal::native::chain_layouts::<
-            C,
-            R,
-            HEADER_SIZE,
-            POLYS,
-            CLAIMS,
-            CHALLENGES,
-            CHALLENGE_WIDTH,
-        >(
-            internal::native::InternalCircuitIndex::NUM,
             self.capacity,
             self.capacity,
         )

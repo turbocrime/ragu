@@ -427,35 +427,6 @@ impl<
     }
 }
 
-/// This stage's wire width for children of the given shapes; the value-level
-/// source of the typed [`values()`](staging::Stage::values). The two children
-/// contribute independently, each at its own shape.
-pub fn num_values(
-    header_size: usize,
-    left: crate::framework_hooks::HookLayout,
-    right: crate::framework_hooks::HookLayout,
-) -> usize {
-    child_num_values(header_size, left) + child_num_values(header_size, right)
-}
-
-/// One child's contribution to this stage's wire width: its three headers, its
-/// polynomial and claim slots at its own shape, its circuit id, and its unified
-/// instance wires.
-///
-/// Its *challenge* slots are not here — they are their own stage
-/// ([`slots`](super::slots)), so that the counts sizing them are named only by
-/// the circuits that read them.
-pub fn child_num_values(header_size: usize, child: crate::framework_hooks::HookLayout) -> usize {
-    // 3 headers * HEADER_SIZE + polynomial slots (2 wires each)
-    //   + query slots (3 wires each)
-    //   + 1 circuit_id + unified instance wires
-    3 * header_size
-        + 2 * child.poly_query.polys
-        + 3 * child.poly_query.claims
-        + 1
-        + unified::NUM_WIRES
-}
-
 /// Both children present the application's shape, so one set of slot counts
 /// sizes both.
 pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: usize> {
@@ -517,18 +488,14 @@ mod tests {
     use ragu_pasta::Pasta;
 
     use super::*;
-    use crate::internal::tests::{HEADER_SIZE, R, capacity_with_polys, stage_wire_count};
+    use crate::internal::tests::{HEADER_SIZE, R, assert_stage_values};
 
-    /// `num_values` predicts the wire count at every shape, not just one.
+    /// `values()` predicts the wire count at every slot count, not just one.
+    /// This is what lets the stage's position in the chain come off its type.
     #[test]
-    fn num_values_matches_wire_count() {
+    fn stage_values_matches_wire_count() {
         fn check<const POLYS: usize>() {
-            let capacity = capacity_with_polys(POLYS);
-            assert_eq!(
-                stage_wire_count(&Stage::<Pasta, R, { HEADER_SIZE }, POLYS, 1>::default()),
-                num_values(HEADER_SIZE, capacity, capacity),
-                "polys={POLYS}"
-            );
+            assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }, POLYS, 1>::default());
         }
         check::<0>();
         check::<1>();

@@ -179,48 +179,51 @@ fn print_internal_circuit_constraint_counts() {
     }
 }
 
-/// Pins the native stages' gate geometry at a stated capacity.
+/// The stage types `test_internal_stage_parameters` pins, at eight polynomial
+/// slots.
+///
+/// The geometry is a function of the declared slot counts, so the counts have
+/// to be named — there is no single "the" layout, which is the point of the
+/// branch these numbers were re-pinned on.
+mod pinned_chain {
+    use super::{HEADER_SIZE, R};
+    use crate::internal::native::chain;
+
+    pub type Preamble = chain::Preamble<ragu_pasta::Pasta, R, HEADER_SIZE, 8, 1>;
+    pub type OuterError = chain::OuterError<ragu_pasta::Pasta, R, HEADER_SIZE, 8, 1>;
+    pub type InnerError = chain::InnerError<ragu_pasta::Pasta, R, HEADER_SIZE, 8, 1>;
+    pub type Query = chain::Query<ragu_pasta::Pasta, R, HEADER_SIZE, 8, 1>;
+    pub type Eval = chain::Eval<ragu_pasta::Pasta, R, HEADER_SIZE, 8, 1>;
+    pub type Challenges = chain::Challenges<ragu_pasta::Pasta, R, HEADER_SIZE, 8, 1, 1, 2>;
+}
+
+/// Pins the native stages' gate geometry at a stated slot count.
 ///
 /// A drift detector for circuit size: a stage that grows pushes everything
-/// after it, and these numbers say by how much. The capacity has to be named
-/// because the geometry is a function of it — there is no single "the" layout
-/// any more, which is the point of the branch these numbers were re-pinned on.
+/// after it, and these numbers say by how much. Every number here comes off the
+/// stage type, through its `Parent` chain — the same source the registry's
+/// masks and the fuse's rx placements use.
 #[rustfmt::skip]
 #[test]
 fn test_internal_stage_parameters() {
-    let (query_chain, error_chain, challenge_chain) = stage_parameter_chains();
+    use ragu_circuits::staging::{Stage as _, StageExt as _};
 
     macro_rules! check_stage {
-        ($chain:expr, $stage:expr, $name:literal, skip = $skip:expr, num = $num:expr) => {{
-            assert_eq!($chain.skip_gates($stage), $skip, "{}: skip", $name);
-            assert_eq!($chain.num_gates($stage), $num, "{}: num", $name);
+        ($stage:ty, $name:literal, skip = $skip:expr, num = $num:expr) => {{
+            assert_eq!(<$stage>::skip_gates(), $skip, "{}: skip", $name);
+            assert_eq!(<$stage>::num_gates(), $num, "{}: num", $name);
         }};
     }
 
-    check_stage!(query_chain,     0, "Preamble",   skip =   1, num = 319);
-    check_stage!(error_chain,     1, "OuterError", skip = 320, num = 186);
-    check_stage!(error_chain,     2, "InnerError", skip = 506, num = 399);
-    check_stage!(query_chain,     1, "Query",      skip = 320, num =  27);
-    check_stage!(query_chain,     2, "Eval",       skip = 347, num =  28);
+    check_stage!(pinned_chain::Preamble,   "Preamble",   skip =   1, num = 319);
+    check_stage!(pinned_chain::OuterError, "OuterError", skip = 320, num = 186);
+    check_stage!(pinned_chain::InnerError, "InnerError", skip = 506, num = 399);
+    check_stage!(pinned_chain::Query,      "Query",      skip = 320, num =  27);
+    check_stage!(pinned_chain::Eval,       "Eval",       skip = 347, num =  28);
     // A sibling of InnerError, not a successor: both start where OuterError
     // ends, so a circuit reaching the challenge slots is not charged for
     // InnerError's gates.
-    check_stage!(challenge_chain, 2, "Challenges", skip = 506, num =   5);
-}
-
-/// The chains `test_internal_stage_parameters` pins, at a capacity of eight
-/// polynomial slots.
-fn stage_parameter_chains() -> (
-    ragu_circuits::staging::InducedStages,
-    ragu_circuits::staging::InducedStages,
-    ragu_circuits::staging::InducedStages,
-) {
-    let capacity = capacity_with_polys(8);
-    native::chain_layouts::<Pasta, R, HEADER_SIZE, 8, 1, 1, 2>(
-        InternalCircuitIndex::NUM,
-        capacity,
-        capacity,
-    )
+    check_stage!(pinned_chain::Challenges, "Challenges", skip = 506, num =   5);
 }
 
 /// Helper test to print current stage parameters in copy-pasteable format.
@@ -229,26 +232,25 @@ fn stage_parameter_chains() -> (
 fn print_internal_stage_parameters() {
     use std::println;
 
-    let (query_chain, error_chain, challenge_chain) = stage_parameter_chains();
+    use ragu_circuits::staging::StageExt as _;
 
-    println!("\n// Copy-paste the following into test_internal_stage_parameters:");
-    for (chain_name, chain, stage, name) in [
-        ("query_chain", &query_chain, 0, "Preamble"),
-        ("error_chain", &error_chain, 1, "OuterError"),
-        ("error_chain", &error_chain, 2, "InnerError"),
-        ("query_chain", &query_chain, 1, "Query"),
-        ("query_chain", &query_chain, 2, "Eval"),
-        ("challenge_chain", &challenge_chain, 2, "Challenges"),
-    ] {
+    fn line<S: ragu_circuits::staging::Stage<ragu_pasta::Fp, R>>(name: &str) {
         println!(
-            "    check_stage!({:<15} {}, {:<13} skip = {:>3}, num = {:>3});",
-            alloc::format!("{chain_name},"),
-            stage,
+            "    check_stage!(pinned_chain::{:<12} {:<13} skip = {:>3}, num = {:>3});",
+            alloc::format!("{name},"),
             alloc::format!("\"{name}\","),
-            chain.skip_gates(stage),
-            chain.num_gates(stage)
+            S::skip_gates(),
+            S::num_gates()
         );
     }
+
+    println!("\n// Copy-paste the following into test_internal_stage_parameters:");
+    line::<pinned_chain::Preamble>("Preamble");
+    line::<pinned_chain::OuterError>("OuterError");
+    line::<pinned_chain::InnerError>("InnerError");
+    line::<pinned_chain::Query>("Query");
+    line::<pinned_chain::Eval>("Eval");
+    line::<pinned_chain::Challenges>("Challenges");
 }
 
 /// Verifies the native registry digest matches the expected value.
@@ -431,16 +433,21 @@ fn print_registry_digests() {
     );
 }
 
-/// Both chain layouts tile — every stage starts where its predecessor ended —
-/// at every capacity, on both curves.
+/// The nested chain layout tiles — every stage starts where its predecessor
+/// ended — at every capacity.
 ///
-/// The masks `register_all` cuts are functions of precisely these offsets, so
-/// a chain that stopped tiling would silently misplace every stage after the
-/// break. Checked across capacities on purpose: the bug this guards against is
+/// The masks cut from it are functions of precisely these offsets, so a chain
+/// that stopped tiling would silently misplace every stage after the break.
+/// Checked across capacities on purpose: the bug this guards against is
 /// geometry that is right at one blessed shape and wrong at every other, which
 /// is exactly what asserting against a fixed placeholder could not catch.
+///
+/// Only the nested chain needs this. The native chain is typed, so
+/// [`Stage::skip_gates`](ragu_circuits::staging::Stage::skip_gates) *is*
+/// `Parent::skip_gates() + Parent::num_gates()` by definition and tiling is not
+/// something it can get wrong.
 #[test]
-fn chain_layouts_tile_at_every_capacity() {
+fn nested_chain_layout_tiles_at_every_capacity() {
     use ragu_pasta::Pasta;
 
     use crate::framework_hooks::{ChallengeLayout, HookLayout, PolyQueryLayout};
@@ -452,22 +459,14 @@ fn chain_layouts_tile_at_every_capacity() {
             challenge: ChallengeLayout { calls: 1, width: 2 },
             poly_query: PolyQueryLayout { polys, claims: 1 },
         };
-        let (query_chain, error_chain, challenge_chain) =
-            crate::internal::native::chain_layouts::<Pasta, R, HEADER_SIZE, 1, 1, 1, 2>(
-                crate::internal::native::InternalCircuitIndex::NUM,
-                capacity,
-                capacity,
-            );
         let nested = crate::internal::nested::chain_layout::<Host, R>(capacity, capacity, capacity);
 
-        for chain in [&query_chain, &error_chain, &challenge_chain, &nested] {
-            for stage in 0..chain.len() {
-                assert_eq!(
-                    chain.skip_gates(stage + 1),
-                    chain.skip_gates(stage) + chain.num_gates(stage),
-                    "not contiguous after stage {stage} at polys={polys}"
-                );
-            }
+        for stage in 0..nested.len() {
+            assert_eq!(
+                nested.skip_gates(stage + 1),
+                nested.skip_gates(stage) + nested.num_gates(stage),
+                "not contiguous after stage {stage} at polys={polys}"
+            );
         }
     }
 }

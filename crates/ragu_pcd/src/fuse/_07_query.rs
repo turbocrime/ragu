@@ -9,7 +9,7 @@
 //! restriction.
 
 use ragu_arithmetic::{CryptoRngCore, Cycle, ff::Field};
-use ragu_circuits::polynomials::Rank;
+use ragu_circuits::{polynomials::Rank, staging::StageExt as _};
 use ragu_core::{Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::Element;
 
@@ -73,11 +73,8 @@ impl<
             ),
         };
 
-        let (query_chain, _, _) = self.native_chain_layouts();
-        let rx = query_chain.rx_configured(
-            1,
+        let rx = native::chain::Query::<C, R, HEADER_SIZE, POLYS, CLAIMS>::rx(
             C::CircuitField::random(&mut *rng),
-            &native::stages::query::Stage::<C, R, HEADER_SIZE, POLYS, CLAIMS>::default(),
             &query_witness,
         )?;
 

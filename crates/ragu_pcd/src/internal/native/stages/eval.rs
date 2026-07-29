@@ -210,24 +210,6 @@ pub struct Output<'dr, D: Driver<'dr>, const POLYS: usize> {
     pub registry_xy: Element<'dr, D>,
 }
 
-/// One child's contribution to this stage's wire width: one evaluation per
-/// entry of its rx list, 4 scalars, and one evaluation per claim slot at its
-/// own count.
-pub fn child_num_values(child: crate::framework_hooks::HookLayout) -> usize {
-    super::super::RxIndex::NUM + 4 + child.poly_query.polys
-}
-
-/// This stage's wire width for children of the given shapes; the value-level
-/// source of the typed [`values()`](staging::Stage::values). The two children
-/// contribute independently, each at its own shape, plus the current step's
-/// 6 elements.
-pub fn num_values(
-    left: crate::framework_hooks::HookLayout,
-    right: crate::framework_hooks::HookLayout,
-) -> usize {
-    child_num_values(left) + child_num_values(right) + 6
-}
-
 /// The eval stage of the fuse witness.
 pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: usize> {
     _marker: PhantomData<(C, R)>,
@@ -305,18 +287,14 @@ mod tests {
     use ragu_pasta::Pasta;
 
     use super::*;
-    use crate::internal::tests::{HEADER_SIZE, R, capacity_with_polys, stage_wire_count};
+    use crate::internal::tests::{HEADER_SIZE, R, assert_stage_values};
 
-    /// `num_values` predicts the wire count at every shape, not just one.
+    /// `values()` predicts the wire count at every slot count, not just one.
+    /// This is what lets the stage's position in the chain come off its type.
     #[test]
-    fn num_values_matches_wire_count() {
+    fn stage_values_matches_wire_count() {
         fn check<const POLYS: usize>() {
-            let capacity = capacity_with_polys(POLYS);
-            assert_eq!(
-                stage_wire_count(&Stage::<Pasta, R, { HEADER_SIZE }, POLYS, 1>::default()),
-                num_values(capacity, capacity),
-                "polys={POLYS}"
-            );
+            assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }, POLYS, 1>::default());
         }
         check::<0>();
         check::<1>();
