@@ -12,31 +12,17 @@
 #![cfg(feature = "unstable-fuzzing")]
 
 use ragu_arithmetic::Cycle;
-use ragu_circuits::polynomials::{ProductionRank, sparse};
+use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::Result;
 use ragu_pasta::{Fp, Pasta};
-use ragu_pcd::{ApplicationBuilder, fuzz_utils::Corruption};
+use ragu_pcd::fuzz_utils::Corruption;
 use ragu_testing::pcd::poly_query::{
-    CommitAndOpen, CommitAndOpenWitness, OpenAndHash, OpenAndHashWitness,
+    CommitAndOpen, CommitAndOpenWitness, OpenAndHash, OpenAndHashWitness, open_app,
+    open_app_builder, poly, seed_leaf,
 };
 use rand::{SeedableRng, rngs::StdRng};
 
 type R = ProductionRank;
-const HEADER_SIZE: usize = 4;
-
-fn poly(coeffs: &[u64]) -> sparse::Polynomial<Fp, R> {
-    sparse::Polynomial::from_coeffs(coeffs.iter().map(|c| Fp::from(*c)).collect())
-}
-
-fn open_app() -> Result<ragu_pcd::Application<'static, Pasta, R, HEADER_SIZE, 1, 2, 1, 2>> {
-    let pasta = Pasta::baked();
-    ApplicationBuilder::<Pasta, R, HEADER_SIZE, 1, 2, 1, 2>::new()
-        .register(CommitAndOpen::<Pasta, R>::new(Pasta::circuit_poseidon(
-            pasta,
-        )))?
-        .register(OpenAndHash::<Pasta, R>::new(Pasta::circuit_poseidon(pasta)))?
-        .finalize(pasta)
-}
 
 /// Corrupting a proof's claim instance (as a malicious prover who skips the
 /// native pre-check would) makes the proof fail root verification, and makes
@@ -44,25 +30,11 @@ fn open_app() -> Result<ragu_pcd::Application<'static, Pasta, R, HEADER_SIZE, 1,
 #[test]
 fn corrupted_claim_is_rejected_directly_and_recursively() -> Result<()> {
     let pasta = Pasta::baked();
-    let app = open_app()?;
+    let app = open_app::<Pasta, R>(pasta)?;
     let mut rng = StdRng::seed_from_u64(1234);
 
-    let make_leaf = |rng: &mut StdRng, coeffs: &[u64]| -> Result<_> {
-        let p = poly(coeffs);
-        let commitment = app.commit_polynomial(&p)?;
-        let (leaf, ()) = app.seed(
-            rng,
-            CommitAndOpen::new(Pasta::circuit_poseidon(pasta)),
-            CommitAndOpenWitness {
-                commitment,
-                claimed_y: None,
-            },
-        )?;
-        Ok(leaf)
-    };
-
     // An honest leaf verifies.
-    let leaf1 = make_leaf(&mut rng, &[3, 1, 4, 1, 5])?;
+    let leaf1 = seed_leaf(&app, pasta, &mut rng, &[3, 1, 4, 1, 5])?;
     assert!(app.verify(&leaf1, &mut rng)?);
 
     // Corrupt the claimed evaluation in slot 0. Root verification rejects it:
@@ -78,7 +50,7 @@ fn corrupted_claim_is_rejected_directly_and_recursively() -> Result<()> {
     // the child's claim instances via the application k(Y) and enforce the
     // claim quotients in compute_v, so the parent either fails to fuse or
     // produces a proof that does not verify.
-    let leaf2 = make_leaf(&mut rng, &[2, 7, 1, 8, 2, 8])?;
+    let leaf2 = seed_leaf(&app, pasta, &mut rng, &[2, 7, 1, 8, 2, 8])?;
     let p1 = poly(&[3, 1, 4, 1, 5]);
     let com1 = app.commit_polynomial(&p1)?;
     let x = Fp::from(9u64);
@@ -131,24 +103,10 @@ fn corrupted_claim_is_rejected_directly_and_recursively() -> Result<()> {
 #[test]
 fn forged_challenge_is_rejected_directly_and_recursively() -> Result<()> {
     let pasta = Pasta::baked();
-    let app = open_app()?;
+    let app = open_app::<Pasta, R>(pasta)?;
     let mut rng = StdRng::seed_from_u64(99);
 
-    let make_leaf = |rng: &mut StdRng, coeffs: &[u64]| -> Result<_> {
-        let p = poly(coeffs);
-        let commitment = app.commit_polynomial(&p)?;
-        let (leaf, ()) = app.seed(
-            rng,
-            CommitAndOpen::new(Pasta::circuit_poseidon(pasta)),
-            CommitAndOpenWitness {
-                commitment,
-                claimed_y: None,
-            },
-        )?;
-        Ok(leaf)
-    };
-
-    let honest = make_leaf(&mut rng, &[3, 1, 4, 1, 5])?;
+    let honest = seed_leaf(&app, pasta, &mut rng, &[3, 1, 4, 1, 5])?;
     assert!(app.verify(&honest, &mut rng)?);
 
     // Keep the point, change the challenge.
@@ -161,7 +119,7 @@ fn forged_challenge_is_rejected_directly_and_recursively() -> Result<()> {
 
     // Fused as a child, `challenge_binding` re-derives the challenge from the
     // point and enforces the pair, so the parent cannot be produced.
-    let leaf2 = make_leaf(&mut rng, &[2, 7, 1, 8])?;
+    let leaf2 = seed_leaf(&app, pasta, &mut rng, &[2, 7, 1, 8])?;
     let p3 = poly(&[5, 5, 5]);
     let com3 = app.commit_polynomial(&p3)?;
     let x = Fp::from(11u64);
@@ -217,18 +175,14 @@ fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
 
     let pasta = Pasta::baked();
     // A prover that simply does not run the fuse-time pre-check.
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 1, 2, 1, 2>::new()
-        .register(CommitAndOpen::<Pasta, R>::new(Pasta::circuit_poseidon(
-            pasta,
-        )))?
-        .register(OpenAndHash::<Pasta, R>::new(Pasta::circuit_poseidon(pasta)))?
+    let app = open_app_builder::<Pasta, R>(pasta)?
         .skip_claim_precheck_for_testing()
         .finalize(pasta)?;
     let mut rng = StdRng::seed_from_u64(2024);
 
     // `bridge_com` commits to P, but the claim carries P'. Both are honest-looking:
     // the step derives z from bridge_com (so z is bound to P) and claims y = P'(z).
-    let p = poly(&[3, 1, 4, 1, 5]);
+    let p = poly::<Fp, R>(&[3, 1, 4, 1, 5]);
     let p_prime = poly(&[9, 2, 6]);
     assert_ne!(p.eval(Fp::from(7u64)), p_prime.eval(Fp::from(7u64)));
     // The handle's host commitment is P's, but its polynomial is P'. The
@@ -264,16 +218,7 @@ fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
     );
 
     // Fused as a child, the desync goes unnoticed.
-    let p2 = poly(&[2, 7, 1, 8]);
-    let com2 = app.commit_polynomial(&p2)?;
-    let (leaf2, ()) = app.seed(
-        &mut rng,
-        CommitAndOpen::new(Pasta::circuit_poseidon(pasta)),
-        CommitAndOpenWitness {
-            commitment: com2,
-            claimed_y: None,
-        },
-    )?;
+    let leaf2 = seed_leaf(&app, pasta, &mut rng, &[2, 7, 1, 8])?;
 
     let p3 = poly(&[5, 5, 5]);
     let com3 = app.commit_polynomial(&p3)?;

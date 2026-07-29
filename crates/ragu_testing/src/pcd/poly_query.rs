@@ -24,8 +24,8 @@
 
 use core::marker::PhantomData;
 
-use ff::Field;
-use ragu_arithmetic::Cycle;
+use ff::{Field, PrimeField};
+use ragu_arithmetic::{CryptoRngCore, Cycle};
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{
     Result,
@@ -34,7 +34,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_pcd::{
-    PolyCommitment,
+    Application, ApplicationBuilder, Pcd, PolyCommitment,
     header::{Header, Suffix},
     step::{Encoded, Index, Step, StepCtx},
 };
@@ -294,4 +294,78 @@ impl<C: Cycle, R: Rank> Step<C> for OpenAndHash<'_, C, R> {
             D::unit(),
         ))
     }
+}
+
+/// The capacity the two fixtures above are exercised at.
+///
+/// One polynomial, opened twice, with one challenge derived over a two-point
+/// input: [`CommitAndOpen`] witnesses the polynomial, derives the challenge and
+/// opens at it, and its `claimed_y` path opens the same polynomial a second time
+/// — which is why `CLAIMS` exceeds `POLYS`. [`OpenAndHash`] fits inside the same
+/// shape with one polynomial and one claim.
+pub const HEADER_SIZE: usize = 4;
+/// See [`HEADER_SIZE`].
+pub const POLYS: usize = 1;
+/// See [`HEADER_SIZE`].
+pub const CLAIMS: usize = 2;
+/// See [`HEADER_SIZE`].
+pub const CHALLENGES: usize = 1;
+/// See [`HEADER_SIZE`].
+pub const CHALLENGE_WIDTH: usize = 2;
+
+/// An [`Application`] at the fixtures' declared capacity.
+pub type OpenApp<'params, C, R> =
+    Application<'params, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>;
+
+/// An [`ApplicationBuilder`] at the fixtures' declared capacity.
+pub type OpenAppBuilder<'params, C, R> =
+    ApplicationBuilder<'params, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>;
+
+/// A polynomial from small integer coefficients.
+pub fn poly<F: PrimeField, R: Rank>(coeffs: &[u64]) -> sparse::Polynomial<F, R> {
+    sparse::Polynomial::from_coeffs(coeffs.iter().map(|c| F::from(*c)).collect())
+}
+
+/// Both fixtures registered, at the capacity above, ready to finalize.
+///
+/// Returned unfinalized so a caller can reach a builder-only knob —
+/// `skip_claim_precheck_for_testing`, which lives behind `unstable-fuzzing` in
+/// `ragu_pcd` and so cannot be named here. Callers that need none of those want
+/// [`open_app`].
+pub fn open_app_builder<C: Cycle, R: Rank>(params: &C::Params) -> Result<OpenAppBuilder<'_, C, R>> {
+    OpenAppBuilder::<C, R>::new()
+        .register(CommitAndOpen::<C, R>::new(C::circuit_poseidon(params)))?
+        .register(OpenAndHash::<C, R>::new(C::circuit_poseidon(params)))
+}
+
+/// Both fixtures registered and finalized: the application every poly-query
+/// test proves through.
+pub fn open_app<C: Cycle, R: Rank>(params: &C::Params) -> Result<OpenApp<'_, C, R>> {
+    open_app_builder::<C, R>(params)?.finalize(params)
+}
+
+/// Seed a [`CommitAndOpen`] leaf over the polynomial with these coefficients.
+///
+/// The leaf's own commitment is derived from the polynomial and dropped, so this
+/// is for callers with nothing to say about it afterwards. A caller that needs
+/// the polynomial or its [`PolyCommitment`] later — to open it in a parent, or
+/// to check a claim against it — should call
+/// [`Application::commit_polynomial`](ragu_pcd::Application::commit_polynomial)
+/// and [`Application::seed`](ragu_pcd::Application::seed) itself.
+pub fn seed_leaf<C: Cycle, R: Rank, RNG: CryptoRngCore>(
+    app: &OpenApp<'_, C, R>,
+    params: &C::Params,
+    rng: &mut RNG,
+    coeffs: &[u64],
+) -> Result<Pcd<C, R, HashedOpening<R>>> {
+    let commitment = app.commit_polynomial(&poly(coeffs))?;
+    let (leaf, ()) = app.seed(
+        rng,
+        CommitAndOpen::new(C::circuit_poseidon(params)),
+        CommitAndOpenWitness {
+            commitment,
+            claimed_y: None,
+        },
+    )?;
+    Ok(leaf)
 }

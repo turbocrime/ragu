@@ -627,15 +627,19 @@ fn test_rx_index_all_exhaustive() {
 /// The branch's acceptance gate: a light application's recursion is
 /// **measurably smaller** than a heavy one's.
 ///
-/// Two applications, identical but for the capacity they declare and what their
-/// single step does with it. The light one witnesses nothing and derives
-/// nothing; the heavy one witnesses two polynomials, opens one of them twice,
-/// and derives a challenge. Every internal circuit the heavy application
-/// registers must be strictly larger, because its capacity comes from its own
-/// declaration rather than from a framework constant — which is the whole point
-/// of the exercise.
+/// Two applications, identical but for the capacity they declare. Every internal
+/// circuit the heavy application registers must be strictly larger, because its
+/// capacity comes from its own declaration rather than from a framework
+/// constant — which is the whole point of the exercise.
 ///
 /// A framework constant would make these two identical.
+///
+/// Each application's single step is written to match what it declares — `Light`
+/// calls no hook, `Heavy` witnesses two polynomials, opens one of them twice and
+/// derives a challenge — but the *bodies do not drive the measurement*. Nothing
+/// registers a step by running it, so the gate counts below come from the
+/// declared consts alone. The two steps are here so the declarations read as
+/// something an application would really ask for.
 mod capacity_is_per_application {
     use ragu_arithmetic::ff::Field;
     use ragu_core::{
@@ -651,6 +655,7 @@ mod capacity_is_per_application {
 
     use super::*;
     use crate::{
+        framework_hooks::{ChallengeLayout, HookLayout, PolyQueryLayout},
         header::{Header, Suffix},
         step::{Encoded, Index, Step, StepCtx},
     };
@@ -772,18 +777,31 @@ mod capacity_is_per_application {
             .finalize(pasta)
             .unwrap();
 
-        // Declared: polynomial slots, claim slots, and the challenge input
-        // width. Each application asks for what its own step needs, which is
-        // what makes the two shapes differ at all.
-        assert_eq!(light.capacity().poly_query.polys, 0);
-        assert_eq!(heavy.capacity().poly_query.polys, 2);
-        assert_eq!(light.capacity().poly_query.claims, 0);
-        assert_eq!(heavy.capacity().poly_query.claims, 3);
-        assert_eq!(light.capacity().challenge.width, 2);
-
-        // How many challenge slots each application declared.
-        assert_eq!(light.capacity().challenge.calls, 0);
-        assert_eq!(heavy.capacity().challenge.calls, 1);
+        // Each application's capacity is its own declaration, and each declared
+        // const lands on its own axis. Reading the four back together is what
+        // makes this more than a restatement: `<2, 3, 1, 2>` is four distinct
+        // values, so a `capacity()` that crossed two of them fails here rather
+        // than downstream as a slot-count mismatch.
+        assert_eq!(
+            light.capacity(),
+            HookLayout {
+                challenge: ChallengeLayout { calls: 0, width: 2 },
+                poly_query: PolyQueryLayout {
+                    polys: 0,
+                    claims: 0
+                },
+            }
+        );
+        assert_eq!(
+            heavy.capacity(),
+            HookLayout {
+                challenge: ChallengeLayout { calls: 1, width: 2 },
+                poly_query: PolyQueryLayout {
+                    polys: 2,
+                    claims: 3
+                },
+            }
+        );
 
         // Every internal circuit that reads a child's slots is strictly
         // smaller in the light application. Under a framework constant these

@@ -3,31 +3,15 @@
 //! through seed/fuse/verify on the real pipeline.
 
 use ragu_arithmetic::{Cycle, ff::Field};
-use ragu_circuits::polynomials::{ProductionRank, sparse};
+use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::{Error, Result};
 use ragu_pasta::{Fp, Pasta};
-use ragu_pcd::ApplicationBuilder;
 use ragu_testing::pcd::poly_query::{
-    CommitAndOpen, CommitAndOpenWitness, OpenAndHash, OpenAndHashWitness,
+    CommitAndOpen, CommitAndOpenWitness, OpenAndHash, OpenAndHashWitness, open_app, poly, seed_leaf,
 };
 use rand::{SeedableRng, rngs::StdRng};
 
 type R = ProductionRank;
-const HEADER_SIZE: usize = 4;
-
-fn poly(coeffs: &[u64]) -> sparse::Polynomial<Fp, R> {
-    sparse::Polynomial::from_coeffs(coeffs.iter().map(|c| Fp::from(*c)).collect())
-}
-
-fn open_app() -> Result<ragu_pcd::Application<'static, Pasta, R, HEADER_SIZE, 1, 2, 1, 2>> {
-    let pasta = Pasta::baked();
-    ApplicationBuilder::<Pasta, R, HEADER_SIZE, 1, 2, 1, 2>::new()
-        .register(CommitAndOpen::<Pasta, R>::new(Pasta::circuit_poseidon(
-            pasta,
-        )))?
-        .register(OpenAndHash::<Pasta, R>::new(Pasta::circuit_poseidon(pasta)))?
-        .finalize(pasta)
-}
 
 /// The full oracle loop, honest witness: a leaf witnesses a polynomial and its
 /// framework commitment, derives a challenge bound to the commitment,
@@ -37,7 +21,7 @@ fn open_app() -> Result<ragu_pcd::Application<'static, Pasta, R, HEADER_SIZE, 1,
 #[test]
 fn oracle_end_to_end() -> Result<()> {
     let pasta = Pasta::baked();
-    let app = open_app()?;
+    let app = open_app::<Pasta, R>(pasta)?;
     let mut rng = StdRng::seed_from_u64(1234);
 
     let p1 = poly(&[3, 1, 4, 1, 5]);
@@ -85,16 +69,7 @@ fn oracle_end_to_end() -> Result<()> {
     assert_eq!(claim1.x, Fp::ZERO, "the repeat opens at x = 0");
     assert_eq!(claim1.y, p1.eval(claim1.x));
 
-    let p2 = poly(&[2, 7, 1, 8, 2, 8]);
-    let com2 = app.commit_polynomial(&p2)?;
-    let (leaf2, ()) = app.seed(
-        &mut rng,
-        CommitAndOpen::new(Pasta::circuit_poseidon(pasta)),
-        CommitAndOpenWitness {
-            commitment: com2,
-            claimed_y: None,
-        },
-    )?;
+    let leaf2 = seed_leaf(&app, pasta, &mut rng, &[2, 7, 1, 8, 2, 8])?;
 
     // Merge the two leaves, opening p1 at a chosen point with an honest
     // evaluation.
@@ -125,7 +100,7 @@ fn oracle_end_to_end() -> Result<()> {
 #[test]
 fn dishonest_evaluation_is_rejected() -> Result<()> {
     let pasta = Pasta::baked();
-    let app = open_app()?;
+    let app = open_app::<Pasta, R>(pasta)?;
     let mut rng = StdRng::seed_from_u64(1234);
 
     let p = poly(&[3, 1, 4, 1, 5]);
