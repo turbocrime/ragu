@@ -322,11 +322,13 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHookOutputs<'d
     }
 }
 
-/// The hook-call counts a step body's circuit structure commits to.
+/// The slot capacities an application declares, as the value that travels
+/// downstream of the [`ApplicationBuilder`](crate::ApplicationBuilder) consts.
 ///
-/// Discovered by the registration-time dry run and replayed at synthesis: a
-/// body whose calls diverge from it would synthesize a circuit other than the
-/// one that was registered.
+/// Every application circuit exposes exactly these counts, whatever its own step
+/// used, so a step's circuit shape is settled the moment it registers rather
+/// than at the last registration. A body that calls a hook past its capacity is
+/// refused at the call that exceeds it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct HookLayout {
     /// What [`derive_challenge`](crate::step::StepCtx::derive_challenge)
@@ -342,8 +344,8 @@ pub struct HookLayout {
 /// Kept apart from [`PolyQueryLayout`] because the two are independent
 /// framework hooks: challenge derivation provides sound Fiat–Shamir, poly-query
 /// provides recursive opening enforcement, and neither implies the other. They
-/// share only the registration dry run that discovers them, which is an
-/// implementation convenience rather than a relationship between the features.
+/// share only the [`HookLayout`] that carries them, which is an implementation
+/// convenience rather than a relationship between the features.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ChallengeLayout {
     /// [`derive_challenge`](crate::step::StepCtx::derive_challenge) calls.
@@ -464,8 +466,9 @@ pub struct FrameworkHookOutputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::
     /// in call order. Each names one of [`witnessed_polys`](Self::witnessed_polys).
     pub poly_queries: Vec<QueryWires<'dr, D>>,
     /// The `(points, challenge)` record per `derive_challenge` call, in slot
-    /// order. Its length is the call count the registration-time dry run
-    /// discovers.
+    /// order. Padded to the application's declared challenge capacity by
+    /// [`StepCtx::finish_slots`](crate::step::StepCtx), so its length is that
+    /// capacity rather than what the body used.
     pub challenge_pairs: Vec<ChallengeWires<'dr, D, C::NestedCurve>>,
 }
 
@@ -500,8 +503,8 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     }
 
     /// The slot the next witnessed polynomial will occupy, in
-    /// `witness_polynomial` call order. The call sequence is circuit structure
-    /// (discovered by the adapter's dry run), so the assignment is
+    /// `witness_polynomial` call order. The call sequence is circuit structure —
+    /// it must not depend on witness values — so the assignment is
     /// deterministic.
     ///
     /// Reserving and recording are separate calls because the slot is needed
@@ -575,17 +578,17 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     /// must not depend on witness values and must not exceed
     /// the application's claim capacity (checked here).
     ///
+    /// `poly_slot` names its polynomial by index into the step's witnessed
+    /// polynomials, so claims may be raised in any order and several may name
+    /// one polynomial. It is recorded as a circuit constant, not a free wire:
+    /// which handle the body passed is structure, so a prover must not be able
+    /// to vary it and re-aim the query.
+    ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidWitness`] if `slot` — the slot assigned when the
-    /// polynomial was witnessed, which fixed the bridge stage `com` commits to
-    /// — is not the instance slot this claim is about to occupy. The two are
-    /// assigned by separate counters, so a body that witnesses `A` then `B` but
-    /// enforces `B` then `A` would otherwise write each claim's `com` into the
-    /// other's slot. Pair each
-    /// [`witness_polynomial`](crate::step::StepCtx::witness_polynomial) with its
-    /// [`enforce_poly_query`](crate::step::StepCtx::enforce_poly_query) in the
-    /// same order.
+    /// Returns [`Error::InvalidWitness`] if the step has already filled every
+    /// claim slot the application declared, or if `poly_slot` names a
+    /// polynomial this step never witnessed.
     pub fn enforce_polynomial_query(
         &mut self,
         dr: &mut D,

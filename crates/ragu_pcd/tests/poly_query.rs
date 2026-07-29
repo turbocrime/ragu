@@ -51,11 +51,11 @@ fn oracle_end_to_end() -> Result<()> {
         },
     )?;
     assert!(app.verify(&leaf1, &mut rng)?);
-    // Every claim slot the application has is present. The count is the
-    // application's *discovered* capacity, not a framework constant: this
-    // step opens one polynomial at two points, so the capacity is two claims
-    // over one polynomial — which is the whole point of splitting the two
-    // counts, and is now what the recursion is sized for.
+    // Every claim slot the application has is present. The counts are the
+    // application's *declared* capacity, not a framework constant: this
+    // application declares two claims over one polynomial, and this step opens
+    // that polynomial at two points — which is the whole point of splitting the
+    // two counts, and is what the recursion is sized for.
     assert_eq!(leaf1.proof().application_claims().len(), 2);
     assert_eq!(leaf1.proof().application_polys().len(), 1);
     // `com` is derived by the framework from the claim's bridge stage once the
