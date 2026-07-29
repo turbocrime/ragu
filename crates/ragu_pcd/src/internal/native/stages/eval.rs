@@ -86,6 +86,16 @@ impl<F: PrimeField> ChildEvaluationsWitness<F> {
     }
 }
 
+/// The number of components the current fuse step contributes to an
+/// accumulation — one per field of [`CurrentStepWitness`]: the two `s_prime`
+/// registry restrictions, the `inner_error` restriction, $a$, $b$, and the
+/// `query` restriction.
+///
+/// Both this stage's width and the nested side's endoscaling-point count are
+/// built from it, so the two cannot drift. `_10_p` documents the canonical
+/// accumulation order.
+pub const CURRENT_STEP_COMPONENTS: usize = 6;
+
 /// Pre-computed polynomial evaluations at $u$ for the current step.
 pub struct CurrentStepWitness<F> {
     /// Evaluation of the committed $m(w, x_0, Y)$ at $u$, where $x\_{0}$ is
@@ -233,7 +243,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const POLYS: usize, const CLAI
     type OutputKind = Kind![C::CircuitField; Output<'_, _, POLYS>];
 
     fn values() -> usize {
-        2 * (super::super::RxIndex::NUM + 4 + POLYS) + 6
+        2 * crate::internal::nested::child_endoscaling_points_for(POLYS) + CURRENT_STEP_COMPONENTS
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

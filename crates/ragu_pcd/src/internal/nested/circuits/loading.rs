@@ -233,7 +233,7 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         // Each poly-query claim's bridge stage must witness exactly the host
         // commitment this proof records for that slot. The stage's wires are
         // therefore the host point, so committing the stage (which yields the
-        // claim's instance-bound `com`) binds `com` to that host commitment —
+        // claim's instance-bound `bridge_com`) binds `bridge_com` to that host commitment —
         // mirroring how `BridgeF.native_f` ties `bridge_f_commitment` above.
         assert_eq!(
             claim_bridges.len(),

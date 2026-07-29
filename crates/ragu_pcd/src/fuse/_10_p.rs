@@ -116,8 +116,8 @@ impl<
                 // Folding them here (with their host commitments entering the
                 // endoscaling points list) is what makes the claims' commitment
                 // binding recursive.
-                for (poly, com) in proof.claim_polys.iter().zip(proof.claim_host_commitments()) {
-                    acc.acc(poly, com);
+                for (poly, host) in proof.claim_polys.iter().zip(proof.claim_host_commitments()) {
+                    acc.acc(poly, host);
                 }
             }
 

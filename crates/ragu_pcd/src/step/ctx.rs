@@ -66,7 +66,8 @@ where
     /// relation. Anything added here must preserve that: allocate the
     /// commitment, retain the coefficients as a value.
     ///
-    /// The commitment point is reachable via [`PolyHandle::commitment`]
+    /// The bridge commitment point is reachable via
+    /// [`PolyHandle::bridge_commitment`]
     /// for challenges, hashing and the like; the retained polynomial is what a
     /// later [`enforce_poly_query`](Self::enforce_poly_query) opens. Because a
     /// [`PolyCommitment`] can only come from
@@ -78,7 +79,7 @@ where
     ///
     /// A step witnesses *all* its polynomials in a single call, and the handles
     /// come back in the same order. Slot `i` is index `i`, so a claim raised
-    /// through `handles[i]` occupies the slot whose bridge stage `com` commits
+    /// through `handles[i]` occupies the slot whose bridge stage `bridge_com` commits
     /// to — there is no separate counter to keep in step with, and no
     /// pair-them-in-order discipline to get wrong.
     ///
@@ -116,10 +117,10 @@ where
         commitment: DriverValue<D, PolyCommitment<C, R>>,
     ) -> Result<PolyHandle<'dr, D, C, R>> {
         let slot = self.hooks.next_poly_slot()?;
-        let host_for_com = commitment.as_ref().map(|c| c.host());
+        let host = commitment.as_ref().map(|c| c.host());
         let proof_values = self.hooks.proof_values();
         let capacity = self.hooks.capacity();
-        let com_value = D::try_just(move || {
+        let bridge_com_value = D::try_just(move || {
             let proof_values = proof_values.take();
             let alpha = crate::internal::challenge::claim_bridge_alpha::<C>(
                 proof_values.bridge_alpha,
@@ -129,15 +130,15 @@ where
                 proof_values.params,
                 slot,
                 alpha,
-                host_for_com.take(),
+                host.take(),
                 capacity,
             )
         })?;
-        let com = Point::alloc(self.dr, com_value)?;
+        let bridge_com = Point::alloc(self.dr, bridge_com_value)?;
         let polynomial = commitment.map(PolyCommitment::into_polynomial);
-        let handle = PolyHandle::new(com, polynomial, slot);
+        let handle = PolyHandle::new(bridge_com, polynomial, slot);
         self.hooks
-            .record_polynomial(handle.commitment().clone(), handle.coefficients())?;
+            .record_polynomial(handle.bridge_commitment().clone(), handle.coefficients())?;
         Ok(handle)
     }
 
@@ -178,7 +179,7 @@ where
     ///
     /// # Soundness status
     ///
-    /// A claim's `com` is the commitment of that claim's **bridge stage** — a
+    /// A claim's `bridge_com` is the commitment of that claim's **bridge stage** — a
     /// polynomial the proof carries, whose wires are the claim's host
     /// commitment, which the `loading` circuit ties to the host point the
     /// parent folds and endoscales. That is the framework's own idiom for
@@ -227,7 +228,7 @@ where
     /// binds that commitment's polynomial — but passing a **freely witnessed**
     /// point binds nothing, and lets the prover grind the challenge by varying
     /// it. Every point here must be pinned: a
-    /// [`PolyHandle::commitment`](crate::poly_commitment::PolyHandle::commitment),
+    /// [`PolyHandle::bridge_commitment`](crate::poly_commitment::PolyHandle::bridge_commitment),
     /// a header-carried point, or a point otherwise constrained in this step.
     /// This is the same discipline the framework applies to its own transcript:
     /// compress data into a binding commitment, then derive from that.
@@ -335,7 +336,7 @@ where
 
             // Straight to the per-slot path, not the step-facing array call:
             // padding runs after the body, so the once-only rule would reject
-            // it. The slot's `com` is still that slot's bridge-stage
+            // it. The slot's `bridge_com` is still that slot's bridge-stage
             // commitment, derived exactly as a real polynomial's is. The handle
             // is discarded: `witness_one_polynomial` already recorded the slot,
             // and no padding query names this slot (they all name slot 0).

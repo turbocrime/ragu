@@ -58,7 +58,11 @@ pub const fn child_endoscaling_points_for(polys: usize) -> usize {
 /// The endoscaling circuits process these points across
 /// [`num_endoscaling_steps`] steps.
 pub const fn num_endoscaling_points(capacity: crate::framework_hooks::HookLayout) -> usize {
-    1 + 2 * child_endoscaling_points(capacity) + 6
+    const F_COMMITMENT_BASE_POINT: usize = 1;
+
+    F_COMMITMENT_BASE_POINT
+        + 2 * child_endoscaling_points(capacity)
+        + crate::internal::native::stages::eval::CURRENT_STEP_COMPONENTS
 }
 
 /// The number of endoscaling step circuits a fuse runs: what
@@ -159,14 +163,22 @@ pub fn chain_layout<HC: ragu_arithmetic::CurveAffine, R: Rank>(
 ///
 /// `nested_chain_layout_tiles_at_every_capacity` pins that each run's slots sum
 /// to the span they subdivide.
-pub fn run_layout(
+/// The slot width comes from `Slot` itself, so the layout and the stage it tiles
+/// cannot disagree about how wide a slot is — a literal here would survive a
+/// slot stage gaining a field.
+pub fn run_layout<F, R, Slot>(
     chain: &ragu_circuits::staging::InducedStages,
     stage: ChainStage,
     slots: usize,
-) -> ragu_circuits::staging::InducedStages {
+) -> ragu_circuits::staging::InducedStages
+where
+    F: ragu_arithmetic::ff::Field,
+    R: Rank,
+    Slot: ragu_circuits::staging::Stage<F, R>,
+{
     ragu_circuits::staging::InducedStages::anchored(
         chain.skip_gates(stage.index()),
-        alloc::vec![2; slots],
+        alloc::vec![Slot::values(); slots],
     )
 }
 
@@ -175,13 +187,18 @@ pub fn run_layout(
 ///
 /// Takes the chain rather than rebuilding it — the two are always wanted
 /// together, and building the chain is a ten-element allocation.
-pub fn claim_run_layout(
+pub fn claim_run_layout<HC: ragu_arithmetic::CurveAffine, R: Rank>(
     chain: &ragu_circuits::staging::InducedStages,
     capacity: crate::framework_hooks::HookLayout,
 ) -> ragu_circuits::staging::InducedStages {
+    use ragu_circuits::staging::Stage as _;
+
     ragu_circuits::staging::InducedStages::anchored(
         chain.final_skip_gates(),
-        alloc::vec![2; capacity.poly_query.polys],
+        alloc::vec![
+            stages::claim_bridge::Slot::<HC, R>::values();
+            capacity.poly_query.polys
+        ],
     )
 }
 
@@ -219,18 +236,22 @@ impl NestedLayouts {
         let chain = chain_layout::<HC, R>(capacity);
         let num_points = num_endoscaling_points(capacity);
         Self {
-            points: run_layout(
+            points: run_layout::<HC::Base, R, endoscalar::PointSlotStage<HC, R>>(
                 &chain,
                 ChainStage::Points,
                 endoscalar::points_stage_num_slots(num_points),
             ),
-            preamble: run_layout(
+            preamble: run_layout::<HC::Base, R, stages::preamble::Slot<HC, R>>(
                 &chain,
                 ChainStage::Preamble,
                 stages::preamble::num_slots(capacity),
             ),
-            eval: run_layout(&chain, ChainStage::Eval, stages::eval::num_slots(capacity)),
-            claims: claim_run_layout(&chain, capacity),
+            eval: run_layout::<HC::Base, R, stages::eval::Slot<HC, R>>(
+                &chain,
+                ChainStage::Eval,
+                stages::eval::num_slots(capacity),
+            ),
+            claims: claim_run_layout::<HC, R>(&chain, capacity),
             chain,
             num_points,
         }
@@ -515,7 +536,7 @@ pub fn register_all<'params, C: Cycle, R: Rank>(
 
     {
         let chain = chain_layout::<C::HostCurve, R>(capacity);
-        let claim_layout = claim_run_layout(&chain, capacity);
+        let claim_layout = claim_run_layout::<C::HostCurve, R>(&chain, capacity);
 
         // The fixed block, in BLOCK_FIXED order: endoscalar, points, points
         // final, then the eight bridge masks in chain order.

@@ -40,7 +40,7 @@ impl<
         builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<()> {
         let bridge_rx = self.nested_chain_layout().rx_configured(
-            3,
+            nested::ChainStage::SPrime.index(),
             C::ScalarField::random(&mut *rng),
             &nested::stages::s_prime::Stage::<C::HostCurve, R>::default(),
             &nested::stages::s_prime::Witness {

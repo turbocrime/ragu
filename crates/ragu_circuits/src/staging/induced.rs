@@ -229,7 +229,11 @@ impl InducedStages {
             alpha,
             self.skip_gates(stage),
             self.num_gates(stage),
-            2 * self.num_gates(stage),
+            // The declared width, matching what the typed path
+            // (`StageExt::rx_configured`) passes as `Self::values()`. Not
+            // `2 * num_gates(stage)`: `num_gates` is `width.div_ceil(2)`, so
+            // that rounds an odd width up and would accept `width + 1` values.
+            self.width(stage),
             values,
         )
     }

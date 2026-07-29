@@ -89,7 +89,7 @@ impl<
             right: nested::stages::preamble::ChildWitness::from_proof(right),
         };
         let bridge_rx = self.nested_chain_layout().rx(
-            2,
+            nested::ChainStage::Preamble.index(),
             C::ScalarField::random(&mut *rng),
             &crate::internal::point_run_values(&witness.slot_points())?,
         )?;

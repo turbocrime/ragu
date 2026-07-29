@@ -292,7 +292,8 @@ fn test_internal_stage_parameters() {
     }
 
     // Moved when a claim started naming its polynomial by commitment instead of
-    // by index: a claim slot is four instance wires (com.x, com.y, x, y) where
+    // by index: a claim slot is four instance wires (bridge_com.x, bridge_com.y,
+    // x, y) where
     // it was three, so at the one claim slot pinned here the preamble gains two
     // values — one gate — and every stage below it shifts by that gate.
     check_stage!(pinned_chain::Preamble,   "Preamble",   skip =   1, num = 320);
@@ -745,7 +746,7 @@ mod capacity_is_per_application {
         ctx.enforce_poly_query(&handle, zero.clone(), zero.clone())?;
         ctx.enforce_poly_query(&handle, zero.clone(), zero.clone())?;
         ctx.enforce_poly_query(&other, zero.clone(), zero)?;
-        ctx.derive_challenge(&[handle.commitment().clone()])?;
+        ctx.derive_challenge(&[handle.bridge_commitment().clone()])?;
     });
 
     fn gates<const POLYS: usize, const CLAIMS: usize, const CHALLENGES: usize>(

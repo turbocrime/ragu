@@ -49,12 +49,12 @@ fn corrupted_claim_is_rejected_directly_and_recursively() -> Result<()> {
 
     let make_leaf = |rng: &mut StdRng, coeffs: &[u64]| -> Result<_> {
         let p = poly(coeffs);
-        let com = app.commit_polynomial(&p)?;
+        let commitment = app.commit_polynomial(&p)?;
         let (leaf, ()) = app.seed(
             rng,
             CommitAndOpen::new(Pasta::circuit_poseidon(pasta)),
             CommitAndOpenWitness {
-                commitment: com,
+                commitment,
                 claimed_y: None,
             },
         )?;
@@ -136,12 +136,12 @@ fn forged_challenge_is_rejected_directly_and_recursively() -> Result<()> {
 
     let make_leaf = |rng: &mut StdRng, coeffs: &[u64]| -> Result<_> {
         let p = poly(coeffs);
-        let com = app.commit_polynomial(&p)?;
+        let commitment = app.commit_polynomial(&p)?;
         let (leaf, ()) = app.seed(
             rng,
             CommitAndOpen::new(Pasta::circuit_poseidon(pasta)),
             CommitAndOpenWitness {
-                commitment: com,
+                commitment,
                 claimed_y: None,
             },
         )?;
@@ -194,23 +194,23 @@ fn forged_challenge_is_rejected_directly_and_recursively() -> Result<()> {
 
 /// **S1 — the claim commitment is not bound to the folded polynomial.**
 ///
-/// A claim's instance-bound `com` is what the *step* sees: its Fiat-Shamir
+/// A claim's instance-bound `bridge_com` is what the *step* sees: its Fiat-Shamir
 /// challenge and header hash are derived from it. The polynomial the *parent*
 /// folds into `f(X)` and the PCS accumulator is carried separately, under its
-/// own host-curve commitment. Every piece is individually pinned — `com` by
+/// own host-curve commitment. Every piece is individually pinned — `bridge_com` by
 /// the child's `k(Y)`, the host commitment by `copying` against the child's
 /// eval bridge stage, and the fold by `loading`/endoscaling — but nothing ties
-/// `com` to the host commitment except a prover-side pre-check that the code
+/// `bridge_com` to the host commitment except a prover-side pre-check that the code
 /// itself documents as carrying no soundness weight.
 ///
 /// So the adversary is a prover who declines to run that pre-check and hands
 /// in a child that is internally consistent everywhere, desynced only between
-/// `com` (which commits to `P`) and the carried polynomial `P'`. The step's
+/// `bridge_com` (which commits to `P`) and the carried polynomial `P'`. The step's
 /// challenge `z` is bound to `P`, yet the statement the parent enforces is
 /// about `P'`.
 ///
 /// Root verification catches this (`verify.rs` re-derives `bridge(host)` and
-/// compares it to `com`). An interior fuse does not — that is the gap.
+/// compares it to `bridge_com`). An interior fuse does not — that is the gap.
 #[test]
 fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
     use ragu_pcd::PolyCommitment;
@@ -226,13 +226,13 @@ fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
         .finalize(pasta)?;
     let mut rng = StdRng::seed_from_u64(2024);
 
-    // `com` commits to P, but the claim carries P'. Both are honest-looking:
-    // the step derives z from com (so z is bound to P) and claims y = P'(z).
+    // `bridge_com` commits to P, but the claim carries P'. Both are honest-looking:
+    // the step derives z from bridge_com (so z is bound to P) and claims y = P'(z).
     let p = poly(&[3, 1, 4, 1, 5]);
     let p_prime = poly(&[9, 2, 6]);
     assert_ne!(p.eval(Fp::from(7u64)), p_prime.eval(Fp::from(7u64)));
     // The handle's host commitment is P's, but its polynomial is P'. The
-    // framework derives `com` from the host, so the step's challenge is bound
+    // framework derives `bridge_com` from the host, so the step's challenge is bound
     // to P while the parent folds P'.
     let host_of_p =
         p.commit_to_affine::<<Pasta as Cycle>::HostCurve>(Pasta::host_generators(pasta));
@@ -247,7 +247,8 @@ fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
         },
     )?;
 
-    // The claim really is desynced: com commits to P, the carried poly is P'.
+    // The claim really is desynced: bridge_com bridges P's host commitment, the
+    // carried poly is P'.
     let claim = cheat.proof().application_claims()[0];
     assert_eq!(
         claim.y,
@@ -259,7 +260,7 @@ fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
     // The root verifier checks the bridge, so it rejects.
     assert!(
         !app.verify(&cheat, &mut rng)?,
-        "root verify must reject a claim whose com does not bridge its host"
+        "root verify must reject a claim whose bridge_com does not bridge its host"
     );
 
     // Fused as a child, the desync goes unnoticed.
@@ -294,13 +295,13 @@ fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
         Err(e) => std::eprintln!("interior fuse rejected the desync: {e:?}"),
         Ok((parent, ())) => {
             let verified = app.verify(&parent, &mut rng)?;
-            // `com` is now the commitment of the claim's bridge stage, which
+            // `bridge_com` is now the commitment of the claim's bridge stage, which
             // the proof carries and whose wires `loading` ties to the folded
             // host commitment -- parity with `bridge_f`. What is still missing
             // is the link from any commitment to the polynomial it commits to,
             // i.e. the framework-wide deferred PCS opening, which no
             // commitment in the system has yet. So a prover can still carry a
-            // bridge rx that disagrees with `com`. Invert this assertion when
+            // bridge rx that disagrees with `bridge_com`. Invert this assertion when
             // the nested-side PCS lands.
             assert!(
                 verified,
@@ -309,7 +310,7 @@ fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
                  -- invert this assertion."
             );
             std::eprintln!(
-                "S1 CONFIRMED: parent verified a claim whose com does not commit \
+                "S1 CONFIRMED: parent verified a claim whose bridge_com does not commit \
                  to the polynomial that was folded."
             );
         }

@@ -153,7 +153,7 @@ impl<C: Cycle, R: Rank> Step<C> for CommitAndOpen<'_, C, R> {
         let [handle] = ctx.witness_polynomial::<R, 1>([commitment])?;
 
         // (2) Derive a challenge bound to the commitment.
-        let z = ctx.derive_challenge(&[handle.commitment().clone()])?;
+        let z = ctx.derive_challenge(&[handle.bridge_commitment().clone()])?;
 
         // (3) Evaluate the polynomial at the challenge (natively; the
         // polynomial is not in-circuit). A dishonest override, if provided,
@@ -184,7 +184,7 @@ impl<C: Cycle, R: Rank> Step<C> for CommitAndOpen<'_, C, R> {
 
         // Output digest binds the commitment.
         let mut sponge = Sponge::new(ctx.dr, self.poseidon_params);
-        handle.commitment().write(ctx.dr, &mut sponge)?;
+        handle.bridge_commitment().write(ctx.dr, &mut sponge)?;
         let output = sponge.squeeze(ctx.dr)?;
         let output_hash = output.value().map(|v| *v);
         let output_encoded = Encoded::from_gadget(output);
@@ -274,7 +274,7 @@ impl<C: Cycle, R: Rank> Step<C> for OpenAndHash<'_, C, R> {
         let mut sponge = Sponge::new(ctx.dr, self.poseidon_params);
         sponge.absorb(ctx.dr, left_encoded.as_gadget())?;
         sponge.absorb(ctx.dr, right_encoded.as_gadget())?;
-        handle.commitment().write(ctx.dr, &mut sponge)?;
+        handle.bridge_commitment().write(ctx.dr, &mut sponge)?;
         let output = sponge.squeeze(ctx.dr)?;
         let output_hash = output.value().map(|v| *v);
         let output_encoded = Encoded::from_gadget(output);

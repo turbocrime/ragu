@@ -131,15 +131,16 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 }
 
 /// A polynomial-opening claim carried on a [`Proof`]: the polynomial's
-/// nested-curve commitment `com`, the opening point `x`, and the claimed
-/// evaluation `y` (the committed polynomial satisfies $p(x) = y$).
+/// nested-curve **bridge** commitment `bridge_com`, the opening point `x`, and
+/// the claimed evaluation `y` (the opened polynomial satisfies $p(x) = y$).
 ///
-/// Named fields rather than a positional `(com, x, y)` tuple so downstream
-/// folding code reads `claim.x` / `claim.y` instead of `claim.1` / `claim.2`.
+/// Named fields rather than a positional `(bridge_com, x, y)` tuple so
+/// downstream folding code reads `claim.x` / `claim.y` instead of `claim.1` /
+/// `claim.2`.
 ///
 /// # The claim names its polynomial by commitment, not by index
 ///
-/// `com` is the same value the proof's
+/// `bridge_com` is the same value the proof's
 /// [`application_polys`](Proof::application_polys) carries for that
 /// polynomial — and in the step's own circuit it is the same *wire*: the
 /// commitment is allocated once by `witness_polynomial` and written into both
@@ -149,14 +150,24 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 /// Naming by commitment rather than by index is deliberate. An index is a name
 /// that must be resolved, and a resolution that goes wrong denotes a different
 /// polynomial *silently* — the circuit still opens. A commitment is the thing
-/// itself: `com` is derived from the polynomial's slot (the blind is
-/// `bridge_alpha^(5+slot)` and the wires are placed at that slot's offset in
-/// the bridge run), so it identifies exactly one slot and cannot be relocated
-/// to another. A mismatch finds no polynomial and produces no proof.
+/// itself.
+///
+/// # Why `bridge_com` rather than `bridge_com`
+///
+/// It is not the commitment *to the polynomial*. It commits to this claim's
+/// bridge stage, whose wires are the coordinates of the polynomial's host
+/// commitment, blinded by `bridge_alpha^(5+slot)` and placed at that slot's
+/// offset in the bridge run. So it is a function of `(host, slot, bridge_alpha,
+/// capacity)`: it identifies exactly one slot of one proof and cannot be
+/// relocated to another, which is precisely the property a claim needs, and a
+/// mismatch finds no polynomial and produces no proof. It is *not* canonical for
+/// the polynomial across proofs or slots, and it is not homomorphic in it. The
+/// polynomial's own commitment is
+/// [`PolyCommitment`](crate::PolyCommitment)'s host commitment.
 #[derive(Clone, Copy, Debug)]
 pub struct ClaimOpening<Curve, F> {
-    /// The opened polynomial's nested-curve commitment.
-    pub com: Curve,
+    /// The opened polynomial's bridge commitment.
+    pub bridge_com: Curve,
     /// The opening point.
     pub x: F,
     /// The claimed evaluation $p(x) = y$.
@@ -292,7 +303,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) application_claims: alloc::vec::Vec<ClaimOpening<C::NestedCurve, C::CircuitField>>,
     /// The nested-curve commitment per polynomial slot, in slot order — one
     /// per polynomial. A claim carries the same commitment for the polynomial
-    /// it opens, so this list is what a claim's `com` is matched against.
+    /// it opens, so this list is what a claim's `bridge_com` is matched against.
     pub(crate) application_polys: alloc::vec::Vec<C::NestedCurve>,
     /// The derived challenges the step's circuit exposes, one per
     /// challenge slot the application's capacity provides, in slot order.
@@ -307,7 +318,7 @@ pub struct Proof<C: Cycle, R: Rank> {
 
     /// Per-claim bridge stage rx polynomials, in slot order. Each one's wires
     /// are the corresponding claim's host commitment, and its commitment is
-    /// the claim's instance-bound `com`. Carrying them is what makes `com` the
+    /// the claim's instance-bound `bridge_com`. Carrying them is what makes `bridge_com` the
     /// commitment of a polynomial the proof actually holds — at parity with
     /// every other cross-curve commitment (e.g. `bridge_f_rx`).
     pub(crate) claim_bridge_rxs: alloc::vec::Vec<sparse::Polynomial<C::ScalarField, R>>,
@@ -627,13 +638,18 @@ impl<
         // follow the application's capacity.
         let chain = self.nested_chain_layout();
         let endoscalar_rx =
-            chain.rx_configured(0, endoscalar_alpha, &EndoscalarStage, beta_endo)?;
+            chain.rx_configured(
+                nested::ChainStage::Endoscalar.index(),
+                endoscalar_alpha,
+                &EndoscalarStage,
+                beta_endo,
+            )?;
         // The points stage is an induced run, so its wires come from the slot
         // list rather than from a stage body — `rx` over the flat values is
         // what `rx_configured` would have computed from the old fixed-vector
         // gadget, and the run is still one commitment.
         let points_rx = chain.rx(
-            1,
+            nested::ChainStage::Points.index(),
             points_alpha,
             &crate::internal::point_run_values(&witness.slot_points())?,
         )?;
@@ -698,7 +714,10 @@ impl<
         // slot holds the canonical padding claim (mirroring the adapter).
         let (padding_host, padding_x, padding_y) =
             crate::internal::challenge::padding_claim::<C>(self.params);
-        let padding_coms: alloc::vec::Vec<C::NestedCurve> = (0..self.capacity().poly_query.polys)
+        let padding_bridge_coms: alloc::vec::Vec<C::NestedCurve> = (0..self
+            .capacity()
+            .poly_query
+            .polys)
             .map(|slot| {
                 crate::internal::challenge::claim_bridge_commitment::<C, R>(
                     self.params,
@@ -718,9 +737,9 @@ impl<
         // records for that slot. Absent when the application declares no
         // polynomial slots, which is only reachable when it declares no claim
         // slots either: a claim has to name a polynomial.
-        let padding_com = padding_coms.first().copied();
+        let padding_bridge_com = padding_bridge_coms.first().copied();
         builder.set_application_polys(
-            padding_coms,
+            padding_bridge_coms,
             vec![
                 crate::internal::challenge::padding_poly::<C, R>();
                 self.capacity().poly_query.polys
@@ -730,7 +749,8 @@ impl<
         builder.set_application_claims(
             (0..self.capacity().poly_query.claims)
                 .map(|_| crate::framework_hooks::PolyQueryClaim {
-                    com: padding_com.expect("a claim slot requires a polynomial slot to name"),
+                    bridge_com: padding_bridge_com
+                        .expect("a claim slot requires a polynomial slot to name"),
                     x: padding_x,
                     y: padding_y,
                 })
@@ -787,7 +807,7 @@ impl<
             let rx = self
                 .nested_chain_layout()
                 .rx_configured(
-                    3,
+                    nested::ChainStage::SPrime.index(),
                     C::ScalarField::ONE,
                     &nested::stages::s_prime::Stage::<C::HostCurve, R>::default(),
                     &nested::stages::s_prime::Witness {
@@ -804,7 +824,7 @@ impl<
             let rx = self
                 .nested_chain_layout()
                 .rx_configured(
-                    4,
+                    nested::ChainStage::InnerError.index(),
                     C::ScalarField::ONE,
                     &nested::stages::inner_error::Stage::<C::HostCurve, R>::default(),
                     &nested::stages::inner_error::Witness {
@@ -820,7 +840,7 @@ impl<
             let rx = self
                 .nested_chain_layout()
                 .rx_configured(
-                    8,
+                    nested::ChainStage::F.index(),
                     C::ScalarField::ONE,
                     &nested::stages::f::Stage::<C::HostCurve, R>::default(),
                     &nested::stages::f::Witness {
@@ -921,7 +941,7 @@ impl<
             let rx = self
                 .nested_chain_layout()
                 .rx(
-                    2,
+                    nested::ChainStage::Preamble.index(),
                     C::ScalarField::ONE,
                     &crate::internal::point_run_values(&witness.slot_points())
                         .expect("trivial preamble slot values"),

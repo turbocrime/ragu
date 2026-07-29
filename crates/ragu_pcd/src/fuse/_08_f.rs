@@ -80,7 +80,7 @@ impl<
         builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<()> {
         let bridge_rx = self.nested_chain_layout().rx_configured(
-            8,
+            nested::ChainStage::F.index(),
             C::ScalarField::random(&mut *rng),
             &nested::stages::f::Stage::<C::HostCurve, R>::default(),
             &nested::stages::f::Witness {
@@ -189,7 +189,7 @@ impl<
                 let slot = proof
                     .application_polys()
                     .iter()
-                    .position(|com| *com == claim.com)
+                    .position(|bridge_com| *bridge_com == claim.bridge_com)
                     .ok_or_else(|| {
                         ragu_core::Error::InvalidWitness(
                             "poly-query claim names a commitment that is not in the instance"

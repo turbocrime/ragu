@@ -232,7 +232,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const POLYS: usize, const CLAI
                         let commitments: Vec<_> = child_preamble
                             .polys
                             .iter()
-                            .map(|poly| poly.com.clone())
+                            .map(|poly| poly.bridge_com.clone())
                             .collect();
                         let mut slots = Vec::with_capacity(child_preamble.claims.len());
                         for claim in child_preamble.claims.iter() {
@@ -241,7 +241,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const POLYS: usize, const CLAI
                                 allocator,
                                 &child_eval.claims,
                                 &commitments,
-                                &claim.com,
+                                &claim.bridge_com,
                             )?);
                         }
                         per_child.push(slots);
@@ -722,7 +722,8 @@ fn poly_queries<
 ///
 /// * each entry is boolean (`b(b - 1) = 0`),
 /// * the entries sum to one, and
-/// * `Σ b_j · com_j` equals the claim's `com`, in **both** coordinates.
+/// * `Σ b_j · bridge_com_j` equals the claim's `bridge_com`, in **both**
+///   coordinates.
 ///
 /// The first two together force exactly one entry to be set; the last forces
 /// *which*. Without booleanity the first two are underdetermined for more than
@@ -747,7 +748,7 @@ fn poly_queries<
 ///
 /// # If two slots carried the same commitment
 ///
-/// A slot's `com` is derived from the slot — the blind is
+/// A slot's `bridge_com` is derived from the slot — the blind is
 /// `bridge_alpha^(5+slot)` — so two slots cannot collide on an honest path. A
 /// dishonest prover can still put one point in two slots, and then this one-hot
 /// may select a different slot than `_08_f`'s first match. That is a **liveness**
@@ -758,7 +759,7 @@ fn poly_queries<
 /// *first* match would cost a pairwise-distinctness check per slot to rule out
 /// a case that already cannot produce a passing proof.
 ///
-/// A cheaper keying — one-hot against `com.x + γ·com.y` for a transcript
+/// A cheaper keying — one-hot against `bridge_com.x + γ·bridge_com.y` for a transcript
 /// challenge `γ` drawn after the commitments are pinned — is possible and is
 /// deliberately not used: it saves `POLYS` multiplications per claim, which at
 /// the polynomial counts in play is a couple of gates, in exchange for a
@@ -775,7 +776,7 @@ fn select_claim<
     allocator: &mut A,
     evaluations: &[Element<'dr, D>],
     commitments: &[Point<'dr, D, C>],
-    com: &Point<'dr, D, C>,
+    bridge_com: &Point<'dr, D, C>,
 ) -> Result<Element<'dr, D>> {
     use ragu_arithmetic::ff::Field;
 
@@ -796,7 +797,7 @@ fn select_claim<
         Ok([x, y])
     };
 
-    let [target_x, target_y] = coordinates(dr, com)?;
+    let [target_x, target_y] = coordinates(dr, bridge_com)?;
     let mut slots = Vec::with_capacity(commitments.len());
     for commitment in commitments {
         slots.push(coordinates(dr, commitment)?);
@@ -805,7 +806,7 @@ fn select_claim<
     // The prover-side match: which slot holds this claim's commitment. The
     // search itself carries no weight — only the constraints below bind the
     // resulting bits.
-    let target = com.value();
+    let target = bridge_com.value();
     let mut bits = Vec::with_capacity(commitments.len());
     for commitment in commitments {
         let slot = commitment.value();

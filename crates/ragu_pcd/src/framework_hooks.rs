@@ -14,7 +14,7 @@
 //! * [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query) —
 //!   a polynomial-query claim sink: steps that need to verify a
 //!   polynomial-commitment opening — i.e. that the polynomial committed to by
-//!   `com` evaluates to `y` at point `x` — reach it there, and it delegates
+//!   `bridge_com` evaluates to `y` at point `x` — reach it there, and it delegates
 //!   here. Each claim carries the opened polynomial's
 //!   coefficients so the framework can fold it into the [PCS aggregation].
 //!   Every application circuit exposes exactly
@@ -109,31 +109,33 @@ use ragu_core::{
 };
 use ragu_primitives::{Element, Point};
 
-/// A single witnessed polynomial: its commitment and its coefficients.
+/// A single witnessed polynomial: its bridge commitment and its coefficients.
 ///
 /// The framework needs the coefficients (not just the commitment) so it can
 /// check queries at fuse time — and batch the polynomial into the proof
 /// system's $(P, u, v)$ accumulator.
 pub struct WitnessedPoly<F: Field, C: CurveAffine<Base = F>> {
-    /// The claimed commitment to the polynomial — the nested-curve point the
-    /// step witnessed in-circuit. Must equal the framework's commitment to
-    /// [`coefficients`](Self::coefficients); see
-    /// [`Application::commit_polynomial`](crate::Application::commit_polynomial).
-    pub com: C,
+    /// The polynomial's **bridge** commitment — the nested-curve point the step
+    /// witnessed in-circuit, which commits to this claim's bridge stage rather
+    /// than to the polynomial. Must equal what the framework derives from the
+    /// host commitment of [`coefficients`](Self::coefficients); see
+    /// [`Application::commit_polynomial`](crate::Application::commit_polynomial)
+    /// and [`PolyHandle`](crate::PolyHandle) for the two-commitment split.
+    pub bridge_com: C,
     /// Coefficients of the polynomial $p(X)$, little-endian
     /// (`coefficients[i]` is the coefficient of $X^i$).
     pub coefficients: Vec<F>,
 }
 
-/// A single opening claim: the polynomial committed to by [`com`](Self::com)
-/// evaluates to `y` at `x`.
+/// A single opening claim: the polynomial whose bridge commitment is
+/// [`bridge_com`](Self::bridge_com) evaluates to `y` at `x`.
 ///
-/// Several of these may carry the same `com` — that is what makes a repeat
-/// opening cheap.
+/// Several of these may carry the same `bridge_com` — that is what makes a
+/// repeat opening cheap.
 pub struct PolyQueryClaim<C: CurveAffine, F: Field> {
-    /// The opened polynomial's nested-curve commitment — the same value the
-    /// step's [`WitnessedPoly::com`] records for it.
-    pub com: C,
+    /// The opened polynomial's bridge commitment — the same value the step's
+    /// [`WitnessedPoly::bridge_com`] records for it.
+    pub bridge_com: C,
     /// Point at which the polynomial is opened.
     pub x: F,
     /// Claimed evaluation $p(x) = y$.
@@ -157,14 +159,15 @@ pub struct ChallengeWires<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
 /// coefficient values the fuse needs for the PCS folding.
 ///
 /// One of these per [`witness_polynomial`](crate::step::StepCtx::witness_polynomial)
-/// call. `com` is the polynomial's identity, and a claim that opens it carries
-/// **this same [`Point`]** — `enforce_polynomial_query` reads it from here
-/// rather than accepting one from the caller. So the polynomial region and the
-/// claim region hold one wire at two instance positions, not two copies that
-/// could disagree, and nothing has to enforce their equality.
+/// call. `bridge_com` is the polynomial's identity *within this proof*, and a
+/// claim that opens it carries **this same [`Point`]** — `enforce_polynomial_query`
+/// reads it from here rather than accepting one from the caller. So the
+/// polynomial region and the claim region hold one wire at two instance
+/// positions, not two copies that could disagree, and nothing has to enforce
+/// their equality.
 pub struct PolyWires<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
-    /// The claimed nested-curve commitment point, as witnessed by the step.
-    pub com: Point<'dr, D, C>,
+    /// The bridge commitment point, as witnessed by the step.
+    pub bridge_com: Point<'dr, D, C>,
     /// The polynomial's coefficient values (witness-only; never wires).
     pub coefficients: DriverValue<D, Vec<D::F>>,
 }
@@ -173,17 +176,17 @@ pub struct PolyWires<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
 /// where, and to what.
 ///
 /// One of these per [`enforce_poly_query`](crate::step::StepCtx::enforce_poly_query)
-/// call. Several queries may carry the same `com` — that is the point of the
-/// split, and it is why a repeat opening costs only these four elements.
+/// call. Several queries may carry the same `bridge_com` — that is the point of
+/// the split, and it is why a repeat opening costs only these four elements.
 pub struct QueryWires<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
-    /// The opened polynomial's commitment.
+    /// The opened polynomial's bridge commitment.
     ///
     /// **This is the same [`Point`] the polynomial's own slot holds**, not a
-    /// copy of it: `witness_polynomial` allocates the commitment once and the
-    /// handle lends it out, so writing it into the polynomial region and into
+    /// copy of it: `witness_polynomial` allocates the bridge commitment once and
+    /// the handle lends it out, so writing it into the polynomial region and into
     /// this claim writes one wire at two instance positions. The two therefore
     /// cannot disagree, and no constraint is needed to make them agree.
-    pub com: Point<'dr, D, C>,
+    pub bridge_com: Point<'dr, D, C>,
     /// The opening point.
     pub x: Element<'dr, D>,
     /// The claimed evaluation.
@@ -205,7 +208,7 @@ pub struct FrameworkHooks<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     /// One entry per
     /// [`witness_polynomial`](crate::step::StepCtx::witness_polynomial) call,
     /// in call order. A polynomial's position here is its slot, which fixes the
-    /// bridge stage — and therefore the generator positions — its `com` commits
+    /// bridge stage — and therefore the generator positions — its `bridge_com` commits
     /// to, and is what a query names.
     witnessed_polys: Vec<PolyWires<'dr, D, C::NestedCurve>>,
     /// The `(points, challenge)` record each
@@ -266,10 +269,14 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHookOutputs<'d
     /// Reads each hook's wires back out as plain values, for the fuse.
     pub(crate) fn into_values(self) -> Result<DriverValue<D, FrameworkAux<C>>> {
         let mut polys = Vec::with_capacity(self.witnessed_polys.len());
-        for PolyWires { com, coefficients } in self.witnessed_polys {
+        for PolyWires {
+            bridge_com,
+            coefficients,
+        } in self.witnessed_polys
+        {
             polys.push(D::try_just(|| {
                 Ok(WitnessedPoly {
-                    com: com.value().take(),
+                    bridge_com: bridge_com.value().take(),
                     coefficients: coefficients.take(),
                 })
             })?);
@@ -277,10 +284,10 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHookOutputs<'d
         let polys = collect_values::<D, _>(polys)?;
 
         let mut claims = Vec::with_capacity(self.poly_queries.len());
-        for QueryWires { com, x, y } in self.poly_queries {
+        for QueryWires { bridge_com, x, y } in self.poly_queries {
             claims.push(D::try_just(|| {
                 Ok(PolyQueryClaim {
-                    com: com.value().take(),
+                    bridge_com: bridge_com.value().take(),
                     x: *x.value().take(),
                     y: *y.value().take(),
                 })
@@ -479,7 +486,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     ///
     /// Reserving and recording are separate calls because the slot is needed
     /// *before* the commitment exists: it selects the bridge stage, and
-    /// therefore the generators, that `com` commits to.
+    /// therefore the generators, that `bridge_com` commits to.
     pub(crate) fn next_poly_slot(&self) -> Result<usize> {
         let slot = self.witnessed_polys.len();
         if slot >= self.capacity.poly_query.polys {
@@ -494,11 +501,14 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     /// [`next_poly_slot`](Self::next_poly_slot) just returned.
     pub(crate) fn record_polynomial(
         &mut self,
-        com: Point<'dr, D, C::NestedCurve>,
+        bridge_com: Point<'dr, D, C::NestedCurve>,
         coefficients: DriverValue<D, Vec<D::F>>,
     ) -> Result<()> {
         self.next_poly_slot()?;
-        self.witnessed_polys.push(PolyWires { com, coefficients });
+        self.witnessed_polys.push(PolyWires {
+            bridge_com,
+            coefficients,
+        });
         Ok(())
     }
 
@@ -533,7 +543,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     }
 
     /// Records a claim that the polynomial with the given `coefficients`
-    /// (little-endian), committed to by `com`, evaluates to `y` at the point
+    /// (little-endian), committed to by `bridge_com`, evaluates to `y` at the point
     /// `x`.
     ///
     /// The claim wires occupy one of the application circuit's
@@ -553,9 +563,9 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     /// `poly_slot` says *which* of the step's polynomials is opened, and the
     /// claim records that polynomial's commitment — read out of the step's own
     /// witnessed polynomials here rather than accepted from the caller. That is
-    /// what makes the recorded `com` necessarily one of this step's
-    /// polynomials, and it is why the claim's `com` and the polynomial region's
-    /// `com` are the same [`Point`] rather than two copies that could drift.
+    /// what makes the recorded `bridge_com` necessarily one of this step's
+    /// polynomials, and it is why the claim's `bridge_com` and the polynomial
+    /// region's are the same [`Point`] rather than two copies that could drift.
     ///
     /// Claims may be raised in any order and several may open one polynomial;
     /// a repeat opening costs a claim slot and no polynomial slot.
@@ -582,7 +592,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
             ));
         };
         self.poly_queries.push(QueryWires {
-            com: poly.com.clone(),
+            bridge_com: poly.bridge_com.clone(),
             x,
             y,
         });

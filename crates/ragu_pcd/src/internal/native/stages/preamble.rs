@@ -25,21 +25,21 @@ use crate::{Proof, header::Header, internal::native::unified, step::internal::pa
 type HeaderVec<'dr, D, const HEADER_SIZE: usize> = FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>>;
 
 /// A single poly-query claim instance witnessed from a child proof: the opened
-/// polynomial's nested-curve commitment and the $(x, y)$ opening. The wire
-/// layout (com.x, com.y, x, y) matches the claim-slot region of the
-/// application circuit's instance, so writing these into the
+/// polynomial's nested-curve bridge commitment and the $(x, y)$ opening. The
+/// wire layout (bridge_com.x, bridge_com.y, x, y) matches the claim-slot region
+/// of the application circuit's instance, so writing these into the
 /// [`application_ky`](ProofInputs::application_ky) Horner binds them to the
 /// child's committed application rx.
 ///
-/// `com` is the same value one of [`ProofInputs::polys`] holds — in the child's
-/// own circuit it is literally the same wire, since the commitment is allocated
-/// once and written at both instance positions. The parent does not have to
-/// enforce that: a trace satisfying the child's registered wiring cannot have
-/// them differ, and the revdot identity is what carries it here.
+/// `bridge_com` is the same value one of [`ProofInputs::polys`] holds — in the
+/// child's own circuit it is literally the same wire, since the commitment is
+/// allocated once and written at both instance positions. The parent does not
+/// have to enforce that: a trace satisfying the child's registered wiring cannot
+/// have them differ, and the revdot identity is what carries it here.
 #[derive(Gadget, Consistent)]
 pub struct ClaimInstance<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     #[ragu(gadget)]
-    pub com: Point<'dr, D, C::NestedCurve>,
+    pub bridge_com: Point<'dr, D, C::NestedCurve>,
     #[ragu(gadget)]
     pub x: Element<'dr, D>,
     #[ragu(gadget)]
@@ -47,15 +47,15 @@ pub struct ClaimInstance<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
 }
 
 /// A single witnessed polynomial as the application circuit's instance exposes
-/// it: its nested-curve commitment. The wire layout (com.x, com.y) matches the
-/// polynomial-slot region of that instance.
+/// it: its nested-curve bridge commitment. The wire layout (bridge_com.x,
+/// bridge_com.y) matches the polynomial-slot region of that instance.
 ///
 /// One per polynomial, not one per query — see
 /// [`instance_len`](crate::step::internal::adapter::instance_len).
 #[derive(Gadget, Consistent)]
 pub struct PolyInstance<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     #[ragu(gadget)]
-    pub com: Point<'dr, D, C::NestedCurve>,
+    pub bridge_com: Point<'dr, D, C::NestedCurve>,
 }
 
 /// A single derived challenge witnessed from a child proof: the points it was
@@ -226,10 +226,10 @@ impl<
         self.children.right.write(dr, &mut ky)?;
         self.output_header.write(dr, &mut ky)?;
         for poly in self.polys.iter() {
-            poly.com.write(dr, &mut ky)?;
+            poly.bridge_com.write(dr, &mut ky)?;
         }
         for claim in self.claims.iter() {
-            claim.com.write(dr, &mut ky)?;
+            claim.bridge_com.write(dr, &mut ky)?;
             claim.x.write(dr, &mut ky)?;
             claim.y.write(dr, &mut ky)?;
         }
@@ -317,7 +317,7 @@ impl<
                 (0..num_polys)
                     .map(|i| {
                         Ok(PolyInstance {
-                            com: Point::alloc(
+                            bridge_com: Point::alloc(
                                 dr,
                                 proof.as_ref().map(|p| p.application_polys()[i]),
                             )?,
@@ -338,9 +338,9 @@ impl<
                 (0..num_queries)
                     .map(|i| {
                         Ok(ClaimInstance {
-                            com: Point::alloc(
+                            bridge_com: Point::alloc(
                                 dr,
-                                proof.as_ref().map(|p| p.application_claims()[i].com),
+                                proof.as_ref().map(|p| p.application_claims()[i].bridge_com),
                             )?,
                             x: Element::alloc(
                                 dr,

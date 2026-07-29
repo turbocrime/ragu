@@ -58,8 +58,9 @@ impl<C: Cycle, R: Rank> PolyCommitment<C, R> {
         Self { polynomial, host }
     }
 
-    /// The polynomial's host-curve commitment. The nested-curve `com` a claim
-    /// carries is derived from this by the framework, in
+    /// The polynomial's host-curve commitment — `commit(polynomial)`, canonical
+    /// for that polynomial. The nested-curve `bridge_com` a claim carries is
+    /// derived from this by the framework, in
     /// [`StepCtx::witness_polynomial`](crate::step::StepCtx::witness_polynomial),
     /// once the claim's slot is known.
     pub(crate) fn host(&self) -> C::HostCurve {
@@ -89,45 +90,62 @@ impl<C: Cycle, R: Rank> PolyCommitment<C, R> {
     }
 }
 
-/// The in-circuit form of a [`PolyCommitment`]: the commitment allocated as a
-/// [`Point`], plus the retained polynomial for the claim.
+/// The in-circuit form of a [`PolyCommitment`]: the polynomial's **bridge**
+/// commitment allocated as a [`Point`], plus the retained polynomial for the
+/// claim.
 ///
 /// Created by
 /// [`StepCtx::witness_polynomial`](crate::step::StepCtx::witness_polynomial).
-/// Use [`commitment`](Self::commitment) wherever the commitment point is needed
-/// (deriving a challenge, hashing into a header), and pass the handle to
+/// Use [`bridge_commitment`](Self::bridge_commitment) wherever the point is
+/// needed (deriving a challenge, hashing into a header), and pass the handle to
 /// [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query) to
 /// raise the claim.
+///
+/// # Two commitments, and this is not the polynomial's
+///
+/// [`PolyCommitment`]'s host commitment is `commit(polynomial)` — the real
+/// thing, on the host curve, canonical for that polynomial. It cannot be a
+/// [`Point`] in a
+/// step: `Point` requires the curve's base field to be the circuit's field, and
+/// `HostCurve::Base` is the *scalar* field.
+///
+/// So what a step sees is `bridge_com`: the commitment of this claim's bridge
+/// stage, whose wires *are* `host`'s coordinates, blinded by
+/// `bridge_alpha^(5 + slot)`. It is a function of `(host, slot, bridge_alpha,
+/// capacity)`, so the same polynomial in a different slot or a different proof
+/// has a different `bridge_com`. It identifies a polynomial *within one proof*,
+/// which is what a claim needs, and it is not homomorphic in the polynomial —
+/// coordinates are not linear in the point.
 pub struct PolyHandle<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> {
-    com: Point<'dr, D, C::NestedCurve>,
+    bridge_com: Point<'dr, D, C::NestedCurve>,
     polynomial: DriverValue<D, sparse::Polynomial<D::F, R>>,
     slot: usize,
 }
 
 impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> PolyHandle<'dr, D, C, R> {
-    /// Bundles an allocated commitment point with its retained polynomial.
+    /// Bundles an allocated bridge commitment with its retained polynomial.
     pub(crate) fn new(
-        com: Point<'dr, D, C::NestedCurve>,
+        bridge_com: Point<'dr, D, C::NestedCurve>,
         polynomial: DriverValue<D, sparse::Polynomial<D::F, R>>,
         slot: usize,
     ) -> Self {
         Self {
-            com,
+            bridge_com,
             polynomial,
             slot,
         }
     }
 
     /// The claim slot this handle was assigned when it was witnessed. Fixes
-    /// which bridge stage — and therefore which generators — `com` commits to,
-    /// so the claim must occupy this instance slot too.
+    /// which bridge stage — and therefore which generators — `bridge_com`
+    /// commits to, so the claim must occupy this instance slot too.
     pub(crate) fn slot(&self) -> usize {
         self.slot
     }
 
-    /// The in-circuit commitment point, for use in challenges, hashing, etc.
-    pub fn commitment(&self) -> &Point<'dr, D, C::NestedCurve> {
-        &self.com
+    /// The in-circuit bridge commitment, for use in challenges, hashing, etc.
+    pub fn bridge_commitment(&self) -> &Point<'dr, D, C::NestedCurve> {
+        &self.bridge_com
     }
 
     /// The retained polynomial (prover-only), e.g. to compute the evaluation

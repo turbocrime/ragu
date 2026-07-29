@@ -135,7 +135,7 @@ impl<
                 host,
                 self.capacity(),
             )?;
-            if precheck && expected != witnessed.com {
+            if precheck && expected != witnessed.bridge_com {
                 return Err(Error::InvalidWitness(
                     "poly-query claim rejected: the claimed commitment does not bind the claimed \
                      polynomial"
@@ -146,14 +146,14 @@ impl<
             claim_host_commitments.push(host);
         }
 
-        // Then each query, against the polynomial its commitment identifies. A
-        // claim's `com` is copied from the slot it opens, so a commitment with
-        // no matching slot here means the hooks and the instance layout have
-        // diverged, not that a witness is bad.
+        // Then each query, against the polynomial its bridge commitment
+        // identifies. A claim's `bridge_com` is copied from the slot it opens, so
+        // a commitment with no matching slot here means the hooks and the
+        // instance layout have diverged, not that a witness is bad.
         for claim in claims.iter() {
             let slot = polys
                 .iter()
-                .position(|witnessed| witnessed.com == claim.com)
+                .position(|witnessed| witnessed.bridge_com == claim.bridge_com)
                 .ok_or_else(|| {
                     Error::InvalidWitness(
                         "poly-query claim names a commitment outside the instance".into(),
@@ -174,7 +174,7 @@ impl<
 
         builder.set_native_application_rx(rx);
         builder.set_application_polys(
-            polys.iter().map(|p| p.com).collect(),
+            polys.iter().map(|p| p.bridge_com).collect(),
             claim_polys,
             claim_host_commitments,
         );

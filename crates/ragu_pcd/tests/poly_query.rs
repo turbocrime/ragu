@@ -58,18 +58,18 @@ fn oracle_end_to_end() -> Result<()> {
     // two counts, and is what the recursion is sized for.
     assert_eq!(leaf1.proof().application_claims().len(), 2);
     assert_eq!(leaf1.proof().application_polys().len(), 1);
-    // `com` is derived by the framework from the claim's bridge stage once the
+    // `bridge_com` is derived by the framework from the claim's bridge stage once the
     // slot is known, so the test cannot recompute it; the opening is what the
     // claim asserts.
     let claim0 = leaf1.proof().application_claims()[0];
     assert_eq!(claim0.y, p1.eval(claim0.x));
 
-    // A claim names its polynomial by commitment, and it is the *same*
+    // A claim names its polynomial by bridge commitment, and it is the *same*
     // commitment the polynomial slot carries — not a second copy.
     assert_eq!(
-        claim0.com,
+        claim0.bridge_com,
         leaf1.proof().application_polys()[0],
-        "a claim should carry its polynomial's own commitment"
+        "a claim should carry its polynomial's own bridge commitment"
     );
 
     // The step opened one polynomial twice, and both claims carry the *same*
@@ -79,8 +79,8 @@ fn oracle_end_to_end() -> Result<()> {
     // second bridge stage, commitment and MSM.
     let claim1 = leaf1.proof().application_claims()[1];
     assert_eq!(
-        claim1.com, claim0.com,
-        "a repeat opening should reuse its polynomial's commitment"
+        claim1.bridge_com, claim0.bridge_com,
+        "a repeat opening should reuse its polynomial's bridge commitment"
     );
     assert_eq!(claim1.x, Fp::ZERO, "the repeat opens at x = 0");
     assert_eq!(claim1.y, p1.eval(claim1.x));
@@ -129,12 +129,12 @@ fn dishonest_evaluation_is_rejected() -> Result<()> {
     let mut rng = StdRng::seed_from_u64(1234);
 
     let p = poly(&[3, 1, 4, 1, 5]);
-    let com = app.commit_polynomial(&p)?;
+    let commitment = app.commit_polynomial(&p)?;
     let result = app.seed(
         &mut rng,
         CommitAndOpen::new(Pasta::circuit_poseidon(pasta)),
         CommitAndOpenWitness {
-            commitment: com,
+            commitment,
             claimed_y: Some(Fp::from(42u64)),
         },
     );

@@ -85,11 +85,11 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 
 impl<C: Cycle, R: Rank> Proof<C, R> {
     /// Replace the carried claim polynomial and its host commitment in `slot`,
-    /// leaving the instance-bound claim `(com, x, y)` — and therefore the
+    /// leaving the instance-bound claim `(bridge_com, x, y)` — and therefore the
     /// application circuit's $k(Y)$ binding — untouched.
     ///
     /// This is the *poly-query commitment binding* attack shape: a prover
-    /// declares a claim against `com` (which the step's Fiat–Shamir challenges
+    /// declares a claim against `bridge_com` (which the step's Fiat–Shamir challenges
     /// and header hashes reference) but hands the parent a different
     /// polynomial to fold. Passing a `poly` that still satisfies
     /// `poly.eval(x) == y` keeps the parent's $f(X)$ quotient exact, so the

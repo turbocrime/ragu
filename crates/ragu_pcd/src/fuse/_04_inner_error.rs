@@ -61,7 +61,7 @@ impl<
         builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<()> {
         let bridge_rx = self.nested_chain_layout().rx_configured(
-            4,
+            nested::ChainStage::InnerError.index(),
             C::ScalarField::random(&mut *rng),
             &nested::stages::inner_error::Stage::<C::HostCurve, R>::default(),
             &nested::stages::inner_error::Witness {

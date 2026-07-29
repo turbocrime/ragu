@@ -21,7 +21,14 @@ use crate::{
 /// Both children present the application's capacity, so one value sizes both.
 pub const fn num_points(capacity: crate::framework_hooks::HookLayout) -> usize {
     use crate::internal::nested::child_endoscaling_points;
-    1 + 2 * child_endoscaling_points(capacity)
+
+    /// The leading slot [`Output::from_slots`] reads before either child's
+    /// block. Not to be confused with the leading point of
+    /// [`num_endoscaling_points`](crate::internal::nested::num_endoscaling_points),
+    /// which is `f.commitment`.
+    const NATIVE_PREAMBLE_SLOT: usize = 1;
+
+    NATIVE_PREAMBLE_SLOT + 2 * child_endoscaling_points(capacity)
 }
 
 /// This stage's wire width; the value-level source of the typed

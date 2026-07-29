@@ -252,16 +252,16 @@ impl<
         // polynomial's commitment, the opening point, and the claimed
         // evaluation. This layout must match `ProofInputs::application_ky`.
         //
-        // A query's `com` is the very `Point` its polynomial's slot wrote —
+        // A query's `bridge_com` is the very `Point` its polynomial's slot wrote —
         // `enforce_polynomial_query` reads it out of `witnessed_polys` rather
         // than taking it from the caller — so this writes one wire at two
         // positions and the parent inherits their equality through the revdot
         // identity, with nothing to enforce.
         for poly in &outputs.witnessed_polys {
-            poly.com.write(dr, &mut elements)?;
+            poly.bridge_com.write(dr, &mut elements)?;
         }
         for query in &outputs.poly_queries {
-            query.com.write(dr, &mut elements)?;
+            query.bridge_com.write(dr, &mut elements)?;
             query.x.write(dr, &mut elements)?;
             query.y.write(dr, &mut elements)?;
         }

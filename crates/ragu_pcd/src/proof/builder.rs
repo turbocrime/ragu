@@ -173,6 +173,9 @@ macro_rules! explicit_commitment_getter {
 /// Witness fields are specified as `field: getter()` pairs — the macro
 /// prepends `self.` to each getter call so that the generated function's own
 /// `self` is used (avoiding macro hygiene issues with `self` in token trees).
+///
+/// `$pos` is a [`nested::ChainStage`], not its index: the macro calls
+/// `.index()` itself, so a bare integer here does not compile.
 macro_rules! cached_bridge {
     ($rx:ident, $commitment:ident,
      $idx:expr, $pos:expr, $stage:ident, { $($wit_field:ident : $getter:ident()),* }) => {
@@ -185,7 +188,7 @@ macro_rules! cached_bridge {
             // the stages before it are, which follows the application's
             // capacity.
             let rx = self.nested_chain().rx_configured(
-                $pos,
+                $pos.index(),
                 self.bridge_alpha_power($idx),
                 &nested::stages::$stage::Stage::<C::HostCurve, R>::default(),
                 &nested::stages::$stage::Witness {
@@ -321,7 +324,7 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     /// [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query),
     /// padded by the adapter to exactly
     /// the application's poly capacity and
-    /// pre-checked natively by fuse. The claim *instances* (com, x, y),
+    /// pre-checked natively by fuse. The claim *instances* (bridge_com, x, y),
     /// the claim polynomials, and the host commitments are persisted in the
     /// [`Proof`] so the parent fuse can enforce the claims recursively.
     application_claims:
@@ -596,7 +599,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         bridge_outer_error_rx,
         bridge_outer_error_commitment,
         nested::RxIndex::BridgeOuterError,
-        5,
+        nested::ChainStage::OuterError,
         outer_error,
         { native_outer_error: native_outer_error_commitment() }
     );
@@ -605,7 +608,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         bridge_ab_rx,
         bridge_ab_commitment,
         nested::RxIndex::BridgeAB,
-        6,
+        nested::ChainStage::Ab,
         ab,
         { a: native_a_commitment(), b: native_b_commitment() }
     );
@@ -614,7 +617,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         bridge_query_rx,
         bridge_query_commitment,
         nested::RxIndex::BridgeQuery,
-        7,
+        nested::ChainStage::Query,
         query,
         { native_query: native_query_commitment(), registry_xy: native_registry_xy_commitment() }
     );
@@ -638,7 +641,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             claims: self.claim_host_commitments(),
         };
         let rx = self.nested_chain().rx(
-            9,
+            nested::ChainStage::Eval.index(),
             self.bridge_alpha_power(nested::RxIndex::BridgeEval),
             &crate::internal::point_run_values(&witness.slot_points())?,
         )?;
@@ -655,7 +658,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     /// Derives the bridge stage rx for poly-query claim `slot`.
     ///
     /// The stage's wires are that claim's host commitment, so committing this
-    /// rx yields the claim's instance-bound `com` — making `com` the
+    /// rx yields the claim's instance-bound `bridge_com` — making `bridge_com` the
     /// commitment of a polynomial the proof carries, at parity with every
     /// other cross-curve commitment. The per-slot stage types differ (they
     /// chain through `Parent`), so this cannot use the `cached_bridge!` macro.
@@ -675,7 +678,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     }
 
     /// The nested-curve commitment to claim `slot`'s bridge stage — the value
-    /// carried as that claim's `com`.
+    /// carried as that claim's `bridge_com`.
     pub(crate) fn claim_bridge_commitment(&self, slot: usize) -> Result<C::NestedCurve> {
         Ok(self
             .claim_bridge_rx(slot)?
@@ -967,7 +970,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
                 .application_claims
                 .iter()
                 .map(|c| super::ClaimOpening {
-                    com: c.com,
+                    bridge_com: c.bridge_com,
                     x: c.x,
                     y: c.y,
                 })

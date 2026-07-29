@@ -181,7 +181,7 @@ impl<
         // host commitment the proof records, and that must bridge to the
         // instance-bound nested commitment.
         let poly_commitments = (0..capacity.poly_query.polys).all(|slot| {
-            let com = pcd.proof().application_polys()[slot];
+            let bridge_com = pcd.proof().application_polys()[slot];
             let poly = &pcd.proof().claim_polys[slot];
             let host = pcd.proof().claim_host_commitment(slot);
             let alpha =
@@ -195,21 +195,22 @@ impl<
                     host,
                     capacity,
                 )
-                .is_ok_and(|bridge| bridge == com)
+                .is_ok_and(|rebuilt| rebuilt == bridge_com)
         });
 
-        // Then each query, against the polynomial its commitment identifies. A
-        // commitment matching no polynomial slot fails the check rather than
-        // panicking: it is instance data, so a malformed proof can carry
-        // anything there.
+        // Then each query, against the polynomial its bridge commitment
+        // identifies. A commitment matching no polynomial slot fails the check
+        // rather than panicking: it is instance data, so a malformed proof can
+        // carry anything there.
         let poly_query_claims = poly_commitments
             && (0..capacity.poly_query.claims).all(|slot| {
-                let crate::ClaimOpening { com, x, y } = pcd.proof().application_claims()[slot];
+                let crate::ClaimOpening { bridge_com, x, y } =
+                    pcd.proof().application_claims()[slot];
 
                 pcd.proof()
                     .application_polys()
                     .iter()
-                    .position(|poly| *poly == com)
+                    .position(|slot_com| *slot_com == bridge_com)
                     .is_some_and(|i| pcd.proof().claim_polys[i].eval(x) == y)
             });
 
