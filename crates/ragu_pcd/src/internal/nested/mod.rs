@@ -181,6 +181,64 @@ pub fn claim_run_layout(
     )
 }
 
+/// Every layout needed to walk a nested trace, built together.
+///
+/// [`loading`](circuits::loading) and [`copying`](circuits::copying) traverse
+/// the same chain — the current step's and a child's respectively — and must
+/// place every stage at the same gate or their wire positions diverge. A stage's
+/// position depends on how wide the stages before it are, so one of them
+/// disagreeing about a single width misplaces everything after it. Building both
+/// walks from one value is what makes that agreement structural rather than a
+/// convention two files have to keep.
+pub struct NestedLayouts {
+    /// The chain itself, in [`ChainStage`] order — the source of every stage's
+    /// position, including the shape-free ones.
+    pub chain: ragu_circuits::staging::InducedStages,
+    /// [`ChainStage::Points`], subdivided into one-point slots.
+    pub points: ragu_circuits::staging::InducedStages,
+    /// [`ChainStage::Preamble`], subdivided into one-point slots.
+    pub preamble: ragu_circuits::staging::InducedStages,
+    /// [`ChainStage::Eval`], subdivided into one-point slots.
+    pub eval: ragu_circuits::staging::InducedStages,
+    /// The claim-bridge run, anchored where the chain ends.
+    pub claims: ragu_circuits::staging::InducedStages,
+    /// How many points [`points`](Self::points) places — the run's slot count,
+    /// which [`Points::from_slots`](endoscalar::Points::from_slots) also needs.
+    pub num_points: usize,
+}
+
+impl NestedLayouts {
+    /// Builds every layout for an application of the given capacity.
+    pub fn new<HC: ragu_arithmetic::CurveAffine, R: Rank>(
+        capacity: crate::framework_hooks::HookLayout,
+    ) -> Self {
+        let chain = chain_layout::<HC, R>(capacity);
+        let num_points = num_endoscaling_points(capacity);
+        Self {
+            points: run_layout(
+                &chain,
+                ChainStage::Points,
+                endoscalar::points_stage_num_slots(num_points),
+            ),
+            preamble: run_layout(
+                &chain,
+                ChainStage::Preamble,
+                stages::preamble::num_slots(capacity),
+            ),
+            eval: run_layout(&chain, ChainStage::Eval, stages::eval::num_slots(capacity)),
+            claims: claim_run_layout(&chain, capacity),
+            chain,
+            num_points,
+        }
+    }
+
+    /// The span width of a stage placed whole, for
+    /// [`configure_stage_sized`](ragu_circuits::staging::StageBuilder::configure_stage_sized).
+    pub fn width(&self, stage: ChainStage) -> usize {
+        self.chain.width(stage.index())
+    }
+}
+
 /// Positions inside the bonding block, before the per-slot masks.
 const BLOCK_FIXED: [InternalCircuitIndex; 11] = [
     InternalCircuitIndex::EndoscalarStage,
@@ -249,12 +307,6 @@ pub enum InternalCircuitIndex {
 }
 
 impl InternalCircuitIndex {
-    /// The number of internal circuits registered by [`register_all`] at the
-    /// given capacity — the number of entries [`all`](Self::all) yields.
-    pub fn num(capacity: crate::framework_hooks::HookLayout) -> usize {
-        num_endoscaling_steps(capacity) + 14 + capacity.poly_query.polys
-    }
-
     /// All variants in canonical iteration order.
     ///
     /// This order must match the registry finalization concatenation order
@@ -267,7 +319,7 @@ impl InternalCircuitIndex {
     /// computed from a generic cannot size an array on stable Rust. The order
     /// is what matters here, and it is identical either way.
     pub fn all(capacity: crate::framework_hooks::HookLayout) -> Vec<Self> {
-        let mut all = Vec::with_capacity(Self::num(capacity));
+        let mut all = Vec::new();
         all.extend(
             (0..num_endoscaling_steps(capacity)).map(|step| Self::EndoscalingStep(step as u32)),
         );
@@ -290,7 +342,6 @@ impl InternalCircuitIndex {
             Self::Copying(Side::Left),
             Self::Copying(Side::Right),
         ]);
-        debug_assert_eq!(all.len(), Self::num(capacity));
         all
     }
 
@@ -380,12 +431,6 @@ pub enum RxIndex {
 }
 
 impl RxIndex {
-    /// The number of rx components in the nested field at the given capacity —
-    /// the number of entries [`all`](Self::all) yields.
-    pub fn num(capacity: crate::framework_hooks::HookLayout) -> usize {
-        num_endoscaling_steps(capacity) + 24 + capacity.poly_query.polys
-    }
-
     /// All variants in canonical order (circuits, then stages), at the given
     /// capacity.
     ///
@@ -395,7 +440,7 @@ impl RxIndex {
     /// polynomial-slot count. See [`InternalCircuitIndex::all`] for why this
     /// one cannot.
     pub fn all(capacity: crate::framework_hooks::HookLayout) -> Vec<Self> {
-        let mut all = Vec::with_capacity(Self::num(capacity));
+        let mut all = Vec::new();
         all.extend(
             (0..num_endoscaling_steps(capacity)).map(|step| Self::EndoscalingStep(step as u32)),
         );
@@ -422,7 +467,6 @@ impl RxIndex {
                 Self::ChildBridge(kind, Side::Right),
             ]);
         }
-        debug_assert_eq!(all.len(), Self::num(capacity));
         all
     }
 }

@@ -103,77 +103,56 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         dr: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
         _witness: DriverValue<D, ()>,
     ) -> Result<WithAux<Bound<'dr, D, ()>, DriverValue<D, ()>>> {
-        use crate::internal::nested::ChainStage;
+        use crate::internal::nested::{ChainStage, NestedLayouts};
 
         // As in `copying`: every position comes from the value-level chain.
-        let chain = crate::internal::nested::chain_layout::<C, R>(self.capacity);
-        let claim_layout = crate::internal::nested::claim_run_layout(&chain, self.capacity);
+        let layouts = NestedLayouts::new::<C, R>(self.capacity);
 
-        // The three shape-carrying stages are runs of one-point slots inside
-        // the spans `chain` already gives them; the rest are ordinary stages.
-        let num_points = crate::internal::nested::num_endoscaling_points(self.capacity);
-        let points_layout = crate::internal::nested::run_layout(
-            &chain,
-            ChainStage::Points,
-            crate::internal::endoscalar::points_stage_num_slots(num_points),
-        );
-        let preamble_layout = crate::internal::nested::run_layout(
-            &chain,
-            ChainStage::Preamble,
-            stages::preamble::num_slots(self.capacity),
-        );
-        let eval_layout = crate::internal::nested::run_layout(
-            &chain,
-            ChainStage::Eval,
-            stages::eval::num_slots(self.capacity),
-        );
-
-        let dr =
-            dr.skip_stage_sized(EndoscalarStage, chain.width(ChainStage::Endoscalar.index()))?;
+        let dr = dr.skip_stage_sized(EndoscalarStage, layouts.width(ChainStage::Endoscalar))?;
         let (point_guards, dr) = dr.configure_induced_sized::<PointsStage<C, R>, _>(
             PointSlotStage::<C, R>::default(),
-            &points_layout,
-            points_layout.skip_gates(0),
+            &layouts.points,
+            layouts.points.skip_gates(0),
         )?;
         let (preamble_guards, dr) = dr
             .configure_induced_sized::<stages::preamble::Stage<C, R>, _>(
                 stages::preamble::Slot::<C, R>::default(),
-                &preamble_layout,
-                preamble_layout.skip_gates(0),
+                &layouts.preamble,
+                layouts.preamble.skip_gates(0),
             )?;
         let (s_prime_guard, dr) = dr.configure_stage_sized(
             stages::s_prime::Stage::<C, R>::default(),
-            chain.width(ChainStage::SPrime.index()),
+            layouts.width(ChainStage::SPrime),
         )?;
         let (inner_error_guard, dr) = dr.configure_stage_sized(
             stages::inner_error::Stage::<C, R>::default(),
-            chain.width(ChainStage::InnerError.index()),
+            layouts.width(ChainStage::InnerError),
         )?;
         let dr = dr.skip_stage_sized(
             stages::outer_error::Stage::<C, R>::default(),
-            chain.width(ChainStage::OuterError.index()),
+            layouts.width(ChainStage::OuterError),
         )?;
         let (ab_guard, dr) = dr.configure_stage_sized(
             stages::ab::Stage::<C, R>::default(),
-            chain.width(ChainStage::Ab.index()),
+            layouts.width(ChainStage::Ab),
         )?;
         let (query_guard, dr) = dr.configure_stage_sized(
             stages::query::Stage::<C, R>::default(),
-            chain.width(ChainStage::Query.index()),
+            layouts.width(ChainStage::Query),
         )?;
         let (f_guard, dr) = dr.configure_stage_sized(
             stages::f::Stage::<C, R>::default(),
-            chain.width(ChainStage::F.index()),
+            layouts.width(ChainStage::F),
         )?;
         let (eval_guards, dr) = dr.configure_induced_sized::<stages::eval::Stage<C, R>, _>(
             stages::eval::Slot::<C, R>::default(),
-            &eval_layout,
-            eval_layout.skip_gates(0),
+            &layouts.eval,
+            layouts.eval.skip_gates(0),
         )?;
         let (claim_guards, dr) = dr.configure_induced_sized::<stages::claim_bridge::Run<C, R>, _>(
             stages::claim_bridge::Slot::<C, R>::default(),
-            &claim_layout,
-            claim_layout.skip_gates(0),
+            &layouts.claims,
+            layouts.claims.skip_gates(0),
         )?;
         let dr = dr.finish();
 
@@ -189,7 +168,7 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
                 .into_iter()
                 .map(|guard| Ok(guard.unenforced(dr, w!())?.point))
                 .collect::<Result<alloc::vec::Vec<_>>>()?,
-            num_points,
+            layouts.num_points,
         )?;
         let preamble = stages::preamble::Output::from_slots(
             preamble_guards

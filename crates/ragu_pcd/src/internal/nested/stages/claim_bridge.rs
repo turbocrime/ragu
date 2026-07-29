@@ -48,8 +48,7 @@ pub type Slot<C, R> = host_bridge::Stage<C, R, ()>;
 pub fn layout<C: CurveAffine, R: Rank>(
     capacity: crate::framework_hooks::HookLayout,
 ) -> InducedStages {
-    let chain = crate::internal::nested::chain_layout::<C, R>(capacity);
-    crate::internal::nested::claim_run_layout(&chain, capacity)
+    crate::internal::nested::NestedLayouts::new::<C, R>(capacity).claims
 }
 
 #[cfg(test)]

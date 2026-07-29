@@ -319,7 +319,6 @@ where
         let capacity = self.hooks.capacity();
 
         // Polynomials first, so every query slot has something to name.
-        let mut padding_handle = None;
         while self.hooks.polys_filled() < capacity.poly_query.polys {
             let proof_values = self.hooks.proof_values();
             let padding = D::try_just(move || {
@@ -334,8 +333,10 @@ where
             // Straight to the per-slot path, not the step-facing array call:
             // padding runs after the body, so the once-only rule would reject
             // it. The slot's `com` is still that slot's bridge-stage
-            // commitment, derived exactly as a real polynomial's is.
-            padding_handle = Some(self.witness_one_polynomial::<R>(padding)?);
+            // commitment, derived exactly as a real polynomial's is. The handle
+            // is discarded: `witness_one_polynomial` already recorded the slot,
+            // and no padding query names this slot (they all name slot 0).
+            self.witness_one_polynomial::<R>(padding)?;
         }
 
         // Then queries. A padding query opens a polynomial at $x = 0$, where the
@@ -367,7 +368,6 @@ where
             };
             self.hooks.enforce_polynomial_query(self.dr, slot, x, y)?;
         }
-        drop(padding_handle);
 
         // A padding challenge supplies no points at all, so every position
         // falls to `derive_challenge`'s sentinel arm.
