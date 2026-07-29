@@ -709,16 +709,23 @@ mod tests {
     /// two wires per input point, plus the challenge. Nothing about it depends
     /// on how many points a call actually passed, which is what lets the
     /// count be witness data rather than circuit structure.
+    ///
+    /// Measured against the stage that holds the region — the challenge slots
+    /// are their own stage, not part of the preamble.
     #[test]
     fn a_challenge_slot_has_one_fixed_instance_width() {
+        use crate::internal::native::stages::slots::num_values;
+
         let width = 2;
-        let layout = |calls| HookLayout {
-            challenge: ChallengeLayout { calls, width },
-            poly_query: PolyQueryLayout::default(),
-        };
+        // `num_values` covers both children, so one call's worth is half the
+        // step from zero calls to one.
         assert_eq!(
-            crate::internal::native::stages::preamble::child_num_values(0, layout(1))
-                - crate::internal::native::stages::preamble::child_num_values(0, layout(0)),
+            (num_values(1, width) - num_values(0, width)) / 2,
+            2 * width + 1,
+        );
+        // And it stays that width however many calls there are.
+        assert_eq!(
+            (num_values(4, width) - num_values(3, width)) / 2,
             2 * width + 1,
         );
     }

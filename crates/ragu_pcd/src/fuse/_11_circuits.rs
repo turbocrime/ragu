@@ -59,8 +59,6 @@ impl<
             HEADER_SIZE,
             POLYS,
             CLAIMS,
-            CHALLENGES,
-            CHALLENGE_WIDTH,
             native::RevdotParameters,
         >::new(
             self.params,
@@ -88,8 +86,6 @@ impl<
             HEADER_SIZE,
             POLYS,
             CLAIMS,
-            CHALLENGES,
-            CHALLENGE_WIDTH,
             native::RevdotParameters,
         >::new(self.params)
         .trace(native::circuits::hashes_2::Witness {
@@ -109,8 +105,6 @@ impl<
             HEADER_SIZE,
             POLYS,
             CLAIMS,
-            CHALLENGES,
-            CHALLENGE_WIDTH,
             native::RevdotParameters,
         >::new()
         .trace(native::circuits::inner_collapse::Witness {
@@ -148,22 +142,15 @@ impl<
             &mut *rng,
         )?;
 
-        let (compute_v_trace, unified) = native::circuits::compute_v::Circuit::<
-            C,
-            R,
-            HEADER_SIZE,
-            POLYS,
-            CLAIMS,
-            CHALLENGES,
-            CHALLENGE_WIDTH,
-        >::new()
-        .trace(native::circuits::compute_v::Witness {
-            unified,
-            preamble_witness,
-            query_witness,
-            eval_witness,
-        })?
-        .into_parts();
+        let (compute_v_trace, unified) =
+            native::circuits::compute_v::Circuit::<C, R, HEADER_SIZE, POLYS, CLAIMS>::new()
+                .trace(native::circuits::compute_v::Witness {
+                    unified,
+                    preamble_witness,
+                    query_witness,
+                    eval_witness,
+                })?
+                .into_parts();
         let compute_v_rx = self.native_registry.assemble(
             &compute_v_trace,
             native::InternalCircuitIndex::ComputeVCircuit.circuit_index(),

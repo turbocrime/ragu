@@ -229,27 +229,12 @@ pub fn num_values(
 }
 
 /// The eval stage of the fuse witness.
-pub struct Stage<
-    C: Cycle,
-    R,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> {
+pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: usize> {
     _marker: PhantomData<(C, R)>,
 }
 
-impl<
-    C: Cycle,
-    R,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> Default for Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+impl<C: Cycle, R, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: usize> Default
+    for Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>
 {
     fn default() -> Self {
         Stage {
@@ -258,19 +243,10 @@ impl<
     }
 }
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> staging::Stage<C::CircuitField, R>
-    for Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: usize>
+    staging::Stage<C::CircuitField, R> for Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>
 {
-    type Parent =
-        super::query::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>;
+    type Parent = super::query::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>;
     type Witness<'source> = &'source Witness<C::CircuitField>;
     type OutputKind = Kind![C::CircuitField; Output<'_, _, POLYS>];
 
@@ -337,7 +313,7 @@ mod tests {
         fn check<const POLYS: usize>() {
             let capacity = capacity_with_polys(POLYS);
             assert_eq!(
-                stage_wire_count(&Stage::<Pasta, R, { HEADER_SIZE }, POLYS, 1, 1, 2>::default()),
+                stage_wire_count(&Stage::<Pasta, R, { HEADER_SIZE }, POLYS, 1>::default()),
                 num_values(capacity, capacity),
                 "polys={POLYS}"
             );

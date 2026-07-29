@@ -25,6 +25,7 @@ pub mod stages {
     pub mod outer_error;
     pub mod preamble;
     pub mod query;
+    pub mod slots;
 }
 
 pub mod circuits {
@@ -54,11 +55,14 @@ pub enum InternalCircuitIndex {
     OuterErrorStage,
     QueryStage,
     EvalStage,
-    // Final stage masks
-    PreambleFinalStaged,
+    ChallengesStage,
+    // Final stage masks. There is no `PreambleFinalStaged`: no circuit ends at
+    // the preamble now that the challenge slots are their own stage — both
+    // `challenge_binding` and `outer_collapse` end at that stage instead.
     InnerErrorFinalStaged,
     OuterErrorFinalStaged,
     EvalFinalStaged,
+    ChallengesFinalStaged,
 }
 
 /// Compute the total circuit count and log2 domain size from the number of
@@ -103,6 +107,7 @@ pub fn chain_layouts<
 ) -> (
     ragu_circuits::staging::InducedStages,
     ragu_circuits::staging::InducedStages,
+    ragu_circuits::staging::InducedStages,
 ) {
     use ragu_circuits::staging::InducedStages;
 
@@ -115,8 +120,6 @@ pub fn chain_layouts<
         HEADER_SIZE,
         POLYS,
         CLAIMS,
-        CHALLENGES,
-        CHALLENGE_WIDTH,
         RevdotParameters,
     > as ragu_circuits::staging::Stage<C::CircuitField, R>>::values();
     let inner_w = <stages::inner_error::Stage<
@@ -125,21 +128,25 @@ pub fn chain_layouts<
         HEADER_SIZE,
         POLYS,
         CLAIMS,
-        CHALLENGES,
-        CHALLENGE_WIDTH,
         RevdotParameters,
     > as ragu_circuits::staging::Stage<C::CircuitField, R>>::values();
+    let challenges_w = stages::slots::num_values(CHALLENGES, CHALLENGE_WIDTH);
 
     (
         InducedStages::new(alloc::vec![preamble_w, query_w, eval_w]),
         InducedStages::new(alloc::vec![preamble_w, outer_w, inner_w]),
+        // The challenge branch: a sibling of `inner_error`, not an extension of
+        // the error chain. It starts where `inner_error` does, so the two
+        // circuits that read challenge slots are not charged for a stage they
+        // do not use — see [`stages::slots`].
+        InducedStages::new(alloc::vec![preamble_w, outer_w, challenges_w]),
     )
 }
 
 impl InternalCircuitIndex {
     /// The number of internal circuits registered by [`register_all`],
     /// equal to the number of variants in [`InternalCircuitIndex`].
-    pub const NUM: usize = 15;
+    pub const NUM: usize = 16;
 
     /// All variants in canonical iteration order.
     ///
@@ -165,10 +172,11 @@ impl InternalCircuitIndex {
         push(&mut slots, &mut c, Self::OuterErrorStage);
         push(&mut slots, &mut c, Self::QueryStage);
         push(&mut slots, &mut c, Self::EvalStage);
-        push(&mut slots, &mut c, Self::PreambleFinalStaged);
+        push(&mut slots, &mut c, Self::ChallengesStage);
         push(&mut slots, &mut c, Self::InnerErrorFinalStaged);
         push(&mut slots, &mut c, Self::OuterErrorFinalStaged);
         push(&mut slots, &mut c, Self::EvalFinalStaged);
+        push(&mut slots, &mut c, Self::ChallengesFinalStaged);
         assert!(c == Self::NUM);
         slots
     }
@@ -201,10 +209,11 @@ pub struct InternalCircuitValues<T> {
     pub outer_error_stage: T,
     pub query_stage: T,
     pub eval_stage: T,
-    pub preamble_final_staged: T,
+    pub challenges_stage: T,
     pub inner_error_final_staged: T,
     pub outer_error_final_staged: T,
     pub eval_final_staged: T,
+    pub challenges_final_staged: T,
 }
 
 impl<T> InternalCircuitValues<T> {
@@ -223,10 +232,11 @@ impl<T> InternalCircuitValues<T> {
             OuterErrorStage => &self.outer_error_stage,
             QueryStage => &self.query_stage,
             EvalStage => &self.eval_stage,
-            PreambleFinalStaged => &self.preamble_final_staged,
+            ChallengesStage => &self.challenges_stage,
             InnerErrorFinalStaged => &self.inner_error_final_staged,
             OuterErrorFinalStaged => &self.outer_error_final_staged,
             EvalFinalStaged => &self.eval_final_staged,
+            ChallengesFinalStaged => &self.challenges_final_staged,
         }
     }
 
@@ -258,10 +268,11 @@ impl<T> InternalCircuitValues<T> {
             outer_error_stage: f(OuterErrorStage)?,
             query_stage: f(QueryStage)?,
             eval_stage: f(EvalStage)?,
-            preamble_final_staged: f(PreambleFinalStaged)?,
+            challenges_stage: f(ChallengesStage)?,
             inner_error_final_staged: f(InnerErrorFinalStaged)?,
             outer_error_final_staged: f(OuterErrorFinalStaged)?,
             eval_final_staged: f(EvalFinalStaged)?,
+            challenges_final_staged: f(ChallengesFinalStaged)?,
         })
     }
 }
@@ -283,11 +294,17 @@ pub enum RxIndex {
     OuterError,
     Query,
     Eval,
+    /// The challenge-slot stage: the last stage of the error chain, holding
+    /// both children's derived-challenge records. Its own stage rather than a
+    /// region of [`Preamble`](Self::Preamble) so that the counts sizing it are
+    /// named only by the circuits that read it — see
+    /// [`slots`](stages::slots).
+    Challenges,
 }
 
 impl RxIndex {
     /// The number of rx polynomial components.
-    pub const NUM: usize = 12;
+    pub const NUM: usize = 13;
 
     /// All variants in canonical order.
     ///
@@ -312,6 +329,7 @@ impl RxIndex {
         push(&mut slots, &mut c, Self::OuterError);
         push(&mut slots, &mut c, Self::Query);
         push(&mut slots, &mut c, Self::Eval);
+        push(&mut slots, &mut c, Self::Challenges);
         assert!(c == Self::NUM);
         slots
     }
@@ -336,6 +354,7 @@ pub struct RxValues<T> {
     pub outer_error: T,
     pub query: T,
     pub eval: T,
+    pub challenges: T,
 }
 
 impl<T> RxValues<T> {
@@ -355,6 +374,7 @@ impl<T> RxValues<T> {
             OuterError => &self.outer_error,
             Query => &self.query,
             Eval => &self.eval,
+            Challenges => &self.challenges,
         }
     }
 
@@ -387,6 +407,7 @@ impl<T> RxValues<T> {
             outer_error: f(OuterError)?,
             query: f(Query)?,
             eval: f(Eval)?,
+            challenges: f(Challenges)?,
         })
     }
 }
@@ -440,8 +461,6 @@ pub fn register_all<
             HEADER_SIZE,
             POLYS,
             CLAIMS,
-            CHALLENGES,
-            CHALLENGE_WIDTH,
             RevdotParameters,
         >::new(params, log2_circuits))?;
         registry = registry.register_internal_circuit(circuits::hashes_2::Circuit::<
@@ -450,8 +469,6 @@ pub fn register_all<
             HEADER_SIZE,
             POLYS,
             CLAIMS,
-            CHALLENGES,
-            CHALLENGE_WIDTH,
             RevdotParameters,
         >::new(params))?;
         registry = registry.register_internal_circuit(circuits::inner_collapse::Circuit::<
@@ -460,8 +477,6 @@ pub fn register_all<
             HEADER_SIZE,
             POLYS,
             CLAIMS,
-            CHALLENGES,
-            CHALLENGE_WIDTH,
             RevdotParameters,
         >::new())?;
         registry = registry.register_internal_circuit(circuits::outer_collapse::Circuit::<
@@ -480,8 +495,6 @@ pub fn register_all<
             HEADER_SIZE,
             POLYS,
             CLAIMS,
-            CHALLENGES,
-            CHALLENGE_WIDTH,
         >::new())?;
         registry = registry.register_internal_circuit(circuits::challenge_binding::Circuit::<
             C,
@@ -495,7 +508,7 @@ pub fn register_all<
     }
 
     {
-        let (query_chain, error_chain) =
+        let (query_chain, error_chain, challenge_chain) =
             chain_layouts::<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>(
                 InternalCircuitIndex::NUM,
                 left,
@@ -507,14 +520,15 @@ pub fn register_all<
         registry = registry.register_bonding(error_chain.mask::<C::CircuitField, R>(1)?);
         registry = registry.register_bonding(query_chain.mask::<C::CircuitField, R>(1)?);
         registry = registry.register_bonding(query_chain.mask::<C::CircuitField, R>(2)?);
-        registry =
-            registry.register_bonding(query_chain.final_mask_through::<C::CircuitField, R>(0)?);
+        registry = registry.register_bonding(challenge_chain.mask::<C::CircuitField, R>(2)?);
         registry =
             registry.register_bonding(error_chain.final_mask_through::<C::CircuitField, R>(2)?);
         registry =
             registry.register_bonding(error_chain.final_mask_through::<C::CircuitField, R>(1)?);
         registry =
             registry.register_bonding(query_chain.final_mask_through::<C::CircuitField, R>(2)?);
+        registry =
+            registry.register_bonding(challenge_chain.final_mask_through::<C::CircuitField, R>(2)?);
     }
 
     assert_eq!(

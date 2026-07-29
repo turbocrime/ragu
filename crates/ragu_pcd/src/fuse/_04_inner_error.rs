@@ -112,8 +112,6 @@ impl<
                 HEADER_SIZE,
                 POLYS,
                 CLAIMS,
-                CHALLENGES,
-                CHALLENGE_WIDTH,
                 native::RevdotParameters,
             >::default(),
             &inner_error_witness,

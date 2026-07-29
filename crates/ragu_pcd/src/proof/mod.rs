@@ -189,6 +189,8 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) native_query_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_registry_xy_poly: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_eval_rx: sparse::Polynomial<C::CircuitField, R>,
+    /// The challenge-slot stage's rx: the last stage of the error chain.
+    pub(crate) native_challenges_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_p_poly: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_hashes_1_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_hashes_2_rx: sparse::Polynomial<C::CircuitField, R>,
@@ -241,6 +243,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     native_query_commitment: Cached<C::HostCurve>,
     native_registry_xy_commitment: Cached<C::HostCurve>,
     native_eval_commitment: Cached<C::HostCurve>,
+    native_challenges_commitment: Cached<C::HostCurve>,
     native_p_commitment: Cached<C::HostCurve>,
     native_hashes_1_commitment: Cached<C::HostCurve>,
     native_hashes_2_commitment: Cached<C::HostCurve>,
@@ -313,6 +316,7 @@ impl<C: Cycle, R: Rank> core::ops::Index<RxIndex> for Proof<C, R> {
             OuterError => &self.native_outer_error_rx,
             Query => &self.native_query_rx,
             Eval => &self.native_eval_rx,
+            Challenges => &self.native_challenges_rx,
             Application => &self.native_application_rx,
             Hashes1 => &self.native_hashes_1_rx,
             Hashes2 => &self.native_hashes_2_rx,
@@ -479,6 +483,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             OuterError => self.native_outer_error_commitment.0,
             Query => self.native_query_commitment.0,
             Eval => self.native_eval_commitment.0,
+            Challenges => self.native_challenges_commitment.0,
             Application => self.native_application_commitment.0,
             Hashes1 => self.native_hashes_1_commitment.0,
             Hashes2 => self.native_hashes_2_commitment.0,
@@ -746,6 +751,7 @@ impl<
         builder.set_native_query_rx(ones_host.clone());
         builder.set_native_registry_xy_poly(registry_xy_poly);
         builder.set_native_eval_rx(ones_host.clone());
+        builder.set_native_challenges_rx(ones_host.clone());
         // native_p_poly: deferred until after endoscaling computation,
         // since the real p commitment is the PointsStage last interstitial.
         builder.set_native_hashes_1_rx(ones_host.clone());
@@ -884,6 +890,7 @@ impl<
                 stashed_outer_error: host_commitment,
                 stashed_query: host_commitment,
                 stashed_eval: host_commitment,
+                stashed_challenges: host_commitment,
                 stashed_ab_a: host_commitment,
                 stashed_ab_b: host_commitment,
                 stashed_registry_xy: registry_xy_commitment,

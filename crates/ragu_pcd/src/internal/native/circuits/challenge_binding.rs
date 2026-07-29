@@ -73,7 +73,8 @@ use ragu_core::{
 use ragu_primitives::{GadgetExt as _, allocator::Standard, poseidon::Sponge};
 
 use super::super::{
-    stages::preamble,
+    RevdotParameters,
+    stages::{outer_error, preamble, slots},
     unified::{self, OutputBuilder},
 };
 
@@ -143,7 +144,19 @@ impl<
 > MultiStageCircuit<C::CircuitField, R>
     for Circuit<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
 {
-    type Last = preamble::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>;
+    /// The challenge slots are last in the error chain, and this circuit exists
+    /// to re-derive each of them, so it reaches down to that stage. Everything
+    /// between is skipped.
+    type Last = slots::ChallengesStage<
+        C,
+        R,
+        HEADER_SIZE,
+        POLYS,
+        CLAIMS,
+        CHALLENGES,
+        CHALLENGE_WIDTH,
+        RevdotParameters,
+    >;
 
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, R, HEADER_SIZE>;
@@ -169,10 +182,19 @@ impl<
     where
         Self: 'dr,
     {
-        let (preamble, builder) = builder.add_stage::<Self::Last>()?;
+        let builder = builder.skip_stage::<preamble::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>>()?;
+        let builder = builder.skip_stage::<outer_error::Stage<
+            C,
+            R,
+            HEADER_SIZE,
+            POLYS,
+            CLAIMS,
+            RevdotParameters,
+        >>()?;
+        let (challenges, builder) = builder.add_stage::<Self::Last>()?;
         let dr = builder.finish();
 
-        let preamble = preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;
+        let challenges = challenges.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;
 
         // Re-derive each child's challenges. A fresh sponge per slot, matching
         // `challenge_from_points` exactly: absorb every input point in slot
@@ -180,8 +202,8 @@ impl<
         // sponge, so slot i's challenge cannot depend on slot i-1's inputs —
         // and it is no more expensive, since each squeeze costs a permutation
         // regardless.
-        for child in [&preamble.left, &preamble.right] {
-            for pair in child.challenges.iter() {
+        for child in [&challenges.left, &challenges.right] {
+            for pair in child.iter() {
                 let mut sponge = Sponge::new(dr, C::circuit_poseidon(self.params));
                 for point in pair.points.iter() {
                     point.write(dr, &mut sponge)?;

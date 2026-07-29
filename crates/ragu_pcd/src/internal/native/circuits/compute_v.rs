@@ -83,27 +83,12 @@ use crate::internal::{
 ///
 /// [module-level documentation]: self
 /// [$v$]: unified::Output::v
-pub struct Circuit<
-    C: Cycle,
-    R,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> {
+pub struct Circuit<C: Cycle, R, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: usize> {
     _marker: PhantomData<(C, R)>,
 }
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> Circuit<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: usize>
+    Circuit<C, R, HEADER_SIZE, POLYS, CLAIMS>
 {
     pub fn new() -> MultiStage<C::CircuitField, R, Self> {
         MultiStage::new(Circuit {
@@ -131,18 +116,10 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     pub eval_witness: &'a native_eval::Witness<C::CircuitField>,
 }
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> MultiStageCircuit<C::CircuitField, R>
-    for Circuit<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: usize>
+    MultiStageCircuit<C::CircuitField, R> for Circuit<C, R, HEADER_SIZE, POLYS, CLAIMS>
 {
-    type Last = native_eval::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>;
+    type Last = native_eval::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>;
 
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, R, HEADER_SIZE>;
@@ -170,36 +147,14 @@ impl<
     {
         // Set up multi-stage circuit pipeline: preamble -> query -> eval.
         // Each stage provides data needed for the v computation.
-        let (preamble, builder) = builder.add_stage::<native_preamble::Stage<
-            C,
-            R,
-            HEADER_SIZE,
-            POLYS,
-            CLAIMS,
-            CHALLENGES,
-            CHALLENGE_WIDTH,
-        >>()?;
+        let (preamble, builder) =
+            builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>>()?;
         let (query, builder) = builder.configure_stage_sized(
-            native_query::Stage::<
-                C,
-                R,
-                HEADER_SIZE,
-                POLYS,
-                CLAIMS,
-                CHALLENGES,
-                CHALLENGE_WIDTH,
-            >::default(),
+            native_query::Stage::<C, R, HEADER_SIZE, POLYS, CLAIMS>::default(),
             native_query::num_values(super::super::InternalCircuitIndex::NUM),
         )?;
-        let (eval, builder) = builder.add_stage::<native_eval::Stage<
-            C,
-            R,
-            HEADER_SIZE,
-            POLYS,
-            CLAIMS,
-            CHALLENGES,
-            CHALLENGE_WIDTH,
-        >>()?;
+        let (eval, builder) =
+            builder.add_stage::<native_eval::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>>()?;
         let dr = builder.finish();
 
         // Preamble is enforced because it contains child proof data that must
@@ -370,8 +325,6 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
         const HEADER_SIZE: usize,
         const POLYS: usize,
         const CLAIMS: usize,
-        const CHALLENGES: usize,
-        const CHALLENGE_WIDTH: usize,
     >(
         dr: &mut D,
         u: &Element<'dr, D>,
@@ -379,16 +332,7 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
         x: &Element<'dr, D>,
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
-        preamble: &native_preamble::Output<
-            'dr,
-            D,
-            C,
-            HEADER_SIZE,
-            POLYS,
-            CLAIMS,
-            CHALLENGES,
-            CHALLENGE_WIDTH,
-        >,
+        preamble: &native_preamble::Output<'dr, D, C, HEADER_SIZE, POLYS, CLAIMS>,
     ) -> Result<Self>
     where
         D::F: ragu_arithmetic::ff::PrimeField,
@@ -694,8 +638,6 @@ fn poly_queries<
     const HEADER_SIZE: usize,
     const POLYS: usize,
     const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
 >(
     eval: &'a native_eval::Output<'dr, D, POLYS>,
     query: &'a native_query::Output<'dr, D>,
@@ -706,8 +648,6 @@ fn poly_queries<
         HEADER_SIZE,
         POLYS,
         CLAIMS,
-        CHALLENGES,
-        CHALLENGE_WIDTH,
     >,
     d: &'a Denominators<'dr, D>,
     computed_ax: &'a Element<'dr, D>,

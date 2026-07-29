@@ -492,11 +492,10 @@ mod tests {
         pasta_curves::group::{Curve, CurveAffine as _, Group},
         rand::RngExt,
     };
-    use ragu_circuits::staging::{InducedStages, Stage};
     use ragu_circuits::{
         CircuitExt,
         polynomials::{self},
-        staging::{MultiStage, StageExt},
+        staging::{InducedStages, MultiStage, Stage, StageExt},
     };
     use ragu_core::{
         Result,

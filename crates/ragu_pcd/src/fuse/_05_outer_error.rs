@@ -83,7 +83,12 @@ impl<
                 let (preamble_witness, inner_error_terms, y, mu, nu) = witness.cast();
                 let allocator = &mut ();
 
-                let preamble = native::stages::preamble::Stage::<
+                let preamble =
+                    native::stages::preamble::Stage::<C, R, HEADER_SIZE, POLYS, CLAIMS>::default()
+                        .witness(dr, preamble_witness.as_ref().map(|w| *w))?;
+                // The challenge slots are their own stage now, so the k(Y)
+                // fold reads them from there rather than from the preamble.
+                let challenges = native::stages::slots::ChallengesStage::<
                     C,
                     R,
                     HEADER_SIZE,
@@ -91,6 +96,7 @@ impl<
                     CLAIMS,
                     CHALLENGES,
                     CHALLENGE_WIDTH,
+                    native::RevdotParameters,
                 >::default()
                 .witness(dr, preamble_witness.as_ref().map(|w| *w))?;
 
@@ -101,12 +107,12 @@ impl<
                     preamble.right.unified_ky_values(dr, &y)?;
 
                 let left_ky = native::stages::outer_error::ChildKyOutputs {
-                    application: preamble.left.application_ky(dr, &y)?,
+                    application: preamble.left.application_ky(dr, &y, &challenges.left)?,
                     unified: left_unified_ky,
                     unified_bridge: left_unified_bridge_ky,
                 };
                 let right_ky = native::stages::outer_error::ChildKyOutputs {
-                    application: preamble.right.application_ky(dr, &y)?,
+                    application: preamble.right.application_ky(dr, &y, &challenges.right)?,
                     unified: right_unified_ky,
                     unified_bridge: right_unified_bridge_ky,
                 };
@@ -183,8 +189,6 @@ impl<
                 HEADER_SIZE,
                 POLYS,
                 CLAIMS,
-                CHALLENGES,
-                CHALLENGE_WIDTH,
                 native::RevdotParameters,
             >::default(),
             outer_error_witness,

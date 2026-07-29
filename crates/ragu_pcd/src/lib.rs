@@ -81,7 +81,6 @@ use ragu_circuits::{
     staging::MultiStage,
 };
 use ragu_core::{Error, Result};
-
 use step::{Step, internal::adapter::Adapter};
 
 /// Domain separation tag for Ragu PCD protocol.
@@ -472,6 +471,7 @@ impl<
     pub(crate) fn native_chain_layouts(
         &self,
     ) -> (
+        ragu_circuits::staging::InducedStages,
         ragu_circuits::staging::InducedStages,
         ragu_circuits::staging::InducedStages,
     ) {

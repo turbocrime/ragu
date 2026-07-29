@@ -49,11 +49,24 @@ impl<
             builder.right_header(),
         )?;
 
-        let (query_chain, _) = self.native_chain_layouts();
+        let (query_chain, _, _) = self.native_chain_layouts();
         let rx = query_chain.rx_configured(
             0,
             C::CircuitField::random(&mut *rng),
-            &native::stages::preamble::Stage::<
+            &native::stages::preamble::Stage::<C, R, HEADER_SIZE, POLYS, CLAIMS>::default(),
+            &preamble_witness,
+        )?;
+
+        builder.set_native_preamble_rx(rx);
+
+        // The challenge slots are their own stage, last in the error chain, and
+        // take the same witness the preamble does — they are a different region
+        // of the same children's instances, not different data.
+        let (_, _, challenge_chain) = self.native_chain_layouts();
+        let challenges_rx = challenge_chain.rx_configured(
+            2,
+            C::CircuitField::random(&mut *rng),
+            &native::stages::slots::ChallengesStage::<
                 C,
                 R,
                 HEADER_SIZE,
@@ -61,11 +74,11 @@ impl<
                 CLAIMS,
                 CHALLENGES,
                 CHALLENGE_WIDTH,
+                native::RevdotParameters,
             >::default(),
             &preamble_witness,
         )?;
-
-        builder.set_native_preamble_rx(rx);
+        builder.set_native_challenges_rx(challenges_rx);
 
         Ok(preamble_witness)
     }

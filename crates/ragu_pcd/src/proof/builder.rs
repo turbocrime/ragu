@@ -232,6 +232,7 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     native_query_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_registry_xy_poly: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_eval_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_challenges_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_p_poly: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_hashes_1_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_hashes_2_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
@@ -292,6 +293,7 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     native_query_commitment: OnceCell<C::HostCurve>,
     native_registry_xy_commitment: OnceCell<C::HostCurve>,
     native_eval_commitment: OnceCell<C::HostCurve>,
+    native_challenges_commitment: OnceCell<C::HostCurve>,
     native_p_commitment: OnceCell<C::HostCurve>,
     native_hashes_1_commitment: OnceCell<C::HostCurve>,
     native_hashes_2_commitment: OnceCell<C::HostCurve>,
@@ -359,6 +361,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             native_query_rx: None,
             native_registry_xy_poly: None,
             native_eval_rx: None,
+            native_challenges_rx: None,
             native_p_poly: None,
             native_hashes_1_rx: None,
             native_hashes_2_rx: None,
@@ -404,6 +407,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             native_query_commitment: OnceCell::new(),
             native_registry_xy_commitment: OnceCell::new(),
             native_eval_commitment: OnceCell::new(),
+            native_challenges_commitment: OnceCell::new(),
             native_p_commitment: OnceCell::new(),
             native_hashes_1_commitment: OnceCell::new(),
             native_hashes_2_commitment: OnceCell::new(),
@@ -444,6 +448,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     native_setter!(set_native_query_rx, native_query_rx);
     native_setter!(set_native_registry_xy_poly, native_registry_xy_poly);
     native_setter!(set_native_eval_rx, native_eval_rx);
+    native_setter!(set_native_challenges_rx, native_challenges_rx);
     native_setter!(set_native_hashes_1_rx, native_hashes_1_rx);
     native_setter!(set_native_hashes_2_rx, native_hashes_2_rx);
     native_setter!(set_native_inner_collapse_rx, native_inner_collapse_rx);
@@ -504,6 +509,12 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         native_eval_commitment,
         native_eval_commitment,
         native_eval_rx
+    );
+    lazy_commitment!(
+        native,
+        native_challenges_commitment,
+        native_challenges_commitment,
+        native_challenges_rx
     );
     lazy_commitment!(
         native,
@@ -820,6 +831,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         self.native_query_commitment();
         self.native_registry_xy_commitment();
         self.native_eval_commitment();
+        self.native_challenges_commitment();
         self.native_hashes_1_commitment();
         self.native_hashes_2_commitment();
         self.native_inner_collapse_commitment();
@@ -875,6 +887,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             native_query_rx: take!(native_query_rx),
             native_registry_xy_poly: take!(native_registry_xy_poly),
             native_eval_rx: take!(native_eval_rx),
+            native_challenges_rx: take!(native_challenges_rx),
             native_p_poly: take!(native_p_poly),
             native_hashes_1_rx: take!(native_hashes_1_rx),
             native_hashes_2_rx: take!(native_hashes_2_rx),
@@ -936,6 +949,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             native_query_commitment: cached!(native_query_commitment),
             native_registry_xy_commitment: cached!(native_registry_xy_commitment),
             native_eval_commitment: cached!(native_eval_commitment),
+            native_challenges_commitment: cached!(native_challenges_commitment),
             native_p_commitment: cached!(native_p_commitment),
             native_hashes_1_commitment: cached!(native_hashes_1_commitment),
             native_hashes_2_commitment: cached!(native_hashes_2_commitment),

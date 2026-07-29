@@ -53,19 +53,11 @@ impl<
                 registry_xy: builder.native_registry_xy_poly().eval(u),
             },
         };
-        let (query_chain, _) = self.native_chain_layouts();
+        let (query_chain, _, _) = self.native_chain_layouts();
         let rx = query_chain.rx_configured(
             2,
             C::CircuitField::random(&mut *rng),
-            &native::stages::eval::Stage::<
-                C,
-                R,
-                HEADER_SIZE,
-                POLYS,
-                CLAIMS,
-                CHALLENGES,
-                CHALLENGE_WIDTH,
-            >::default(),
+            &native::stages::eval::Stage::<C, R, HEADER_SIZE, POLYS, CLAIMS>::default(),
             &eval_witness,
         )?;
 

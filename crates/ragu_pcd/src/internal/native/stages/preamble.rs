@@ -17,7 +17,7 @@ use ragu_primitives::{
     Boolean, Element, GadgetExt, Point,
     allocator::Allocator,
     consistent::Consistent,
-    vec::{CollectFixed, ConstLen, FixedVec, Len},
+    vec::{CollectFixed, ConstLen, FixedVec},
 };
 
 use crate::{Proof, header::Header, internal::native::unified, step::internal::padded};
@@ -129,8 +129,6 @@ pub struct ProofInputs<
     const HEADER_SIZE: usize,
     const POLYS: usize,
     const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
 > {
     /// Headers this child proof claimed for its own children.
     #[ragu(gadget)]
@@ -147,9 +145,6 @@ pub struct ProofInputs<
     /// by index.
     #[ragu(gadget)]
     pub polys: FixedVec<PolyInstance<'dr, D, C>, ConstLen<POLYS>>,
-    /// The derived-challenge pairs the child's circuit exposed, in slot order.
-    #[ragu(gadget)]
-    pub challenges: FixedVec<ChallengeInstance<'dr, D, C, CHALLENGE_WIDTH>, ConstLen<CHALLENGES>>,
     #[ragu(gadget)]
     pub circuit_id: Element<'dr, D>,
     #[ragu(gadget)]
@@ -163,9 +158,7 @@ impl<
     const HEADER_SIZE: usize,
     const POLYS: usize,
     const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> ProofInputs<'dr, D, C, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+> ProofInputs<'dr, D, C, HEADER_SIZE, POLYS, CLAIMS>
 {
     /// Compute unified k(y) and unified+bridged k(y) values simultaneously,
     /// sharing computation.
@@ -203,12 +196,25 @@ impl<
     /// Compute k(y) for the application circuit instance.
     ///
     /// Returns `application_ky` = k(y) for `(children.left, children.right,
-    /// output_header, polys, claims)` — the polynomial slots follow the
-    /// headers and the query slots follow those, matching the instance layout
-    /// the adapter writes (`step::internal::adapter::instance_len`). This is
-    /// what binds the witnessed polynomials and claim instances to the child's
-    /// committed application rx.
-    pub fn application_ky(&self, dr: &mut D, y: &Element<'dr, D>) -> Result<Element<'dr, D>> {
+    /// output_header, polys, claims, challenges)` — the polynomial slots follow
+    /// the headers, the query slots follow those, and the challenge slots
+    /// follow those, matching the instance layout the adapter writes
+    /// (`step::internal::adapter::instance_len`). This is what binds the
+    /// witnessed polynomials, claim instances and derived challenges to the
+    /// child's committed application rx.
+    ///
+    /// `challenges` comes in as an argument because the challenge slots are
+    /// their own stage
+    /// ([`ChallengesStage`](super::slots::ChallengesStage)) rather than a field
+    /// here. The fold still walks one contiguous instance; only which stage
+    /// each region's wires live in differs, and that is deliberate — see that
+    /// module for why the slot regions do not belong on the chain's root.
+    pub fn application_ky<const CHALLENGES: usize, const CHALLENGE_WIDTH: usize>(
+        &self,
+        dr: &mut D,
+        y: &Element<'dr, D>,
+        challenges: &FixedVec<ChallengeInstance<'dr, D, C, CHALLENGE_WIDTH>, ConstLen<CHALLENGES>>,
+    ) -> Result<Element<'dr, D>> {
         let mut ky = Horner::new(y);
         self.children.left.write(dr, &mut ky)?;
         self.children.right.write(dr, &mut ky)?;
@@ -221,7 +227,7 @@ impl<
             claim.x.write(dr, &mut ky)?;
             claim.y.write(dr, &mut ky)?;
         }
-        for pair in self.challenges.iter() {
+        for pair in challenges.iter() {
             for point in pair.points.iter() {
                 point.write(dr, &mut ky)?;
             }
@@ -248,9 +254,7 @@ impl<
     const HEADER_SIZE: usize,
     const POLYS: usize,
     const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> ProofInputs<'dr, D, C, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+> ProofInputs<'dr, D, C, HEADER_SIZE, POLYS, CLAIMS>
 {
     /// Allocate ProofInputs from a proof reference and pre-computed output
     /// header. The slot counts are circuit-construction parameters: they fix
@@ -263,7 +267,6 @@ impl<
     ) -> Result<Self> {
         let num_polys = POLYS;
         let num_queries = CLAIMS;
-        let num_challenges = CHALLENGES;
         fn alloc_header<'dr, D: Driver<'dr>, const N: usize>(
             dr: &mut D,
             allocator: &mut (),
@@ -348,41 +351,6 @@ impl<
                     })
                     .try_collect_fixed()?
             },
-            challenges: {
-                D::try_just(|| {
-                    if proof.as_ref().take().application_challenges().len() != num_challenges {
-                        return Err(Error::MalformedEncoding(
-                            "proof does not carry exactly the configured number of challenge \
-                             pairs"
-                                .into(),
-                        ));
-                    }
-                    Ok(())
-                })?;
-                (0..num_challenges)
-                    .map(|i| {
-                        Ok(ChallengeInstance {
-                            points: ConstLen::<CHALLENGE_WIDTH>::range()
-                                .map(|j| {
-                                    Point::alloc(
-                                        dr,
-                                        proof
-                                            .as_ref()
-                                            .map(|p| p.application_challenges()[i].points[j]),
-                                    )
-                                })
-                                .try_collect_fixed()?,
-                            challenge: Element::alloc(
-                                dr,
-                                allocator,
-                                proof
-                                    .as_ref()
-                                    .map(|p| p.application_challenges()[i].challenge),
-                            )?,
-                        })
-                    })
-                    .try_collect_fixed()?
-            },
             circuit_id: Element::alloc(
                 dr,
                 allocator,
@@ -431,13 +399,11 @@ pub struct Output<
     const HEADER_SIZE: usize,
     const POLYS: usize,
     const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
 > {
     #[ragu(gadget)]
-    pub left: ProofInputs<'dr, D, C, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>,
+    pub left: ProofInputs<'dr, D, C, HEADER_SIZE, POLYS, CLAIMS>,
     #[ragu(gadget)]
-    pub right: ProofInputs<'dr, D, C, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>,
+    pub right: ProofInputs<'dr, D, C, HEADER_SIZE, POLYS, CLAIMS>,
 }
 
 impl<
@@ -447,9 +413,7 @@ impl<
     const HEADER_SIZE: usize,
     const POLYS: usize,
     const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> Output<'dr, D, C, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+> Output<'dr, D, C, HEADER_SIZE, POLYS, CLAIMS>
 {
     /// Returns true if both child proofs are trivial proofs.
     pub fn is_base_case(
@@ -474,45 +438,32 @@ pub fn num_values(
     child_num_values(header_size, left) + child_num_values(header_size, right)
 }
 
-/// One child's contribution to this stage's wire width: its three headers,
-/// its slot instances at its own shape, its circuit id, and its unified
+/// One child's contribution to this stage's wire width: its three headers, its
+/// polynomial and claim slots at its own shape, its circuit id, and its unified
 /// instance wires.
+///
+/// Its *challenge* slots are not here — they are their own stage
+/// ([`slots`](super::slots)), so that the counts sizing them are named only by
+/// the circuits that read them.
 pub fn child_num_values(header_size: usize, child: crate::framework_hooks::HookLayout) -> usize {
     // 3 headers * HEADER_SIZE + polynomial slots (2 wires each)
     //   + query slots (3 wires each)
-    //   + challenge slots (2 wires per input point, plus the challenge)
     //   + 1 circuit_id + unified instance wires
     3 * header_size
         + 2 * child.poly_query.polys
         + 3 * child.poly_query.claims
-        + (2 * child.challenge.width + 1) * child.challenge.calls
         + 1
         + unified::NUM_WIRES
 }
 
 /// Both children present the application's shape, so one set of slot counts
 /// sizes both.
-pub struct Stage<
-    C: Cycle,
-    R,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> {
+pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: usize> {
     _marker: PhantomData<(C, R)>,
 }
 
-impl<
-    C: Cycle,
-    R,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> Default for Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+impl<C: Cycle, R, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: usize> Default
+    for Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>
 {
     fn default() -> Self {
         Stage {
@@ -521,31 +472,20 @@ impl<
     }
 }
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> staging::Stage<C::CircuitField, R>
-    for Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: usize>
+    staging::Stage<C::CircuitField, R> for Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>
 {
     type Parent = ();
     type Witness<'source> = &'source Witness<'source, C, R, HEADER_SIZE>;
     type OutputKind = Kind![
         C::CircuitField;
-        Output<'_, _, C, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+        Output<'_, _, C, HEADER_SIZE, POLYS, CLAIMS>
     ];
 
     fn values() -> usize {
-        2 * (3 * HEADER_SIZE
-            + 2 * POLYS
-            + 3 * CLAIMS
-            + (2 * CHALLENGE_WIDTH + 1) * CHALLENGES
-            + 1
-            + unified::NUM_WIRES)
+        // The challenge slots are their own stage — see
+        // [`slots`](super::slots) for why the chain's root does not hold them.
+        2 * (3 * HEADER_SIZE + 2 * POLYS + 3 * CLAIMS + 1 + unified::NUM_WIRES)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -585,7 +525,7 @@ mod tests {
         fn check<const POLYS: usize>() {
             let capacity = capacity_with_polys(POLYS);
             assert_eq!(
-                stage_wire_count(&Stage::<Pasta, R, { HEADER_SIZE }, POLYS, 1, 1, 2>::default()),
+                stage_wire_count(&Stage::<Pasta, R, { HEADER_SIZE }, POLYS, 1>::default()),
                 num_values(HEADER_SIZE, capacity, capacity),
                 "polys={POLYS}"
             );

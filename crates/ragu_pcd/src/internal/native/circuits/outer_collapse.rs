@@ -71,7 +71,7 @@ use ragu_core::{
 use ragu_primitives::{GadgetExt as _, allocator::Standard};
 
 use super::super::{
-    stages::{outer_error, preamble},
+    stages::{outer_error, preamble, slots},
     unified::{self, OutputBuilder},
 };
 use crate::internal::fold_revdot;
@@ -151,8 +151,13 @@ impl<
 > MultiStageCircuit<C::CircuitField, R>
     for Circuit<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH, FP>
 {
+    /// The challenge slots are the last stage of the error chain, and this
+    /// circuit folds a child's *whole* instance into $k(Y)$ — challenge slots
+    /// included — so it reaches all the way down. `hashes_1`, `hashes_2` and
+    /// `inner_collapse` stop at the error stages above and never name these
+    /// counts.
     type Last =
-        outer_error::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH, FP>;
+        slots::ChallengesStage<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH, FP>;
 
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, R, HEADER_SIZE, FP>;
@@ -178,16 +183,11 @@ impl<
     where
         Self: 'dr,
     {
-        let (preamble, builder) = builder.add_stage::<preamble::Stage<
-            C,
-            R,
-            HEADER_SIZE,
-            POLYS,
-            CLAIMS,
-            CHALLENGES,
-            CHALLENGE_WIDTH,
-        >>()?;
-        let (outer_error, builder) = builder.add_stage::<outer_error::Stage<
+        let (preamble, builder) =
+            builder.add_stage::<preamble::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>>()?;
+        let (outer_error, builder) =
+            builder.add_stage::<outer_error::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, FP>>()?;
+        let (challenges, builder) = builder.add_stage::<slots::ChallengesStage<
             C,
             R,
             HEADER_SIZE,
@@ -202,6 +202,7 @@ impl<
         let preamble = preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;
         let outer_error =
             outer_error.unenforced(dr, witness.as_ref().map(|w| w.outer_error_witness))?;
+        let challenges = challenges.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;
 
         let allocator = &mut Standard::new();
         let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));
@@ -212,8 +213,8 @@ impl<
         {
             let y = unified_output.y.read(dr, allocator)?;
 
-            let left_application_ky = preamble.left.application_ky(dr, &y)?;
-            let right_application_ky = preamble.right.application_ky(dr, &y)?;
+            let left_application_ky = preamble.left.application_ky(dr, &y, &challenges.left)?;
+            let right_application_ky = preamble.right.application_ky(dr, &y, &challenges.right)?;
 
             left_application_ky.enforce_equal(dr, &outer_error.left.application)?;
             right_application_ky.enforce_equal(dr, &outer_error.right.application)?;

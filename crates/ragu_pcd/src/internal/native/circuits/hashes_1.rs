@@ -134,8 +134,6 @@ pub struct Circuit<
     const HEADER_SIZE: usize,
     const POLYS: usize,
     const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
     FP: fold_revdot::Parameters,
 > {
     params: &'params C::Params,
@@ -150,10 +148,8 @@ impl<
     const HEADER_SIZE: usize,
     const POLYS: usize,
     const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
     FP: fold_revdot::Parameters,
-> Circuit<'params, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH, FP>
+> Circuit<'params, C, R, HEADER_SIZE, POLYS, CLAIMS, FP>
 {
     /// Creates a new multi-stage circuit.
     ///
@@ -204,22 +200,10 @@ impl<
     const HEADER_SIZE: usize,
     const POLYS: usize,
     const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
     FP: fold_revdot::Parameters,
-> MultiStageCircuit<C::CircuitField, R>
-    for Circuit<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH, FP>
+> MultiStageCircuit<C::CircuitField, R> for Circuit<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, FP>
 {
-    type Last = native_outer_error::Stage<
-        C,
-        R,
-        HEADER_SIZE,
-        POLYS,
-        CLAIMS,
-        CHALLENGES,
-        CHALLENGE_WIDTH,
-        FP,
-    >;
+    type Last = native_outer_error::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, FP>;
 
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, R, HEADER_SIZE, FP>;
@@ -245,25 +229,11 @@ impl<
     where
         Self: 'dr,
     {
-        let (preamble, builder) = builder.add_stage::<native_preamble::Stage<
-            C,
-            R,
-            HEADER_SIZE,
-            POLYS,
-            CLAIMS,
-            CHALLENGES,
-            CHALLENGE_WIDTH,
-        >>()?;
-        let (outer_error, builder) = builder.add_stage::<native_outer_error::Stage<
-            C,
-            R,
-            HEADER_SIZE,
-            POLYS,
-            CLAIMS,
-            CHALLENGES,
-            CHALLENGE_WIDTH,
-            FP,
-        >>()?;
+        let (preamble, builder) =
+            builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>>()?;
+        let (outer_error, builder) =
+            builder
+                .add_stage::<native_outer_error::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, FP>>()?;
         let dr = builder.finish();
 
         let preamble = preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;

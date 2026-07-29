@@ -95,20 +95,30 @@ impl<
             Emulator::emulate_wireless((pcd.proof(), pcd.data().clone(), y), |dr, witness| {
                 let (proof, data, y) = witness.cast();
                 let y = Element::alloc(dr, &mut (), y)?;
-                let proof_inputs = ProofInputs::<
+                let proof_inputs =
+                    ProofInputs::<_, C, HEADER_SIZE, POLYS, CLAIMS>::alloc_for_verify::<R, H>(
+                        dr,
+                        Maybe::clone(&proof),
+                        data,
+                    )?;
+                // The challenge slots live in their own stage, so they are
+                // allocated through the same helper that stage uses — one
+                // definition of the region's order, not two.
+                let challenges = crate::internal::native::stages::slots::alloc_challenges::<
                     _,
                     C,
-                    HEADER_SIZE,
-                    POLYS,
-                    CLAIMS,
+                    R,
                     CHALLENGES,
                     CHALLENGE_WIDTH,
-                >::alloc_for_verify::<R, H>(dr, proof, data)?;
+                >(dr, proof)?;
 
                 let (unified_ky, unified_bridge_ky) = proof_inputs.unified_ky_values(dr, &y)?;
                 let unified_ky = *unified_ky.value().take();
                 let unified_bridge_ky = *unified_bridge_ky.value().take();
-                let application_ky = *proof_inputs.application_ky(dr, &y)?.value().take();
+                let application_ky = *proof_inputs
+                    .application_ky(dr, &y, &challenges)?
+                    .value()
+                    .take();
 
                 Ok((unified_ky, unified_bridge_ky, application_ky))
             })?;

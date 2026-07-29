@@ -73,19 +73,11 @@ impl<
             ),
         };
 
-        let (query_chain, _) = self.native_chain_layouts();
+        let (query_chain, _, _) = self.native_chain_layouts();
         let rx = query_chain.rx_configured(
             1,
             C::CircuitField::random(&mut *rng),
-            &native::stages::query::Stage::<
-                C,
-                R,
-                HEADER_SIZE,
-                POLYS,
-                CLAIMS,
-                CHALLENGES,
-                CHALLENGE_WIDTH,
-            >::default(),
+            &native::stages::query::Stage::<C, R, HEADER_SIZE, POLYS, CLAIMS>::default(),
             &query_witness,
         )?;
 

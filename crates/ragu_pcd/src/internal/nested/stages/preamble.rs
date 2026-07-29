@@ -77,6 +77,8 @@ pub struct ChildWitness<C: CurveAffine> {
     pub stashed_query: C,
     /// Stashed commitment from the child's eval bridge stage.
     pub stashed_eval: C,
+    /// Stashed commitment from the child's challenge-slot stage.
+    pub stashed_challenges: C,
     /// Stashed `a` commitment from the child's AB bridge stage.
     pub stashed_ab_a: C,
     /// Stashed `b` commitment from the child's AB bridge stage.
@@ -110,6 +112,7 @@ impl<C: CurveAffine> ChildWitness<C> {
             stashed_outer_error: proof.native_rx_commitment(RxIndex::OuterError),
             stashed_query: proof.native_rx_commitment(RxIndex::Query),
             stashed_eval: proof.native_rx_commitment(RxIndex::Eval),
+            stashed_challenges: proof.native_rx_commitment(RxIndex::Challenges),
             stashed_ab_a: proof.native_commitment(RxComponent::AbA),
             stashed_ab_b: proof.native_commitment(RxComponent::AbB),
             stashed_registry_xy: proof.native_registry_xy_commitment(),
@@ -169,6 +172,8 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     pub stashed_query: Point<'dr, D, C>,
     /// Stashed commitment from the child's eval bridge stage.
     pub stashed_eval: Point<'dr, D, C>,
+    /// Stashed commitment from the child's challenge-slot stage.
+    pub stashed_challenges: Point<'dr, D, C>,
     /// Stashed `a` commitment from the child's AB bridge stage.
     pub stashed_ab_a: Point<'dr, D, C>,
     /// Stashed `b` commitment from the child's AB bridge stage.
@@ -203,6 +208,7 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> core::ops::Index<RxIndex>
             OuterError => &self.stashed_outer_error,
             Query => &self.stashed_query,
             Eval => &self.stashed_eval,
+            Challenges => &self.stashed_challenges,
         }
     }
 }
@@ -224,6 +230,7 @@ impl<C: CurveAffine> ChildWitness<C> {
             self.stashed_outer_error,
             self.stashed_query,
             self.stashed_eval,
+            self.stashed_challenges,
             self.stashed_ab_a,
             self.stashed_ab_b,
             self.stashed_registry_xy,
@@ -267,6 +274,7 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> ChildOutput<'dr, D, C> {
             stashed_outer_error: next()?,
             stashed_query: next()?,
             stashed_eval: next()?,
+            stashed_challenges: next()?,
             stashed_ab_a: next()?,
             stashed_ab_b: next()?,
             stashed_registry_xy: next()?,
@@ -429,6 +437,7 @@ mod tests {
                 stashed_outer_error: EqAffine::default(),
                 stashed_query: EqAffine::default(),
                 stashed_eval: EqAffine::default(),
+                stashed_challenges: EqAffine::default(),
                 stashed_ab_a: EqAffine::default(),
                 stashed_ab_b: EqAffine::default(),
                 stashed_registry_xy: EqAffine::default(),

@@ -128,8 +128,55 @@ fn test_internal_circuit_constraint_counts() {
     check_constraints!(Hashes2Circuit,          mul = 1954, lin = 2951);
     check_constraints!(InnerCollapseCircuit,    mul = 1831, lin = 1918);
     check_constraints!(OuterCollapseCircuit,    mul = 1848, lin = 2742);
-    check_constraints!(ComputeVCircuit,         mul = 1226, lin = 1799);
-    check_constraints!(ChallengeBindingCircuit, mul = 332, lin = 71);
+    // `ComputeV` grew by 13: it iterates the internal circuits, and the
+    // challenge slots added a stage mask and a final-trace mask.
+    //
+    // `ChallengeBinding` grew by 186 — exactly `OuterError`'s gates. It reaches
+    // the challenge slots on the branch below `OuterError`, and a circuit's
+    // trace spans every gate up to its last stage, so it pays for the stage it
+    // skips on the way. That is the price of keeping `OuterCollapse` — which
+    // needs both `OuterError` and the challenge slots — able to reach both.
+    check_constraints!(ComputeVCircuit,         mul = 1239, lin = 1819);
+    check_constraints!(ChallengeBindingCircuit, mul =  518, lin =   71);
+}
+
+/// Prints the counts `test_internal_circuit_constraint_counts` pins, so a
+/// deliberate change can be re-pinned in one run instead of one per circuit.
+///
+/// Ignored by default: it is a helper, not a check.
+///
+/// Run with: `cargo test -p ragu_pcd print_internal_circuit_constraint -- --ignored --nocapture`
+#[test]
+#[ignore = "prints the pinned constraint counts; run explicitly"]
+fn print_internal_circuit_constraint_counts() {
+    use std::println;
+
+    let pasta = Pasta::baked();
+    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 0, 0, 0, 2>::new()
+        .register_dummy_circuits(NUM_APP_STEPS)
+        .unwrap()
+        .finalize(pasta)
+        .unwrap();
+
+    println!("\n// Copy-paste the following into test_internal_circuit_constraint_counts:");
+    for variant in [
+        InternalCircuitIndex::Hashes1Circuit,
+        InternalCircuitIndex::Hashes2Circuit,
+        InternalCircuitIndex::InnerCollapseCircuit,
+        InternalCircuitIndex::OuterCollapseCircuit,
+        InternalCircuitIndex::ComputeVCircuit,
+        InternalCircuitIndex::ChallengeBindingCircuit,
+    ] {
+        let (mul, lin) = app
+            .native_registry
+            .constraint_counts(variant.circuit_index());
+        println!(
+            "    check_constraints!({:<24} mul = {:>4}, lin = {:>4});",
+            alloc::format!("{variant:?},"),
+            mul,
+            lin
+        );
+    }
 }
 
 /// Pins the native stages' gate geometry at a stated capacity.
@@ -141,7 +188,7 @@ fn test_internal_circuit_constraint_counts() {
 #[rustfmt::skip]
 #[test]
 fn test_internal_stage_parameters() {
-    let (query_chain, error_chain) = stage_parameter_chains();
+    let (query_chain, error_chain, challenge_chain) = stage_parameter_chains();
 
     macro_rules! check_stage {
         ($chain:expr, $stage:expr, $name:literal, skip = $skip:expr, num = $num:expr) => {{
@@ -150,16 +197,21 @@ fn test_internal_stage_parameters() {
         }};
     }
 
-    check_stage!(query_chain, 0, "Preamble",   skip =   1, num = 324);
-    check_stage!(error_chain, 1, "OuterError", skip = 325, num = 186);
-    check_stage!(error_chain, 2, "InnerError", skip = 511, num = 399);
-    check_stage!(query_chain, 1, "Query",      skip = 325, num =  25);
-    check_stage!(query_chain, 2, "Eval",       skip = 350, num =  27);
+    check_stage!(query_chain,     0, "Preamble",   skip =   1, num = 319);
+    check_stage!(error_chain,     1, "OuterError", skip = 320, num = 186);
+    check_stage!(error_chain,     2, "InnerError", skip = 506, num = 399);
+    check_stage!(query_chain,     1, "Query",      skip = 320, num =  27);
+    check_stage!(query_chain,     2, "Eval",       skip = 347, num =  28);
+    // A sibling of InnerError, not a successor: both start where OuterError
+    // ends, so a circuit reaching the challenge slots is not charged for
+    // InnerError's gates.
+    check_stage!(challenge_chain, 2, "Challenges", skip = 506, num =   5);
 }
 
 /// The chains `test_internal_stage_parameters` pins, at a capacity of eight
 /// polynomial slots.
 fn stage_parameter_chains() -> (
+    ragu_circuits::staging::InducedStages,
     ragu_circuits::staging::InducedStages,
     ragu_circuits::staging::InducedStages,
 ) {
@@ -177,23 +229,20 @@ fn stage_parameter_chains() -> (
 fn print_internal_stage_parameters() {
     use std::println;
 
-    let (query_chain, error_chain) = stage_parameter_chains();
+    let (query_chain, error_chain, challenge_chain) = stage_parameter_chains();
 
     println!("\n// Copy-paste the following into test_internal_stage_parameters:");
-    for (chain, stage, name) in [
-        (&query_chain, 0, "Preamble"),
-        (&error_chain, 1, "OuterError"),
-        (&error_chain, 2, "InnerError"),
-        (&query_chain, 1, "Query"),
-        (&query_chain, 2, "Eval"),
+    for (chain_name, chain, stage, name) in [
+        ("query_chain", &query_chain, 0, "Preamble"),
+        ("error_chain", &error_chain, 1, "OuterError"),
+        ("error_chain", &error_chain, 2, "InnerError"),
+        ("query_chain", &query_chain, 1, "Query"),
+        ("query_chain", &query_chain, 2, "Eval"),
+        ("challenge_chain", &challenge_chain, 2, "Challenges"),
     ] {
         println!(
-            "    check_stage!({}, {}, {:<13} skip = {:>3}, num = {:>3});",
-            if core::ptr::eq(chain, &query_chain) {
-                "query_chain"
-            } else {
-                "error_chain"
-            },
+            "    check_stage!({:<15} {}, {:<13} skip = {:>3}, num = {:>3});",
+            alloc::format!("{chain_name},"),
             stage,
             alloc::format!("\"{name}\","),
             chain.skip_gates(stage),
@@ -255,7 +304,16 @@ fn test_native_registry_digest() {
     // particular falls from 1534 gates to 332, because an application that
     // never derives a challenge has nothing to bind. Another application's
     // digest will differ, which is the point.
-    let expected = fp!(0x2a61c5deef3faeacc2fc54372f7c63ad3e66419338eb5bb673aabf898633a13b);
+    //
+    // Changed again when the challenge slots became their own stage. Two
+    // circuits gained stages — `outer_collapse` and `challenge_binding` both
+    // end at the new stage now — so their entries in `native::claims::build`
+    // fold two more rx components. `compute_v` builds that same claim list
+    // in-circuit, and the extra components are evaluations folded into linear
+    // combinations it already had, so its wiring moves while its gate counts do
+    // not. That is why this digest changed and
+    // `test_internal_circuit_constraint_counts` did not.
+    let expected = fp!(0x2bb64a4adaa9e869d9187bec77ae9f8c8788703ca013ff9bae02b6fdbc02dec0);
 
     assert_eq!(
         app.native_registry.digest(),
@@ -311,7 +369,7 @@ fn test_nested_registry_digest() {
     // application's steps use no slots, so the claim-bridge run is empty, the
     // eval and preamble bridges carry no stashed claims, and the endoscaling
     // point list loses a point per slot per child. See the native digest.
-    let expected = fq!(0x3dc08609fc0492d25731f1c7a1c0850349a753c54b3e9b393a7cd9eac58ccf2c);
+    let expected = fq!(0x06bb3145242fd72534249a81cf321e7e4608d2610f745aa4eafa42887528f9d9);
 
     assert_eq!(
         app.nested_registry.digest(),
@@ -394,7 +452,7 @@ fn chain_layouts_tile_at_every_capacity() {
             challenge: ChallengeLayout { calls: 1, width: 2 },
             poly_query: PolyQueryLayout { polys, claims: 1 },
         };
-        let (query_chain, error_chain) =
+        let (query_chain, error_chain, challenge_chain) =
             crate::internal::native::chain_layouts::<Pasta, R, HEADER_SIZE, 1, 1, 1, 2>(
                 crate::internal::native::InternalCircuitIndex::NUM,
                 capacity,
@@ -402,7 +460,7 @@ fn chain_layouts_tile_at_every_capacity() {
             );
         let nested = crate::internal::nested::chain_layout::<Host, R>(capacity, capacity, capacity);
 
-        for chain in [&query_chain, &error_chain, &nested] {
+        for chain in [&query_chain, &error_chain, &challenge_chain, &nested] {
             for stage in 0..chain.len() {
                 assert_eq!(
                     chain.skip_gates(stage + 1),

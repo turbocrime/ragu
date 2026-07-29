@@ -201,14 +201,15 @@ where
                 }
             }
 
-            // outer_collapse: OuterCollapse + Preamble + OuterError
+            // outer_collapse: OuterCollapse + Preamble + OuterError + Challenges
             OuterCollapseCircuit => {
-                for ((fc, pre), en) in source
+                for (((fc, pre), en), ch) in source
                     .rx(Rx(OuterCollapse))
                     .zip(source.rx(Rx(Preamble)))
                     .zip(source.rx(Rx(OuterError)))
+                    .zip(source.rx(Rx(Challenges)))
                 {
-                    processor.internal_circuit_claim(id, [fc, pre, en].into_iter());
+                    processor.internal_circuit_claim(id, [fc, pre, en, ch].into_iter());
                 }
             }
 
@@ -224,10 +225,19 @@ where
                 }
             }
 
-            // challenge_binding: ChallengeBinding + Preamble
+            // challenge_binding: ChallengeBinding + Preamble + OuterError +
+            // Challenges. It reads only the preamble and the challenge slots,
+            // but the challenge stage hangs below `outer_error`, and a
+            // circuit's trace spans every stage up to its last one — so the
+            // stage it skips is still part of the trace this claim covers.
             ChallengeBindingCircuit => {
-                for (cb, pre) in source.rx(Rx(ChallengeBinding)).zip(source.rx(Rx(Preamble))) {
-                    processor.internal_circuit_claim(id, [cb, pre].into_iter());
+                for (((cb, pre), en), ch) in source
+                    .rx(Rx(ChallengeBinding))
+                    .zip(source.rx(Rx(Preamble)))
+                    .zip(source.rx(Rx(OuterError)))
+                    .zip(source.rx(Rx(Challenges)))
+                {
+                    processor.internal_circuit_claim(id, [cb, pre, en, ch].into_iter());
                 }
             }
 
@@ -248,24 +258,30 @@ where
                 processor.bonding_claim(id, source.rx(Rx(Eval)))?;
             }
 
-            // Final stage bonding claims
-            PreambleFinalStaged => {
-                processor.bonding_claim(id, source.rx(Rx(ChallengeBinding)))?;
+            ChallengesStage => {
+                processor.bonding_claim(id, source.rx(Rx(Challenges)))?;
             }
+
+            // Final stage bonding claims
             InnerErrorFinalStaged => {
                 processor.bonding_claim(id, source.rx(Rx(InnerCollapse)))?;
             }
             OuterErrorFinalStaged => {
-                processor.bonding_claim(
-                    id,
-                    source
-                        .rx(Rx(Hashes1))
-                        .chain(source.rx(Rx(Hashes2)))
-                        .chain(source.rx(Rx(OuterCollapse))),
-                )?;
+                processor
+                    .bonding_claim(id, source.rx(Rx(Hashes1)).chain(source.rx(Rx(Hashes2))))?;
             }
             EvalFinalStaged => {
                 processor.bonding_claim(id, source.rx(Rx(ComputeV)))?;
+            }
+            // Both circuits that read challenge slots end at that stage, so
+            // they share its final trace.
+            ChallengesFinalStaged => {
+                processor.bonding_claim(
+                    id,
+                    source
+                        .rx(Rx(ChallengeBinding))
+                        .chain(source.rx(Rx(OuterCollapse))),
+                )?;
             }
         }
     }

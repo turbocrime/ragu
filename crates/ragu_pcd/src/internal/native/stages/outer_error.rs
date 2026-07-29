@@ -111,8 +111,6 @@ pub struct Stage<
     const HEADER_SIZE: usize,
     const POLYS: usize,
     const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
     FP: fold_revdot::Parameters,
 > {
     _marker: PhantomData<(C, R, FP)>,
@@ -124,14 +122,10 @@ impl<
     const HEADER_SIZE: usize,
     const POLYS: usize,
     const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
     FP: fold_revdot::Parameters,
-> staging::Stage<C::CircuitField, R>
-    for Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH, FP>
+> staging::Stage<C::CircuitField, R> for Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, FP>
 {
-    type Parent =
-        super::preamble::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>;
+    type Parent = super::preamble::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>;
     type Witness<'source> = &'source Witness<C, FP>;
     type OutputKind = Kind![C::CircuitField; Output<'_, _, FP, C::CircuitPoseidon>];
 
@@ -214,15 +208,6 @@ mod tests {
 
     #[test]
     fn stage_values_matches_wire_count() {
-        assert_stage_values(&Stage::<
-            Pasta,
-            R,
-            { HEADER_SIZE },
-            1,
-            1,
-            1,
-            2,
-            RevdotParameters,
-        >::default());
+        assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }, 1, 1, RevdotParameters>::default());
     }
 }
