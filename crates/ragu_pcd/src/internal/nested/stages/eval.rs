@@ -1,15 +1,9 @@
 //! Eval stage for nested fuse operations.
 
 use alloc::vec::Vec;
-use core::marker::PhantomData;
 
 use ragu_arithmetic::CurveAffine;
-use ragu_circuits::polynomials::Rank;
-use ragu_core::{
-    Result,
-    drivers::{Driver, DriverValue},
-    gadgets::{Bound, Kind},
-};
+use ragu_core::{Result, drivers::Driver};
 use ragu_primitives::Point;
 
 /// This stage's wire width for a step of shape `own` (the *current* step's
@@ -100,38 +94,7 @@ pub type Slot<C, R> = super::host_bridge::Stage<C, R, ()>;
 /// would defeat the point of this stage, which is a *single* stashed copy the
 /// parent's copying circuit can check (see [`super::claim_bridge`], which
 /// deliberately does the opposite).
-pub struct Stage<C: CurveAffine, R> {
-    _marker: PhantomData<(C, R)>,
-}
-
-impl<C: CurveAffine, R> Default for Stage<C, R> {
-    fn default() -> Self {
-        Stage {
-            _marker: PhantomData,
-        }
-    }
-}
-
-impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R> {
-    type Parent = super::f::Stage<C, R>;
-    type Witness<'source> = &'source Witness<C>;
-    type OutputKind = Kind![C::Base; super::host_bridge::Output<'_, _, C>];
-
-    fn values() -> usize {
-        crate::internal::shape_dependent_stage()
-    }
-
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
-        &self,
-        _dr: &mut D,
-        _witness: DriverValue<D, Self::Witness<'source>>,
-    ) -> Result<Bound<'dr, D, Self::OutputKind>>
-    where
-        Self: 'dr,
-    {
-        crate::internal::shape_dependent_stage()
-    }
-}
+pub type Stage<C, R> = super::host_bridge::Run<C, R, super::f::Stage<C, R>>;
 
 #[cfg(test)]
 mod tests {

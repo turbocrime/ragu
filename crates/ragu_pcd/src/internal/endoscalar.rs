@@ -266,39 +266,7 @@ pub fn points_run_layout<F: ragu_arithmetic::ff::Field, R: Rank>(
 /// The whole run is masked and committed as **one** stage, exactly as it was
 /// when it held fixed vectors — the subdivision decides where wires land, not
 /// how many commitments there are.
-pub struct PointsStage<C: CurveAffine, R> {
-    _marker: core::marker::PhantomData<(C, R)>,
-}
-
-impl<C: CurveAffine, R> Default for PointsStage<C, R> {
-    fn default() -> Self {
-        Self {
-            _marker: core::marker::PhantomData,
-        }
-    }
-}
-
-impl<C: CurveAffine, R: Rank> Stage<C::Base, R> for PointsStage<C, R> {
-    type Parent = EndoscalarStage;
-
-    fn values() -> usize {
-        crate::internal::shape_dependent_stage()
-    }
-
-    type Witness<'source> = &'source PointsWitness<C>;
-    type OutputKind = Kind![C::Base; PointSlot<'_, _, C>];
-
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
-        &self,
-        _dr: &mut D,
-        _witness: DriverValue<D, Self::Witness<'source>>,
-    ) -> Result<Bound<'dr, D, Self::OutputKind>>
-    where
-        Self: 'dr,
-    {
-        crate::internal::shape_dependent_stage()
-    }
-}
+pub type PointsStage<C, R> = crate::internal::Run<C, R, EndoscalarStage>;
 
 /// One slot of a [`PointsStage`] run: a single curve point.
 #[derive(Gadget)]

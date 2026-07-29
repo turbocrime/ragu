@@ -22,8 +22,6 @@ use ragu_core::{
 };
 use ragu_primitives::{Point, io::Write};
 
-use crate::internal::shape_dependent_stage;
-
 /// Number of curve points in each bridge stage: one host commitment.
 const NUM: usize = 1;
 
@@ -94,63 +92,15 @@ impl<C: CurveAffine, R: Rank, P: ragu_circuits::staging::Stage<C::Base, R>>
 /// A whole family of [`Stage`] slots chained after `P`.
 ///
 /// A family whose length is a property of the application cannot be a chain of
-/// aliases — but it does not have to be. `Run` is the family's single entry in
-/// the typed hierarchy: one ordinary [`Stage`](ragu_circuits::staging::Stage)
-/// covering every slot's wires, with
+/// aliases — but it does not have to be: it is a [`crate::internal::Run`], the
+/// family's single entry in the typed hierarchy, with
 /// [`InducedStages`](ragu_circuits::staging::InducedStages) saying where the
-/// slot boundaries fall inside it.
+/// slot boundaries fall inside its span.
 ///
-/// This is exact rather than approximate. Each slot is [`NUM`] points, so
-/// `2 * NUM` wires, so a whole number of gates with nothing wasted to padding;
-/// a run of `n` slots therefore spans precisely the gates that a chain of `n`
-/// aliases would have. Everything after the run — including the circuit's
-/// [`Last`](ragu_circuits::staging::MultiStageCircuit::Last) stage — chains
-/// onto `Run` and computes the same `skip_gates` it always did, with no
-/// knowledge that the span is subdivided. `ragu_circuits`' own
-/// `induced_run_matches_typed_chain` test pins that equivalence.
-///
-/// # The run carries no slot count
-///
-/// `Run` exists only to occupy a position in the `Parent` chain.
-/// [`configure_induced_sized`](ragu_circuits::staging::StageBuilder::configure_induced_sized)
-/// reserves each slot from the *layout*, and each slot's wires are produced by
-/// [`Stage`]; the run's own [`values`](ragu_circuits::staging::Stage::values),
-/// [`OutputKind`](ragu_circuits::staging::Stage::OutputKind) and
-/// [`witness`](ragu_circuits::staging::Stage::witness) are never reached. So
-/// the slot count stays a value — it is a property of the application, which
-/// is what [`shape_dependent_stage`] says — and downstream stages inherit no
-/// parameter from it.
-pub struct Run<C, R, P> {
-    _marker: PhantomData<(C, R, P)>,
-}
-
-impl<C, R, P> Default for Run<C, R, P> {
-    fn default() -> Self {
-        Self {
-            _marker: PhantomData,
-        }
-    }
-}
-
-impl<C: CurveAffine, R: Rank, P: ragu_circuits::staging::Stage<C::Base, R>>
-    ragu_circuits::staging::Stage<C::Base, R> for Run<C, R, P>
-{
-    type Parent = P;
-    type Witness<'source> = &'source [C];
-    type OutputKind = Kind![C::Base; Output<'_, _, C>];
-
-    fn values() -> usize {
-        shape_dependent_stage()
-    }
-
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
-        &self,
-        _dr: &mut D,
-        _witness: DriverValue<D, Self::Witness<'source>>,
-    ) -> Result<Bound<'dr, D, Self::OutputKind>>
-    where
-        Self: 'dr,
-    {
-        shape_dependent_stage()
-    }
-}
+/// The subdivision is exact rather than approximate, which is what lets this
+/// family be a run at all. Each slot is [`NUM`] points, so `2 * NUM` wires, so a
+/// whole number of gates with nothing wasted to padding; a run of `n` slots
+/// therefore spans precisely the gates that a chain of `n` aliases would have.
+/// `ragu_circuits`' own `induced_run_matches_typed_chain` test pins that
+/// equivalence.
+pub type Run<C, R, P> = crate::internal::Run<C, R, P>;

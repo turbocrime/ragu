@@ -3,15 +3,10 @@
 //! Collects child proof commitments for cross-curve accumulation.
 
 use alloc::vec::Vec;
-use core::marker::PhantomData;
 
 use ragu_arithmetic::{CurveAffine, Cycle};
 use ragu_circuits::polynomials::Rank;
-use ragu_core::{
-    Result,
-    drivers::{Driver, DriverValue},
-    gadgets::{Bound, Kind},
-};
+use ragu_core::{Result, drivers::Driver};
 use ragu_primitives::Point;
 
 use crate::{
@@ -337,38 +332,7 @@ pub type Slot<C, R> = super::host_bridge::Stage<C, R, ()>;
 /// The whole run is masked and committed as **one** stage, exactly as it was
 /// when it held a fixed vector — the subdivision decides where wires land, not
 /// how many commitments there are.
-pub struct Stage<C: CurveAffine, R> {
-    _marker: PhantomData<(C, R)>,
-}
-
-impl<C: CurveAffine, R> Default for Stage<C, R> {
-    fn default() -> Self {
-        Stage {
-            _marker: PhantomData,
-        }
-    }
-}
-
-impl<C: CurveAffine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R> {
-    type Parent = PointsStage<C, R>;
-    type Witness<'source> = &'source Witness<C>;
-    type OutputKind = Kind![C::Base; super::host_bridge::Output<'_, _, C>];
-
-    fn values() -> usize {
-        crate::internal::shape_dependent_stage()
-    }
-
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
-        &self,
-        _dr: &mut D,
-        _witness: DriverValue<D, Self::Witness<'source>>,
-    ) -> Result<Bound<'dr, D, Self::OutputKind>>
-    where
-        Self: 'dr,
-    {
-        crate::internal::shape_dependent_stage()
-    }
-}
+pub type Stage<C, R> = super::host_bridge::Run<C, R, PointsStage<C, R>>;
 
 impl<C: CurveAffine> Witness<C> {
     /// This stage's points in slot order — the flat list the run places, and

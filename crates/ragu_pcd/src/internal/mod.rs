@@ -48,6 +48,68 @@ pub(crate) fn shape_dependent_stage() -> ! {
     )
 }
 
+/// The span stage for an induced run, chained after `P`: one entry in the typed
+/// hierarchy covering every slot, with no geometry of its own.
+///
+/// A run's slot count is a property of the application, so it cannot be a chain
+/// of per-slot aliases. `Run` holds the family's position in the
+/// [`Parent`](ragu_circuits::staging::Stage::Parent) chain instead, and
+/// [`InducedStages`](ragu_circuits::staging::InducedStages) says where the slot
+/// boundaries fall inside its span. Everything after the run — including a
+/// circuit's [`Last`](ragu_circuits::staging::MultiStageCircuit::Last) — chains
+/// onto it and computes the same `skip_gates` it always did, with no knowledge
+/// that the span is subdivided.
+///
+/// One type serves every run because a run's own geometry is never reached.
+/// [`configure_induced_sized`](ragu_circuits::staging::StageBuilder::configure_induced_sized)
+/// reserves each slot from the layout and produces its wires from the per-slot
+/// stage, so the span's [`values`](ragu_circuits::staging::Stage::values) and
+/// [`witness`](ragu_circuits::staging::Stage::witness) are
+/// [`shape_dependent_stage`] holes and its `Witness`/`OutputKind` are unit —
+/// the only thing that distinguishes one run from another is where it chains.
+pub struct Run<C, R, P> {
+    _marker: core::marker::PhantomData<(C, R, P)>,
+}
+
+impl<C, R, P> Clone for Run<C, R, P> {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl<C, R, P> Default for Run<C, R, P> {
+    fn default() -> Self {
+        Self {
+            _marker: core::marker::PhantomData,
+        }
+    }
+}
+
+impl<C: ragu_arithmetic::CurveAffine, R: ragu_circuits::polynomials::Rank, P>
+    ragu_circuits::staging::Stage<C::Base, R> for Run<C, R, P>
+where
+    P: ragu_circuits::staging::Stage<C::Base, R>,
+{
+    type Parent = P;
+    type Witness<'source> = ();
+    type OutputKind = ();
+
+    fn values() -> usize {
+        shape_dependent_stage()
+    }
+
+    fn witness<'dr, 'source: 'dr, D: ragu_core::drivers::Driver<'dr, F = C::Base>>(
+        &self,
+        _dr: &mut D,
+        _witness: ragu_core::drivers::DriverValue<D, Self::Witness<'source>>,
+    ) -> ragu_core::Result<ragu_core::gadgets::Bound<'dr, D, Self::OutputKind>>
+    where
+        Self: 'dr,
+    {
+        shape_dependent_stage()
+    }
+}
+
 /// The wire values a run of one-point slots produces, in slot order — what
 /// [`InducedStages::rx`](ragu_circuits::staging::InducedStages::rx) needs for a
 /// span the typed path can no longer supply a body for.
