@@ -177,20 +177,23 @@ impl<
         // enforces the claims the children raised via `enforce_poly_query`.
         // Must remain the trailing block, matching `poly_queries`.
         //
-        // A query names its polynomial by index, so the quotient is taken
-        // against the polynomial it names — not the one at the query's own
-        // position. `compute_v` reaches the same polynomial through a one-hot
-        // on the same index; the two must agree or the circuit cannot open.
+        // A claim carries the commitment of the polynomial it opens, so the
+        // quotient is taken against the polynomial that commitment identifies —
+        // not the one at the claim's own position. `compute_v` reaches the same
+        // polynomial through a one-hot keyed on the same commitment, so the two
+        // resolutions agree by construction: they match on one value that a
+        // prover cannot forge, rather than on two mechanisms kept in step by
+        // hand.
         for proof in [left, right] {
             for claim in &proof.application_claims {
-                let slot = (0..proof.application_polys().len())
-                    .find(|i| {
-                        crate::framework_hooks::field_index::<C::CircuitField>(*i)
-                            == claim.poly_slot
-                    })
+                let slot = proof
+                    .application_polys()
+                    .iter()
+                    .position(|com| *com == claim.com)
                     .ok_or_else(|| {
                         ragu_core::Error::InvalidWitness(
-                            "poly-query claim names a polynomial slot outside the instance".into(),
+                            "poly-query claim names a commitment that is not in the instance"
+                                .into(),
                         )
                     })?;
                 iters.push(factor_iter(proof.claim_polys[slot].iter_coeffs(), claim.x));

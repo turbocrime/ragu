@@ -64,15 +64,23 @@ fn oracle_end_to_end() -> Result<()> {
     let claim0 = leaf1.proof().application_claims()[0];
     assert_eq!(claim0.y, p1.eval(claim0.x));
 
-    // The step opened one polynomial twice, and both claims name the *same*
-    // polynomial slot — a repeat opening spends a query slot, not a polynomial
-    // slot. This is the whole point of separating the two counts: had the
-    // second opening needed its own polynomial, it would sit in slot 1 and
-    // carry a second bridge stage, commitment and MSM.
+    // A claim names its polynomial by commitment, and it is the *same*
+    // commitment the polynomial slot carries — not a second copy.
+    assert_eq!(
+        claim0.com,
+        leaf1.proof().application_polys()[0],
+        "a claim should carry its polynomial's own commitment"
+    );
+
+    // The step opened one polynomial twice, and both claims carry the *same*
+    // commitment — a repeat opening spends a query slot, not a polynomial slot.
+    // This is the whole point of separating the two counts: had the second
+    // opening needed its own polynomial, it would sit in slot 1 and carry a
+    // second bridge stage, commitment and MSM.
     let claim1 = leaf1.proof().application_claims()[1];
     assert_eq!(
-        claim1.poly_slot, claim0.poly_slot,
-        "a repeat opening should reuse its polynomial's slot"
+        claim1.com, claim0.com,
+        "a repeat opening should reuse its polynomial's commitment"
     );
     assert_eq!(claim1.x, Fp::ZERO, "the repeat opens at x = 0");
     assert_eq!(claim1.y, p1.eval(claim1.x));

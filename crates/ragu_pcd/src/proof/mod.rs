@@ -136,15 +136,27 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 ///
 /// Named fields rather than a positional `(com, x, y)` tuple so downstream
 /// folding code reads `claim.x` / `claim.y` instead of `claim.1` / `claim.2`.
+///
+/// # The claim names its polynomial by commitment, not by index
+///
+/// `com` is the same value the proof's
+/// [`application_polys`](Proof::application_polys) carries for that
+/// polynomial — and in the step's own circuit it is the same *wire*: the
+/// commitment is allocated once by `witness_polynomial` and written into both
+/// the polynomial region and every claim that opens it. So the two cannot
+/// disagree; they are not two copies.
+///
+/// Naming by commitment rather than by index is deliberate. An index is a name
+/// that must be resolved, and a resolution that goes wrong denotes a different
+/// polynomial *silently* — the circuit still opens. A commitment is the thing
+/// itself: `com` is derived from the polynomial's slot (the blind is
+/// `bridge_alpha^(5+slot)` and the wires are placed at that slot's offset in
+/// the bridge run), so it identifies exactly one slot and cannot be relocated
+/// to another. A mismatch finds no polynomial and produces no proof.
 #[derive(Clone, Copy, Debug)]
-pub struct ClaimOpening<F> {
-    /// Index of the polynomial opened, into the proof's
-    /// [`application_polys`](Proof::application_polys).
-    ///
-    /// The commitment lives on the polynomial, not here: several queries may
-    /// open the same polynomial, and a second copy of `com` per query could
-    /// disagree with the first.
-    pub poly_slot: F,
+pub struct ClaimOpening<Curve, F> {
+    /// The opened polynomial's nested-curve commitment.
+    pub com: Curve,
     /// The opening point.
     pub x: F,
     /// The claimed evaluation $p(x) = y$.
@@ -277,9 +289,10 @@ pub struct Proof<C: Cycle, R: Rank> {
     /// enforced when this proof is fused as a child: the parent folds each
     /// claim into $f(X)$ and the PCS accumulator, and its `compute_v` circuit
     /// re-derives the matching terms.
-    pub(crate) application_claims: alloc::vec::Vec<ClaimOpening<C::CircuitField>>,
+    pub(crate) application_claims: alloc::vec::Vec<ClaimOpening<C::NestedCurve, C::CircuitField>>,
     /// The nested-curve commitment per polynomial slot, in slot order — one
-    /// per polynomial, which is what a query names by index.
+    /// per polynomial. A claim carries the same commitment for the polynomial
+    /// it opens, so this list is what a claim's `com` is matched against.
     pub(crate) application_polys: alloc::vec::Vec<C::NestedCurve>,
     /// The derived challenges the step's circuit exposes, one per
     /// challenge slot the application's capacity provides, in slot order.
@@ -404,7 +417,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     /// unused slots holding the canonical padding claim. The instances are
     /// bound to the application circuit's $k(Y)$ and recursively enforced when
     /// this proof is fused as a child.
-    pub fn application_claims(&self) -> &[ClaimOpening<C::CircuitField>] {
+    pub fn application_claims(&self) -> &[ClaimOpening<C::NestedCurve, C::CircuitField>] {
         &self.application_claims
     }
 
@@ -685,33 +698,39 @@ impl<
         // slot holds the canonical padding claim (mirroring the adapter).
         let (padding_host, padding_x, padding_y) =
             crate::internal::challenge::padding_claim::<C>(self.params);
-        builder.set_application_polys(
-            (0..self.capacity().poly_query.polys)
-                .map(|slot| {
-                    crate::internal::challenge::claim_bridge_commitment::<C, R>(
-                        self.params,
+        let padding_coms: alloc::vec::Vec<C::NestedCurve> = (0..self.capacity().poly_query.polys)
+            .map(|slot| {
+                crate::internal::challenge::claim_bridge_commitment::<C, R>(
+                    self.params,
+                    slot,
+                    crate::internal::challenge::claim_bridge_alpha::<C>(
+                        builder.bridge_alpha(),
                         slot,
-                        crate::internal::challenge::claim_bridge_alpha::<C>(
-                            builder.bridge_alpha(),
-                            slot,
-                        ),
-                        padding_host,
-                        self.capacity(),
-                    )
-                    .expect("trivial padding bridge commitment")
-                })
-                .collect(),
+                    ),
+                    padding_host,
+                    self.capacity(),
+                )
+                .expect("trivial padding bridge commitment")
+            })
+            .collect();
+        // Every query opens polynomial slot 0, matching the adapter's padding —
+        // so it carries slot 0's commitment, the same value `application_polys`
+        // records for that slot. Absent when the application declares no
+        // polynomial slots, which is only reachable when it declares no claim
+        // slots either: a claim has to name a polynomial.
+        let padding_com = padding_coms.first().copied();
+        builder.set_application_polys(
+            padding_coms,
             vec![
                 crate::internal::challenge::padding_poly::<C, R>();
                 self.capacity().poly_query.polys
             ],
             vec![padding_host; self.capacity().poly_query.polys],
         );
-        // Every query names polynomial slot 0, matching the adapter's padding.
         builder.set_application_claims(
             (0..self.capacity().poly_query.claims)
                 .map(|_| crate::framework_hooks::PolyQueryClaim {
-                    poly_slot: C::CircuitField::ZERO,
+                    com: padding_com.expect("a claim slot requires a polynomial slot to name"),
                     x: padding_x,
                     y: padding_y,
                 })

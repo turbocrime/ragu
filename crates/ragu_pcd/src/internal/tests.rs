@@ -89,45 +89,85 @@ pub const HEADER_SIZE: usize = 90;
 // steps are present.
 const NUM_APP_STEPS: usize = 6000;
 
+/// The header size the slotted shape pins at.
+///
+/// Small on purpose. [`HEADER_SIZE`] is 90 because the no-slot shape exists to
+/// measure how much header an application can afford; the slotted shape exists
+/// to cover the *slot* regions, and pairing a 90-element header with real slots
+/// would push `hashes_2` against its gate bound for no gain.
+const SLOTTED_HEADER_SIZE: usize = 4;
+
+/// Dummy application circuits for the slotted shape.
+///
+/// The no-slot shape registers [`NUM_APP_STEPS`] to show the internal circuits
+/// survive a large application; the slotted shape does not need to re-prove
+/// that, and building 6000 circuits twice would double this file's runtime.
+const NUM_SLOTTED_APP_STEPS: usize = 6;
+
+/// Builds a dummy application at a stated shape.
+///
+/// The shape is the point: every pinned number below is a function of it, so
+/// the same checks run at more than one, and a change that only touches the
+/// slot regions cannot slip past them.
+fn dummy_app<
+    'params,
+    const HDR: usize,
+    const POLYS: usize,
+    const CLAIMS: usize,
+    const CHALLENGES: usize,
+>(
+    pasta: &'params <Pasta as ragu_arithmetic::Cycle>::Params,
+    steps: usize,
+) -> crate::Application<'params, Pasta, R, HDR, POLYS, CLAIMS, CHALLENGES, 2> {
+    ApplicationBuilder::<Pasta, R, HDR, POLYS, CLAIMS, CHALLENGES, 2>::new()
+        .register_dummy_circuits(steps)
+        .unwrap()
+        .finalize(pasta)
+        .unwrap()
+}
+
+/// Pins one internal circuit's gate and constraint counts in `app`.
+///
+/// Takes the application because these numbers are a function of its declared
+/// shape, and the shape is what has to be covered at more than one value: the
+/// gate count is measured against `R::n()`, the 2048-gate bound that sets an
+/// application's claim capacity, and only a shape with slots can show a slot
+/// region pushing against it.
+macro_rules! check_constraints {
+    ($app:expr, $variant:ident, mul = $mul:expr, lin = $lin:expr) => {{
+        let circuit_index = InternalCircuitIndex::$variant.circuit_index();
+        let (actual_gates, actual_constraints) =
+            $app.native_registry.constraint_counts(circuit_index);
+        assert_eq!(
+            actual_gates,
+            $mul,
+            "{}: gates: expected {}, got {}",
+            stringify!($variant),
+            $mul,
+            actual_gates
+        );
+        assert_eq!(
+            actual_constraints,
+            $lin,
+            "{}: constraints: expected {}, got {}",
+            stringify!($variant),
+            $lin,
+            actual_constraints
+        );
+    }};
+}
+
 #[rustfmt::skip]
 #[test]
 fn test_internal_circuit_constraint_counts() {
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 0, 0, 0, 2>::new()
-        .register_dummy_circuits(NUM_APP_STEPS)
-        .unwrap()
-        .finalize(pasta)
-        .unwrap();
+    let app = dummy_app::<HEADER_SIZE, 0, 0, 0>(pasta, NUM_APP_STEPS);
 
-    macro_rules! check_constraints {
-        ($variant:ident, mul = $mul:expr, lin = $lin:expr) => {{
-            let circuit_index = InternalCircuitIndex::$variant.circuit_index();
-            let (actual_gates, actual_constraints) =
-                app.native_registry.constraint_counts(circuit_index);
-            assert_eq!(
-                actual_gates,
-                $mul,
-                "{}: gates: expected {}, got {}",
-                stringify!($variant),
-                $mul,
-                actual_gates
-            );
-            assert_eq!(
-                actual_constraints,
-                $lin,
-                "{}: constraints: expected {}, got {}",
-                stringify!($variant),
-                $lin,
-                actual_constraints
-            );
-        }};
-    }
-
-    check_constraints!(Hashes1Circuit,          mul = 1406, lin = 2038);
-    check_constraints!(Hashes2Circuit,          mul = 1954, lin = 2951);
-    check_constraints!(InnerCollapseCircuit,    mul = 1831, lin = 1918);
-    check_constraints!(OuterCollapseCircuit,    mul = 1848, lin = 2742);
+    check_constraints!(app, Hashes1Circuit,          mul = 1406, lin = 2038);
+    check_constraints!(app, Hashes2Circuit,          mul = 1954, lin = 2951);
+    check_constraints!(app, InnerCollapseCircuit,    mul = 1831, lin = 1918);
+    check_constraints!(app, OuterCollapseCircuit,    mul = 1848, lin = 2742);
     // `ComputeV` grew by 13: it iterates the internal circuits, and the
     // challenge slots added a stage mask and a final-trace mask.
     //
@@ -136,8 +176,40 @@ fn test_internal_circuit_constraint_counts() {
     // trace spans every gate up to its last stage, so it pays for the stage it
     // skips on the way. That is the price of keeping `OuterCollapse` — which
     // needs both `OuterError` and the challenge slots — able to reach both.
-    check_constraints!(ComputeVCircuit,         mul = 1239, lin = 1819);
-    check_constraints!(ChallengeBindingCircuit, mul =  518, lin =   71);
+    check_constraints!(app, ComputeVCircuit,         mul = 1239, lin = 1819);
+    check_constraints!(app, ChallengeBindingCircuit, mul =  518, lin =   71);
+}
+
+/// The same pins at a shape that *has* slots — two polynomials, three claims,
+/// one challenge.
+///
+/// [`test_internal_circuit_constraint_counts`] declares none of those, so every
+/// width the slot regions contribute collapses to zero and a change confined to
+/// them passes it untouched. These numbers are the ones that move when a claim
+/// gets wider, when `compute_v`'s per-claim resolution gets dearer, or when a
+/// slot region starts pushing an internal circuit toward `R::n()`.
+///
+/// The gate column is the one to watch: `compute_v` is the circuit that sets an
+/// application's claim capacity, and it does so by reaching 2048 first.
+#[rustfmt::skip]
+#[test]
+fn test_slotted_internal_circuit_constraint_counts() {
+    let pasta = Pasta::baked();
+
+    let app = dummy_app::<SLOTTED_HEADER_SIZE, 2, 3, 1>(pasta, NUM_SLOTTED_APP_STEPS);
+
+    check_constraints!(app, Hashes1Circuit,          mul = 1148, lin = 1834);
+    check_constraints!(app, Hashes2Circuit,          mul = 1712, lin = 2951);
+    check_constraints!(app, InnerCollapseCircuit,    mul = 1589, lin = 1918);
+    check_constraints!(app, OuterCollapseCircuit,    mul =  793, lin = 1106);
+    // The two that read the slot regions, and the reason this shape is pinned
+    // at all. `ComputeV` carries the per-claim resolution — a one-hot over the
+    // polynomial slots, keyed on the claim's commitment — so it moves whenever
+    // that keying or the claim count does. `ChallengeBinding` is 857 here
+    // against 518 with no slots, because an application that derives a
+    // challenge has one to bind.
+    check_constraints!(app, ComputeVCircuit,         mul = 1099, lin = 2059);
+    check_constraints!(app, ChallengeBindingCircuit, mul =  857, lin = 1225);
 }
 
 /// Prints the counts `test_internal_circuit_constraint_counts` pins, so a
@@ -152,31 +224,35 @@ fn print_internal_circuit_constraint_counts() {
     use std::println;
 
     let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 0, 0, 0, 2>::new()
-        .register_dummy_circuits(NUM_APP_STEPS)
-        .unwrap()
-        .finalize(pasta)
-        .unwrap();
 
-    println!("\n// Copy-paste the following into test_internal_circuit_constraint_counts:");
-    for variant in [
-        InternalCircuitIndex::Hashes1Circuit,
-        InternalCircuitIndex::Hashes2Circuit,
-        InternalCircuitIndex::InnerCollapseCircuit,
-        InternalCircuitIndex::OuterCollapseCircuit,
-        InternalCircuitIndex::ComputeVCircuit,
-        InternalCircuitIndex::ChallengeBindingCircuit,
-    ] {
-        let (mul, lin) = app
-            .native_registry
-            .constraint_counts(variant.circuit_index());
-        println!(
-            "    check_constraints!({:<24} mul = {:>4}, lin = {:>4});",
-            alloc::format!("{variant:?},"),
-            mul,
-            lin
-        );
-    }
+    let print = |registry: &ragu_circuits::registry::Registry<_, R>, test: &str| {
+        println!("\n// Copy-paste the following into {test}:");
+        for variant in [
+            InternalCircuitIndex::Hashes1Circuit,
+            InternalCircuitIndex::Hashes2Circuit,
+            InternalCircuitIndex::InnerCollapseCircuit,
+            InternalCircuitIndex::OuterCollapseCircuit,
+            InternalCircuitIndex::ComputeVCircuit,
+            InternalCircuitIndex::ChallengeBindingCircuit,
+        ] {
+            let (mul, lin) = registry.constraint_counts(variant.circuit_index());
+            println!(
+                "    check_constraints!(app, {:<24} mul = {:>4}, lin = {:>4});",
+                alloc::format!("{variant:?},"),
+                mul,
+                lin
+            );
+        }
+    };
+
+    print(
+        &dummy_app::<HEADER_SIZE, 0, 0, 0>(pasta, NUM_APP_STEPS).native_registry,
+        "test_internal_circuit_constraint_counts",
+    );
+    print(
+        &dummy_app::<SLOTTED_HEADER_SIZE, 2, 3, 1>(pasta, NUM_SLOTTED_APP_STEPS).native_registry,
+        "test_slotted_internal_circuit_constraint_counts",
+    );
 }
 
 /// The stage types `test_internal_stage_parameters` pins, at eight polynomial
@@ -215,15 +291,19 @@ fn test_internal_stage_parameters() {
         }};
     }
 
-    check_stage!(pinned_chain::Preamble,   "Preamble",   skip =   1, num = 319);
-    check_stage!(pinned_chain::OuterError, "OuterError", skip = 320, num = 186);
-    check_stage!(pinned_chain::InnerError, "InnerError", skip = 506, num = 399);
-    check_stage!(pinned_chain::Query,      "Query",      skip = 320, num =  27);
-    check_stage!(pinned_chain::Eval,       "Eval",       skip = 347, num =  28);
+    // Moved when a claim started naming its polynomial by commitment instead of
+    // by index: a claim slot is four instance wires (com.x, com.y, x, y) where
+    // it was three, so at the one claim slot pinned here the preamble gains two
+    // values — one gate — and every stage below it shifts by that gate.
+    check_stage!(pinned_chain::Preamble,   "Preamble",   skip =   1, num = 320);
+    check_stage!(pinned_chain::OuterError, "OuterError", skip = 321, num = 186);
+    check_stage!(pinned_chain::InnerError, "InnerError", skip = 507, num = 399);
+    check_stage!(pinned_chain::Query,      "Query",      skip = 321, num =  27);
+    check_stage!(pinned_chain::Eval,       "Eval",       skip = 348, num =  28);
     // A sibling of InnerError, not a successor: both start where OuterError
     // ends, so a circuit reaching the challenge slots is not charged for
     // InnerError's gates.
-    check_stage!(pinned_chain::Challenges, "Challenges", skip = 506, num =   5);
+    check_stage!(pinned_chain::Challenges, "Challenges", skip = 507, num =   5);
 }
 
 /// Helper test to print current stage parameters in copy-pasteable format.
@@ -262,11 +342,7 @@ fn print_internal_stage_parameters() {
 fn test_native_registry_digest() {
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 0, 0, 0, 2>::new()
-        .register_dummy_circuits(NUM_APP_STEPS)
-        .unwrap()
-        .finalize(pasta)
-        .unwrap();
+    let app = dummy_app::<HEADER_SIZE, 0, 0, 0>(pasta, NUM_APP_STEPS);
 
     // Changed when challenge derivation moved into application-circuit stages:
     // every application circuit gained `NUM_CHALLENGE_SLOTS` staged wire
@@ -315,12 +391,48 @@ fn test_native_registry_digest() {
     // combinations it already had, so its wiring moves while its gate counts do
     // not. That is why this digest changed and
     // `test_internal_circuit_constraint_counts` did not.
+    //
+    // **Unmoved** by a claim naming its polynomial by commitment rather than by
+    // index — because this shape declares no slots at all, so the claim region
+    // it touches is empty. That blindness is why
+    // [`test_slotted_registry_digests`] exists: this pin covers the shape-free
+    // wiring, that one covers the slot regions.
     let expected = fp!(0x2bb64a4adaa9e869d9187bec77ae9f8c8788703ca013ff9bae02b6fdbc02dec0);
 
     assert_eq!(
         app.native_registry.digest(),
         expected,
         "Native registry digest changed unexpectedly!"
+    );
+}
+
+/// Pins both registry digests for an application that *has* slots.
+///
+/// [`test_native_registry_digest`] and [`test_nested_registry_digest`] both
+/// build a `POLYS = 0, CLAIMS = 0, CHALLENGES = 0` application, so every width
+/// the slot regions contribute collapses to zero and a change confined to them
+/// passes both untouched. That is not hypothetical: an omission in the
+/// challenge stage slipped through exactly this way earlier on this branch,
+/// caught only by an integration test.
+///
+/// This application declares two polynomials, three claims and one challenge,
+/// so it moves when any slot region's wiring does — which is the case the other
+/// two cannot see.
+#[test]
+fn test_slotted_registry_digests() {
+    let pasta = Pasta::baked();
+
+    let app = dummy_app::<SLOTTED_HEADER_SIZE, 2, 3, 1>(pasta, NUM_SLOTTED_APP_STEPS);
+
+    assert_eq!(
+        app.native_registry.digest(),
+        fp!(0x256a9ff7fe0fad62d02a4bee7f9db347a3b24c8a098f0a0dba16eed53c469003),
+        "Native registry digest changed unexpectedly at a slotted shape!"
+    );
+    assert_eq!(
+        app.nested_registry.digest(),
+        fq!(0x1fd4a86bad460c439621607b721207dfd0d8fcc40f77e245318399388d3f106a),
+        "Nested registry digest changed unexpectedly at a slotted shape!"
     );
 }
 
@@ -333,11 +445,7 @@ fn test_native_registry_digest() {
 fn test_nested_registry_digest() {
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 0, 0, 0, 2>::new()
-        .register_dummy_circuits(NUM_APP_STEPS)
-        .unwrap()
-        .finalize(pasta)
-        .unwrap();
+    let app = dummy_app::<HEADER_SIZE, 0, 0, 0>(pasta, NUM_APP_STEPS);
 
     // Changed when the per-claim bridge stages were added: the nested registry
     // gained one bonding mask per poly-query claim slot
@@ -371,6 +479,11 @@ fn test_nested_registry_digest() {
     // application's steps use no slots, so the claim-bridge run is empty, the
     // eval and preamble bridges carry no stashed claims, and the endoscaling
     // point list loses a point per slot per child. See the native digest.
+    //
+    // That is also this pin's blind spot: with no slots there is no claim-bridge
+    // run, no stashed claim, and no per-slot endoscaling point, so a change to
+    // any of them cannot move this number. [`test_slotted_registry_digests`]
+    // covers that shape.
     let expected = fq!(0x06bb3145242fd72534249a81cf321e7e4608d2610f745aa4eafa42887528f9d9);
 
     assert_eq!(
@@ -384,52 +497,40 @@ fn test_nested_registry_digest() {
 /// Run with: `cargo test -p ragu_pcd --release print_registry_digests -- --nocapture`
 #[test]
 fn print_registry_digests() {
-    use alloc::{format, string::String, vec::Vec};
+    use alloc::{format, string::String};
     use std::println;
 
     use ragu_arithmetic::ff::PrimeField;
 
     let pasta = Pasta::baked();
 
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 0, 0, 0, 2>::new()
-        .register_dummy_circuits(NUM_APP_STEPS)
-        .unwrap()
-        .finalize(pasta)
-        .unwrap();
+    // Big-endian hex, the `fp!`/`fq!` literal form.
+    fn hex<F: PrimeField>(digest: F) -> String {
+        digest
+            .to_repr()
+            .as_ref()
+            .iter()
+            .rev()
+            .map(|b| format!("{:02x}", b))
+            .collect()
+    }
 
-    let native_digest = app.native_registry.digest();
-    let nested_digest = app.nested_registry.digest();
-
-    // Convert to big-endian hex for repr256! format
-    let native_bytes: Vec<u8> = native_digest
-        .to_repr()
-        .as_ref()
-        .iter()
-        .rev()
-        .cloned()
-        .collect();
-    let nested_bytes: Vec<u8> = nested_digest
-        .to_repr()
-        .as_ref()
-        .iter()
-        .rev()
-        .cloned()
-        .collect();
+    let no_slots = dummy_app::<HEADER_SIZE, 0, 0, 0>(pasta, NUM_APP_STEPS);
+    let slotted = dummy_app::<SLOTTED_HEADER_SIZE, 2, 3, 1>(pasta, NUM_SLOTTED_APP_STEPS);
 
     println!("\n// Copy-paste the following into the registry digest tests:");
     println!(
-        "    let expected = fp!(0x{});",
-        native_bytes
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect::<String>()
+        "    // test_native_registry_digest\n    let expected = fp!(0x{});",
+        hex(no_slots.native_registry.digest())
     );
     println!(
-        "    let expected = fq!(0x{});",
-        nested_bytes
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect::<String>()
+        "    // test_nested_registry_digest\n    let expected = fq!(0x{});",
+        hex(no_slots.nested_registry.digest())
+    );
+    println!(
+        "    // test_slotted_registry_digests\n    fp!(0x{}),\n    fq!(0x{}),",
+        hex(slotted.native_registry.digest()),
+        hex(slotted.nested_registry.digest())
     );
 }
 

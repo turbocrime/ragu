@@ -24,16 +24,22 @@ use crate::{Proof, header::Header, internal::native::unified, step::internal::pa
 
 type HeaderVec<'dr, D, const HEADER_SIZE: usize> = FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>>;
 
-/// A single poly-query claim instance witnessed from a child proof: the
-/// claimed nested-curve commitment point and the $(x, y)$ opening. The wire
+/// A single poly-query claim instance witnessed from a child proof: the opened
+/// polynomial's nested-curve commitment and the $(x, y)$ opening. The wire
 /// layout (com.x, com.y, x, y) matches the claim-slot region of the
 /// application circuit's instance, so writing these into the
 /// [`application_ky`](ProofInputs::application_ky) Horner binds them to the
 /// child's committed application rx.
+///
+/// `com` is the same value one of [`ProofInputs::polys`] holds — in the child's
+/// own circuit it is literally the same wire, since the commitment is allocated
+/// once and written at both instance positions. The parent does not have to
+/// enforce that: a trace satisfying the child's registered wiring cannot have
+/// them differ, and the revdot identity is what carries it here.
 #[derive(Gadget, Consistent)]
-pub struct ClaimInstance<'dr, D: Driver<'dr>> {
+pub struct ClaimInstance<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     #[ragu(gadget)]
-    pub poly_slot: Element<'dr, D>,
+    pub com: Point<'dr, D, C::NestedCurve>,
     #[ragu(gadget)]
     pub x: Element<'dr, D>,
     #[ragu(gadget)]
@@ -139,10 +145,10 @@ pub struct ProofInputs<
     /// The poly-query claim instances this child proof raised, in slot order.
     /// Unused slots hold the canonical padding claim.
     #[ragu(gadget)]
-    pub claims: FixedVec<ClaimInstance<'dr, D>, ConstLen<CLAIMS>>,
+    pub claims: FixedVec<ClaimInstance<'dr, D, C>, ConstLen<CLAIMS>>,
     /// The polynomials this child proof witnessed, in slot order. Unused slots
-    /// hold the canonical padding polynomial. A claim above names one of these
-    /// by index.
+    /// hold the canonical padding polynomial. Each claim above carries the
+    /// commitment of one of these.
     #[ragu(gadget)]
     pub polys: FixedVec<PolyInstance<'dr, D, C>, ConstLen<POLYS>>,
     #[ragu(gadget)]
@@ -223,7 +229,7 @@ impl<
             poly.com.write(dr, &mut ky)?;
         }
         for claim in self.claims.iter() {
-            claim.poly_slot.write(dr, &mut ky)?;
+            claim.com.write(dr, &mut ky)?;
             claim.x.write(dr, &mut ky)?;
             claim.y.write(dr, &mut ky)?;
         }
@@ -332,10 +338,9 @@ impl<
                 (0..num_queries)
                     .map(|i| {
                         Ok(ClaimInstance {
-                            poly_slot: Element::alloc(
+                            com: Point::alloc(
                                 dr,
-                                allocator,
-                                proof.as_ref().map(|p| p.application_claims()[i].poly_slot),
+                                proof.as_ref().map(|p| p.application_claims()[i].com),
                             )?,
                             x: Element::alloc(
                                 dr,
@@ -454,9 +459,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const POLYS: usize, const CLAI
     ];
 
     fn values() -> usize {
-        // The challenge slots are their own stage — see
+        // Four wires per claim: the opened polynomial's commitment, then the
+        // $(x, y)$ opening. The challenge slots are their own stage — see
         // [`slots`](super::slots) for why the chain's root does not hold them.
-        2 * (3 * HEADER_SIZE + 2 * POLYS + 3 * CLAIMS + 1 + unified::NUM_WIRES)
+        2 * (3 * HEADER_SIZE + 2 * POLYS + 4 * CLAIMS + 1 + unified::NUM_WIRES)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

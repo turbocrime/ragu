@@ -151,21 +151,17 @@ impl<
             claim_host_commitments.push(host);
         }
 
-        // Then each query, against the polynomial it names. A query's slot is a
-        // constant element of the circuit, so an out-of-range index here means
-        // the hooks and the instance layout have diverged, not that a witness is
-        // bad.
+        // Then each query, against the polynomial its commitment identifies. A
+        // claim's `com` is copied from the slot it opens, so a commitment with
+        // no matching slot here means the hooks and the instance layout have
+        // diverged, not that a witness is bad.
         for claim in claims.iter() {
-            let slot = claim_polys
+            let slot = polys
                 .iter()
-                .enumerate()
-                .find(|(i, _)| {
-                    crate::framework_hooks::field_index::<C::CircuitField>(*i) == claim.poly_slot
-                })
-                .map(|(i, _)| i)
+                .position(|witnessed| witnessed.com == claim.com)
                 .ok_or_else(|| {
                     Error::InvalidWitness(
-                        "poly-query claim names a polynomial slot outside the instance".into(),
+                        "poly-query claim names a commitment outside the instance".into(),
                     )
                 })?;
             if claim_polys[slot].eval(claim.x) != claim.y {

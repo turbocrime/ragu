@@ -198,18 +198,18 @@ impl<
                 .is_ok_and(|bridge| bridge == com)
         });
 
-        // Then each query, against the polynomial it names. An index outside
-        // the polynomial slots fails the check rather than panicking: it is
-        // instance data, so a malformed proof can carry anything there.
+        // Then each query, against the polynomial its commitment identifies. A
+        // commitment matching no polynomial slot fails the check rather than
+        // panicking: it is instance data, so a malformed proof can carry
+        // anything there.
         let poly_query_claims = poly_commitments
             && (0..capacity.poly_query.claims).all(|slot| {
-                let crate::ClaimOpening { poly_slot, x, y } =
-                    pcd.proof().application_claims()[slot];
+                let crate::ClaimOpening { com, x, y } = pcd.proof().application_claims()[slot];
 
-                (0..capacity.poly_query.polys)
-                    .find(|i| {
-                        crate::framework_hooks::field_index::<C::CircuitField>(*i) == poly_slot
-                    })
+                pcd.proof()
+                    .application_polys()
+                    .iter()
+                    .position(|poly| *poly == com)
                     .is_some_and(|i| pcd.proof().claim_polys[i].eval(x) == y)
             });
 

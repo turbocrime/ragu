@@ -324,7 +324,8 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     /// pre-checked natively by fuse. The claim *instances* (com, x, y),
     /// the claim polynomials, and the host commitments are persisted in the
     /// [`Proof`] so the parent fuse can enforce the claims recursively.
-    application_claims: Vec<crate::framework_hooks::PolyQueryClaim<C::CircuitField>>,
+    application_claims:
+        Vec<crate::framework_hooks::PolyQueryClaim<C::NestedCurve, C::CircuitField>>,
     /// The nested-curve commitment the instance exposes per polynomial slot,
     /// in slot order — one per polynomial, not one per query.
     application_polys: Vec<C::NestedCurve>,
@@ -786,7 +787,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     /// recorded. May only be called once.
     pub(crate) fn set_application_claims(
         &mut self,
-        claims: Vec<crate::framework_hooks::PolyQueryClaim<C::CircuitField>>,
+        claims: Vec<crate::framework_hooks::PolyQueryClaim<C::NestedCurve, C::CircuitField>>,
     ) {
         assert!(
             self.application_claims.is_empty(),
@@ -966,7 +967,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
                 .application_claims
                 .iter()
                 .map(|c| super::ClaimOpening {
-                    poly_slot: c.poly_slot,
+                    com: c.com,
                     x: c.x,
                     y: c.y,
                 })

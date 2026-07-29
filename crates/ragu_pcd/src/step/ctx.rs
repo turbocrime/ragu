@@ -165,12 +165,16 @@ where
     /// enforcement never relies on prover behavior.
     ///
     /// Claims may be raised in any order, and the **same handle may be used
-    /// more than once**: a query names its polynomial by index rather than by
-    /// position, so opening one polynomial at several points costs one
-    /// claim slot each and no additional polynomial slot — no second bridge stage,
-    /// no second commitment, no second MSM, no extra endoscaling point. That is
-    /// the cheap direction to grow in; witnessing another polynomial is the
-    /// expensive one.
+    /// more than once**: a claim carries the commitment of the polynomial it
+    /// opens rather than sitting at that polynomial's position, so opening one
+    /// polynomial at several points costs one claim slot each and no additional
+    /// polynomial slot — no second bridge stage, no second commitment, no second
+    /// MSM, no extra endoscaling point. That is the cheap direction to grow in;
+    /// witnessing another polynomial is the expensive one.
+    ///
+    /// The commitment it carries is the very [`Point`] the handle holds, so a
+    /// claim cannot name a polynomial this step did not witness, and cannot
+    /// drift from the one it names.
     ///
     /// # Soundness status
     ///
@@ -197,8 +201,7 @@ where
         x: Element<'dr, D>,
         y: Element<'dr, D>,
     ) -> Result<()> {
-        self.hooks
-            .enforce_polynomial_query(self.dr, commitment.slot(), x, y)
+        self.hooks.enforce_polynomial_query(commitment.slot(), x, y)
     }
 
     /// Derives a sound Fiat–Shamir challenge from `points`.
@@ -366,7 +369,7 @@ where
                     (x, y)
                 }
             };
-            self.hooks.enforce_polynomial_query(self.dr, slot, x, y)?;
+            self.hooks.enforce_polynomial_query(slot, x, y)?;
         }
 
         // A padding challenge supplies no points at all, so every position

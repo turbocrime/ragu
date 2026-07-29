@@ -119,15 +119,15 @@ pub struct WitnessedPoly<F: Field, C: CurveAffine<Base = F>> {
     pub coefficients: Vec<F>,
 }
 
-/// A single opening claim: polynomial [`poly_slot`](Self::poly_slot) evaluates
-/// to `y` at `x`.
+/// A single opening claim: the polynomial committed to by [`com`](Self::com)
+/// evaluates to `y` at `x`.
 ///
-/// Several of these may name the same polynomial — that is what makes a repeat
+/// Several of these may carry the same `com` — that is what makes a repeat
 /// opening cheap.
-pub struct PolyQueryClaim<F: Field> {
-    /// Index of the polynomial being opened, into the step's witnessed
-    /// polynomials.
-    pub poly_slot: F,
+pub struct PolyQueryClaim<C: CurveAffine, F: Field> {
+    /// The opened polynomial's nested-curve commitment — the same value the
+    /// step's [`WitnessedPoly::com`] records for it.
+    pub com: C,
     /// Point at which the polynomial is opened.
     pub x: F,
     /// Claimed evaluation $p(x) = y$.
@@ -151,10 +151,11 @@ pub struct ChallengeWires<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
 /// coefficient values the fuse needs for the PCS folding.
 ///
 /// One of these per [`witness_polynomial`](crate::step::StepCtx::witness_polynomial)
-/// call. `com` lives here rather than on each query precisely because it
-/// identifies the polynomial: a query names its polynomial by index, and if it
-/// carried its own copy of `com` nothing would force the two to agree — a
-/// prover could pair one slot's commitment with another slot's evaluation.
+/// call. `com` is the polynomial's identity, and a claim that opens it carries
+/// **this same [`Point`]** — `enforce_polynomial_query` reads it from here
+/// rather than accepting one from the caller. So the polynomial region and the
+/// claim region hold one wire at two instance positions, not two copies that
+/// could disagree, and nothing has to enforce their equality.
 pub struct PolyWires<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     /// The claimed nested-curve commitment point, as witnessed by the step.
     pub com: Point<'dr, D, C>,
@@ -166,15 +167,17 @@ pub struct PolyWires<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
 /// where, and to what.
 ///
 /// One of these per [`enforce_poly_query`](crate::step::StepCtx::enforce_poly_query)
-/// call. Several queries may name the same polynomial — that is the point of
-/// the split, and it is why a repeat opening costs only these three elements.
-pub struct QueryWires<'dr, D: Driver<'dr>> {
-    /// Index of the polynomial being opened, as a constant element.
+/// call. Several queries may carry the same `com` — that is the point of the
+/// split, and it is why a repeat opening costs only these four elements.
+pub struct QueryWires<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
+    /// The opened polynomial's commitment.
     ///
-    /// Pinned to a constant rather than allocated free: it is circuit
-    /// structure (fixed by which handle the body passed), so a prover must not
-    /// be able to vary it and re-aim a query at a different polynomial.
-    pub poly_slot: Element<'dr, D>,
+    /// **This is the same [`Point`] the polynomial's own slot holds**, not a
+    /// copy of it: `witness_polynomial` allocates the commitment once and the
+    /// handle lends it out, so writing it into the polynomial region and into
+    /// this claim writes one wire at two instance positions. The two therefore
+    /// cannot disagree, and no constraint is needed to make them agree.
+    pub com: Point<'dr, D, C>,
     /// The opening point.
     pub x: Element<'dr, D>,
     /// The claimed evaluation.
@@ -192,7 +195,7 @@ pub struct QueryWires<'dr, D: Driver<'dr>> {
 pub struct FrameworkHooks<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     /// One entry per [`enforce_poly_query`](crate::step::StepCtx::enforce_poly_query)
     /// call, in call order.
-    poly_queries: Vec<QueryWires<'dr, D>>,
+    poly_queries: Vec<QueryWires<'dr, D, C::NestedCurve>>,
     /// One entry per
     /// [`witness_polynomial`](crate::step::StepCtx::witness_polynomial) call,
     /// in call order. A polynomial's position here is its slot, which fixes the
@@ -231,31 +234,14 @@ pub struct FrameworkAux<C: Cycle> {
     /// the PCS accumulator.
     pub polys: Vec<WitnessedPoly<C::CircuitField, C::NestedCurve>>,
     /// The step's opening claims, padded to the application's claim capacity,
-    /// in call order. Each names one of [`polys`](Self::polys). Fuse
-    /// pre-checks every claim natively, persists the claim instances in the
-    /// proof, and the *next* fuse enforces them recursively via the PCS
-    /// accumulator.
-    pub claims: Vec<PolyQueryClaim<C::CircuitField>>,
+    /// in call order. Each carries the commitment of one of
+    /// [`polys`](Self::polys). Fuse pre-checks every claim natively, persists
+    /// the claim instances in the proof, and the *next* fuse enforces them
+    /// recursively via the PCS accumulator.
+    pub claims: Vec<PolyQueryClaim<C::NestedCurve, C::CircuitField>>,
     /// The derived-challenge records the circuit exposes, padded to the
     /// application's challenge capacity, in slot order.
     pub challenges: Vec<crate::proof::ChallengeOpening<C::NestedCurve, C::CircuitField>>,
-}
-
-/// A small non-negative index as a field element.
-///
-/// Summed from `ONE` rather than converted, so this needs only [`Field`] and
-/// the hook container does not have to demand [`PrimeField`] of every driver it
-/// is generic over. The indices are slot numbers, bounded by
-/// the application's poly capacity, so the loop is a handful of additions — no
-/// gates, and nothing that scales.
-///
-/// [`PrimeField`]: ragu_arithmetic::ff::PrimeField
-pub(crate) fn field_index<F: Field>(index: usize) -> F {
-    let mut value = F::ZERO;
-    for _ in 0..index {
-        value += F::ONE;
-    }
-    value
 }
 
 /// Transposes a list of per-item driver values into one driver value holding
@@ -285,10 +271,10 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHookOutputs<'d
         let polys = collect_values::<D, _>(polys)?;
 
         let mut claims = Vec::with_capacity(self.poly_queries.len());
-        for QueryWires { poly_slot, x, y } in self.poly_queries {
+        for QueryWires { com, x, y } in self.poly_queries {
             claims.push(D::try_just(|| {
                 Ok(PolyQueryClaim {
-                    poly_slot: *poly_slot.value().take(),
+                    com: com.value().take(),
                     x: *x.value().take(),
                     y: *y.value().take(),
                 })
@@ -386,13 +372,15 @@ pub struct PolyQueryLayout {
     /// plus two endoscaling points (one per child) in the next fuse.
     pub polys: usize,
     /// [`enforce_poly_query`](crate::step::StepCtx::enforce_poly_query) claims —
-    /// the cheap count. One instance entry, one quotient in `_08_f`, one triple
-    /// in `compute_v`; no commitment, no MSM, no endoscaling point.
+    /// the cheap count. Four instance elements, one quotient in `_08_f`, one
+    /// term in `compute_v`; no bridge stage of its own, no commitment to
+    /// compute, no MSM, no endoscaling point.
     ///
-    /// Tracked separately from [`polys`](Self::polys) because a claim names its
-    /// polynomial by index, so several claims may share one commitment.
-    /// Collapsing them into one number would tax every additional claim at the
-    /// polynomial rate, which is the opposite of what this mechanism is for.
+    /// Tracked separately from [`polys`](Self::polys) because several claims may
+    /// carry the same commitment — the pool is flat, so a step spends it however
+    /// it likes rather than against a per-polynomial allowance. Collapsing the
+    /// two numbers into one would tax every additional claim at the polynomial
+    /// rate, which is the opposite of what this mechanism is for.
     pub claims: usize,
 }
 
@@ -464,7 +452,7 @@ pub struct FrameworkHookOutputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::
     pub witnessed_polys: Vec<PolyWires<'dr, D, C::NestedCurve>>,
     /// Opening claims raised via [`FrameworkHooks::enforce_polynomial_query`],
     /// in call order. Each names one of [`witnessed_polys`](Self::witnessed_polys).
-    pub poly_queries: Vec<QueryWires<'dr, D>>,
+    pub poly_queries: Vec<QueryWires<'dr, D, C::NestedCurve>>,
     /// The `(points, challenge)` record per `derive_challenge` call, in slot
     /// order. Padded to the application's declared challenge capacity by
     /// [`StepCtx::finish_slots`](crate::step::StepCtx), so its length is that
@@ -578,11 +566,17 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     /// must not depend on witness values and must not exceed
     /// the application's claim capacity (checked here).
     ///
-    /// `poly_slot` names its polynomial by index into the step's witnessed
-    /// polynomials, so claims may be raised in any order and several may name
-    /// one polynomial. It is recorded as a circuit constant, not a free wire:
-    /// which handle the body passed is structure, so a prover must not be able
-    /// to vary it and re-aim the query.
+    /// # The claim carries the commitment, and takes it from the slot
+    ///
+    /// `poly_slot` says *which* of the step's polynomials is opened, and the
+    /// claim records that polynomial's commitment — read out of the step's own
+    /// witnessed polynomials here rather than accepted from the caller. That is
+    /// what makes the recorded `com` necessarily one of this step's
+    /// polynomials, and it is why the claim's `com` and the polynomial region's
+    /// `com` are the same [`Point`] rather than two copies that could drift.
+    ///
+    /// Claims may be raised in any order and several may open one polynomial;
+    /// a repeat opening costs a claim slot and no polynomial slot.
     ///
     /// # Errors
     ///
@@ -591,7 +585,6 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     /// polynomial this step never witnessed.
     pub fn enforce_polynomial_query(
         &mut self,
-        dr: &mut D,
         poly_slot: usize,
         x: Element<'dr, D>,
         y: Element<'dr, D>,
@@ -601,13 +594,13 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
                 "step enforced more poly-queries than there are query slots".into(),
             ));
         }
-        if poly_slot >= self.witnessed_polys.len() {
+        let Some(poly) = self.witnessed_polys.get(poly_slot) else {
             return Err(Error::InvalidWitness(
                 "poly-query names a polynomial slot that was never witnessed".into(),
             ));
-        }
+        };
         self.poly_queries.push(QueryWires {
-            poly_slot: Element::constant(dr, field_index::<D::F>(poly_slot)),
+            com: poly.com.clone(),
             x,
             y,
         });

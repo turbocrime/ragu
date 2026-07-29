@@ -46,7 +46,7 @@
 use alloc::{vec, vec::Vec};
 use core::marker::PhantomData;
 
-use ragu_arithmetic::{Cycle, ff::Field};
+use ragu_arithmetic::{CurveAffine, Cycle, ff::Field};
 use ragu_circuits::{
     WithAux,
     horner::Horner,
@@ -59,7 +59,7 @@ use ragu_core::{
     gadgets::Bound,
     maybe::Maybe,
 };
-use ragu_primitives::{Element, Endoscalar, GadgetExt, allocator::Standard};
+use ragu_primitives::{Element, Endoscalar, GadgetExt, Point, allocator::Standard};
 
 use super::super::{
     InternalCircuitIndex, InternalCircuitValues, RxComponent, RxIndex,
@@ -231,13 +231,19 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const POLYS: usize, const CLAI
                     for (child_eval, child_preamble) in
                         [(&eval.left, &preamble.left), (&eval.right, &preamble.right)]
                     {
+                        let commitments: Vec<_> = child_preamble
+                            .polys
+                            .iter()
+                            .map(|poly| poly.com.clone())
+                            .collect();
                         let mut slots = Vec::with_capacity(child_preamble.claims.len());
                         for claim in child_preamble.claims.iter() {
                             slots.push(select_claim(
                                 dr,
                                 allocator,
                                 &child_eval.claims,
-                                &claim.poly_slot,
+                                &commitments,
+                                &claim.com,
                             )?);
                         }
                         per_child.push(slots);
@@ -707,35 +713,107 @@ fn poly_queries<
                 (&child_selected[i], &child_preamble.claims[i].y, &child_d.claims[i]))))
 }
 
-/// Selects `claims[poly_slot]` through a one-hot witnessed in this circuit.
+/// Selects the evaluation of the polynomial a claim opens, through a one-hot
+/// witnessed in this circuit and keyed on the claim's **commitment**.
 ///
-/// A query names its polynomial by index, so the parent has to turn that index
-/// into the right evaluation without indexing — circuit structure cannot depend
-/// on a witnessed value. The one-hot is the standard way, and it is bound by
-/// three constraints, none of which may be dropped:
+/// A claim carries the commitment of the polynomial it opens, and the parent
+/// has to turn that into the matching entry of `evaluations` without indexing —
+/// circuit structure cannot depend on a witnessed value. The one-hot is the
+/// standard way, and it is bound by four constraints, none of which may be
+/// dropped:
 ///
 /// * each entry is boolean (`b(b - 1) = 0`),
 /// * the entries sum to one, and
-/// * `Σ j·b_j` equals the instance-bound `poly_slot`.
+/// * `Σ b_j · com_j` equals the claim's `com`, in **both** coordinates.
 ///
-/// The first two together force exactly one entry to be set; the third forces
+/// The first two together force exactly one entry to be set; the last forces
 /// *which*. Without booleanity the first two are underdetermined for more than
 /// two slots — a prover could spread weight across several entries and blend
 /// their evaluations freely — so the cheap-looking version of this is unsound.
-fn select_claim<'dr, D: Driver<'dr>, A: ragu_primitives::allocator::Allocator<'dr, D>>(
+///
+/// # Why the key is a commitment and not an index
+///
+/// Both coordinates must match, so this costs `2·POLYS` multiplications more
+/// than keying on a one-element index would (an index key is `Σ j·b_j`, a
+/// scaling by circuit constants rather than a multiplication). That is paid
+/// deliberately. An index is a name that has to be resolved, and a resolution
+/// that goes wrong denotes a different polynomial *silently* — the circuit
+/// still opens, and a false claim gets a passing proof. A commitment is the
+/// thing itself; a mismatch selects nothing and no proof exists. The failure
+/// mode moves from fail-open to fail-closed.
+///
+/// It also makes this circuit and `_08_f` agree by construction rather than by
+/// convention: `_08_f` finds the polynomial by matching the same commitment
+/// natively, so the two resolutions key on one unforgeable value instead of two
+/// mechanisms that a comment has to keep in step.
+///
+/// # If two slots carried the same commitment
+///
+/// A slot's `com` is derived from the slot — the blind is
+/// `bridge_alpha^(5+slot)` — so two slots cannot collide on an honest path. A
+/// dishonest prover can still put one point in two slots, and then this one-hot
+/// may select a different slot than `_08_f`'s first match. That is a **liveness**
+/// failure, not a soundness one: `_08_f` folds slot `j`'s polynomial into
+/// $f(X)$ while this circuit takes slot `k`'s evaluation, so $v$ disagrees with
+/// the accumulator and no proof exists — unless the two polynomials are equal,
+/// in which case nothing was misrepresented. Constraining the one-hot to the
+/// *first* match would cost a pairwise-distinctness check per slot to rule out
+/// a case that already cannot produce a passing proof.
+///
+/// A cheaper keying — one-hot against `com.x + γ·com.y` for a transcript
+/// challenge `γ` drawn after the commitments are pinned — is possible and is
+/// deliberately not used: it saves `POLYS` multiplications per claim, which at
+/// the polynomial counts in play is a couple of gates, in exchange for a
+/// Schwartz–Zippel argument a reviewer has to check. It becomes worth
+/// revisiting somewhere around `POLYS = 8`, and can be added without touching
+/// the claim format.
+fn select_claim<
+    'dr,
+    D: Driver<'dr>,
+    C: CurveAffine<Base = D::F>,
+    A: ragu_primitives::allocator::Allocator<'dr, D>,
+>(
     dr: &mut D,
     allocator: &mut A,
-    claims: &[Element<'dr, D>],
-    poly_slot: &Element<'dr, D>,
+    evaluations: &[Element<'dr, D>],
+    commitments: &[Point<'dr, D, C>],
+    com: &Point<'dr, D, C>,
 ) -> Result<Element<'dr, D>> {
-    use ragu_arithmetic::{Coeff, ff::Field};
+    use ragu_arithmetic::ff::Field;
 
-    let one = Element::one();
-    let mut bits = Vec::with_capacity(claims.len());
-    for j in 0..claims.len() {
-        let target = crate::framework_hooks::field_index::<D::F>(j);
-        let value = poly_slot.value().map(|slot| {
-            if *slot == target {
+    debug_assert_eq!(
+        evaluations.len(),
+        commitments.len(),
+        "one evaluation per polynomial slot"
+    );
+
+    // A point's coordinates are reached through its `Write` impl — the same
+    // door the adapter used to put them into the instance, so the pair read
+    // here is the pair that was bound to $k(Y)$ there.
+    let coordinates = |dr: &mut D, point: &Point<'dr, D, C>| -> Result<[Element<'dr, D>; 2]> {
+        let mut out = Vec::with_capacity(2);
+        point.write(dr, &mut out)?;
+        let [x, y] = <[Element<'dr, D>; 2]>::try_from(out)
+            .map_err(|_| ragu_core::Error::MalformedEncoding("a point is two wires".into()))?;
+        Ok([x, y])
+    };
+
+    let [target_x, target_y] = coordinates(dr, com)?;
+    let mut slots = Vec::with_capacity(commitments.len());
+    for commitment in commitments {
+        slots.push(coordinates(dr, commitment)?);
+    }
+
+    // The prover-side match: which slot holds this claim's commitment. The
+    // search itself carries no weight — only the constraints below bind the
+    // resulting bits.
+    let target = com.value();
+    let mut bits = Vec::with_capacity(commitments.len());
+    for commitment in commitments {
+        let slot = commitment.value();
+        let target = Maybe::clone(&target);
+        let value = D::just(move || {
+            if target.take() == slot.take() {
                 D::F::ONE
             } else {
                 D::F::ZERO
@@ -744,25 +822,29 @@ fn select_claim<'dr, D: Driver<'dr>, A: ragu_primitives::allocator::Allocator<'d
         bits.push(Element::alloc(dr, allocator, value)?);
     }
 
+    let one = Element::one();
     let mut sum = Element::zero(dr);
-    let mut weighted = Element::zero(dr);
+    let mut selected_x = Element::zero(dr);
+    let mut selected_y = Element::zero(dr);
     let mut selected = Element::zero(dr);
     for (j, bit) in bits.iter().enumerate() {
         // Booleanity.
         bit.sub(dr, &one).mul(dr, bit)?.enforce_zero(dr)?;
 
         sum = sum.add(dr, bit);
-        let scaled = bit.scale(
-            dr,
-            Coeff::Arbitrary(crate::framework_hooks::field_index::<D::F>(j)),
-        );
-        weighted = weighted.add(dr, &scaled);
-        let term = bit.mul(dr, &claims[j])?;
+
+        let x_term = bit.mul(dr, &slots[j][0])?;
+        selected_x = selected_x.add(dr, &x_term);
+        let y_term = bit.mul(dr, &slots[j][1])?;
+        selected_y = selected_y.add(dr, &y_term);
+
+        let term = bit.mul(dr, &evaluations[j])?;
         selected = selected.add(dr, &term);
     }
 
     sum.sub(dr, &one).enforce_zero(dr)?;
-    weighted.sub(dr, poly_slot).enforce_zero(dr)?;
+    selected_x.sub(dr, &target_x).enforce_zero(dr)?;
+    selected_y.sub(dr, &target_y).enforce_zero(dr)?;
 
     Ok(selected)
 }

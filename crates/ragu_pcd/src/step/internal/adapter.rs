@@ -26,19 +26,21 @@ use crate::{
 
 /// Length of an application circuit's public instance: the three headers, then
 /// the polynomial slots (commitment point coordinates — two elements per slot),
-/// then the query slots (the polynomial index and the $(x, y)$ opening — three
-/// elements per slot), then the challenge slots (the coordinates of every input
-/// point, then the challenge).
+/// then the query slots (the opened polynomial's commitment and the $(x, y)$
+/// opening — four elements per slot), then the challenge slots (the coordinates
+/// of every input point, then the challenge).
 ///
-/// A polynomial's commitment appears once, in its own slot, rather than once
-/// per query that opens it. That is what makes a repeat opening cost three
-/// elements instead of a whole polynomial's worth — and it is also what makes
-/// it *sound*: a query names its polynomial by index, so there is no second
-/// copy of `com` that could disagree with the first.
+/// A query carries the commitment of the polynomial it opens rather than an
+/// index into the polynomial slots. It is the *same* commitment — the same
+/// allocated [`Point`](ragu_primitives::Point), written at two instance
+/// positions — so the two cannot disagree, and no constraint is spent making
+/// them agree. A repeat opening still costs a query slot and no polynomial
+/// slot; it costs one element more than an index would, and buys a reference
+/// that cannot be mis-resolved.
 pub fn instance_len(header_size: usize, capacity: HookLayout) -> usize {
     header_size * 3
         + capacity.poly_query.polys * 2
-        + capacity.poly_query.claims * 3
+        + capacity.poly_query.claims * 4
         + capacity.challenge.calls * (capacity.challenge.width * 2 + 1)
 }
 
@@ -65,7 +67,7 @@ impl<
     for InstanceLen<HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
 {
     fn len() -> usize {
-        HEADER_SIZE * 3 + POLYS * 2 + CLAIMS * 3 + CHALLENGES * (CHALLENGE_WIDTH * 2 + 1)
+        HEADER_SIZE * 3 + POLYS * 2 + CLAIMS * 4 + CHALLENGES * (CHALLENGE_WIDTH * 2 + 1)
     }
 }
 
@@ -243,14 +245,20 @@ impl<
         right.write(dr, &mut elements)?;
         output.write(dr, &mut elements)?;
         // The polynomial slots follow the headers: per slot, the commitment
-        // point's two coordinates. Then the query slots: per slot, the index of
-        // the polynomial opened, the opening point, and the claimed evaluation.
-        // This layout must match `ProofInputs::application_ky`.
+        // point's two coordinates. Then the query slots: per slot, the opened
+        // polynomial's commitment, the opening point, and the claimed
+        // evaluation. This layout must match `ProofInputs::application_ky`.
+        //
+        // A query's `com` is the very `Point` its polynomial's slot wrote —
+        // `enforce_polynomial_query` reads it out of `witnessed_polys` rather
+        // than taking it from the caller — so this writes one wire at two
+        // positions and the parent inherits their equality through the revdot
+        // identity, with nothing to enforce.
         for poly in &outputs.witnessed_polys {
             poly.com.write(dr, &mut elements)?;
         }
         for query in &outputs.poly_queries {
-            query.poly_slot.write(dr, &mut elements)?;
+            query.com.write(dr, &mut elements)?;
             query.x.write(dr, &mut elements)?;
             query.y.write(dr, &mut elements)?;
         }
@@ -459,7 +467,9 @@ mod tests {
                 claims: 8,
             },
         };
-        let slots = 8 * 2 + 8 * 3 + 2 * (capacity.challenge.width * 2 + 1);
+        // Two elements per polynomial (its commitment), four per claim (the
+        // opened polynomial's commitment, then the `(x, y)` opening).
+        let slots = 8 * 2 + 8 * 4 + 2 * (capacity.challenge.width * 2 + 1);
         assert_eq!(instance_len(1, capacity), 3 + slots);
         assert_eq!(instance_len(4, capacity), 12 + slots);
         assert_eq!(instance_len(10, capacity), 30 + slots);
