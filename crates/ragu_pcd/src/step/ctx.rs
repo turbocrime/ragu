@@ -20,7 +20,7 @@ use ragu_primitives::{Element, Point};
 
 use crate::{
     framework_hooks::FrameworkHooks,
-    poly_commitment::{PolyCommitment, PolyQueryHandle},
+    poly_commitment::{PolyCommitment, PolyHandle},
 };
 
 /// Framework-side state threaded through [`Step::witness`](super::Step::witness).
@@ -48,7 +48,7 @@ where
     }
 
     /// Witnesses this step's polynomials in-circuit, producing one
-    /// [`PolyQueryHandle`] per [`PolyCommitment`].
+    /// [`PolyHandle`] per [`PolyCommitment`].
     ///
     /// # The polynomial never enters the circuit
     ///
@@ -66,7 +66,7 @@ where
     /// relation. Anything added here must preserve that: allocate the
     /// commitment, retain the coefficients as a value.
     ///
-    /// The commitment point is reachable via [`PolyQueryHandle::commitment`]
+    /// The commitment point is reachable via [`PolyHandle::commitment`]
     /// for challenges, hashing and the like; the retained polynomial is what a
     /// later [`enforce_poly_query`](Self::enforce_poly_query) opens. Because a
     /// [`PolyCommitment`] can only come from
@@ -91,7 +91,7 @@ where
     pub fn witness_polynomial<R: Rank, const N: usize>(
         &mut self,
         commitments: [DriverValue<D, PolyCommitment<C, R>>; N],
-    ) -> Result<[PolyQueryHandle<'dr, D, C, R>; N]> {
+    ) -> Result<[PolyHandle<'dr, D, C, R>; N]> {
         if self.hooks.polys_filled() > 0 {
             return Err(ragu_core::Error::InvalidWitness(
                 "witness_polynomial may only be called once per step".into(),
@@ -114,7 +114,7 @@ where
     fn witness_one_polynomial<R: Rank>(
         &mut self,
         commitment: DriverValue<D, PolyCommitment<C, R>>,
-    ) -> Result<PolyQueryHandle<'dr, D, C, R>> {
+    ) -> Result<PolyHandle<'dr, D, C, R>> {
         let slot = self.hooks.next_poly_slot()?;
         let host_for_com = commitment.as_ref().map(|c| c.host());
         let proof_values = self.hooks.proof_values();
@@ -135,7 +135,7 @@ where
         })?;
         let com = Point::alloc(self.dr, com_value)?;
         let polynomial = commitment.map(PolyCommitment::into_polynomial);
-        let handle = PolyQueryHandle::new(com, polynomial, slot);
+        let handle = PolyHandle::new(com, polynomial, slot);
         self.hooks
             .record_polynomial(handle.commitment().clone(), handle.coefficients())?;
         Ok(handle)
@@ -144,7 +144,7 @@ where
     /// Records a poly-query claim: the polynomial behind `commitment` evaluates
     /// to `y` at the point `x`.
     ///
-    /// `commitment` is a [`PolyQueryHandle`] from
+    /// `commitment` is a [`PolyHandle`] from
     /// [`witness_polynomial`](Self::witness_polynomial); it carries both the
     /// in-circuit commitment and the polynomial, so the two cannot drift apart.
     ///
@@ -197,7 +197,7 @@ where
     /// deferred work.
     pub fn enforce_poly_query<R: Rank>(
         &mut self,
-        commitment: &PolyQueryHandle<'dr, D, C, R>,
+        commitment: &PolyHandle<'dr, D, C, R>,
         x: Element<'dr, D>,
         y: Element<'dr, D>,
     ) -> Result<()> {
@@ -227,7 +227,7 @@ where
     /// binds that commitment's polynomial — but passing a **freely witnessed**
     /// point binds nothing, and lets the prover grind the challenge by varying
     /// it. Every point here must be pinned: a
-    /// [`PolyQueryHandle::commitment`](crate::poly_commitment::PolyQueryHandle::commitment),
+    /// [`PolyHandle::commitment`](crate::poly_commitment::PolyHandle::commitment),
     /// a header-carried point, or a point otherwise constrained in this step.
     /// This is the same discipline the framework applies to its own transcript:
     /// compress data into a binding commitment, then derive from that.

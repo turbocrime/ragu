@@ -72,7 +72,7 @@ use alloc::collections::BTreeMap;
 use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 
 use header::Header;
-pub use poly_commitment::{PolyCommitment, PolyQueryHandle};
+pub use poly_commitment::{PolyCommitment, PolyHandle};
 pub use proof::{ClaimOpening, Pcd, Proof};
 use ragu_arithmetic::{CryptoRngCore, Cycle};
 use ragu_circuits::{
@@ -565,7 +565,7 @@ impl<
     /// coefficients on the host curve, carried onto the nested curve via the
     /// framework's standard bridge encoding. Thread the returned
     /// [`PolyCommitment`] into a step's witness and turn it into an in-circuit
-    /// [`PolyQueryHandle`] with
+    /// [`PolyHandle`] with
     /// [`StepCtx::witness_polynomial`](step::StepCtx::witness_polynomial);
     /// [`StepCtx::enforce_poly_query`](step::StepCtx::enforce_poly_query) then
     /// raises the opening claim. Because the commitment is derived from the

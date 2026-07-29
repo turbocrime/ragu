@@ -11,7 +11,7 @@
 //!   [`Application::commit_polynomial`](crate::Application::commit_polynomial):
 //!   the commitment is *derived from* the polynomial, so an honest caller
 //!   cannot mismatch them.
-//! * [`PolyQueryHandle`] is the in-circuit form, created by
+//! * [`PolyHandle`] is the in-circuit form, created by
 //!   [`StepCtx::witness_polynomial`](crate::step::StepCtx::witness_polynomial):
 //!   it witnesses the commitment as a [`Point`] (usable for challenges,
 //!   hashing, etc.) while retaining the polynomial, and is consumed by
@@ -33,7 +33,7 @@ use ragu_primitives::Point;
 /// [`Application::commit_polynomial`](crate::Application::commit_polynomial),
 /// which derives the commitment from the polynomial. Thread this into a
 /// [`Step`](crate::step::Step)'s witness and turn it into an in-circuit
-/// [`PolyQueryHandle`] with
+/// [`PolyHandle`] with
 /// [`StepCtx::witness_polynomial`](crate::step::StepCtx::witness_polynomial).
 pub struct PolyCommitment<C: Cycle, R: Rank> {
     polynomial: sparse::Polynomial<C::CircuitField, R>,
@@ -98,13 +98,13 @@ impl<C: Cycle, R: Rank> PolyCommitment<C, R> {
 /// (deriving a challenge, hashing into a header), and pass the handle to
 /// [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query) to
 /// raise the claim.
-pub struct PolyQueryHandle<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> {
+pub struct PolyHandle<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> {
     com: Point<'dr, D, C::NestedCurve>,
     polynomial: DriverValue<D, sparse::Polynomial<D::F, R>>,
     slot: usize,
 }
 
-impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> PolyQueryHandle<'dr, D, C, R> {
+impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> PolyHandle<'dr, D, C, R> {
     /// Bundles an allocated commitment point with its retained polynomial.
     pub(crate) fn new(
         com: Point<'dr, D, C::NestedCurve>,
