@@ -195,62 +195,6 @@ impl<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R> + 'dr> StageGuard<'dr, D, R
     }
 }
 
-/// A [`StageGuard`] for one slot of an induced run, whose position within the
-/// run came from a value-level layout rather than a `Parent` type chain.
-///
-/// Produced by [`StageBuilder::configure_induced_sized`]. Consumed exactly
-/// like a [`StageGuard`] — the wires are already reserved, so nothing
-/// downstream of reservation differs.
-#[must_use = "InducedGuard must be consumed via `enforced` or `unenforced`"]
-pub struct InducedGuard<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R>> {
-    stage: S,
-    stage_wires: Vec<D::Wire>,
-    _marker: PhantomData<(&'dr (), R, S)>,
-}
-
-impl<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R>> InducedGuard<'dr, D, R, S> {
-    /// See [`StageGuard::num_reserved`].
-    #[cfg(test)]
-    pub(crate) fn num_reserved(&self) -> usize {
-        self.stage_wires.len()
-    }
-}
-
-impl<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R> + 'dr> InducedGuard<'dr, D, R, S> {
-    /// As [`StageGuard::enforced`].
-    pub fn enforced<'source: 'dr>(
-        self,
-        dr: &mut D,
-        witness: DriverValue<D, S::Witness<'source>>,
-    ) -> Result<Bound<'dr, D, S::OutputKind>>
-    where
-        Bound<'dr, D, S::OutputKind>: Consistent<'dr, D>,
-    {
-        let output = self.into_guard().unenforced_inner(witness)?;
-        output.enforce_consistent(dr)?;
-        Ok(output)
-    }
-
-    /// As [`StageGuard::unenforced`].
-    pub fn unenforced<'source: 'dr>(
-        self,
-        _dr: &mut D,
-        witness: DriverValue<D, S::Witness<'source>>,
-    ) -> Result<Bound<'dr, D, S::OutputKind>> {
-        self.into_guard().unenforced_inner(witness)
-    }
-
-    /// Wire injection is identical once the wires are reserved; only where the
-    /// geometry came from differs.
-    fn into_guard(self) -> StageGuard<'dr, D, R, S> {
-        StageGuard {
-            stage: self.stage,
-            stage_wires: self.stage_wires,
-            _marker: PhantomData,
-        }
-    }
-}
-
 impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D::F, R>>
     StageBuilder<'a, 'dr, D, R, Current, Target>
 {
@@ -318,39 +262,17 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
     /// computes positions from the same value; the value-level layouts that
     /// feed masks and rx are built from exactly these widths.
     pub fn configure_stage_sized<Next: Stage<D::F, R, Parent = Current> + 'dr>(
-        self,
+        mut self,
         stage: Next,
         num_slots: usize,
     ) -> Result<(
         StageGuard<'dr, D, R, Next>,
         StageBuilder<'a, 'dr, D, R, Next, Target>,
     )> {
-        let num_gates = num_slots.div_ceil(2);
-
-        let mut emulator = Emulator::counter();
-        let mut num_wires = stage.witness(&mut emulator, Empty)?.num_wires()?;
-
-        if num_wires > num_slots {
-            return Err(ragu_core::Error::GateBoundExceeded { limit: num_gates });
-        }
-
-        let allocator = &mut Standard::new();
-        let mut wires = Vec::with_capacity(num_wires);
-        for _ in 0..num_wires {
-            wires.push(allocator.alloc(self.driver, || Ok(Coeff::Zero))?);
-        }
-
-        while (num_wires / 2) < num_gates {
-            allocator.alloc(self.driver, || Ok(Coeff::Zero))?;
-            num_wires += 1;
-        }
+        let guard = self.reserve_slot(stage, num_slots)?;
 
         Ok((
-            StageGuard {
-                stage,
-                stage_wires: wires,
-                _marker: PhantomData,
-            },
+            guard,
             StageBuilder {
                 driver: self.driver,
                 on_finish: self.on_finish,
@@ -400,7 +322,7 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
         layout: &super::InducedStages,
         start_gate: usize,
     ) -> Result<(
-        Vec<InducedGuard<'dr, D, R, S>>,
+        Vec<StageGuard<'dr, D, R, S>>,
         StageBuilder<'a, 'dr, D, R, Next, Target>,
     )>
     where
@@ -415,11 +337,7 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
 
         let mut guards = Vec::with_capacity(layout.len());
         for slot in 0..layout.len() {
-            guards.push(self.reserve_slot(
-                stage.clone(),
-                layout.width(slot),
-                layout.num_gates(slot),
-            )?);
+            guards.push(self.reserve_slot(stage.clone(), layout.width(slot))?);
         }
 
         Ok((
@@ -432,19 +350,27 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
         ))
     }
 
-    /// Reserves one slot of an induced run: the wire-allocation half of
-    /// [`configure_stage`](Self::configure_stage), with the geometry supplied
-    /// rather than read off a type.
+    /// Reserves one stage's wires at a width supplied as a value: the
+    /// wire-allocation half of [`configure_stage`](Self::configure_stage),
+    /// with the geometry supplied rather than read off a type.
+    ///
+    /// The single reservation primitive behind both value-width doors —
+    /// [`configure_stage_sized`](Self::configure_stage_sized), where the width
+    /// is the whole stage's, and
+    /// [`configure_induced_sized`](Self::configure_induced_sized), where it is
+    /// one slot's. A run's slots are reserved exactly as an ordinary stage is;
+    /// only where the width came from differs.
     fn reserve_slot<S: Stage<D::F, R> + 'dr>(
         &mut self,
         stage: S,
-        values: usize,
-        num_gates: usize,
-    ) -> Result<InducedGuard<'dr, D, R, S>> {
+        num_slots: usize,
+    ) -> Result<StageGuard<'dr, D, R, S>> {
+        let num_gates = num_slots.div_ceil(2);
+
         let mut emulator = Emulator::counter();
         let mut num_wires = stage.witness(&mut emulator, Empty)?.num_wires()?;
 
-        if num_wires > values {
+        if num_wires > num_slots {
             return Err(ragu_core::Error::GateBoundExceeded { limit: num_gates });
         }
 
@@ -459,7 +385,7 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
             num_wires += 1;
         }
 
-        Ok(InducedGuard {
+        Ok(StageGuard {
             stage,
             stage_wires: wires,
             _marker: PhantomData,

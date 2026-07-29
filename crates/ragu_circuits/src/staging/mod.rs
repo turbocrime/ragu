@@ -151,7 +151,7 @@ mod rx_driver;
 
 use alloc::boxed::Box;
 
-pub use builder::{InducedGuard, StageBuilder, StageGuard};
+pub use builder::{StageBuilder, StageGuard};
 pub use induced::InducedStages;
 use ragu_arithmetic::{Coeff, ff::Field};
 use ragu_core::{
