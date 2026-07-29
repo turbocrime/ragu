@@ -149,10 +149,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const POLYS: usize, const CLAI
         // Each stage provides data needed for the v computation.
         let (preamble, builder) =
             builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>>()?;
-        let (query, builder) = builder.configure_stage_sized(
-            native_query::Stage::<C, R, HEADER_SIZE, POLYS, CLAIMS>::default(),
-            native_query::num_values(super::super::InternalCircuitIndex::NUM),
-        )?;
+        let (query, builder) =
+            builder.add_stage::<native_query::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>>()?;
         let (eval, builder) =
             builder.add_stage::<native_eval::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>>()?;
         let dr = builder.finish();

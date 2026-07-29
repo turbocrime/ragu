@@ -60,11 +60,14 @@ impl Index {
     /// Pass the known number of application steps to validate and compute the
     /// final index of this step. Returns an error if an application step index
     /// exceeds the number of registered steps.
-    pub(crate) fn circuit_index(
-        &self,
-        num_application_steps: usize,
-        num_internal_circuits: usize,
-    ) -> Result<CircuitIndex> {
+    ///
+    /// The internal-circuit count is [`InternalCircuitIndex::NUM`], read here
+    /// rather than passed: it is the *native* list, which is a framework
+    /// constant. Only the nested list became capacity-dependent — see
+    /// [`nested::InternalCircuitIndex::circuit_index`](crate::internal::nested::InternalCircuitIndex::circuit_index),
+    /// which does take the capacity.
+    pub(crate) fn circuit_index(&self, num_application_steps: usize) -> Result<CircuitIndex> {
+        let num_internal_circuits = crate::internal::native::InternalCircuitIndex::NUM;
         match self.index {
             StepIndex::Internal(i) => {
                 // Internal steps come after internal circuits
@@ -123,28 +126,28 @@ fn test_index_map() -> Result<()> {
     // Internal steps come after internal circuits
     assert_eq!(
         Index::internal(InternalStepIndex::Rerandomize)
-            .circuit_index(num_application_steps, num_internal)?,
+            .circuit_index(num_application_steps)?,
         CircuitIndex::new(num_internal)
     );
     assert_eq!(
         Index::internal(InternalStepIndex::Trivial)
-            .circuit_index(num_application_steps, num_internal)?,
+            .circuit_index(num_application_steps)?,
         CircuitIndex::new(num_internal + 1)
     );
 
     // Application steps occupy indices (InternalCircuitIndex::NUM + NUM_INTERNAL_STEPS)..
     assert_eq!(
-        Index::new(0).circuit_index(num_application_steps, num_internal)?,
+        Index::new(0).circuit_index(num_application_steps)?,
         CircuitIndex::new(app_offset)
     );
     assert_eq!(
-        Index::new(1).circuit_index(num_application_steps, num_internal)?,
+        Index::new(1).circuit_index(num_application_steps)?,
         CircuitIndex::new(app_offset + 1)
     );
     Index::new(999).assert_index(999)?;
     assert!(
         Index::new(10)
-            .circuit_index(num_application_steps, num_internal)
+            .circuit_index(num_application_steps)
             .is_err()
     );
 

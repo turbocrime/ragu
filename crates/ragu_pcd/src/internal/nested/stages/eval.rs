@@ -94,7 +94,7 @@ pub type Slot<C, R> = super::host_bridge::Stage<C, R, ()>;
 /// would defeat the point of this stage, which is a *single* stashed copy the
 /// parent's copying circuit can check (see [`super::claim_bridge`], which
 /// deliberately does the opposite).
-pub type Stage<C, R> = super::host_bridge::Run<C, R, super::f::Stage<C, R>>;
+pub type Stage<C, R> = crate::internal::Run<C, R, super::f::Stage<C, R>>;
 
 #[cfg(test)]
 mod tests {

@@ -105,7 +105,7 @@ use ragu_arithmetic::{CurveAffine, Cycle, ff::Field};
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverValue},
-    maybe::{Maybe, MaybeKind},
+    maybe::Maybe,
 };
 use ragu_primitives::{Element, Point};
 
@@ -321,7 +321,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHookOutputs<'d
 /// used, so a step's circuit shape is settled the moment it registers rather
 /// than at the last registration. A body that calls a hook past its capacity is
 /// refused at the call that exceeds it.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct HookLayout {
     /// What [`derive_challenge`](crate::step::StepCtx::derive_challenge)
     /// requires.
@@ -338,7 +338,7 @@ pub struct HookLayout {
 /// provides recursive opening enforcement, and neither implies the other. They
 /// share only the [`HookLayout`] that carries them, which is an implementation
 /// convenience rather than a relationship between the features.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ChallengeLayout {
     /// [`derive_challenge`](crate::step::StepCtx::derive_challenge) calls.
     pub calls: usize,
@@ -371,7 +371,7 @@ impl ChallengeLayout {
 /// What the poly-query hook requires of a step's circuit.
 ///
 /// Two counts, not one, and that separation is the point of the mechanism.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PolyQueryLayout {
     /// [`witness_polynomial`](crate::step::StepCtx::witness_polynomial) calls —
     /// the expensive count. Each costs a bridge stage with its own commitment,
@@ -389,30 +389,6 @@ pub struct PolyQueryLayout {
     /// rate, which is the opposite of what this mechanism is for.
     pub claims: usize,
 }
-
-/// The proof's two blind sources, as the step circuit's witness carries them.
-///
-/// Separate from the cycle parameters on purpose. Both are absent during
-/// registration, but for different reasons: the parameters do not exist until
-/// [`ApplicationBuilder::finalize`](crate::ApplicationBuilder::finalize),
-/// while the blinds do not exist until a *proof* is being built. Only the
-/// second is an execution-mode difference, so only the second rides a
-/// [`DriverValue`] — and being plain field elements with no lifetime, they do
-/// so with none of the variance or outlives obligations a borrowed parameter
-/// would impose on the step circuit's `Witness`.
-pub struct Alphas<C: Cycle> {
-    /// Blinds the nested bridge stages.
-    pub bridge: C::ScalarField,
-}
-
-// Hand-written: `derive` would demand `C: Clone`/`C: Copy`, but the field is a
-// field element, `Copy` for every `Cycle`.
-impl<C: Cycle> Clone for Alphas<C> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-impl<C: Cycle> Copy for Alphas<C> {}
 
 /// The proof-level values a hook needs to compute a witness: the cycle
 /// parameters, and the proof's bridge blind source.
@@ -656,24 +632,11 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     }
 }
 
-/// An empty container at zero capacity, for structure-only drivers.
-///
-/// **Structure-only drivers only**, and enforced as such:
-/// [`MaybeKind::empty`] does not compile on a value-carrying kind, so a
-/// container built this way that reached a real witness pass is a build error
-/// rather than a proof whose challenges came from nothing. That is the
-/// guarantee `Maybe` exists to give.
-impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Default for FrameworkHooks<'dr, D, C> {
-    fn default() -> Self {
-        Self::new(HookLayout::default(), <D::MaybeKind as MaybeKind>::empty())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use ragu_core::{
         drivers::emulator::{Emulator, Wireless},
-        maybe::Empty,
+        maybe::{Empty, MaybeKind},
     };
     use ragu_pasta::{Fp, Pasta};
 

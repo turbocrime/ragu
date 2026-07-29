@@ -26,7 +26,7 @@ use ragu_core::{Error, Result};
 
 use crate::{
     Application, Header, Pcd, Proof,
-    framework_hooks::{Alphas, FrameworkAux},
+    framework_hooks::FrameworkAux,
     internal::challenge,
     proof::ProofBuilder,
     step::{
@@ -76,9 +76,7 @@ impl<
             CHALLENGE_WIDTH,
         >::new(step, Some(self.params), self.capacity()))
         .trace((
-            Alphas {
-                bridge: builder.bridge_alpha(),
-            },
+            builder.bridge_alpha(),
             left_data,
             right_data,
             witness,
@@ -86,10 +84,7 @@ impl<
         .into_parts();
         let rx = self.native_registry.assemble(
             &trace,
-            S::INDEX.circuit_index(
-                self.num_application_steps,
-                crate::internal::native::InternalCircuitIndex::NUM,
-            )?,
+            S::INDEX.circuit_index(self.num_application_steps)?,
             &mut *rng,
         )?;
 
@@ -173,10 +168,7 @@ impl<
             }
         }
 
-        builder.set_circuit_id(S::INDEX.circuit_index(
-            self.num_application_steps,
-            crate::internal::native::InternalCircuitIndex::NUM,
-        )?);
+        builder.set_circuit_id(S::INDEX.circuit_index(self.num_application_steps)?);
         builder.set_left_header(left_header.into_inner());
         builder.set_right_header(right_header.into_inner());
 

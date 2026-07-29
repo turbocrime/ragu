@@ -21,7 +21,7 @@ use ragu_primitives::{
 use super::super::{Step, StepCtx};
 use crate::{
     Header,
-    framework_hooks::{Alphas, FrameworkAux, FrameworkHooks, HookLayout, ProofValues},
+    framework_hooks::{FrameworkAux, FrameworkHooks, HookLayout, ProofValues},
 };
 
 /// Length of an application circuit's public instance: the three headers, then
@@ -176,7 +176,11 @@ impl<
         <S::Output as Header<C::CircuitField>>::Data,
     );
     type Witness<'source> = (
-        Alphas<C>,
+        // The proof's bridge blind source. Absent during registration, because
+        // it does not exist until a *proof* is being built — which is why it
+        // rides a `DriverValue` while the cycle parameters, absent for a
+        // different reason, are an `Option` field on the adapter instead.
+        C::ScalarField,
         <S::Left as Header<C::CircuitField>>::Data,
         <S::Right as Header<C::CircuitField>>::Data,
         S::Witness<'source>,
@@ -208,7 +212,7 @@ impl<
     {
         let dr = builder.finish();
 
-        let (alphas, left, right, witness) = witness.cast();
+        let (bridge_alpha, left, right, witness) = witness.cast();
         // `Self: 'dr` gives `'params: 'dr`, so the parameters coerce. The
         // closure runs only on a value-carrying driver, and every such driver
         // is building a proof — which only `Application` can do, and only with
@@ -222,8 +226,7 @@ impl<
                     "step witnessed with proof blinds but no cycle parameters".into(),
                 )
             })?;
-            let alphas = alphas.take();
-            Ok(ProofValues::new(params, alphas.bridge))
+            Ok(ProofValues::new(params, bridge_alpha.take()))
         })?;
 
         let mut hooks = FrameworkHooks::new(self.capacity, Maybe::clone(&proof_values));
@@ -386,11 +389,9 @@ mod tests {
         }
     }
 
-    /// Arbitrary blinds for tests that only care about circuit shape.
-    fn test_alphas() -> Alphas<Pasta> {
-        Alphas {
-            bridge: <Pasta as Cycle>::ScalarField::ONE,
-        }
+    /// An arbitrary bridge blind for tests that only care about circuit shape.
+    fn test_bridge_alpha() -> <Pasta as Cycle>::ScalarField {
+        <Pasta as Cycle>::ScalarField::ONE
     }
 
     /// Like [`TestStep`], but derives a challenge and folds it into the output.
@@ -496,7 +497,7 @@ mod tests {
             declared(0, 0, 0, 2),
         );
         let capacity = adapter.capacity;
-        let witness = Always::maybe_just(|| (test_alphas(), Fp::from(10u64), Fp::from(20u64), ()));
+        let witness = Always::maybe_just(|| (test_bridge_alpha(), Fp::from(10u64), Fp::from(20u64), ()));
 
         let output = MultiStage::new(adapter)
             .witness(dr, witness)
@@ -517,7 +518,7 @@ mod tests {
             Some(Pasta::baked()),
             declared(0, 0, 0, 2),
         );
-        let witness = Always::maybe_just(|| (test_alphas(), Fp::from(10u64), Fp::from(20u64), ()));
+        let witness = Always::maybe_just(|| (test_bridge_alpha(), Fp::from(10u64), Fp::from(20u64), ()));
 
         let aux = MultiStage::new(adapter)
             .witness(dr, witness)

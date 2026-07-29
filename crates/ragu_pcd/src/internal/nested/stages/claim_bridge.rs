@@ -18,9 +18,10 @@
 //!
 //! How many claim slots exist is a property of the application being built, not
 //! of any Rust type, so this family cannot be a chain of per-slot aliases. It
-//! is a [`host_bridge::Run`] instead: one stage in the typed hierarchy spanning
-//! every slot, subdivided by a [`layout`] that says where each slot's wires
-//! begin.
+//! is a [`crate::internal::Run`] of [`host_bridge::Stage`] instead: one stage in
+//! the typed hierarchy spanning every slot, subdivided by a [`layout`] that says
+//! where each slot's wires begin. [`host_bridge`] documents why that
+//! subdivision is exact.
 //!
 //! Nothing downstream has to care: the run occupies the same gates an alias
 //! chain would, and the loading circuit's `Last` is still an ordinary stage
@@ -36,7 +37,7 @@ use super::host_bridge;
 ///
 /// How many slots there are is the application's poly capacity — a value, read
 /// from [`layout`] — so it appears nowhere in this type.
-pub type Run<C, R> = host_bridge::Run<C, R, super::eval::Stage<C, R>>;
+pub type Run<C, R> = crate::internal::Run<C, R, super::eval::Stage<C, R>>;
 
 /// The witness body for a single claim slot.
 ///

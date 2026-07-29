@@ -144,7 +144,6 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
                 .map(|guard| Ok(guard.unenforced(dr, w!())?.host))
                 .collect::<Result<alloc::vec::Vec<_>>>()?,
             self.capacity.poly_query.polys,
-            self.capacity.poly_query.polys,
         )?;
         let s_prime = s_prime_guard.unenforced(dr, w!())?;
         let inner_error = inner_error_guard.unenforced(dr, w!())?;

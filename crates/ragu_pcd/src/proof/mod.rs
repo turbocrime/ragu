@@ -754,8 +754,6 @@ impl<
                 .collect(),
         );
 
-        let padding_host_commitment = padding_host;
-
         // Native rx polynomials (all trivial ones)
         builder.set_native_application_rx(ones_host.clone());
         builder.set_native_preamble_rx(ones_host.clone());
@@ -860,7 +858,7 @@ impl<
                 points.push(registry_xy_commitment); // RegistryXY
                 points.push(host_commitment); // P placeholder
                 for _ in 0..self.capacity().poly_query.polys {
-                    points.push(padding_host_commitment); // claim slots
+                    points.push(padding_host); // claim slots
                 }
             }
 
@@ -909,10 +907,7 @@ impl<
                 stashed_ab_b: host_commitment,
                 stashed_registry_xy: registry_xy_commitment,
                 stashed_p: p_commitment,
-                stashed_claims: alloc::vec![
-                    padding_host_commitment;
-                    self.capacity().poly_query.polys
-                ],
+                stashed_claims: alloc::vec![padding_host; self.capacity().poly_query.polys],
             };
             // Placed through the value-level chain: the preamble sits after
             // the points stage, whose width follows the capacity, so no type

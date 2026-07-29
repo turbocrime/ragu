@@ -301,12 +301,12 @@ pub fn child_num_values() -> usize {
 }
 
 /// This stage's wire width; the value-level source of the typed
-/// [`values()`](staging::Stage::values). `num_internal_circuits` is the size
-/// of the recursion's internal circuit list (one fixed-registry evaluation
-/// each).
-pub fn num_values(num_internal_circuits: usize) -> usize {
-    // num_internal_circuits + registry_wxy (1) + per-child evaluations
-    num_internal_circuits + 1 + 2 * child_num_values()
+/// [`values()`](staging::Stage::values).
+///
+/// One fixed-registry evaluation per native internal circuit — a framework
+/// constant — plus `registry_wxy`, plus each child's contribution.
+pub fn num_values() -> usize {
+    InternalCircuitIndex::NUM + 1 + 2 * child_num_values()
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: usize>
@@ -317,7 +317,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const POLYS: usize, const CLAI
     type OutputKind = Kind![C::CircuitField; Output<'_, _>];
 
     fn values() -> usize {
-        num_values(InternalCircuitIndex::NUM)
+        num_values()
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

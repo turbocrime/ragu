@@ -119,13 +119,11 @@ pub enum InternalCircuitIndex {
 }
 
 /// Compute the total circuit count and log2 domain size from the number of
-/// application-defined steps and the number of internal circuits and masks
-/// (i.e. [`InternalCircuitIndex::NUM`]).
-pub fn total_circuit_counts(
-    num_application_steps: usize,
-    num_internal_circuits: usize,
-) -> (usize, u32) {
-    let total_circuits = num_application_steps + step::NUM_INTERNAL_STEPS + num_internal_circuits;
+/// application-defined steps. The rest of the registry — the internal steps and
+/// the native internal circuits and masks — is a framework constant.
+pub fn total_circuit_counts(num_application_steps: usize) -> (usize, u32) {
+    let total_circuits =
+        num_application_steps + step::NUM_INTERNAL_STEPS + InternalCircuitIndex::NUM;
     let log2_circuits = total_circuits.next_power_of_two().trailing_zeros();
     (total_circuits, log2_circuits)
 }

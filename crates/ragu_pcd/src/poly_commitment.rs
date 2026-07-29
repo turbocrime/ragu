@@ -80,7 +80,7 @@ impl<C: Cycle, R: Rank> PolyCommitment<C, R> {
         polynomial: sparse::Polynomial<C::CircuitField, R>,
         host: C::HostCurve,
     ) -> Self {
-        Self { polynomial, host }
+        Self::new(polynomial, host)
     }
 
     /// Consumes the bundle, returning the polynomial.

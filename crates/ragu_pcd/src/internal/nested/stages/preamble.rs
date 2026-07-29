@@ -291,21 +291,20 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> Output<'dr, D, C> {
     /// Rebuild the named view from the run's slots: `native_preamble`, then
     /// the left child's block, then the right child's.
     ///
-    /// Each child's block is sized by *its own* poly count, matching how
-    /// [`num_points`] measures the span — the two children need not be the
-    /// same shape.
+    /// One `polys` sizes both children's blocks, because [`num_points`] measures
+    /// the span the same way — `1 + 2 * child_endoscaling_points`. An asymmetric
+    /// pair would mis-tile the run.
     pub fn from_slots(
         slots: impl IntoIterator<Item = Point<'dr, D, C>>,
-        left_polys: usize,
-        right_polys: usize,
+        polys: usize,
     ) -> Result<Self> {
         let slots = &mut slots.into_iter();
         Ok(Output {
             native_preamble: slots.next().ok_or_else(|| {
                 ragu_core::Error::MalformedEncoding("the preamble run yielded no slots".into())
             })?,
-            left: ChildOutput::from_slots(slots, left_polys)?,
-            right: ChildOutput::from_slots(slots, right_polys)?,
+            left: ChildOutput::from_slots(slots, polys)?,
+            right: ChildOutput::from_slots(slots, polys)?,
         })
     }
 }
@@ -332,7 +331,7 @@ pub type Slot<C, R> = super::host_bridge::Stage<C, R, ()>;
 /// The whole run is masked and committed as **one** stage, exactly as it was
 /// when it held a fixed vector — the subdivision decides where wires land, not
 /// how many commitments there are.
-pub type Stage<C, R> = super::host_bridge::Run<C, R, PointsStage<C, R>>;
+pub type Stage<C, R> = crate::internal::Run<C, R, PointsStage<C, R>>;
 
 impl<C: CurveAffine> Witness<C> {
     /// This stage's points in slot order — the flat list the run places, and

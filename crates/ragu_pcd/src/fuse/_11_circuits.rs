@@ -62,11 +62,7 @@ impl<
             native::RevdotParameters,
         >::new(
             self.params,
-            total_circuit_counts(
-                self.num_application_steps,
-                crate::internal::native::InternalCircuitIndex::NUM,
-            )
-            .1,
+            total_circuit_counts(self.num_application_steps).1,
         )
         .trace(native::circuits::hashes_1::Witness {
             unified,

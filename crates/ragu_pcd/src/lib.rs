@@ -314,10 +314,8 @@ impl<
         // a step's circuit shape is final the moment it registers.
         let capacity = Self::capacity();
 
-        let (total_circuits, log2_circuits) = internal::native::total_circuit_counts(
-            self.num_application_steps,
-            internal::native::InternalCircuitIndex::NUM,
-        );
+        let (total_circuits, log2_circuits) =
+            internal::native::total_circuit_counts(self.num_application_steps);
 
         // Build the native registry:
         // 1. Application circuits (registered just above)

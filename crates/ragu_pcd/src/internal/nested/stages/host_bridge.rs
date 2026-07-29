@@ -9,6 +9,21 @@
 //! [`claim_bridge`](super::claim_bridge) is a run of this stage. [`Stage`]
 //! takes its parent as a type parameter so a family can attach wherever it
 //! needs to without the stage being duplicated per family.
+//!
+//! ## Why a family of these can be a run
+//!
+//! A family whose length is a property of the application cannot be a chain of
+//! type aliases — but it does not have to be. It becomes a
+//! [`crate::internal::Run`]: the family's single entry in the typed hierarchy,
+//! with [`InducedStages`](ragu_circuits::staging::InducedStages) saying where
+//! the slot boundaries fall inside its span.
+//!
+//! The subdivision is exact rather than approximate, which is what lets this
+//! family be a run at all. Each slot is [`NUM`] points, so `2 * NUM` wires, so a
+//! whole number of gates with nothing wasted to padding; a run of `n` slots
+//! therefore spans precisely the gates that a chain of `n` aliases would have.
+//! `ragu_circuits`' own `induced_run_matches_typed_chain` test pins that
+//! equivalence.
 
 use core::marker::PhantomData;
 
@@ -88,19 +103,3 @@ impl<C: CurveAffine, R: Rank, P: ragu_circuits::staging::Stage<C::Base, R>>
         })
     }
 }
-
-/// A whole family of [`Stage`] slots chained after `P`.
-///
-/// A family whose length is a property of the application cannot be a chain of
-/// aliases — but it does not have to be: it is a [`crate::internal::Run`], the
-/// family's single entry in the typed hierarchy, with
-/// [`InducedStages`](ragu_circuits::staging::InducedStages) saying where the
-/// slot boundaries fall inside its span.
-///
-/// The subdivision is exact rather than approximate, which is what lets this
-/// family be a run at all. Each slot is [`NUM`] points, so `2 * NUM` wires, so a
-/// whole number of gates with nothing wasted to padding; a run of `n` slots
-/// therefore spans precisely the gates that a chain of `n` aliases would have.
-/// `ragu_circuits`' own `induced_run_matches_typed_chain` test pins that
-/// equivalence.
-pub type Run<C, R, P> = crate::internal::Run<C, R, P>;
