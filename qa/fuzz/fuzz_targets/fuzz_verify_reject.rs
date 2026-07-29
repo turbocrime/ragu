@@ -20,11 +20,21 @@ use std::sync::LazyLock;
 type C = Pasta;
 type R = ProductionRank;
 const HEADER_SIZE: usize = 4;
+/// This target drives `test_trivial_proof` and `verify` only: it witnesses no
+/// polynomials, raises no claims and derives no challenges, so every hook
+/// capacity is zero. `CHALLENGE_WIDTH` is the one exception — it is the absorb
+/// width a challenge slot would have, independent of how many slots exist.
+const POLYS: usize = 0;
+const CLAIMS: usize = 0;
+const CHALLENGES: usize = 0;
+const CHALLENGE_WIDTH: usize = 2;
 
 /// Wrapper to satisfy `Sync` for `Application` (which contains a
 /// `OnceCell` field — `seeded_trivial` — for memoizing the trivial-proof
 /// fixture, breaking auto-`Sync`).
-struct SyncApp(ragu_pcd::Application<'static, C, R, HEADER_SIZE>);
+struct SyncApp(
+    ragu_pcd::Application<'static, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>,
+);
 // SAFETY: this fuzz body invokes `Application` exclusively through
 // `app.test_trivial_proof()` (which only reads from the application,
 // initializing `seeded_trivial` on the first call and reading it
@@ -38,7 +48,7 @@ unsafe impl Sync for SyncApp {}
 static APP: LazyLock<SyncApp> = LazyLock::new(|| {
     let pasta = Pasta::baked();
     SyncApp(
-        ApplicationBuilder::<C, R, HEADER_SIZE>::new()
+        ApplicationBuilder::<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>::new()
             .finalize(pasta)
             .expect("failed to create application"),
     )
