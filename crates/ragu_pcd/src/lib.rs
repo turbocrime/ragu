@@ -452,11 +452,21 @@ impl<
     /// The nested bridge chain's value-level geometry at this application's
     /// capacity.
     ///
-    /// The nested chain is the one place a stage's position cannot come from
-    /// its type: it holds a *run* of per-slot bridge stages, and stable Rust
-    /// cannot build a [`Parent`](ragu_circuits::staging::Stage::Parent) chain
-    /// whose length is a const. The native chain has no run in it, so it needs
-    /// none of this — see [`internal::native::chain`].
+    /// Two separate things keep this value-level, and they are worth telling
+    /// apart:
+    ///
+    /// - The chain's three shape-carrying stages state no width of their own —
+    ///   their `values()` is
+    ///   [`shape_dependent_stage`](internal::shape_dependent_stage) — so their
+    ///   positions cannot come from their types. That is a consequence of
+    ///   keeping the slot counts off the nested stage types, not a language
+    ///   limit; putting them back would let this chain be typed the way
+    ///   [`internal::native::chain`] is, at the cost of the counts becoming
+    ///   viral through the seven stages below them.
+    /// - The chain ends in *runs* of per-slot bridge stages, and a run cuts one
+    ///   mask per slot from a single span. That one is a language limit: no
+    ///   type produces N masks for a runtime N, so the runs need span
+    ///   arithmetic regardless of where the counts live.
     pub(crate) fn nested_chain_layout(&self) -> ragu_circuits::staging::InducedStages {
         internal::nested::chain_layout::<C::HostCurve, R>(self.capacity)
     }
