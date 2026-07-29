@@ -130,20 +130,25 @@ fn test_rerandomize_consistency() {
         }
     }
 
+    let capacity = crate::framework_hooks::HookLayout {
+        challenge: crate::framework_hooks::ChallengeLayout { calls: 0, width: 2 },
+        poly_query: crate::framework_hooks::PolyQueryLayout {
+            polys: 0,
+            claims: 0,
+        },
+    };
     let circuit_single =
         super::adapter::Adapter::<Pasta, Rerandomize<Single>, R, HEADER_SIZE, 0, 0, 0, 2>::new(
             Rerandomize::new(),
             Some(Pasta::baked()),
-            2,
-        )
-        .unwrap();
+            capacity,
+        );
     let circuit_pair =
         super::adapter::Adapter::<Pasta, Rerandomize<Pair>, R, HEADER_SIZE, 0, 0, 0, 2>::new(
             Rerandomize::new(),
             Some(Pasta::baked()),
-            2,
-        )
-        .unwrap();
+            capacity,
+        );
 
     let mut builder: TestRegistryBuilder<'_, _, R> = TestRegistryBuilder::new();
     let single_h = builder

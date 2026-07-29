@@ -194,16 +194,6 @@ impl<
         }
     }
 
-    /// The widest input a [`derive_challenge`](step::StepCtx::derive_challenge)
-    /// call may pass, in curve points.
-    ///
-    /// The declared `CHALLENGE_WIDTH`, verbatim. Known before any step
-    /// registers, which is what lets the registration dry run witness the right
-    /// number of points.
-    fn challenge_width() -> usize {
-        CHALLENGE_WIDTH
-    }
-
     /// The application's slot capacity, straight from its declared parameters.
     ///
     /// Every application circuit exposes exactly these slots. Nothing is folded
@@ -247,17 +237,23 @@ impl<
         //
         // Hand-over is immediate: it freezes the circuit's shape, and the shape
         // is settled, because every term of the instance comes from a declared
-        // parameter rather than from a maximum over steps still to arrive.
-        // `with_capacity` rejects a step that needs more than was declared,
-        // naming both numbers, at the moment that step registers.
-        self.native_registry = self.native_registry.register_circuit(MultiStage::new(
-            Adapter::<C, S, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>::new(
-                step,
-                None,
-                Self::challenge_width(),
-            )?
-            .with_capacity(Self::capacity())?,
-        ))?;
+        // parameter rather than from a maximum over steps still to arrive. A
+        // step that asks for more slots than were declared is rejected by the
+        // hooks at the call that exceeds the capacity.
+        self.native_registry =
+            self.native_registry
+                .register_circuit(MultiStage::new(Adapter::<
+                    C,
+                    S,
+                    R,
+                    HEADER_SIZE,
+                    POLYS,
+                    CLAIMS,
+                    CHALLENGES,
+                    CHALLENGE_WIDTH,
+                >::new(
+                    step, None, Self::capacity()
+                )))?;
         self.num_application_steps += 1;
 
         Ok(self)
@@ -290,23 +286,21 @@ impl<
         params: &'params C::Params,
     ) -> Result<Application<'params, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>>
     {
-        // Registration is closed, so the shape set is settled: collect every
-        // step's discovered plan before hand-over freezes the circuits. The
-        // internal steps are constructed here too (their discovery dry run is
-        // structure-only), so their plans join the table in circuit-index
-        // order: internal steps first, then application steps.
+        // The internal steps are built at the same declared capacity as the
+        // application's own, so their circuits join the registry in
+        // circuit-index order: internal steps first, then application steps.
         let rerandomize =
             Adapter::<C, _, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>::new(
                 step::internal::rerandomize::Rerandomize::<()>::new(),
                 Some(params),
-                Self::challenge_width(),
-            )?;
+                Self::capacity(),
+            );
         let trivial =
             Adapter::<C, _, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>::new(
                 step::internal::trivial::Trivial::new(),
                 Some(params),
-                Self::challenge_width(),
-            )?;
+                Self::capacity(),
+            );
         // The application's slot capacity. Uniform across one application,
         // because the internal circuits read a child's instance as a
         // fixed-width record and any step's proof may be any fuse's child.
@@ -344,10 +338,10 @@ impl<
         // Then, register internal steps
         self.native_registry = self
             .native_registry
-            .register_internal_step(MultiStage::new(rerandomize.with_capacity(capacity)?))?;
+            .register_internal_step(MultiStage::new(rerandomize))?;
         self.native_registry = self
             .native_registry
-            .register_internal_step(MultiStage::new(trivial.with_capacity(capacity)?))?;
+            .register_internal_step(MultiStage::new(trivial))?;
 
         assert_eq!(
             self.native_registry.log2_circuits(),

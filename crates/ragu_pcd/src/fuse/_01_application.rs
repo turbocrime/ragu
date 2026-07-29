@@ -61,17 +61,20 @@ impl<
     )> {
         let (left_proof, left_data) = left.into_parts();
         let (right_proof, right_data) = right.into_parts();
-        // The same circuit registration measured, so the same capacity:
-        // synthesizing at the step's own shape would produce a narrower
-        // instance than the registry committed to.
-        let (trace, aux) = MultiStage::new(
-            Adapter::<C, S, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>::new(
-                step,
-                Some(self.params),
-                self.capacity().challenge.width,
-            )?
-            .with_capacity(self.capacity())?,
-        )
+        // The same capacity registration used, so the same instance width the
+        // registry committed to. It is the application's declared capacity, so
+        // building the adapter here costs nothing beyond wrapping the step —
+        // there is no dry run of the body to repeat per fuse.
+        let (trace, aux) = MultiStage::new(Adapter::<
+            C,
+            S,
+            R,
+            HEADER_SIZE,
+            POLYS,
+            CLAIMS,
+            CHALLENGES,
+            CHALLENGE_WIDTH,
+        >::new(step, Some(self.params), self.capacity()))
         .trace((
             Alphas {
                 bridge: builder.bridge_alpha(),

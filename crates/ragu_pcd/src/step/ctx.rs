@@ -291,13 +291,13 @@ where
     /// Closes out the framework's fixed-size slot layout, after the step body
     /// has run.
     ///
-    /// First the determinism guard
-    /// ([`FrameworkHooks::check_layout`](crate::framework_hooks::FrameworkHooks)),
-    /// then padding. Every application circuit exposes exactly the
-    /// application's settled capacity in claims, polynomials and challenge
-    /// records, whatever the body used, so the instance shape — which the
-    /// internal circuits read as a fixed-width record — never depends on
-    /// *which* step produced the proof.
+    /// Every application circuit exposes exactly the application's declared
+    /// capacity in claims, polynomials and challenge records, whatever the body
+    /// used, so the instance shape — which the internal circuits read as a
+    /// fixed-width record — never depends on *which* step produced the proof.
+    ///
+    /// There is no count to reconcile first. The capacity is declared, so each
+    /// hook already refused any call past it, at the call that exceeded it.
     ///
     /// Padding goes through the same doors a step body does:
     /// [`witness_polynomial`](Self::witness_polynomial) plus
@@ -315,8 +315,6 @@ where
     /// `R` is a method parameter rather than a type parameter so the rank stays
     /// out of this context, and out of every `Step::witness` signature with it.
     pub(crate) fn finish_slots<R: Rank>(&mut self) -> Result<()> {
-        self.hooks.check_layout()?;
-
         let allocator = &mut ragu_primitives::allocator::Standard::new();
         let capacity = self.hooks.capacity();
 

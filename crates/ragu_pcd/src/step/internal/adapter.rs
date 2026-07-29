@@ -9,12 +9,9 @@ use ragu_circuits::{
 };
 use ragu_core::{
     Result,
-    drivers::{
-        Driver, DriverValue,
-        emulator::{Emulator, Wireless},
-    },
+    drivers::{Driver, DriverValue},
     gadgets::{Bound, Kind},
-    maybe::{Empty, Maybe},
+    maybe::Maybe,
 };
 use ragu_primitives::{
     Element, GadgetExt,
@@ -24,10 +21,7 @@ use ragu_primitives::{
 use super::super::{Step, StepCtx};
 use crate::{
     Header,
-    framework_hooks::{
-        Alphas, ChallengeLayout, FrameworkAux, FrameworkHooks, HookLayout, PolyQueryLayout,
-        ProofValues,
-    },
+    framework_hooks::{Alphas, FrameworkAux, FrameworkHooks, HookLayout, ProofValues},
 };
 
 /// Length of an application circuit's public instance: the three headers, then
@@ -75,69 +69,6 @@ impl<
     }
 }
 
-/// Discovers the hook-call counts of `step` — how many
-/// [`derive_challenge`](StepCtx::derive_challenge) calls it makes and how many
-/// poly-query claims it raises — by dry-running its witness body once, with an
-/// [`Empty`] witness on a counting emulator and the hooks in discovery mode.
-///
-/// Only call counts: how many points a `derive_challenge` call passes is
-/// witness data (every slot's instance region is the same width regardless),
-/// and a claim's wires are a fixed shape.
-///
-/// This is sound because circuit structure must be witness-independent: the
-/// same body runs with `Empty` witnesses for wiring extraction and metrics,
-/// so the call sequence cannot differ between this dry run and real
-/// synthesis. (A body that violates that requirement is caught at synthesis
-/// time by the determinism guard in [`StepCtx::derive_challenge`].)
-pub(crate) fn discover_hook_layout<C: Cycle, S: Step<C>, const HEADER_SIZE: usize>(
-    step: &S,
-    challenge_points: usize,
-) -> Result<HookLayout> {
-    let mut dr: Emulator<Wireless<Empty, C::CircuitField>> = Emulator::counter();
-    // Discovery has no *count* to respect — it is what establishes the counts an
-    // application's capacity is then the maximum of — so those caps are set out
-    // of the way. A step whose counts exceed the settled capacity is rejected at
-    // hand-over, with both numbers in hand.
-    //
-    // The challenge input width is not one of them: it is declared by the
-    // application, known before any step registers, and a `derive_challenge`
-    // call witnesses exactly that many points. A sentinel here would be a
-    // `0..usize::MAX` loop, not a disabled cap.
-    let mut hooks = FrameworkHooks::<_, C>::new(HookLayout {
-        challenge: ChallengeLayout {
-            calls: usize::MAX,
-            width: challenge_points,
-        },
-        poly_query: PolyQueryLayout {
-            polys: usize::MAX,
-            claims: usize::MAX,
-        },
-    });
-    {
-        let mut ctx = StepCtx::<'_, '_, _, C>::new(&mut dr, &mut hooks);
-        step.witness::<_, HEADER_SIZE>(&mut ctx, Empty, Empty, Empty)?;
-    }
-
-    let outputs = hooks.into_outputs();
-
-    // No cap is applied here. The counts a step needs *are* its requirement;
-    // the application's capacity is the maximum over its registered steps,
-    // settled in `ApplicationBuilder::finalize` where the gate budget is known.
-    // Checking against a framework constant here would reject a step the
-    // application could afford, and would charge every other step for slots it
-    // does not use.
-    Ok(HookLayout {
-        challenge: ChallengeLayout {
-            calls: outputs.challenge_pairs.len(),
-            width: challenge_points,
-        },
-        poly_query: PolyQueryLayout {
-            polys: outputs.witnessed_polys.len(),
-            claims: outputs.poly_queries.len(),
-        },
-    })
-}
-
 /// Auxiliary data produced by [`Adapter::witness`]: the two input headers, the
 /// output data carried by the resulting PCD, the inner step's own aux, and the
 /// polynomial-query claims raised by the step (checked and recorded by fuse —
@@ -164,28 +95,23 @@ pub(crate) struct Adapter<
     const CHALLENGE_WIDTH: usize,
 > {
     step: S,
-    /// The hook-call counts discovered from the step's witness body at
-    /// construction time; see [`discover_hook_layout`]. Part of the circuit
-    /// structure, so synthesis replays them as a determinism guard — enforced
-    /// by [`StepCtx::finish_slots`], not here.
-    layout: HookLayout,
-    /// The application's settled slot capacities — what this circuit's
+    /// The application's declared slot capacities — what this circuit's
     /// instance exposes and what [`StepCtx::finish_slots`] pads to.
     ///
-    /// Not known at construction: it is the maximum over *every* registered
-    /// step's [`layout`](Self::layout), so it is settled only when
-    /// registration closes. [`with_capacity`](Self::with_capacity) supplies it
-    /// before hand-over.
+    /// Known before the first step registers, because the application declares
+    /// it rather than the framework folding it over the registered steps. That
+    /// is what lets a circuit be handed to the registry on the spot: hand-over
+    /// *measures* a circuit, and a shape folded from the steps would not be
+    /// settled until the last one arrived.
     capacity: HookLayout,
     /// The cycle's runtime parameters, absent during registration.
     ///
     /// `ApplicationBuilder::register` runs before
     /// [`finalize`](crate::ApplicationBuilder::finalize) supplies them, and it
-    /// only needs the circuit's *structure*: the layout dry run above is
-    /// structure-only, and the parameters are read solely to build a proof's
-    /// witness values. So registration passes `None`, and the one place that
-    /// reads them — [`witness`](MultiStageCircuit::witness) — does so inside a
-    /// `try_just` that a structure-only driver discards.
+    /// only needs the circuit's *structure*; the parameters are read solely to
+    /// build a proof's witness values. So registration passes `None`, and the
+    /// one place that reads them — [`witness`](MultiStageCircuit::witness) —
+    /// does so inside a `try_just` that a structure-only driver discards.
     params: Option<&'params C::Params>,
     _marker: PhantomData<(C, R)>,
 }
@@ -202,58 +128,26 @@ impl<
     const CHALLENGE_WIDTH: usize,
 > Adapter<'params, C, S, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
 {
-    /// Wraps `step` for registration/keygen, discovering its `derive_challenge`
-    /// call count and poly-query claim count with a dry run of the witness
-    /// body (see [`discover_hook_layout`]).
+    /// Wraps `step` for registration/keygen at the application's declared
+    /// `capacity`.
     ///
-    /// The only constructor. `params` is `None` at registration, which runs
-    /// before the cycle parameters exist and needs only the circuit's
-    /// structure; see the field's documentation.
-    pub fn new(
-        step: S,
-        params: Option<&'params C::Params>,
-        challenge_points: usize,
-    ) -> Result<Self> {
-        let layout = discover_hook_layout::<C, S, HEADER_SIZE>(&step, challenge_points)?;
-        Ok(Adapter {
+    /// The only constructor, and it takes the capacity directly: the
+    /// application declares its slot counts, so there is nothing to discover
+    /// from the step and no second phase to settle. A step that asks for more
+    /// slots than the capacity is rejected by the hooks at the call that
+    /// exceeds it, which names the offending call rather than reporting a
+    /// mismatched total afterwards.
+    ///
+    /// `params` is `None` at registration, which runs before the cycle
+    /// parameters exist and needs only the circuit's structure; see the
+    /// field's documentation.
+    pub fn new(step: S, params: Option<&'params C::Params>, capacity: HookLayout) -> Self {
+        Adapter {
             step,
-            layout,
-            // Provisional: a step is its own capacity until registration
-            // closes and `with_capacity` supplies the application's.
-            capacity: layout,
+            capacity,
             params,
             _marker: PhantomData,
-        })
-    }
-
-    /// Settles this circuit's slot capacities, once registration has closed and
-    /// the maximum over every step is known.
-    ///
-    /// Rejects a capacity the step does not fit in, which would otherwise
-    /// surface as an instance-width mismatch far from its cause.
-    pub(crate) fn with_capacity(mut self, capacity: HookLayout) -> Result<Self> {
-        let fits = self.layout.poly_query.polys <= capacity.poly_query.polys
-            && self.layout.poly_query.claims <= capacity.poly_query.claims
-            && self.layout.challenge.calls <= capacity.challenge.calls;
-        if !fits {
-            return Err(ragu_core::Error::Initialization(
-                alloc::format!(
-                    "step needs {:?} but the application settled on {:?}",
-                    self.layout,
-                    capacity,
-                )
-                .into(),
-            ));
         }
-        self.capacity = capacity;
-        Ok(self)
-    }
-
-    /// The number of [`derive_challenge`](StepCtx::derive_challenge) calls the
-    /// step body makes.
-    #[cfg(test)]
-    pub fn challenge_calls(&self) -> usize {
-        self.layout.challenge.calls
     }
 }
 
@@ -330,15 +224,15 @@ impl<
             Ok(ProofValues::new(params, alphas.bridge))
         })?;
 
-        let mut hooks =
-            FrameworkHooks::with_expected(self.layout, self.capacity, Maybe::clone(&proof_values));
+        let mut hooks = FrameworkHooks::new(self.capacity, Maybe::clone(&proof_values));
         let ((left, right, output), output_data, step_aux) = {
             let mut ctx = StepCtx::<'_, '_, _, C>::new(dr, &mut hooks);
             let body = self
                 .step
                 .witness::<_, HEADER_SIZE>(&mut ctx, witness, left, right)?;
-            // Check the body against the discovered layout and fill whatever
-            // slots it left over, through the same hooks it used.
+            // Fill whatever slots the body left over, through the same hooks it
+            // used. Each hook already rejected a call past the declared
+            // capacity, so there is no total to reconcile here.
             ctx.finish_slots::<R>()?;
             body
         };
@@ -405,15 +299,16 @@ mod tests {
     use ragu_arithmetic::ff::Field;
     use ragu_circuits::{Circuit, staging::MultiStage};
     use ragu_core::{
-        drivers::emulator::Emulator,
+        drivers::emulator::{Emulator, Wireless},
         gadgets::{Bound, Kind},
-        maybe::{Always, Maybe, MaybeKind},
+        maybe::{Always, Empty, Maybe, MaybeKind},
     };
     use ragu_pasta::{Fp, Pasta};
     use ragu_primitives::allocator::{Allocator, Standard};
 
     use super::*;
     use crate::{
+        framework_hooks::{ChallengeLayout, PolyQueryLayout},
         header::{Header, Suffix},
         step::{Encoded, Index, Step},
     };
@@ -545,6 +440,14 @@ mod tests {
         }
     }
 
+    /// The declared capacity matching a test's const parameters.
+    fn declared(polys: usize, claims: usize, calls: usize, width: usize) -> HookLayout {
+        HookLayout {
+            challenge: ChallengeLayout { calls, width },
+            poly_query: PolyQueryLayout { polys, claims },
+        }
+    }
+
     /// The instance is three headers plus the application's slots, and every
     /// term scales with the capacity it is drawn from.
     #[test]
@@ -580,9 +483,8 @@ mod tests {
         let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE, 0, 0, 0, 2>::new(
             TestStep,
             Some(Pasta::baked()),
-            2,
-        )
-        .expect("adapter construction should succeed");
+            declared(0, 0, 0, 2),
+        );
         let capacity = adapter.capacity;
         let witness = Always::maybe_just(|| (test_alphas(), Fp::from(10u64), Fp::from(20u64), ()));
 
@@ -603,9 +505,8 @@ mod tests {
         let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE, 0, 0, 0, 2>::new(
             TestStep,
             Some(Pasta::baked()),
-            2,
-        )
-        .expect("adapter construction should succeed");
+            declared(0, 0, 0, 2),
+        );
         let witness = Always::maybe_just(|| (test_alphas(), Fp::from(10u64), Fp::from(20u64), ()));
 
         let aux = MultiStage::new(adapter)
@@ -629,37 +530,15 @@ mod tests {
         assert_eq!(output_data, Fp::from(30u64));
     }
 
-    /// A step without `derive_challenge` calls discovers no calls.
+    /// A step body that derives more challenges than the application declared
+    /// is rejected by the hook, at the call that exceeds the capacity.
+    ///
+    /// There is no separate reconciliation pass to catch this: the capacity is
+    /// declared, so the very first over-budget call has everything it needs to
+    /// refuse — and refusing there names the offending call rather than a
+    /// mismatched total after the fact.
     #[test]
-    fn discovery_finds_no_calls_for_plain_step() {
-        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE, 0, 0, 0, 2>::new(
-            TestStep,
-            Some(Pasta::baked()),
-            2,
-        )
-        .expect("discovery should succeed");
-        assert_eq!(adapter.challenge_calls(), 0);
-    }
-
-    /// The dry run counts each `derive_challenge` call.
-    #[test]
-    fn discovery_finds_challenge_call() {
-        let adapter = Adapter::<Pasta, ChallengeStep, TestR, HEADER_SIZE, 0, 0, 1, 2>::new(
-            ChallengeStep,
-            Some(Pasta::baked()),
-            2,
-        )
-        .expect("discovery should succeed");
-        assert_eq!(adapter.challenge_calls(), 1);
-    }
-
-    /// A step body that derives more challenges than there are slots is
-    /// rejected at registration, when the dry run trips the cap.
-    /// Discovery itself never caps — it is what *establishes* the counts an
-    /// application's capacity is the maximum of. A step that does not fit the
-    /// settled capacity is rejected at hand-over, with both shapes named.
-    #[test]
-    fn hand_over_rejects_a_step_that_exceeds_the_capacity() {
+    fn a_step_that_exceeds_the_declared_capacity_is_rejected() {
         struct TooManyChallenges;
 
         impl Step<Pasta> for TooManyChallenges {
@@ -708,23 +587,20 @@ mod tests {
             }
         }
 
-        let adapter = Adapter::<Pasta, TooManyChallenges, TestR, HEADER_SIZE, 0, 0, 1, 2>::new(
+        // The step derives three challenges; the application declared two.
+        let adapter = Adapter::<Pasta, TooManyChallenges, TestR, HEADER_SIZE, 0, 0, 2, 2>::new(
             TooManyChallenges,
             Some(Pasta::baked()),
-            2,
-        )
-        .expect("discovery does not cap");
-        assert_eq!(adapter.challenge_calls(), 3);
+            declared(0, 0, 2, 2),
+        );
 
-        let error = adapter
-            .with_capacity(HookLayout {
-                challenge: ChallengeLayout { calls: 2, width: 2 },
-                poly_query: PolyQueryLayout::default(),
-            })
+        let mut dr: Emulator<Wireless<Empty, Fp>> = Emulator::counter();
+        let error = MultiStage::new(adapter)
+            .witness(&mut dr, Empty)
             .err()
-            .expect("a step that does not fit the capacity should be rejected");
+            .expect("a step that derives past the declared capacity should be rejected");
         assert!(
-            alloc::format!("{error}").contains("the application settled on"),
+            alloc::format!("{error}").contains("challenge slots"),
             "unexpected error: {error}"
         );
     }
@@ -742,9 +618,8 @@ mod tests {
         let adapter = Adapter::<Pasta, ChallengeStep, TestR, HEADER_SIZE, 0, 0, 1, 2>::new(
             ChallengeStep,
             Some(Pasta::baked()),
-            2,
-        )
-        .expect("discovery should succeed");
+            declared(0, 0, 1, 2),
+        );
 
         let capacity = adapter.capacity;
         let output = MultiStage::new(adapter)
