@@ -66,7 +66,7 @@ use ragu_primitives::{
     consistent::Consistent,
 };
 
-use super::Stage;
+use super::{Stage, StageExt};
 use crate::polynomials::Rank;
 
 /// Builder object for synthesizing a multi-stage circuit witness.
@@ -218,28 +218,50 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
     /// not compute the witness. Call [`StageGuard::unenforced`] or
     /// [`StageGuard::enforced`] on the returned guard to provide the witness
     /// and obtain the output gadget.
-    /// This is [`reserve_slot`](Self::reserve_slot) at the stage's declared
-    /// width, plus the typestate transition. The two agree by definition:
-    /// `reserve_slot` derives its gate count as `num_slots.div_ceil(2)` and
-    /// [`super::StageExt::num_gates`] *is* `values().div_ceil(2)`, so passing
-    /// `Next::values()` reproduces the typed geometry exactly — including the
-    /// `limit` in the [`GateBoundExceeded`](ragu_core::Error::GateBoundExceeded)
-    /// it raises.
     pub fn configure_stage<Next: Stage<D::F, R, Parent = Current> + 'dr>(
-        mut self,
+        self,
         stage: Next,
     ) -> Result<(
         StageGuard<'dr, D, R, Next>,
         StageBuilder<'a, 'dr, D, R, Next, Target>,
     )> {
-        let guard = self.reserve_slot(stage, Next::values())?;
+        // Invoke wireless emulator with dummy witness to get gadget structure.
+        // The emulator never actually reads the witness values.
+        let mut emulator = Emulator::counter();
+        let mut num_wires = stage.witness(&mut emulator, Empty)?.num_wires()?;
+
+        // Check bounds
+        if num_wires > Next::values() {
+            return Err(ragu_core::Error::GateBoundExceeded {
+                limit: Next::num_gates(),
+            });
+        }
+
+        // Collect stage wires
+        let allocator = &mut Standard::new();
+        let mut wires = Vec::with_capacity(num_wires);
+        for _ in 0..num_wires {
+            wires.push(allocator.alloc(self.driver, || Ok(Coeff::Zero))?);
+        }
+
+        // Padding
+        while (num_wires / 2) < Next::num_gates() {
+            allocator.alloc(self.driver, || Ok(Coeff::Zero))?;
+            num_wires += 1;
+        }
 
         Ok((
-            guard,
+            StageGuard {
+                stage,
+                stage_wires: wires,
+                _marker: PhantomData,
+            },
             StageBuilder {
                 driver: self.driver,
                 on_finish: self.on_finish,
-                gate: self.gate,
+                // This stage's gates, so a run configured after it sees where
+                // the trace actually is. The only addition to this body.
+                gate: self.gate + Next::num_gates(),
                 _marker: PhantomData,
             },
         ))

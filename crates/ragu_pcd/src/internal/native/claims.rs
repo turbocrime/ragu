@@ -24,32 +24,26 @@ use ragu_primitives::Element;
 use super::{InternalCircuitIndex, RxComponent, RxIndex};
 use crate::internal::claims::{Builder, Source, sum_polynomials};
 
-/// The circuits using unified $k(y)$ in [`build`] — those whose output kind is
-/// [`unified::InternalOutputKind`].
+/// Number of circuits using unified $k(y)$ in [`build`].
 ///
-/// Spelled as the list rather than as a count so that
-/// [`NUM_UNIFIED_CIRCUITS`] cannot disagree with it, and so a name that stops
-/// being a variant is a compile error rather than prose that has gone stale.
+/// These circuits use [`unified::InternalOutputKind`]:
+/// [`hashes_2`], [`inner_collapse`], [`outer_collapse`], [`compute_v`],
+/// [`challenge_binding`].
 ///
-/// Note: [`hashes_1`] is *not* here. It is a sixth circuit raising an
-/// `internal_circuit_claim`, but it uses `unified_bridge_ky` instead, because
-/// its public inputs include child proof headers (see [`hashes_1::Output`]).
-/// The arm count in `build` is therefore one more than this list's length.
+/// Note: [`hashes_1`] separately uses `unified_bridge_ky` because its public
+/// inputs include child proof headers (see [`hashes_1::Output`]). It is a sixth
+/// circuit raising an `internal_circuit_claim`, so the arm count in `build` is
+/// one more than this.
 ///
 /// [`hashes_1`]: crate::internal::native::circuits::hashes_1
 /// [`hashes_1::Output`]: crate::internal::native::circuits::hashes_1::Output
+/// [`hashes_2`]: crate::internal::native::circuits::hashes_2
+/// [`inner_collapse`]: crate::internal::native::circuits::inner_collapse
+/// [`outer_collapse`]: crate::internal::native::circuits::outer_collapse
+/// [`compute_v`]: crate::internal::native::circuits::compute_v
+/// [`challenge_binding`]: crate::internal::native::circuits::challenge_binding
 /// [`unified::InternalOutputKind`]: crate::internal::native::unified::InternalOutputKind
-const UNIFIED_CIRCUITS: [InternalCircuitIndex; 5] = [
-    InternalCircuitIndex::Hashes2Circuit,
-    InternalCircuitIndex::InnerCollapseCircuit,
-    InternalCircuitIndex::OuterCollapseCircuit,
-    InternalCircuitIndex::ComputeVCircuit,
-    InternalCircuitIndex::ChallengeBindingCircuit,
-];
-
-/// How many times [`build`] repeats `unified_ky`: one per
-/// [`UNIFIED_CIRCUITS`] entry.
-const NUM_UNIFIED_CIRCUITS: usize = UNIFIED_CIRCUITS.len();
+const NUM_UNIFIED_CIRCUITS: usize = 5;
 
 /// Trait that processes claim values into accumulated outputs.
 ///
