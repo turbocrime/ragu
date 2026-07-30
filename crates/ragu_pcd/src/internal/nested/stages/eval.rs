@@ -6,11 +6,15 @@ use ragu_arithmetic::CurveAffine;
 use ragu_core::{Result, drivers::Driver};
 use ragu_primitives::Point;
 
-/// This stage's wire width for a step of shape `own` (the *current* step's
-/// slots, not a child's); the value-level source of the typed
+/// This stage's wire width at the application's declared `capacity`; the
+/// value-level source of the typed
 /// [`values()`](ragu_circuits::staging::Stage::values).
-pub const fn num_values(own: crate::framework_hooks::HookLayout) -> usize {
-    2 * (1 + own.poly_query.polys)
+///
+/// The slots this stage carries are the *current* step's, not a child's — but
+/// the capacity is the same either way, being declared once per application, so
+/// this takes the same value every other stage in the chain does.
+pub const fn num_values(capacity: crate::framework_hooks::HookLayout) -> usize {
+    2 * (1 + capacity.poly_query.polys)
 }
 
 /// Witness data for this bridge stage.
@@ -72,10 +76,10 @@ impl<C: CurveAffine> Witness<C> {
     }
 }
 
-/// This stage's slot count for a step of shape `own`: `native_eval`, then one
-/// slot per poly-query claim.
-pub const fn num_slots(own: crate::framework_hooks::HookLayout) -> usize {
-    1 + own.poly_query.polys
+/// This stage's slot count at the application's declared `capacity`:
+/// `native_eval`, then one slot per poly-query claim.
+pub const fn num_slots(capacity: crate::framework_hooks::HookLayout) -> usize {
+    1 + capacity.poly_query.polys
 }
 
 /// The witness body for one slot of the run: a single host-curve point.

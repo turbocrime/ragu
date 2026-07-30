@@ -125,13 +125,11 @@ fn test_index_map() -> Result<()> {
 
     // Internal steps come after internal circuits
     assert_eq!(
-        Index::internal(InternalStepIndex::Rerandomize)
-            .circuit_index(num_application_steps)?,
+        Index::internal(InternalStepIndex::Rerandomize).circuit_index(num_application_steps)?,
         CircuitIndex::new(num_internal)
     );
     assert_eq!(
-        Index::internal(InternalStepIndex::Trivial)
-            .circuit_index(num_application_steps)?,
+        Index::internal(InternalStepIndex::Trivial).circuit_index(num_application_steps)?,
         CircuitIndex::new(num_internal + 1)
     );
 
@@ -145,11 +143,7 @@ fn test_index_map() -> Result<()> {
         CircuitIndex::new(app_offset + 1)
     );
     Index::new(999).assert_index(999)?;
-    assert!(
-        Index::new(10)
-            .circuit_index(num_application_steps)
-            .is_err()
-    );
+    assert!(Index::new(10).circuit_index(num_application_steps).is_err());
 
     Ok(())
 }

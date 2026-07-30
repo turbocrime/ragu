@@ -73,7 +73,7 @@ use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 
 use header::Header;
 pub use poly_commitment::{PolyCommitment, PolyHandle};
-pub use proof::{ClaimOpening, Pcd, Proof};
+pub use proof::{ChallengeOpening, ClaimOpening, Pcd, Proof};
 use ragu_arithmetic::{CryptoRngCore, Cycle};
 use ragu_circuits::{
     polynomials::Rank,
@@ -205,18 +205,8 @@ impl<
     /// arrives — which is what lets [`register`](Self::register) hand a circuit
     /// to the registry immediately instead of holding it until
     /// [`finalize`](Self::finalize).
-    fn capacity() -> framework_hooks::HookLayout {
-        framework_hooks::HookLayout {
-            challenge: framework_hooks::ChallengeLayout {
-                calls: CHALLENGES,
-                width: CHALLENGE_WIDTH,
-            },
-            poly_query: framework_hooks::PolyQueryLayout {
-                polys: POLYS,
-                claims: CLAIMS,
-            },
-        }
-    }
+    const CAPACITY: framework_hooks::HookLayout =
+        framework_hooks::HookLayout::declared(POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH);
 
     /// Register a new application-defined [`Step`] in this context. The
     /// provided [`Step`]'s [`INDEX`](Step::INDEX) must be the next sequential
@@ -254,9 +244,7 @@ impl<
                     CLAIMS,
                     CHALLENGES,
                     CHALLENGE_WIDTH,
-                >::new(
-                    step, None, Self::capacity()
-                )))?;
+                >::new(step, None)))?;
         self.num_application_steps += 1;
 
         Ok(self)
@@ -296,23 +284,12 @@ impl<
             Adapter::<C, _, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>::new(
                 step::internal::rerandomize::Rerandomize::<()>::new(),
                 Some(params),
-                Self::capacity(),
             );
         let trivial =
             Adapter::<C, _, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>::new(
                 step::internal::trivial::Trivial::new(),
                 Some(params),
-                Self::capacity(),
             );
-        // The application's slot capacity. Uniform across one application,
-        // because the internal circuits read a child's instance as a
-        // fixed-width record and any step's proof may be any fuse's child.
-        //
-        // The slot counts are declared, never discovered: they come from this
-        // type's const parameters, so the cost of a heavy step falls on the
-        // application that declares the slots rather than on the framework, and
-        // a step's circuit shape is final the moment it registers.
-        let capacity = Self::capacity();
 
         let (total_circuits, log2_circuits) =
             internal::native::total_circuit_counts(self.num_application_steps);
@@ -356,15 +333,18 @@ impl<
         );
 
         // Register nested internal circuits (no application steps, no headers).
+        //
+        // Every circuit above is built at `CAPACITY`, which is uniform across one
+        // application because the internal circuits read a child's instance as a
+        // fixed-width record and any step's proof may be any fuse's child.
         self.nested_registry =
-            internal::nested::register_all::<C, R>(self.nested_registry, capacity)?;
+            internal::nested::register_all::<C, R>(self.nested_registry, Self::CAPACITY)?;
 
         Ok(Application {
             native_registry: self.native_registry.finalize()?,
             nested_registry: self.nested_registry.finalize()?,
             params,
             num_application_steps: self.num_application_steps,
-            capacity,
             seeded_trivial: OnceCell::new(),
             #[cfg(feature = "unstable-fuzzing")]
             skip_claim_precheck: self.skip_claim_precheck,
@@ -418,13 +398,6 @@ pub struct Application<
     nested_registry: Registry<'params, C::ScalarField, R>,
     params: &'params C::Params,
     num_application_steps: usize,
-    /// The application's slot capacity, read off this type's const parameters
-    /// by [`Self::capacity`].
-    ///
-    /// Every application circuit exposes exactly these slots, so this is the
-    /// shape the internal circuits are built for, the shape a proof's lists
-    /// have, and the shape padding fills to.
-    capacity: framework_hooks::HookLayout,
     /// Cached seeded trivial proof for rerandomization.
     seeded_trivial: OnceCell<Proof<C, R>>,
     /// Test-only: skip the prover-side poly-query pre-check. See
@@ -446,8 +419,12 @@ impl<
 {
     /// The application's settled slot capacity — the shape every application
     /// circuit's instance has, and every proof's slot lists.
-    pub(crate) fn capacity(&self) -> framework_hooks::HookLayout {
-        self.capacity
+    ///
+    /// Read off this type's own const parameters rather than stored, so it is the
+    /// same value every circuit was registered at and there is no second
+    /// representation to keep in step.
+    pub(crate) const fn capacity(&self) -> framework_hooks::HookLayout {
+        framework_hooks::HookLayout::declared(POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH)
     }
 
     /// The nested bridge chain's value-level geometry at this application's
@@ -469,7 +446,7 @@ impl<
     ///   type produces N masks for a runtime N, so the runs need span
     ///   arithmetic regardless of where the counts live.
     pub(crate) fn nested_chain_layout(&self) -> ragu_circuits::staging::InducedStages {
-        internal::nested::chain_layout::<C::HostCurve, R>(self.capacity)
+        internal::nested::chain_layout::<C::HostCurve, R>(self.capacity())
     }
 
     /// Seed a new computation by running a step with trivial inputs.

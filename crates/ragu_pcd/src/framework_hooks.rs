@@ -198,9 +198,13 @@ pub struct QueryWires<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
 ///
 /// Holds the polynomial-commitment opening-claim sink and the record of
 /// [`derive_challenge`](crate::step::StepCtx::derive_challenge) calls. The framework's adapter
-/// constructs this, passes it to the step, then surfaces
-/// [`into_outputs`](Self::into_outputs) through its `Aux` for later fuse-time
-/// processing.
+/// constructs this, passes it to the step, then drains it into
+/// [`FrameworkHookOutputs`] and surfaces that through its `Aux` for later
+/// fuse-time processing.
+///
+/// Constructing and draining one is the adapter's business, so both are
+/// crate-internal; a step reaches the hooks through
+/// [`StepCtx`](crate::step::StepCtx).
 pub struct FrameworkHooks<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     /// One entry per [`enforce_poly_query`](crate::step::StepCtx::enforce_poly_query)
     /// call, in call order.
@@ -265,62 +269,6 @@ fn collect_values<'dr, D: Driver<'dr>, T: Send>(
     D::try_just(move || Ok(values.into_iter().map(Maybe::take).collect()))
 }
 
-impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHookOutputs<'dr, D, C> {
-    /// Reads each hook's wires back out as plain values, for the fuse.
-    pub(crate) fn into_values(self) -> Result<DriverValue<D, FrameworkAux<C>>> {
-        let mut polys = Vec::with_capacity(self.witnessed_polys.len());
-        for PolyWires {
-            bridge_com,
-            coefficients,
-        } in self.witnessed_polys
-        {
-            polys.push(D::try_just(|| {
-                Ok(WitnessedPoly {
-                    bridge_com: bridge_com.value().take(),
-                    coefficients: coefficients.take(),
-                })
-            })?);
-        }
-        let polys = collect_values::<D, _>(polys)?;
-
-        let mut claims = Vec::with_capacity(self.poly_queries.len());
-        for QueryWires { bridge_com, x, y } in self.poly_queries {
-            claims.push(D::try_just(|| {
-                Ok(PolyQueryClaim {
-                    bridge_com: bridge_com.value().take(),
-                    x: *x.value().take(),
-                    y: *y.value().take(),
-                })
-            })?);
-        }
-        let claims = collect_values::<D, _>(claims)?;
-
-        let mut challenges = Vec::with_capacity(self.challenge_pairs.len());
-        for pair in self.challenge_pairs {
-            challenges.push(D::try_just(|| {
-                let mut points = Vec::with_capacity(pair.points.len());
-                for point in &pair.points {
-                    points.push(point.value().take());
-                }
-                Ok(crate::proof::ChallengeOpening {
-                    points,
-                    challenge: *pair.challenge.value().take(),
-                })
-            })?);
-        }
-        let challenges = collect_values::<D, _>(challenges)?;
-
-        // `StepCtx::finish_slots` padded each to the application's capacity.
-        D::try_just(move || {
-            Ok(FrameworkAux {
-                polys: polys.take(),
-                claims: claims.take(),
-                challenges: challenges.take(),
-            })
-        })
-    }
-}
-
 /// The slot capacities an application declares, as the value that travels
 /// downstream of the [`ApplicationBuilder`](crate::ApplicationBuilder) consts.
 ///
@@ -336,6 +284,23 @@ pub struct HookLayout {
     /// What [`enforce_poly_query`](crate::step::StepCtx::enforce_poly_query)
     /// requires.
     pub poly_query: PolyQueryLayout,
+}
+
+impl HookLayout {
+    /// The capacity an application's declared parameters state.
+    ///
+    /// The one place the four consts on
+    /// [`ApplicationBuilder`](crate::ApplicationBuilder) turn into the value
+    /// every circuit is built from, so nothing downstream can hold a capacity
+    /// that disagrees with the type it came from. `const` so its callers can be
+    /// associated constants: a capacity that is read off a type's own parameters
+    /// on demand is one representation, where a stored copy of it would be two.
+    pub const fn declared(polys: usize, claims: usize, calls: usize, width: usize) -> Self {
+        Self {
+            challenge: ChallengeLayout { calls, width },
+            poly_query: PolyQueryLayout { polys, claims },
+        }
+    }
 }
 
 /// What the challenge-derivation hook requires of a step's circuit.
@@ -430,9 +395,9 @@ impl<C: Cycle> Clone for ProofValues<'_, C> {
 }
 impl<C: Cycle> Copy for ProofValues<'_, C> {}
 
-/// Aggregate of every hook's accumulated output, returned by
-/// [`FrameworkHooks::into_outputs`]. Adding a new hook means adding a field
-/// here, which forces every drain site to acknowledge it.
+/// Aggregate of every hook's accumulated output, drained from a
+/// [`FrameworkHooks`] once the step body has run. Adding a new hook means adding
+/// a field here, which forces every drain site to acknowledge it.
 pub struct FrameworkHookOutputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     /// Polynomials witnessed via
     /// [`StepCtx::witness_polynomial`](crate::step::StepCtx::witness_polynomial),
@@ -451,6 +416,62 @@ pub struct FrameworkHookOutputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::
     pub challenge_pairs: Vec<ChallengeWires<'dr, D, C::NestedCurve>>,
 }
 
+impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHookOutputs<'dr, D, C> {
+    /// Reads each hook's wires back out as plain values, for the fuse.
+    pub(crate) fn into_values(self) -> Result<DriverValue<D, FrameworkAux<C>>> {
+        let mut polys = Vec::with_capacity(self.witnessed_polys.len());
+        for PolyWires {
+            bridge_com,
+            coefficients,
+        } in self.witnessed_polys
+        {
+            polys.push(D::try_just(|| {
+                Ok(WitnessedPoly {
+                    bridge_com: bridge_com.value().take(),
+                    coefficients: coefficients.take(),
+                })
+            })?);
+        }
+        let polys = collect_values::<D, _>(polys)?;
+
+        let mut claims = Vec::with_capacity(self.poly_queries.len());
+        for QueryWires { bridge_com, x, y } in self.poly_queries {
+            claims.push(D::try_just(|| {
+                Ok(PolyQueryClaim {
+                    bridge_com: bridge_com.value().take(),
+                    x: *x.value().take(),
+                    y: *y.value().take(),
+                })
+            })?);
+        }
+        let claims = collect_values::<D, _>(claims)?;
+
+        let mut challenges = Vec::with_capacity(self.challenge_pairs.len());
+        for pair in self.challenge_pairs {
+            challenges.push(D::try_just(|| {
+                let mut points = Vec::with_capacity(pair.points.len());
+                for point in &pair.points {
+                    points.push(point.value().take());
+                }
+                Ok(crate::proof::ChallengeOpening {
+                    points,
+                    challenge: *pair.challenge.value().take(),
+                })
+            })?);
+        }
+        let challenges = collect_values::<D, _>(challenges)?;
+
+        // `StepCtx::finish_slots` padded each to the application's capacity.
+        D::try_just(move || {
+            Ok(FrameworkAux {
+                polys: polys.take(),
+                claims: claims.take(),
+                challenges: challenges.take(),
+            })
+        })
+    }
+}
+
 impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, C> {
     /// Creates a hook container at the application's declared `capacity`, with
     /// the proof-level values the hooks commit to.
@@ -459,7 +480,10 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     /// declared, so nothing has to be learned from the step body first — each
     /// hook simply refuses a call past the capacity, at the call that exceeds
     /// it.
-    pub fn new(capacity: HookLayout, proof_values: DriverValue<D, ProofValues<'dr, C>>) -> Self {
+    pub(crate) fn new(
+        capacity: HookLayout,
+        proof_values: DriverValue<D, ProofValues<'dr, C>>,
+    ) -> Self {
         Self {
             poly_queries: Vec::new(),
             witnessed_polys: Vec::new(),
@@ -624,9 +648,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
             .witnessed_polys
             .first()
             .ok_or_else(|| {
-                Error::InvalidWitness(
-                    "a padding claim requires a polynomial slot to name".into(),
-                )
+                Error::InvalidWitness("a padding claim requires a polynomial slot to name".into())
             })?
             .bridge_com
             .clone();
@@ -675,7 +697,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     }
 
     /// Consumes the container and returns every hook's accumulated output.
-    pub fn into_outputs(self) -> FrameworkHookOutputs<'dr, D, C> {
+    pub(crate) fn into_outputs(self) -> FrameworkHookOutputs<'dr, D, C> {
         FrameworkHookOutputs {
             witnessed_polys: self.witnessed_polys,
             poly_queries: self.poly_queries,

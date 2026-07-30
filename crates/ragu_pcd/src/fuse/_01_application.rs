@@ -62,9 +62,10 @@ impl<
         let (left_proof, left_data) = left.into_parts();
         let (right_proof, right_data) = right.into_parts();
         // The same capacity registration used, so the same instance width the
-        // registry committed to. It is the application's declared capacity, so
-        // building the adapter here costs nothing beyond wrapping the step —
-        // there is no dry run of the body to repeat per fuse.
+        // registry committed to — it comes off the same const parameters, so
+        // there is nothing to pass and nothing that could disagree. Building the
+        // adapter here costs nothing beyond wrapping the step: there is no dry
+        // run of the body to repeat per fuse.
         let (trace, aux) = MultiStage::new(Adapter::<
             C,
             S,
@@ -74,13 +75,8 @@ impl<
             CLAIMS,
             CHALLENGES,
             CHALLENGE_WIDTH,
-        >::new(step, Some(self.params), self.capacity()))
-        .trace((
-            builder.bridge_alpha(),
-            left_data,
-            right_data,
-            witness,
-        ))?
+        >::new(step, Some(self.params)))
+        .trace((builder.bridge_alpha(), left_data, right_data, witness))?
         .into_parts();
         let rx = self.native_registry.assemble(
             &trace,

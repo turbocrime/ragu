@@ -48,7 +48,10 @@ pub fn instance_len(header_size: usize, capacity: HookLayout) -> usize {
 /// circuit's instance can be a `FixedVec`.
 ///
 /// It is a computed length, not one of the declared consts, so it cannot ride
-/// as a const-generic argument on stable — hence a type that computes it.
+/// as a const-generic argument on stable — hence a type that computes it. The
+/// arithmetic is not restated here: this calls [`instance_len`] on the capacity
+/// its own const parameters declare, so the `FixedVec`'s length and the number
+/// of elements the adapter writes are one statement.
 pub struct InstanceLen<
     const HEADER_SIZE: usize,
     const POLYS: usize,
@@ -67,7 +70,10 @@ impl<
     for InstanceLen<HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
 {
     fn len() -> usize {
-        HEADER_SIZE * 3 + POLYS * 2 + CLAIMS * 4 + CHALLENGES * (CHALLENGE_WIDTH * 2 + 1)
+        instance_len(
+            HEADER_SIZE,
+            HookLayout::declared(POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH),
+        )
     }
 }
 
@@ -97,15 +103,6 @@ pub(crate) struct Adapter<
     const CHALLENGE_WIDTH: usize,
 > {
     step: S,
-    /// The application's declared slot capacities — what this circuit's
-    /// instance exposes and what [`StepCtx::finish_slots`] pads to.
-    ///
-    /// Known before the first step registers, because the application declares
-    /// it rather than the framework folding it over the registered steps. That
-    /// is what lets a circuit be handed to the registry on the spot: hand-over
-    /// *measures* a circuit, and a shape folded from the steps would not be
-    /// settled until the last one arrived.
-    capacity: HookLayout,
     /// The cycle's runtime parameters, absent during registration.
     ///
     /// `ApplicationBuilder::register` runs before
@@ -130,23 +127,34 @@ impl<
     const CHALLENGE_WIDTH: usize,
 > Adapter<'params, C, S, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
 {
-    /// Wraps `step` for registration/keygen at the application's declared
-    /// `capacity`.
+    /// The application's declared slot capacities — what this circuit's
+    /// instance exposes and what [`StepCtx::finish_slots`] pads to.
     ///
-    /// The only constructor, and it takes the capacity directly: the
-    /// application declares its slot counts, so there is nothing to discover
-    /// from the step and no second phase to settle. A step that asks for more
-    /// slots than the capacity is rejected by the hooks at the call that
+    /// Read off this type's own const parameters, so it cannot disagree with the
+    /// shape the type states. Known before the first step registers, because the
+    /// application declares it rather than the framework folding it over the
+    /// registered steps: that is what lets a circuit be handed to the registry on
+    /// the spot, since hand-over *measures* a circuit and a shape folded from the
+    /// steps would not be settled until the last one arrived.
+    pub(crate) const CAPACITY: HookLayout =
+        HookLayout::declared(POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH);
+
+    /// Wraps `step` for registration/keygen at [`CAPACITY`](Self::CAPACITY).
+    ///
+    /// The only constructor, and it takes no capacity: the application declares
+    /// its slot counts as const parameters, so there is nothing to discover from
+    /// the step, no second phase to settle, and no way for a caller to hand in a
+    /// capacity other than the one this type is instantiated at. A step that asks
+    /// for more slots than the capacity is rejected by the hooks at the call that
     /// exceeds it, which names the offending call rather than reporting a
     /// mismatched total afterwards.
     ///
     /// `params` is `None` at registration, which runs before the cycle
     /// parameters exist and needs only the circuit's structure; see the
     /// field's documentation.
-    pub fn new(step: S, params: Option<&'params C::Params>, capacity: HookLayout) -> Self {
+    pub fn new(step: S, params: Option<&'params C::Params>) -> Self {
         Adapter {
             step,
-            capacity,
             params,
             _marker: PhantomData,
         }
@@ -229,7 +237,7 @@ impl<
             Ok(ProofValues::new(params, bridge_alpha.take()))
         })?;
 
-        let mut hooks = FrameworkHooks::new(self.capacity, Maybe::clone(&proof_values));
+        let mut hooks = FrameworkHooks::new(Self::CAPACITY, Maybe::clone(&proof_values));
         let ((left, right, output), output_data, step_aux) = {
             let mut ctx = StepCtx::<'_, '_, _, C>::new(dr, &mut hooks);
             let body = self
@@ -243,7 +251,7 @@ impl<
         };
         let outputs = hooks.into_outputs();
 
-        let mut elements = Vec::with_capacity(instance_len(HEADER_SIZE, self.capacity));
+        let mut elements = Vec::with_capacity(instance_len(HEADER_SIZE, Self::CAPACITY));
         left.write(dr, &mut elements)?;
         right.write(dr, &mut elements)?;
         output.write(dr, &mut elements)?;
@@ -449,14 +457,6 @@ mod tests {
         }
     }
 
-    /// The declared capacity matching a test's const parameters.
-    fn declared(polys: usize, claims: usize, calls: usize, width: usize) -> HookLayout {
-        HookLayout {
-            challenge: ChallengeLayout { calls, width },
-            poly_query: PolyQueryLayout { polys, claims },
-        }
-    }
-
     /// The instance is three headers plus the application's slots, and every
     /// term scales with the capacity it is drawn from.
     #[test]
@@ -491,13 +491,10 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE, 0, 0, 0, 2>::new(
-            TestStep,
-            Some(Pasta::baked()),
-            declared(0, 0, 0, 2),
-        );
-        let capacity = adapter.capacity;
-        let witness = Always::maybe_just(|| (test_bridge_alpha(), Fp::from(10u64), Fp::from(20u64), ()));
+        type Subject = Adapter<'static, Pasta, TestStep, TestR, HEADER_SIZE, 0, 0, 0, 2>;
+        let adapter = Subject::new(TestStep, Some(Pasta::baked()));
+        let witness =
+            Always::maybe_just(|| (test_bridge_alpha(), Fp::from(10u64), Fp::from(20u64), ()));
 
         let output = MultiStage::new(adapter)
             .witness(dr, witness)
@@ -505,7 +502,7 @@ mod tests {
             .into_output();
 
         // Output should have 3 * HEADER_SIZE elements (left + right + output headers)
-        assert_eq!(output.len(), instance_len(HEADER_SIZE, capacity));
+        assert_eq!(output.len(), instance_len(HEADER_SIZE, Subject::CAPACITY));
     }
 
     #[test]
@@ -516,9 +513,9 @@ mod tests {
         let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE, 0, 0, 0, 2>::new(
             TestStep,
             Some(Pasta::baked()),
-            declared(0, 0, 0, 2),
         );
-        let witness = Always::maybe_just(|| (test_bridge_alpha(), Fp::from(10u64), Fp::from(20u64), ()));
+        let witness =
+            Always::maybe_just(|| (test_bridge_alpha(), Fp::from(10u64), Fp::from(20u64), ()));
 
         let aux = MultiStage::new(adapter)
             .witness(dr, witness)
@@ -602,7 +599,6 @@ mod tests {
         let adapter = Adapter::<Pasta, TooManyChallenges, TestR, HEADER_SIZE, 0, 0, 2, 2>::new(
             TooManyChallenges,
             Some(Pasta::baked()),
-            declared(0, 0, 2, 2),
         );
 
         let mut dr: Emulator<Wireless<Empty, Fp>> = Emulator::counter();
@@ -626,18 +622,14 @@ mod tests {
         let mut dr: Emulator<Wireless<Empty, Fp>> = Emulator::counter();
         let dr = &mut dr;
 
-        let adapter = Adapter::<Pasta, ChallengeStep, TestR, HEADER_SIZE, 0, 0, 1, 2>::new(
-            ChallengeStep,
-            Some(Pasta::baked()),
-            declared(0, 0, 1, 2),
-        );
+        type Subject = Adapter<'static, Pasta, ChallengeStep, TestR, HEADER_SIZE, 0, 0, 1, 2>;
+        let adapter = Subject::new(ChallengeStep, Some(Pasta::baked()));
 
-        let capacity = adapter.capacity;
         let output = MultiStage::new(adapter)
             .witness(dr, Empty)
             .expect("structure-only synthesis should succeed")
             .into_output();
 
-        assert_eq!(output.len(), instance_len(HEADER_SIZE, capacity));
+        assert_eq!(output.len(), instance_len(HEADER_SIZE, Subject::CAPACITY));
     }
 }

@@ -152,7 +152,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 /// polynomial *silently* — the circuit still opens. A commitment is the thing
 /// itself.
 ///
-/// # Why `bridge_com` rather than `bridge_com`
+/// # Why `bridge_com` rather than `com`
 ///
 /// It is not the commitment *to the polynomial*. It commits to this claim's
 /// bridge stage, whose wires are the coordinates of the polynomial's host
@@ -436,7 +436,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     /// witnessed, in slot order — always
     /// the application's poly capacity, with unused slots
     /// holding the canonical padding polynomial. A claim names one of these by
-    /// index; the commitment appears here once, not once per claim.
+    /// carrying it, not by index; the commitment appears here once, not once per
+    /// claim.
     pub fn application_polys(&self) -> &[C::NestedCurve] {
         &self.application_polys
     }
@@ -637,13 +638,12 @@ impl<
         // `Default` is the typed placeholder: a stage's width and position
         // follow the application's capacity.
         let chain = self.nested_chain_layout();
-        let endoscalar_rx =
-            chain.rx_configured(
-                nested::ChainStage::Endoscalar.index(),
-                endoscalar_alpha,
-                &EndoscalarStage,
-                beta_endo,
-            )?;
+        let endoscalar_rx = chain.rx_configured(
+            nested::ChainStage::Endoscalar.index(),
+            endoscalar_alpha,
+            &EndoscalarStage,
+            beta_endo,
+        )?;
         // The points stage is an induced run, so its wires come from the slot
         // list rather than from a stage body — `rx` over the flat values is
         // what `rx_configured` would have computed from the old fixed-vector
@@ -714,24 +714,22 @@ impl<
         // slot holds the canonical padding claim (mirroring the adapter).
         let (padding_host, padding_x, padding_y) =
             crate::internal::challenge::padding_claim::<C>(self.params);
-        let padding_bridge_coms: alloc::vec::Vec<C::NestedCurve> = (0..self
-            .capacity()
-            .poly_query
-            .polys)
-            .map(|slot| {
-                crate::internal::challenge::claim_bridge_commitment::<C, R>(
-                    self.params,
-                    slot,
-                    crate::internal::challenge::claim_bridge_alpha::<C>(
-                        builder.bridge_alpha(),
+        let padding_bridge_coms: alloc::vec::Vec<C::NestedCurve> =
+            (0..self.capacity().poly_query.polys)
+                .map(|slot| {
+                    crate::internal::challenge::claim_bridge_commitment::<C, R>(
+                        self.params,
                         slot,
-                    ),
-                    padding_host,
-                    self.capacity(),
-                )
-                .expect("trivial padding bridge commitment")
-            })
-            .collect();
+                        crate::internal::challenge::claim_bridge_alpha::<C>(
+                            builder.bridge_alpha(),
+                            slot,
+                        ),
+                        padding_host,
+                        self.capacity(),
+                    )
+                    .expect("trivial padding bridge commitment")
+                })
+                .collect();
         // Every query opens polynomial slot 0, matching the adapter's padding —
         // so it carries slot 0's commitment, the same value `application_polys`
         // records for that slot. Absent when the application declares no
