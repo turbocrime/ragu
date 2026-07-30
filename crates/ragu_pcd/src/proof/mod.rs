@@ -94,6 +94,14 @@ pub(crate) struct ChildStageRx<F: ragu_arithmetic::ff::PrimeField, R: Rank> {
     pub bridge_ab: sparse::Polynomial<F, R>,
     pub bridge_query: sparse::Polynomial<F, R>,
     pub bridge_eval: sparse::Polynomial<F, R>,
+    /// The child's per-claim bridge stages, in slot order.
+    ///
+    /// A `Vec` rather than a named field per stage, because the family's length
+    /// is the application's poly capacity. Carried for the same reason as every
+    /// other entry here: a fuse must establish that the child's `bridge_com`
+    /// bridges the host commitment the parent folds, and the parent cannot
+    /// check a stage it does not hold.
+    pub bridge_claims: alloc::vec::Vec<sparse::Polynomial<F, R>>,
 }
 
 impl<F: ragu_arithmetic::ff::PrimeField, R: Rank> ChildStageRx<F, R> {
@@ -126,6 +134,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             bridge_ab: self.bridge_ab_rx.0.clone(),
             bridge_query: self.bridge_query_rx.0.clone(),
             bridge_eval: self.bridge_eval_rx.0.clone(),
+            bridge_claims: self.claim_bridge_rxs.clone(),
         }
     }
 }
@@ -382,6 +391,7 @@ impl<C: Cycle, R: Rank> core::ops::Index<nested::RxIndex> for Proof<C, R> {
             BridgeClaim(slot) => &self.claim_bridge_rxs[slot as usize],
             ChildPointsStage(side) => &self.child_stage_rx(side).points_stage,
             ChildBridge(kind, side) => self.child_stage_rx(side).bridge_at(kind),
+            ChildBridgeClaim(slot, side) => &self.child_stage_rx(side).bridge_claims[slot as usize],
         }
     }
 }
@@ -996,6 +1006,15 @@ impl<
                 .bridge_eval_rx()
                 .expect("trivial bridge_eval_rx")
                 .clone(),
+            // Same identity: a trivial proof is its own child, so its claim
+            // bridges are the ones it carries.
+            bridge_claims: (0..self.capacity().poly_query.polys)
+                .map(|slot| {
+                    builder
+                        .claim_bridge_rx(slot)
+                        .expect("trivial claim bridge rx")
+                })
+                .collect(),
         };
         builder.set_child_left_stage_rx(trivial_child.clone());
         builder.set_child_right_stage_rx(trivial_child);

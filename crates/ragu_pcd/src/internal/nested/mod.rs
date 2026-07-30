@@ -457,6 +457,13 @@ pub enum RxIndex {
     /// Child proof's bridge rx polynomial (per-side, for copying),
     /// keyed by which bridge stage it comes from.
     ChildBridge(ChildBridgeKind, Side),
+    /// Child proof's per-claim bridge rx polynomial (per-side, per slot).
+    ///
+    /// Its own variant rather than a [`ChildBridgeKind`] arm because that enum
+    /// is a fixed list and this family's length is the application's poly
+    /// capacity — the same reason [`BridgeClaim`](Self::BridgeClaim) is
+    /// slot-indexed rather than one variant per slot.
+    ChildBridgeClaim(u32, Side),
 }
 
 impl RxIndex {
@@ -494,6 +501,12 @@ impl RxIndex {
             all.extend([
                 Self::ChildBridge(kind, Side::Left),
                 Self::ChildBridge(kind, Side::Right),
+            ]);
+        }
+        for slot in 0..polys {
+            all.extend([
+                Self::ChildBridgeClaim(slot as u32, Side::Left),
+                Self::ChildBridgeClaim(slot as u32, Side::Right),
             ]);
         }
         all

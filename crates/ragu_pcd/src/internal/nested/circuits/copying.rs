@@ -57,7 +57,7 @@ impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> Circuit<C, R, L> {
 impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> MultiStageCircuit<C::Base, R>
     for Circuit<C, R, L>
 {
-    type Last = stages::eval::Stage<C, R>;
+    type Last = stages::claim_bridge::Run<C, R>;
     type Instance<'source> = ();
     type Witness<'source> = ();
     type Output = ();
@@ -121,6 +121,14 @@ impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> MultiStageCircuit<C:
         let (eval_guards, dr) = dr.configure_induced_sized::<stages::eval::Stage<C, R>, _>(
             stages::eval::Slot::<C, R>::default(),
             &layouts.eval,
+        )?;
+        // The child's claim-bridge run. `loading` ties this proof's own claim
+        // bridges to its own eval claims; a fuse has to establish the same
+        // thing about the child it folds, because `bridge_com` is how a claim
+        // names the polynomial it opens.
+        let (claim_guards, dr) = dr.configure_induced_sized::<stages::claim_bridge::Run<C, R>, _>(
+            stages::claim_bridge::Slot::<C, R>::default(),
+            &layouts.claims,
         )?;
         let dr = dr.finish();
 
@@ -188,6 +196,26 @@ impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> MultiStageCircuit<C:
         // the child's own record of them in its eval bridge stage.
         for (stashed_claim, child_claim) in child.stashed_claims.iter().zip(eval.claims.iter()) {
             stashed_claim.enforce_equal(dr, child_claim)?;
+        }
+
+        // And the child's claim-bridge stages must witness those same host
+        // commitments. Without this the parent binds only the *host* side: the
+        // child's `bridge_com` — what its step derived challenges from, and
+        // what each claim names its polynomial by — could bridge some other
+        // point entirely, and every place the parent looks would still agree.
+        // `loading` makes this check for the current step; a fuse must make it
+        // for the child it folds.
+        let child_claim_bridges = claim_guards
+            .into_iter()
+            .map(|guard| Ok(guard.unenforced(dr, w!())?.host))
+            .collect::<Result<alloc::vec::Vec<_>>>()?;
+        assert_eq!(
+            child_claim_bridges.len(),
+            eval.claims.len(),
+            "the child's claim-bridge run did not yield one slot per claim"
+        );
+        for (bridge_host, child_claim) in child_claim_bridges.iter().zip(eval.claims.iter()) {
+            bridge_host.enforce_equal(dr, child_claim)?;
         }
 
         // P: the child's accumulated p commitment is the last interstitial

@@ -209,21 +209,18 @@ fn claim_bridge_stage_must_be_tied_to_the_recorded_host() -> Result<()> {
          BridgeClaim(slot), so the constraint at loading.rs:251-253 is vacuous"
     );
 
-    // Fused as a child, it is *not* caught — and that is a **separate** gap
-    // from the one above, which this test pins rather than fixes.
+    // And recursively. A fuse must be immediately sound: it need not carry a
+    // child's history, but it must establish everything about its immediate
+    // children that it relies on. It relies on `bridge_com` — that is how a
+    // claim names the polynomial it opens, and what the child's step derived
+    // its Fiat-Shamir challenges from.
     //
-    // `nested_claims::build` has exactly one caller, `verify.rs`, and it runs
-    // against `SingleProofSource { proof: <the proof being verified> }`. So a
-    // proof's nested bonding claims — `Loading` among them — are only ever
-    // checked when *that* proof is verified at root. A parent carries copies of
-    // its children's chain bridge stages (that is what the `Copying` group
-    // reads) but not their claim-bridge run, so once a proof is fused the
-    // stages tampered with here are gone, and nothing ever looked at them.
-    //
-    // Whether that is the intended division of labour — a child's claims being
-    // discharged by the accumulation rather than re-checked — or a second
-    // defect is an open question, and not one this test answers. The assertion
-    // records the observed behaviour so a change in it is noticed.
+    // The parent already binds the child's *host* commitments: they are stashed
+    // into its preamble stage, walked into its points accumulation by `loading`,
+    // and cross-checked against the child's carried eval stage by `copying`.
+    // What it must also establish is that the child's `bridge_com` bridges that
+    // same host commitment, which needs the child's claim-bridge run carried
+    // and tied — `ChildStageRx` has seven fields and this is not one of them.
     let leaf2 = seed_leaf(&app, pasta, &mut rng, &[2, 7, 1, 8])?;
     let p3 = poly(&[5, 5, 5]);
     let com3 = app.commit_polynomial(&p3)?;
@@ -246,15 +243,11 @@ fn claim_bridge_stage_must_be_tied_to_the_recorded_host() -> Result<()> {
         Err(e) => std::eprintln!("interior fuse rejected the untied claim bridge: {e:?}"),
         Ok((parent, ())) => {
             assert!(
-                app.verify(&parent, &mut rng)?,
-                "expected the status quo: a proof's nested claims are checked only \
-                 when it is verified at root, so a parent does not re-check its \
-                 child's. If this now fails, that has changed -- invert this \
-                 assertion."
-            );
-            std::eprintln!(
-                "a parent of an untied-claim-bridge child still verifies: nested \
-                 claims are root-only."
+                !app.verify(&parent, &mut rng)?,
+                "a parent of a child whose claim bridge is untied must not verify: \
+                 the fuse relies on `bridge_com` to name the polynomial each claim \
+                 opens, so it must establish that the child's bridge stage carries \
+                 the host commitment the parent folds"
             );
         }
     }

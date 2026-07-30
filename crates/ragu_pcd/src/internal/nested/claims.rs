@@ -183,19 +183,36 @@ where
                     .grouped_bonding_claim(id, groups.into_iter().map(|group| group.into_iter()))?;
             }
             Copying(side) => {
-                let groups = source
+                // As in `Loading`: every stage the circuit configures must be
+                // supplied, or its constraints hold vacuously over zero wires.
+                // `copying` configures the child's claim-bridge run, whose
+                // length is the application's poly capacity, so this arm
+                // accumulates per-proof groups rather than zipping a fixed
+                // tuple.
+                let mut groups: alloc::vec::Vec<alloc::vec::Vec<S::Rx>> = source
                     .rx(RxIndex::ChildPointsStage(side))
-                    .zip(source.rx(RxIndex::BridgePreamble))
-                    .zip(source.rx(RxIndex::ChildBridge(ChildBridgeKind::SPrime, side)))
-                    .zip(source.rx(RxIndex::ChildBridge(ChildBridgeKind::InnerError, side)))
-                    .zip(source.rx(RxIndex::ChildBridge(ChildBridgeKind::OuterError, side)))
-                    .zip(source.rx(RxIndex::ChildBridge(ChildBridgeKind::AB, side)))
-                    .zip(source.rx(RxIndex::ChildBridge(ChildBridgeKind::Query, side)))
-                    .zip(source.rx(RxIndex::ChildBridge(ChildBridgeKind::Eval, side)))
-                    .map(|(((((((cp, bp), cs), ci), co), ca), cq), ce)| {
-                        [cp, bp, cs, ci, co, ca, cq, ce].into_iter()
-                    });
-                processor.grouped_bonding_claim(id, groups)?;
+                    .map(|rx| alloc::vec![rx])
+                    .collect();
+
+                let fixed = [
+                    RxIndex::BridgePreamble,
+                    RxIndex::ChildBridge(ChildBridgeKind::SPrime, side),
+                    RxIndex::ChildBridge(ChildBridgeKind::InnerError, side),
+                    RxIndex::ChildBridge(ChildBridgeKind::OuterError, side),
+                    RxIndex::ChildBridge(ChildBridgeKind::AB, side),
+                    RxIndex::ChildBridge(ChildBridgeKind::Query, side),
+                    RxIndex::ChildBridge(ChildBridgeKind::Eval, side),
+                ];
+                let claim_slots =
+                    (0..polys).map(|slot| RxIndex::ChildBridgeClaim(slot as u32, side));
+                for component in fixed.into_iter().chain(claim_slots) {
+                    for (group, rx) in groups.iter_mut().zip(source.rx(component)) {
+                        group.push(rx);
+                    }
+                }
+
+                processor
+                    .grouped_bonding_claim(id, groups.into_iter().map(|group| group.into_iter()))?;
             }
         }
     }
