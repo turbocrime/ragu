@@ -646,7 +646,13 @@ impl<
             crate::internal::nested::num_endoscaling_points(self.capacity().poly_query.polys);
         assert_eq!(points.len(), num_points);
 
-        let witness = PointsWitness::<C::HostCurve>::new(beta_endo, points);
+        // The assertion above checks the slice against the *value* formula; the
+        // conversion inside `new` checks it against the `Len` the stage is typed
+        // by. Two independent sides of the same obligation.
+        let witness = PointsWitness::<
+            C::HostCurve,
+            crate::internal::nested::EndoPoints<ragu_primitives::vec::ConstLen<POLYS>>,
+        >::new(beta_endo, points)?;
 
         // Placed through the value-level chain, not `StageExt::rx`, whose
         // `Default` is the typed placeholder: a stage's width and position

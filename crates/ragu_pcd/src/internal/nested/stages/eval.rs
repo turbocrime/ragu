@@ -4,7 +4,11 @@ use alloc::vec::Vec;
 
 use ragu_arithmetic::CurveAffine;
 use ragu_core::{Result, drivers::Driver, gadgets::Gadget};
-use ragu_primitives::{Point, io::Write};
+use ragu_primitives::{
+    Point,
+    io::Write,
+    vec::{FixedVec, Len},
+};
 
 /// This stage's wire width at the application's declared `capacity`; the
 /// value-level source of the typed
@@ -30,71 +34,45 @@ pub struct Witness<C: CurveAffine> {
     pub claims: Vec<C>,
 }
 
-/// This stage's fixed point, as the circuit body names it.
+/// This stage's points, as the circuit body names them.
 ///
-/// A gadget, exactly as on `main`: one named point, its wire order stated once by
-/// the field list. The stage's dynamic tail is **not** part of this type — see
-/// [`StashedClaims`], which comes from its own method and is its own type
-/// precisely because its length is a value rather than a property of the type.
+/// A gadget, as on `main`, whose `native_eval` field is `main`'s whole list. The
+/// claim block is a field too rather than a separate type: `FixedVec`'s length is
+/// a [`Len`], so a member whose count is the application's poly capacity is still
+/// a gadget member, and the derive states the order of both parts once.
+///
+/// `claims` is last, so the wire order is `native_eval` then one slot per claim —
+/// the order [`Witness::slot_points`] emits.
 #[derive(Gadget, Write)]
-pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
+pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> {
     #[ragu(gadget)]
     pub native_eval: Point<'dr, D, C>,
+    /// The current step's poly-query claim host commitments, in slot order.
+    #[ragu(gadget)]
+    pub claims: FixedVec<Point<'dr, D, C>, L>,
 }
 
-/// The stage's dynamic tail: the current step's poly-query claim host
-/// commitments, in slot order.
-///
-/// Deliberately not a gadget and deliberately not a field of [`Output`]. Its
-/// length is the application's poly capacity — a value — and a gadget's wire
-/// count is fixed by its field list, so the two cannot be one type without
-/// pushing the poly count into the type system as far as
-/// [`Proof`](crate::Proof). Keeping it separate is what lets [`Output`] keep its
-/// derive.
-pub struct StashedClaims<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
-    pub claims: Vec<Point<'dr, D, C>>,
-}
-
-/// Pulls the next slot, or reports the run was short.
-fn next_slot<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>>(
-    slots: &mut impl Iterator<Item = Point<'dr, D, C>>,
-) -> Result<Point<'dr, D, C>> {
-    slots.next().ok_or_else(|| {
-        ragu_core::Error::MalformedEncoding(
-            "the eval run yielded fewer slots than the layout sized it for".into(),
-        )
-    })
-}
-
-impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> Output<'dr, D, C> {
-    /// Rebuild the fixed point from the run's leading slot, and the dynamic tail
-    /// that follows it, in the order [`Witness::slot_points`] emitted them.
+impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> Output<'dr, D, C, L> {
+    /// Rebuild the named view from the run's slots, in the order
+    /// [`Witness::slot_points`] emitted them.
     ///
-    /// Returns the two as separate values because they are separate types; one
-    /// walk produces both because they share the run.
-    pub fn from_slots(
-        slots: impl IntoIterator<Item = Point<'dr, D, C>>,
-        polys: usize,
-    ) -> Result<(Self, StashedClaims<'dr, D, C>)> {
+    /// Takes no count: the claim block's width comes from `L`.
+    pub fn from_slots(slots: impl IntoIterator<Item = Point<'dr, D, C>>) -> Result<Self> {
         let slots = &mut slots.into_iter();
+        let mut next = || {
+            slots.next().ok_or_else(|| {
+                ragu_core::Error::MalformedEncoding(
+                    "the eval run yielded fewer slots than the layout sized it for".into(),
+                )
+            })
+        };
 
-        let native_eval = next_slot(slots)?;
-        let claims = StashedClaims::from_slots(slots, polys)?;
+        let native_eval = next()?;
+        let claims = (0..L::len()).map(|_| next()).collect::<Result<Vec<_>>>()?;
 
-        Ok((Output { native_eval }, claims))
-    }
-}
-
-impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> StashedClaims<'dr, D, C> {
-    /// Rebuild the claim block from the run's slots, after the fixed point.
-    fn from_slots(
-        slots: &mut impl Iterator<Item = Point<'dr, D, C>>,
-        polys: usize,
-    ) -> Result<Self> {
-        Ok(StashedClaims {
-            claims: (0..polys)
-                .map(|_| next_slot(slots))
-                .collect::<Result<Vec<_>>>()?,
+        Ok(Output {
+            native_eval,
+            claims: claims.try_into()?,
         })
     }
 }

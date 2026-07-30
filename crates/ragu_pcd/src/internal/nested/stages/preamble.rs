@@ -7,7 +7,11 @@ use alloc::vec::Vec;
 use ragu_arithmetic::{CurveAffine, Cycle};
 use ragu_circuits::polynomials::Rank;
 use ragu_core::{Result, drivers::Driver, gadgets::Gadget};
-use ragu_primitives::{Point, io::Write};
+use ragu_primitives::{
+    Point,
+    io::Write,
+    vec::{FixedVec, Len},
+};
 
 use crate::{
     Proof,
@@ -133,16 +137,18 @@ pub struct Witness<C: CurveAffine> {
 /// One child proof's **fixed** points in the preamble bridge stage, as the
 /// circuit body names them.
 ///
-/// A gadget, as on `main`: the derive places these seventeen wires from the field
-/// list, so the field list is the one statement of their order. The child's
-/// poly-query claims are **not** here — they are [`ChildStashedClaims`], their own
-/// type from their own method, because their count is the application's poly
-/// capacity and a gadget's width is fixed by its fields.
+/// A gadget, as on `main`: the derive places these wires from the field list, so
+/// the field list is the one statement of their order.
 ///
-/// Field order is the leading slot order [`ChildWitness::slot_points`] emits and
-/// [`child_from_slots`] consumes.
+/// The child's poly-query claims are the last field rather than a separate type.
+/// `FixedVec`'s length is a [`Len`], so a member whose count is the application's
+/// poly capacity is still a gadget member — which is what lets the whole block be
+/// one derive instead of a struct plus a hand-written tail.
+///
+/// Field order is the slot order [`ChildWitness::slot_points`] emits and
+/// [`from_slots`](Self::from_slots) consumes.
 #[derive(Gadget, Write)]
-pub struct ChildOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
+pub struct ChildOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> {
     // Field order matches `_10_p` accumulation order.
     /// Point commitment from the child's application circuit.
     #[ragu(gadget)]
@@ -196,21 +202,19 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     /// Stashed accumulated P commitment from the child.
     #[ragu(gadget)]
     pub stashed_p: Point<'dr, D, C>,
+    /// Stashed poly-query claim host commitments from the child, in slot order —
+    /// one per polynomial it witnessed. Loading enforces these against the
+    /// [`PointsStage`] inputs (they enter the `_10_p` accumulation); copying
+    /// verifies them against the child's own eval bridge stage record.
+    ///
+    /// Last, so the per-child block is the seventeen named points then the claims,
+    /// which is the order `_10_p` accumulates.
+    #[ragu(gadget)]
+    pub stashed_claims: FixedVec<Point<'dr, D, C>, L>,
 }
 
-/// One child proof's stashed poly-query claim host commitments, in slot order.
-///
-/// One per polynomial the child witnessed — a count the application fixes, so a
-/// value rather than a length in the type, which is exactly why this is its own
-/// type and not a field of [`ChildOutput`]. Loading enforces these against the
-/// [`PointsStage`] inputs (they enter the `_10_p` accumulation); copying verifies
-/// them against the child's own eval bridge stage record.
-pub struct ChildStashedClaims<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
-    pub claims: Vec<Point<'dr, D, C>>,
-}
-
-impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> core::ops::Index<RxIndex>
-    for ChildOutput<'dr, D, C>
+impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> core::ops::Index<RxIndex>
+    for ChildOutput<'dr, D, C, L>
 {
     type Output = Point<'dr, D, C>;
 
@@ -273,114 +277,90 @@ fn next_slot<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>>(
     })
 }
 
-impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> ChildOutput<'dr, D, C> {
-    /// Rebuild the fixed block from the run's slots, in the order
-    /// [`ChildWitness::slot_points`] emitted it.
+impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> ChildOutput<'dr, D, C, L> {
+    /// Rebuild one child's block from the run's slots, in the order
+    /// [`ChildWitness::slot_points`] emitted it: the named points, then the
+    /// claims.
     ///
-    /// Takes no count: this block's width is the field list's, which is the point
-    /// of it being a gadget.
-    fn from_slots(slots: &mut impl Iterator<Item = Point<'dr, D, C>>) -> Result<Self> {
-        Ok(ChildOutput {
-            application: next_slot(slots)?,
-            hashes_1: next_slot(slots)?,
-            hashes_2: next_slot(slots)?,
-            inner_collapse: next_slot(slots)?,
-            outer_collapse: next_slot(slots)?,
-            compute_v: next_slot(slots)?,
-            challenge_binding: next_slot(slots)?,
-            stashed_preamble: next_slot(slots)?,
-            stashed_inner_error: next_slot(slots)?,
-            stashed_outer_error: next_slot(slots)?,
-            stashed_query: next_slot(slots)?,
-            stashed_eval: next_slot(slots)?,
-            stashed_challenges: next_slot(slots)?,
-            stashed_ab_a: next_slot(slots)?,
-            stashed_ab_b: next_slot(slots)?,
-            stashed_registry_xy: next_slot(slots)?,
-            stashed_p: next_slot(slots)?,
-        })
-    }
-}
-
-impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> ChildStashedClaims<'dr, D, C> {
-    /// Rebuild this child's claim block from the run's slots, immediately after
-    /// its fixed block.
-    ///
-    /// `polys` comes from the same layout that sized the run, so a mismatch is a
-    /// short iterator, which is what
+    /// Takes no count: the named points' width is the field list's and the claim
+    /// block's is `L`'s. A run shorter than that is what
     /// [`MalformedEncoding`](ragu_core::Error::MalformedEncoding) reports.
-    fn from_slots(
-        slots: &mut impl Iterator<Item = Point<'dr, D, C>>,
-        polys: usize,
-    ) -> Result<Self> {
-        Ok(ChildStashedClaims {
-            claims: (0..polys)
-                .map(|_| next_slot(slots))
-                .collect::<Result<Vec<_>>>()?,
+    fn from_slots(slots: &mut impl Iterator<Item = Point<'dr, D, C>>) -> Result<Self> {
+        let application = next_slot(slots)?;
+        let hashes_1 = next_slot(slots)?;
+        let hashes_2 = next_slot(slots)?;
+        let inner_collapse = next_slot(slots)?;
+        let outer_collapse = next_slot(slots)?;
+        let compute_v = next_slot(slots)?;
+        let challenge_binding = next_slot(slots)?;
+        let stashed_preamble = next_slot(slots)?;
+        let stashed_inner_error = next_slot(slots)?;
+        let stashed_outer_error = next_slot(slots)?;
+        let stashed_query = next_slot(slots)?;
+        let stashed_eval = next_slot(slots)?;
+        let stashed_challenges = next_slot(slots)?;
+        let stashed_ab_a = next_slot(slots)?;
+        let stashed_ab_b = next_slot(slots)?;
+        let stashed_registry_xy = next_slot(slots)?;
+        let stashed_p = next_slot(slots)?;
+        let stashed_claims = (0..L::len())
+            .map(|_| next_slot(slots))
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(ChildOutput {
+            application,
+            hashes_1,
+            hashes_2,
+            inner_collapse,
+            outer_collapse,
+            compute_v,
+            challenge_binding,
+            stashed_preamble,
+            stashed_inner_error,
+            stashed_outer_error,
+            stashed_query,
+            stashed_eval,
+            stashed_challenges,
+            stashed_ab_a,
+            stashed_ab_b,
+            stashed_registry_xy,
+            stashed_p,
+            stashed_claims: stashed_claims.try_into()?,
         })
     }
 }
 
-/// The preamble bridge stage's fixed points, as the circuit body names them.
+/// The preamble bridge stage's points, as the circuit body names them.
 ///
-/// A gadget, as on `main`. The stage's claim blocks are [`StashedClaims`].
+/// A gadget, as on `main`.
 #[derive(Gadget, Write)]
-pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
+pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> {
     /// Point commitment from the native preamble stage.
     #[ragu(gadget)]
     pub native_preamble: Point<'dr, D, C>,
     /// Points from the left child proof.
     #[ragu(gadget)]
-    pub left: ChildOutput<'dr, D, C>,
+    pub left: ChildOutput<'dr, D, C, L>,
     /// Points from the right child proof.
     #[ragu(gadget)]
-    pub right: ChildOutput<'dr, D, C>,
+    pub right: ChildOutput<'dr, D, C, L>,
 }
 
-/// Both children's stashed claim blocks.
-///
-/// Mirrors [`Output`]'s left/right shape, separately, because the count is a
-/// value.
-pub struct StashedClaims<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
-    pub left: ChildStashedClaims<'dr, D, C>,
-    pub right: ChildStashedClaims<'dr, D, C>,
-}
-
-impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> Output<'dr, D, C> {
-    /// Rebuild both views from the run's slots, which the run places interleaved:
-    /// `native_preamble`, the left child's fixed block, its claims, then the
-    /// right child's fixed block and claims.
+impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> Output<'dr, D, C, L> {
+    /// Rebuild the named view from the run's slots: `native_preamble`, then each
+    /// child's block in turn.
     ///
-    /// The two halves come back as separate values because they are separate
-    /// types; the interleaving is why one walk produces both rather than each
-    /// reading the run independently.
-    ///
-    /// One `polys` sizes both children's blocks, because [`num_points`] measures
-    /// the span the same way — `1 + 2 * child_endoscaling_points`. An asymmetric
-    /// pair would mis-tile the run.
-    pub fn from_slots(
-        slots: impl IntoIterator<Item = Point<'dr, D, C>>,
-        polys: usize,
-    ) -> Result<(Self, StashedClaims<'dr, D, C>)> {
+    /// One `L` sizes both children's blocks, because [`num_points`] measures the
+    /// span the same way — `1 + 2 * child_endoscaling_points`. An asymmetric pair
+    /// would mis-tile the run.
+    pub fn from_slots(slots: impl IntoIterator<Item = Point<'dr, D, C>>) -> Result<Self> {
         let slots = &mut slots.into_iter();
 
-        let native_preamble = next_slot(slots)?;
-        let left = ChildOutput::from_slots(slots)?;
-        let left_claims = ChildStashedClaims::from_slots(slots, polys)?;
-        let right = ChildOutput::from_slots(slots)?;
-        let right_claims = ChildStashedClaims::from_slots(slots, polys)?;
-
-        Ok((
-            Output {
-                native_preamble,
-                left,
-                right,
-            },
-            StashedClaims {
-                left: left_claims,
-                right: right_claims,
-            },
-        ))
+        Ok(Output {
+            native_preamble: next_slot(slots)?,
+            left: ChildOutput::from_slots(slots)?,
+            right: ChildOutput::from_slots(slots)?,
+        })
     }
 }
 

@@ -137,34 +137,28 @@ impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> MultiStageCircuit<C:
                 .map(|guard| Ok(guard.unenforced(dr, w!())?.point))
                 .collect::<Result<alloc::vec::Vec<_>>>()?,
         )?;
-        let (preamble, preamble_claims) = stages::preamble::Output::from_slots(
+        let preamble = stages::preamble::Output::<D, C, L>::from_slots(
             preamble_guards
                 .into_iter()
                 .map(|guard| Ok(guard.unenforced(dr, w!())?.host))
                 .collect::<Result<alloc::vec::Vec<_>>>()?,
-            L::len(),
         )?;
         let s_prime = s_prime_guard.unenforced(dr, w!())?;
         let inner_error = inner_error_guard.unenforced(dr, w!())?;
         let outer_error = outer_error_guard.unenforced(dr, w!())?;
         let ab = ab_guard.unenforced(dr, w!())?;
         let query = query_guard.unenforced(dr, w!())?;
-        let (eval, eval_claims) = stages::eval::Output::from_slots(
+        let eval = stages::eval::Output::<D, C, L>::from_slots(
             eval_guards
                 .into_iter()
                 .map(|guard| Ok(guard.unenforced(dr, w!())?.host))
                 .collect::<Result<alloc::vec::Vec<_>>>()?,
-            L::len(),
         )?;
 
         // Select the child corresponding to this circuit's side.
         let child = match self.side {
             Side::Left => &preamble.left,
             Side::Right => &preamble.right,
-        };
-        let child_claims = match self.side {
-            Side::Left => &preamble_claims.left,
-            Side::Right => &preamble_claims.right,
         };
 
         // Enforce that each ChildWitness stash field matches the
@@ -192,9 +186,7 @@ impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> MultiStageCircuit<C:
 
         // Poly-query claims: the stashed claim host commitments must match
         // the child's own record of them in its eval bridge stage.
-        for (stashed_claim, child_claim) in
-            child_claims.claims.iter().zip(eval_claims.claims.iter())
-        {
+        for (stashed_claim, child_claim) in child.stashed_claims.iter().zip(eval.claims.iter()) {
             stashed_claim.enforce_equal(dr, child_claim)?;
         }
 

@@ -178,26 +178,24 @@ impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> MultiStageCircuit<C:
                 .map(|guard| Ok(guard.unenforced(dr, w!())?.point))
                 .collect::<Result<alloc::vec::Vec<_>>>()?,
         )?;
-        let (preamble, preamble_claims) = stages::preamble::Output::from_slots(
+        let preamble = stages::preamble::Output::<D, C, L>::from_slots(
             preamble_guards
                 .into_iter()
                 .map(|guard| Ok(guard.unenforced(dr, w!())?.host))
                 .collect::<Result<alloc::vec::Vec<_>>>()?,
-            L::len(),
         )?;
         let s_prime = s_prime_guard.unenforced(dr, w!())?;
         let inner_error = inner_error_guard.unenforced(dr, w!())?;
         let ab = ab_guard.unenforced(dr, w!())?;
         let query = query_guard.unenforced(dr, w!())?;
         let f_stage = f_guard.unenforced(dr, w!())?;
-        // Loading reads only the dynamic tail: the fixed `native_eval` point is
+        // Loading reads only this stage's claim block: the `native_eval` point is
         // checked by `copying`, against the child's stashed copy.
-        let (_eval, eval_claims) = stages::eval::Output::from_slots(
+        let eval = stages::eval::Output::<D, C, L>::from_slots(
             eval_guards
                 .into_iter()
                 .map(|guard| Ok(guard.unenforced(dr, w!())?.host))
                 .collect::<Result<alloc::vec::Vec<_>>>()?,
-            L::len(),
         )?;
         let claim_bridges = claim_guards
             .into_iter()
@@ -208,10 +206,7 @@ impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> MultiStageCircuit<C:
         // in `compute_p` (_10_p.rs).
         let mut walker = Walker::new(&points);
 
-        for (child, child_claims) in [
-            (&preamble.left, &preamble_claims.left),
-            (&preamble.right, &preamble_claims.right),
-        ] {
+        for child in [&preamble.left, &preamble.right] {
             for &id in &RxIndex::ALL {
                 walker.enforce_equal(dr, &child[id])?;
             }
@@ -219,7 +214,7 @@ impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> MultiStageCircuit<C:
             walker.enforce_equal(dr, &child.stashed_ab_b)?;
             walker.enforce_equal(dr, &child.stashed_registry_xy)?;
             walker.enforce_equal(dr, &child.stashed_p)?;
-            for stashed_claim in child_claims.claims.iter() {
+            for stashed_claim in child.stashed_claims.iter() {
                 walker.enforce_equal(dr, stashed_claim)?;
             }
         }
@@ -250,11 +245,11 @@ impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> MultiStageCircuit<C:
         // mirroring how `BridgeF.native_f` ties `bridge_f_commitment` above.
         assert_eq!(
             claim_bridges.len(),
-            eval_claims.claims.len(),
+            eval.claims.len(),
             "the claim-bridge run did not yield one slot per claim"
         );
         for (slot, bridge_host) in claim_bridges.iter().enumerate() {
-            bridge_host.enforce_equal(dr, &eval_claims.claims[slot])?;
+            bridge_host.enforce_equal(dr, &eval.claims[slot])?;
         }
 
         Ok(WithAux::new((), D::unit()))
