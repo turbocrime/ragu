@@ -129,8 +129,8 @@ impl ChainStage {
 ///
 /// The chain is linear, in [`ChainStage`] order: endoscalar → points →
 /// preamble → s_prime → inner_error → outer_error → ab → query → f → eval,
-/// followed by the claim and challenge bridge runs (whose layouts live with
-/// their `Run` types). The points and preamble stages carry the *children's*
+/// followed by the claim-bridge run (whose layout lives with its `Run` type).
+/// The points and preamble stages carry the *children's*
 /// blocks, the eval stage the current step's own slots — but every step in an
 /// application exposes the same shape, so one capacity sizes all three. The
 /// widths come from each stage's `num_values` (capacity-dependent stages) or
@@ -192,7 +192,8 @@ where
     )
 }
 
-/// The claim-bridge run's layout: one two-wire slot per witnessed polynomial,
+/// The claim-bridge run's layout: one slot of coordinate-bit wires per
+/// witnessed polynomial (the slot's width is its stage's `values()`),
 /// anchored right after the chain `chain` describes.
 ///
 /// Takes the chain rather than rebuilding it — the two are always wanted

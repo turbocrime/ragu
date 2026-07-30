@@ -421,10 +421,12 @@ fn test_slotted_registry_digests() {
         fp!(0x256a9ff7fe0fad62d02a4bee7f9db347a3b24c8a098f0a0dba16eed53c469003),
         "Native registry digest changed unexpectedly at a slotted shape!"
     );
-    // Changed when `copying` gained the child's claim-bridge run, so that a
-    // fuse establishes that the child's `bridge_com` bridges the host
-    // commitment the parent folds. `copying`'s final stage moved from `eval` to
-    // that run, which widens its wiring by one gate per poly slot.
+    // Changed when the claim-bridge stages went from carrying a host point's
+    // two coordinate wires to carrying its 508 coordinate *bits*, so that a
+    // step can open `bridge_com` against limbs it witnesses itself: each slot
+    // widened from one gate to 254, and `loading`/`copying`'s tie became a
+    // linear recomposition instead of a point equality. (Previously changed
+    // when `copying` gained the child's claim-bridge run.)
     //
     // That this moved while both `POLYS = 0` digests held is the check, not an
     // inconvenience: an empty run configures no gates, so a change confined to
@@ -433,7 +435,7 @@ fn test_slotted_registry_digests() {
     // intended.
     assert_eq!(
         app.nested_registry.digest(),
-        fq!(0x3c151c38407bd7c8915dbe01e9e24253f60966039c5a19e6a707c45c493cfa80),
+        fq!(0x00fe0e46165ea8a4c9e43ab967f4fab98fdd9cfbee350a75d17feff231f9fecb),
         "Nested registry digest changed unexpectedly at a slotted shape!"
     );
 }

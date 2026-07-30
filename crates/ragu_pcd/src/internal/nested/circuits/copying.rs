@@ -207,15 +207,15 @@ impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> MultiStageCircuit<C:
         // for the child it folds.
         let child_claim_bridges = claim_guards
             .into_iter()
-            .map(|guard| Ok(guard.unenforced(dr, w!())?.host))
+            .map(|guard| guard.unenforced(dr, w!()))
             .collect::<Result<alloc::vec::Vec<_>>>()?;
         assert_eq!(
             child_claim_bridges.len(),
             eval.claims.len(),
             "the child's claim-bridge run did not yield one slot per claim"
         );
-        for (bridge_host, child_claim) in child_claim_bridges.iter().zip(eval.claims.iter()) {
-            bridge_host.enforce_equal(dr, child_claim)?;
+        for (bridge, child_claim) in child_claim_bridges.iter().zip(eval.claims.iter()) {
+            stages::claim_bridge::enforce_names(dr, bridge, child_claim)?;
         }
 
         // P: the child's accumulated p commitment is the last interstitial

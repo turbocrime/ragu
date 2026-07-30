@@ -199,7 +199,7 @@ impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> MultiStageCircuit<C:
         )?;
         let claim_bridges = claim_guards
             .into_iter()
-            .map(|guard| Ok(guard.unenforced(dr, w!())?.host))
+            .map(|guard| guard.unenforced(dr, w!()))
             .collect::<Result<alloc::vec::Vec<_>>>()?;
 
         // Walk through PointsStage inputs, mirroring the accumulation order
@@ -238,18 +238,25 @@ impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> MultiStageCircuit<C:
         // The initial point (f.commitment) must match BridgeF.native_f.
         points.initial.enforce_equal(dr, &f_stage.native_f)?;
 
-        // Each poly-query claim's bridge stage must witness exactly the host
+        // Each poly-query claim's bridge stage must name exactly the host
         // commitment this proof records for that slot. The stage's wires are
-        // therefore the host point, so committing the stage (which yields the
-        // claim's instance-bound `bridge_com`) binds `bridge_com` to that host commitment —
-        // mirroring how `BridgeF.native_f` ties `bridge_f_commitment` above.
+        // that point's coordinates in bits, so recomposing them and equating
+        // the result determines the point — and committing the stage (which
+        // yields the claim's instance-bound `bridge_com`) therefore binds
+        // `bridge_com` to that host commitment, mirroring how `BridgeF.native_f`
+        // ties `bridge_f_commitment` above.
+        //
+        // Recomposition is linear, which is what lets this check live here: a
+        // bonding circuit may only add. Nothing constrains the wires to be
+        // bits; see `claim_bridge`'s module docs for why that is enough here,
+        // and where booleanity does come from.
         assert_eq!(
             claim_bridges.len(),
             eval.claims.len(),
             "the claim-bridge run did not yield one slot per claim"
         );
-        for (slot, bridge_host) in claim_bridges.iter().enumerate() {
-            bridge_host.enforce_equal(dr, &eval.claims[slot])?;
+        for (slot, bridge) in claim_bridges.iter().enumerate() {
+            stages::claim_bridge::enforce_names(dr, bridge, &eval.claims[slot])?;
         }
 
         Ok(WithAux::new((), D::unit()))
