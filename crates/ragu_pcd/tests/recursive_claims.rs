@@ -202,14 +202,17 @@ fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
     )?;
 
     // The claim really is desynced: bridge_com bridges P's host commitment, the
-    // carried poly is P'.
-    let claim = cheat.proof().application_claims()[0];
+    // carried poly is P'. Establishing that here is what lets the rejection
+    // below be attributed to the desync rather than to any of the other ways a
+    // malformed proof fails, and it is the only reason a test reaches a claim
+    // slot at all — hence the `_for_testing` accessor rather than a public one.
+    let (claim_x, claim_y) = cheat.proof().claim_opening_for_testing(0);
     assert_eq!(
-        claim.y,
-        p_prime.eval(claim.x),
-        "but the claimed opening is of P'"
+        claim_y,
+        p_prime.eval(claim_x),
+        "the claimed opening is of P'"
     );
-    assert_ne!(claim.y, p.eval(claim.x), "P and P' disagree at z");
+    assert_ne!(claim_y, p.eval(claim_x), "P and P' disagree at z");
 
     // The root verifier checks the bridge, so it rejects.
     assert!(

@@ -204,7 +204,7 @@ impl<
         // carry anything there.
         let poly_query_claims = poly_commitments
             && (0..capacity.poly_query.claims).all(|slot| {
-                let crate::ClaimOpening { bridge_com, x, y } =
+                let crate::proof::ClaimOpening { bridge_com, x, y } =
                     pcd.proof().application_claims()[slot];
 
                 pcd.proof()

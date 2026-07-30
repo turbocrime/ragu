@@ -73,7 +73,11 @@ use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 
 use header::Header;
 pub use poly_commitment::{PolyCommitment, PolyHandle};
-pub use proof::{ChallengeOpening, ClaimOpening, Pcd, Proof};
+// `ClaimOpening` and `ChallengeOpening` are deliberately *not* re-exported, so
+// this list matches `main`'s. Both describe a slot of a proof's instance, and the
+// accessors that return them are `pub(crate)`: see `Proof::application_claims`
+// for why a proof's slot lists are not a public reporting surface.
+pub use proof::{Pcd, Proof};
 use ragu_arithmetic::{CryptoRngCore, Cycle};
 use ragu_circuits::{
     polynomials::Rank,

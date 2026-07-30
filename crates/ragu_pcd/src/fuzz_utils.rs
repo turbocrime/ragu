@@ -106,6 +106,26 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         self.claim_polys[slot] = poly;
         self.set_claim_host_commitment(slot, host);
     }
+
+    /// The instance-bound opening $(x, y)$ this proof claims in `slot`.
+    ///
+    /// The read counterpart to [`Corruption::ClaimY`], and the only way out of
+    /// the crate to see a claim slot at all. It exists for one job: letting a
+    /// test establish *what* a proof claims before asserting how the verifier
+    /// treats it, so a rejection can be attributed to the desync under test
+    /// rather than to any of the other ways a malformed proof fails.
+    ///
+    /// Not a general proof-inspection API, which is why it is behind this
+    /// feature. A consumer's contract with a proof is
+    /// [`Application::verify`](crate::Application::verify), and it already checks
+    /// every slot list's length, every claim against the polynomial its
+    /// commitment names, and every carried polynomial against its recorded host
+    /// commitment — so a test that reads these back to re-assert them is
+    /// restating the verifier.
+    pub fn claim_opening_for_testing(&self, slot: usize) -> (C::CircuitField, C::CircuitField) {
+        let claim = &self.application_claims[slot];
+        (claim.x, claim.y)
+    }
 }
 
 impl<C: Cycle, R: Rank, H: crate::Header<C::CircuitField>> crate::Pcd<C, R, H> {

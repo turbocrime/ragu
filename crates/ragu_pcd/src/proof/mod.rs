@@ -428,7 +428,18 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     /// unused slots holding the canonical padding claim. The instances are
     /// bound to the application circuit's $k(Y)$ and recursively enforced when
     /// this proof is fused as a child.
-    pub fn application_claims(&self) -> &[ClaimOpening<C::NestedCurve, C::CircuitField>] {
+    ///
+    /// Crate-internal, with the two slot lists below it. A proof's slot lists are
+    /// the verifier's working data, not a reporting surface: a consumer's contract
+    /// is [`Application::verify`](crate::Application::verify), which checks each
+    /// of these itself — every list's length against the declared capacity, then
+    /// every claim against the polynomial its commitment names, then every carried
+    /// polynomial against its recorded host commitment. Reading them back to
+    /// re-assert any of that restates the verifier. The one legitimate outside
+    /// read is a test establishing what a proof claims *before* checking how the
+    /// verifier treats it, so a rejection can be attributed; that goes through
+    /// `Proof::claim_opening_for_testing`, behind `unstable-fuzzing`.
+    pub(crate) fn application_claims(&self) -> &[ClaimOpening<C::NestedCurve, C::CircuitField>] {
         &self.application_claims
     }
 
@@ -438,12 +449,14 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     /// holding the canonical padding polynomial. A claim names one of these by
     /// carrying it, not by index; the commitment appears here once, not once per
     /// claim.
-    pub fn application_polys(&self) -> &[C::NestedCurve] {
+    pub(crate) fn application_polys(&self) -> &[C::NestedCurve] {
         &self.application_polys
     }
 
     /// The derived challenges this proof's circuit exposes, in slot order.
-    pub fn application_challenges(&self) -> &[ChallengeOpening<C::NestedCurve, C::CircuitField>] {
+    pub(crate) fn application_challenges(
+        &self,
+    ) -> &[ChallengeOpening<C::NestedCurve, C::CircuitField>] {
         &self.application_challenges
     }
 
