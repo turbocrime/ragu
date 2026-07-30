@@ -143,18 +143,44 @@ where
                 processor.bonding_claim(id, source.rx(RxIndex::BridgeEval))?;
             }
             Loading => {
-                let groups = source
+                // **Every stage the circuit configures must be supplied here.**
+                // A bonding claim is checked against the *sum* of these rxs, so
+                // a configured stage that is left out contributes zero wires —
+                // and every constraint the circuit places over it is then
+                // satisfied vacuously. `loading` configures the eval stage and
+                // the claim-bridge run and enforces that they agree slot by
+                // slot, so both belong in the trace that claim is checked
+                // against. While they were omitted that check was vacuous;
+                // `claim_bridge_stage_must_be_tied_to_the_recorded_host` in
+                // `tests/recursive_claims.rs` is the regression test.
+                //
+                // The claim slots are an application parameter, so this arm
+                // cannot be the fixed `.zip()` chain the others are. It builds
+                // the same thing a chain would — one group per proof, holding
+                // every stage of that proof's trace — by accumulation instead.
+                let mut groups: alloc::vec::Vec<alloc::vec::Vec<S::Rx>> = source
                     .rx(RxIndex::PointsStage)
-                    .zip(source.rx(RxIndex::BridgePreamble))
-                    .zip(source.rx(RxIndex::BridgeSPrime))
-                    .zip(source.rx(RxIndex::BridgeInnerError))
-                    .zip(source.rx(RxIndex::BridgeAB))
-                    .zip(source.rx(RxIndex::BridgeQuery))
-                    .zip(source.rx(RxIndex::BridgeF))
-                    .map(|((((((ps, bp), bs), bi), ba), bq), bf)| {
-                        [ps, bp, bs, bi, ba, bq, bf].into_iter()
-                    });
-                processor.grouped_bonding_claim(id, groups)?;
+                    .map(|rx| alloc::vec![rx])
+                    .collect();
+
+                let fixed = [
+                    RxIndex::BridgePreamble,
+                    RxIndex::BridgeSPrime,
+                    RxIndex::BridgeInnerError,
+                    RxIndex::BridgeAB,
+                    RxIndex::BridgeQuery,
+                    RxIndex::BridgeF,
+                    RxIndex::BridgeEval,
+                ];
+                let claim_slots = (0..polys).map(|slot| RxIndex::BridgeClaim(slot as u32));
+                for component in fixed.into_iter().chain(claim_slots) {
+                    for (group, rx) in groups.iter_mut().zip(source.rx(component)) {
+                        group.push(rx);
+                    }
+                }
+
+                processor
+                    .grouped_bonding_claim(id, groups.into_iter().map(|group| group.into_iter()))?;
             }
             Copying(side) => {
                 let groups = source

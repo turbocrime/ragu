@@ -150,6 +150,118 @@ fn forged_challenge_is_rejected_directly_and_recursively() -> Result<()> {
     Ok(())
 }
 
+/// **S2 — `loading` does not enforce the claim-bridge binding.**
+///
+/// A regression test for a defect this branch introduced in `68cde75a`, not a
+/// deferred framework gap.
+///
+/// `loading` configures the eval stage and the claim-bridge run and enforces
+/// `claim_bridges[slot].host == eval.claims[slot]` — the constraint whose own
+/// comment calls it *"what makes `bridge_com` bound to that host commitment"*.
+/// But a bonding claim asserts `a.revdot(s_y) == 0` over the **sum of the rxs
+/// supplied**, and the `Loading` group in `internal/nested/claims.rs` supplies
+/// only the seven rxs `main` needed, omitting `BridgeEval` and every
+/// `BridgeClaim(slot)`. Those wires are therefore zero in `a`, and the
+/// constraint reduces to `0 == 0`.
+///
+/// `copying` in the same file supplies all eight stages it configures, and
+/// `main`'s `loading` supplies exactly the seven it configures — so the rule is
+/// not in doubt, and this is a missed edit rather than a convention.
+///
+/// **The adversary.** Rebuild the carried claim-bridge stage in slot 0 so it
+/// witnesses a host commitment the proof does not record, and change nothing
+/// else. The instance-bound `bridge_com` and the recorded host both stay put, so
+/// the child's $k(Y)$ is intact and the native root check — which *recomputes*
+/// the bridge commitment from the recorded host rather than reading the carried
+/// rx — has no reason to fire. The substituted rx is a well-formed stage for the
+/// same slot with the same blind, so that slot's own `BridgeClaim` bonding claim
+/// still holds. Exactly one check in the system is supposed to reject this.
+///
+/// This test asserts the **correct** behaviour, so it fails until the `Loading`
+/// group is fixed. It is the acceptance gate for that work.
+#[test]
+fn claim_bridge_stage_must_be_tied_to_the_recorded_host() -> Result<()> {
+    let pasta = Pasta::baked();
+    let app = open_app::<Pasta, R>(pasta)?;
+    let mut rng = StdRng::seed_from_u64(4242);
+
+    let honest = seed_leaf(&app, pasta, &mut rng, &[3, 1, 4, 1, 5])?;
+    assert!(
+        app.verify(&honest, &mut rng)?,
+        "the honest leaf must verify"
+    );
+
+    // A host commitment this proof records nowhere.
+    let other = poly::<Fp, R>(&[7, 7, 7]);
+    let other_host =
+        other.commit_to_affine::<<Pasta as Cycle>::HostCurve>(Pasta::host_generators(pasta));
+
+    let mut tampered = honest;
+    tampered.corrupt_claim_bridge_host(0, other_host)?;
+
+    // `loading` relates the claim-bridge run to the eval stage's claim block,
+    // and they now disagree in slot 0.
+    assert!(
+        !app.verify(&tampered, &mut rng)?,
+        "the loading circuit must reject a claim-bridge stage that witnesses a \
+         host commitment the proof does not record for that slot — if this \
+         fails, the `Loading` bonding group is still missing BridgeEval and \
+         BridgeClaim(slot), so the constraint at loading.rs:251-253 is vacuous"
+    );
+
+    // Fused as a child, it is *not* caught — and that is a **separate** gap
+    // from the one above, which this test pins rather than fixes.
+    //
+    // `nested_claims::build` has exactly one caller, `verify.rs`, and it runs
+    // against `SingleProofSource { proof: <the proof being verified> }`. So a
+    // proof's nested bonding claims — `Loading` among them — are only ever
+    // checked when *that* proof is verified at root. A parent carries copies of
+    // its children's chain bridge stages (that is what the `Copying` group
+    // reads) but not their claim-bridge run, so once a proof is fused the
+    // stages tampered with here are gone, and nothing ever looked at them.
+    //
+    // Whether that is the intended division of labour — a child's claims being
+    // discharged by the accumulation rather than re-checked — or a second
+    // defect is an open question, and not one this test answers. The assertion
+    // records the observed behaviour so a change in it is noticed.
+    let leaf2 = seed_leaf(&app, pasta, &mut rng, &[2, 7, 1, 8])?;
+    let p3 = poly(&[5, 5, 5]);
+    let com3 = app.commit_polynomial(&p3)?;
+    let x = Fp::from(11u64);
+    let y = p3.eval(x);
+
+    let fused = app.fuse(
+        &mut rng,
+        OpenAndHash::new(Pasta::circuit_poseidon(pasta)),
+        OpenAndHashWitness {
+            commitment: com3,
+            x,
+            y,
+        },
+        tampered,
+        leaf2,
+    );
+
+    match fused {
+        Err(e) => std::eprintln!("interior fuse rejected the untied claim bridge: {e:?}"),
+        Ok((parent, ())) => {
+            assert!(
+                app.verify(&parent, &mut rng)?,
+                "expected the status quo: a proof's nested claims are checked only \
+                 when it is verified at root, so a parent does not re-check its \
+                 child's. If this now fails, that has changed -- invert this \
+                 assertion."
+            );
+            std::eprintln!(
+                "a parent of an untied-claim-bridge child still verifies: nested \
+                 claims are root-only."
+            );
+        }
+    }
+
+    Ok(())
+}
+
 /// **S1 — the claim commitment is not bound to the folded polynomial.**
 ///
 /// A claim's instance-bound `bridge_com` is what the *step* sees: its Fiat-Shamir

@@ -107,6 +107,40 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         self.set_claim_host_commitment(slot, host);
     }
 
+    /// Rebuild the carried claim-bridge stage rx in `slot` so that it witnesses
+    /// `host` instead of the host commitment this proof records for that slot.
+    ///
+    /// Nothing else moves: `claim_host_commitments[slot]` still holds the real
+    /// host, so the eval bridge stage still records it, and the instance-bound
+    /// `bridge_com` is untouched — so neither the application circuit's $k(Y)$
+    /// nor the native root-verify check
+    /// (`verify.rs`, which *recomputes* the bridge commitment from the recorded
+    /// host rather than reading the carried rx) has any reason to fire.
+    ///
+    /// The substituted rx is a *well-formed* claim-bridge stage for the same
+    /// slot with the same blind, so that slot's own `BridgeClaim` bonding claim
+    /// still holds too. Exactly one check in the system is supposed to reject
+    /// this: the `loading` circuit's
+    /// `claim_bridges[slot].host == eval.claims[slot]`.
+    ///
+    /// That makes this the isolating adversary for that constraint, and the
+    /// reason it is a distinct entry point rather than a
+    /// [`Corruption`] variant is that it needs a `HostCurve` point, not a field
+    /// element.
+    pub fn corrupt_claim_bridge_host(
+        &mut self,
+        slot: usize,
+        host: C::HostCurve,
+    ) -> ragu_core::Result<()> {
+        // One carried bridge rx per poly slot, so this list *is* the capacity
+        // the layout must be built at.
+        let polys = self.claim_bridge_rxs.len();
+        let alpha = crate::internal::challenge::claim_bridge_alpha::<C>(self.bridge_alpha, slot);
+        self.claim_bridge_rxs[slot] =
+            crate::internal::challenge::claim_bridge_rx::<C, R>(slot, alpha, host, polys)?;
+        Ok(())
+    }
+
     /// The instance-bound opening $(x, y)$ this proof claims in `slot`.
     ///
     /// The read counterpart to [`Corruption::ClaimY`], and the only way out of
@@ -142,6 +176,15 @@ impl<C: Cycle, R: Rank, H: crate::Header<C::CircuitField>> crate::Pcd<C, R, H> {
         host: C::HostCurve,
     ) {
         self.proof_mut().corrupt_claim_poly(slot, poly, host);
+    }
+
+    /// Apply [`Proof::corrupt_claim_bridge_host`] to the underlying proof.
+    pub fn corrupt_claim_bridge_host(
+        &mut self,
+        slot: usize,
+        host: C::HostCurve,
+    ) -> ragu_core::Result<()> {
+        self.proof_mut().corrupt_claim_bridge_host(slot, host)
     }
 }
 
