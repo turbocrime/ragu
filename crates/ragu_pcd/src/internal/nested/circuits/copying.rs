@@ -30,30 +30,33 @@ use ragu_primitives::GadgetExt as _;
 use crate::internal::{
     Side,
     endoscalar::{EndoscalarStage, PointSlotStage, Points, PointsStage},
-    nested::stages,
+    nested::{EndoPoints, stages},
 };
 
 /// Copying circuit that relates the current preamble to a child's stages.
-pub struct Circuit<C: CurveAffine, R: Rank> {
+///
+/// `L` is the application's poly count as a
+/// [`Len`](ragu_primitives::vec::Len): what [`Points`] needs in order to be a
+/// gadget, and the only shape this circuit needs. This circuit traverses a
+/// *child's* trace, but every step in an application exposes the same shape —
+/// child and grandchildren included — so one count describes the whole walk.
+pub struct Circuit<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> {
     side: Side,
-    /// The application's capacity. This circuit traverses a *child's* trace,
-    /// but every step in an application exposes the same shape — child and
-    /// grandchildren included — so one value describes the whole walk.
-    capacity: crate::framework_hooks::HookLayout,
-    _marker: PhantomData<(C, R)>,
+    _marker: PhantomData<(C, R, L)>,
 }
 
-impl<C: CurveAffine, R: Rank> Circuit<C, R> {
-    pub fn new(side: Side, capacity: crate::framework_hooks::HookLayout) -> Self {
+impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> Circuit<C, R, L> {
+    pub fn new(side: Side) -> Self {
         Self {
             side,
-            capacity,
             _marker: PhantomData,
         }
     }
 }
 
-impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
+impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> MultiStageCircuit<C::Base, R>
+    for Circuit<C, R, L>
+{
     type Last = stages::eval::Stage<C, R>;
     type Instance<'source> = ();
     type Witness<'source> = ();
@@ -79,7 +82,7 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         // the typed positions after it are right.
         use crate::internal::nested::{ChainStage, NestedLayouts};
 
-        let layouts = NestedLayouts::new::<C, R>(self.capacity);
+        let layouts = NestedLayouts::new::<C, R>(L::len());
 
         let dr = dr.skip_stage_sized(EndoscalarStage, layouts.width(ChainStage::Endoscalar))?;
         let (point_guards, dr) = dr.configure_induced_sized::<PointsStage<C, R>, _>(
@@ -128,19 +131,18 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
                 _witness.as_ref().map(|_| unreachable!())
             };
         }
-        let points = Points::from_slots(
+        let points = Points::<D, C, EndoPoints<L>>::from_slots(
             point_guards
                 .into_iter()
                 .map(|guard| Ok(guard.unenforced(dr, w!())?.point))
                 .collect::<Result<alloc::vec::Vec<_>>>()?,
-            layouts.num_points,
         )?;
         let (preamble, preamble_claims) = stages::preamble::Output::from_slots(
             preamble_guards
                 .into_iter()
                 .map(|guard| Ok(guard.unenforced(dr, w!())?.host))
                 .collect::<Result<alloc::vec::Vec<_>>>()?,
-            self.capacity.poly_query.polys,
+            L::len(),
         )?;
         let s_prime = s_prime_guard.unenforced(dr, w!())?;
         let inner_error = inner_error_guard.unenforced(dr, w!())?;
@@ -152,7 +154,7 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
                 .into_iter()
                 .map(|guard| Ok(guard.unenforced(dr, w!())?.host))
                 .collect::<Result<alloc::vec::Vec<_>>>()?,
-            self.capacity.poly_query.polys,
+            L::len(),
         )?;
 
         // Select the child corresponding to this circuit's side.

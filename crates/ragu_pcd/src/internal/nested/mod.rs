@@ -34,19 +34,11 @@ use crate::internal::{Side, endoscalar};
 /// entry of its rx list, plus `a`, `b`, `registry_xy`, `p`, and its stashed
 /// poly-query claim commitments.
 ///
-/// Shared between [`num_endoscaling_points`] and the nested preamble's
-/// `num_points` — both walk the same per-child block.
-pub const fn child_endoscaling_points(child: crate::framework_hooks::HookLayout) -> usize {
-    child_endoscaling_points_for(child.poly_query.polys)
-}
-
-/// [`child_endoscaling_points`] straight from a poly count, for callers holding
-/// the count without the surrounding [`HookLayout`](crate::framework_hooks::HookLayout).
-///
-/// This is the single statement of the per-child block's decomposition: the 13
-/// native rx commitments, four extras (`ab_a`, `ab_b`, `registry_xy`, `p`), and
-/// one stashed claim per polynomial slot.
-pub const fn child_endoscaling_points_for(polys: usize) -> usize {
+/// The single statement of the per-child block's decomposition: the 13 native rx
+/// commitments, four extras (`ab_a`, `ab_b`, `registry_xy`, `p`), and one stashed
+/// claim per polynomial slot. Shared between [`num_endoscaling_points`] and the
+/// nested preamble's `num_points` — both walk the same block.
+pub const fn child_endoscaling_points(polys: usize) -> usize {
     crate::internal::native::RxIndex::NUM + 4 + polys
 }
 
@@ -57,18 +49,36 @@ pub const fn child_endoscaling_points_for(polys: usize) -> usize {
 ///
 /// The endoscaling circuits process these points across
 /// [`num_endoscaling_steps`] steps.
-pub const fn num_endoscaling_points(capacity: crate::framework_hooks::HookLayout) -> usize {
+pub const fn num_endoscaling_points(polys: usize) -> usize {
     const F_COMMITMENT_BASE_POINT: usize = 1;
 
     F_COMMITMENT_BASE_POINT
-        + 2 * child_endoscaling_points(capacity)
+        + 2 * child_endoscaling_points(polys)
         + crate::internal::native::stages::eval::CURRENT_STEP_COMPONENTS
 }
 
 /// The number of endoscaling step circuits a fuse runs: what
 /// [`endoscalar::num_steps`] makes of [`num_endoscaling_points`].
-pub const fn num_endoscaling_steps(capacity: crate::framework_hooks::HookLayout) -> usize {
-    endoscalar::num_steps(num_endoscaling_points(capacity))
+pub const fn num_endoscaling_steps(polys: usize) -> usize {
+    endoscalar::num_steps(num_endoscaling_points(polys))
+}
+
+/// [`num_endoscaling_points`] at the type level, for a poly count `L`.
+///
+/// The `Len` that [`endoscalar::Points`] and [`endoscalar::EndoscalingStep`] are
+/// parameterized by. It exists because the point count is an *expression* in the
+/// poly count, which a const generic cannot carry on stable Rust while
+/// [`Len::len`](ragu_primitives::vec::Len::len) — an ordinary function — can.
+///
+/// This delegates to [`num_endoscaling_points`] rather than restating it, so the
+/// value form and the type form are one formula: a gadget's width and the layout
+/// that places it cannot disagree.
+pub struct EndoPoints<L: ragu_primitives::vec::Len>(core::marker::PhantomData<L>);
+
+impl<L: ragu_primitives::vec::Len> ragu_primitives::vec::Len for EndoPoints<L> {
+    fn len() -> usize {
+        num_endoscaling_points(L::len())
+    }
 }
 
 /// A stage's position in [`chain_layout`], so the runs and the mask
@@ -128,7 +138,7 @@ impl ChainStage {
 /// type); `nested_chain_layout_tiles_at_every_capacity` pins that the result is
 /// contiguous.
 pub fn chain_layout<HC: ragu_arithmetic::CurveAffine, R: Rank>(
-    capacity: crate::framework_hooks::HookLayout,
+    polys: usize,
 ) -> ragu_circuits::staging::InducedStages {
     use ragu_circuits::staging::{InducedStages, Stage};
 
@@ -140,15 +150,15 @@ pub fn chain_layout<HC: ragu_arithmetic::CurveAffine, R: Rank>(
     // This vector's order is `ChainStage::ALL`.
     InducedStages::new(alloc::vec![
         <endoscalar::EndoscalarStage as Stage<HC::Base, R>>::values(),
-        endoscalar::points_stage_num_values(num_endoscaling_points(capacity)),
-        stages::preamble::num_values(capacity),
+        endoscalar::points_stage_num_values(num_endoscaling_points(polys)),
+        stages::preamble::num_values(polys),
         <stages::s_prime::Stage<HC, R> as Stage<HC::Base, R>>::values(),
         <stages::inner_error::Stage<HC, R> as Stage<HC::Base, R>>::values(),
         <stages::outer_error::Stage<HC, R> as Stage<HC::Base, R>>::values(),
         <stages::ab::Stage<HC, R> as Stage<HC::Base, R>>::values(),
         <stages::query::Stage<HC, R> as Stage<HC::Base, R>>::values(),
         <stages::f::Stage<HC, R> as Stage<HC::Base, R>>::values(),
-        stages::eval::num_values(capacity),
+        stages::eval::num_values(polys),
     ])
 }
 
@@ -189,7 +199,7 @@ where
 /// together, and building the chain is a ten-element allocation.
 pub fn claim_run_layout<HC: ragu_arithmetic::CurveAffine, R: Rank>(
     chain: &ragu_circuits::staging::InducedStages,
-    capacity: crate::framework_hooks::HookLayout,
+    polys: usize,
 ) -> ragu_circuits::staging::InducedStages {
     use ragu_circuits::staging::Stage as _;
 
@@ -197,7 +207,7 @@ pub fn claim_run_layout<HC: ragu_arithmetic::CurveAffine, R: Rank>(
         chain.final_skip_gates(),
         alloc::vec![
             stages::claim_bridge::Slot::<HC, R>::values();
-            capacity.poly_query.polys
+            polys
         ],
     )
 }
@@ -223,18 +233,13 @@ pub struct NestedLayouts {
     pub eval: ragu_circuits::staging::InducedStages,
     /// The claim-bridge run, anchored where the chain ends.
     pub claims: ragu_circuits::staging::InducedStages,
-    /// How many points [`points`](Self::points) places — the run's slot count,
-    /// which [`Points::from_slots`](endoscalar::Points::from_slots) also needs.
-    pub num_points: usize,
 }
 
 impl NestedLayouts {
     /// Builds every layout for an application of the given capacity.
-    pub fn new<HC: ragu_arithmetic::CurveAffine, R: Rank>(
-        capacity: crate::framework_hooks::HookLayout,
-    ) -> Self {
-        let chain = chain_layout::<HC, R>(capacity);
-        let num_points = num_endoscaling_points(capacity);
+    pub fn new<HC: ragu_arithmetic::CurveAffine, R: Rank>(polys: usize) -> Self {
+        let chain = chain_layout::<HC, R>(polys);
+        let num_points = num_endoscaling_points(polys);
         Self {
             points: run_layout::<HC::Base, R, endoscalar::PointSlotStage<HC, R>>(
                 &chain,
@@ -244,16 +249,15 @@ impl NestedLayouts {
             preamble: run_layout::<HC::Base, R, stages::preamble::Slot<HC, R>>(
                 &chain,
                 ChainStage::Preamble,
-                stages::preamble::num_slots(capacity),
+                stages::preamble::num_slots(polys),
             ),
             eval: run_layout::<HC::Base, R, stages::eval::Slot<HC, R>>(
                 &chain,
                 ChainStage::Eval,
-                stages::eval::num_slots(capacity),
+                stages::eval::num_slots(polys),
             ),
-            claims: claim_run_layout::<HC, R>(&chain, capacity),
+            claims: claim_run_layout::<HC, R>(&chain, polys),
             chain,
-            num_points,
         }
     }
 
@@ -290,8 +294,8 @@ const BLOCK_FIXED: [InternalCircuitIndex; 11] = [
 /// Every one of these is built at the capacity, children included, which is
 /// why there is a single run and a single block rather than a family keyed by
 /// shape.
-pub(crate) fn num_internal(capacity: crate::framework_hooks::HookLayout) -> usize {
-    num_endoscaling_steps(capacity) + BLOCK_FIXED.len() + capacity.poly_query.polys + 3
+pub(crate) fn num_internal(polys: usize) -> usize {
+    num_endoscaling_steps(polys) + BLOCK_FIXED.len() + polys + 3
 }
 
 /// Index of internal nested circuits registered into the registry.
@@ -343,10 +347,10 @@ impl InternalCircuitIndex {
     /// polynomial-slot count, which is an application parameter, and a length
     /// computed from a generic cannot size an array on stable Rust. The order
     /// is what matters here, and it is identical either way.
-    pub fn all(capacity: crate::framework_hooks::HookLayout) -> Vec<Self> {
+    pub fn all(polys: usize) -> Vec<Self> {
         let mut all = Vec::new();
         all.extend(
-            (0..num_endoscaling_steps(capacity)).map(|step| Self::EndoscalingStep(step as u32)),
+            (0..num_endoscaling_steps(polys)).map(|step| Self::EndoscalingStep(step as u32)),
         );
         all.extend([
             Self::EndoscalarStage,
@@ -361,7 +365,7 @@ impl InternalCircuitIndex {
             Self::BridgeF,
             Self::BridgeEval,
         ]);
-        all.extend((0..capacity.poly_query.polys).map(|i| Self::BridgeClaim(i as u32)));
+        all.extend((0..polys).map(|i| Self::BridgeClaim(i as u32)));
         all.extend([
             Self::Loading,
             Self::Copying(Side::Left),
@@ -374,8 +378,8 @@ impl InternalCircuitIndex {
     ///
     /// Circuit indices follow the `RegistryBuilder::finalize()` concatenation
     /// order: internal circuits first, then internal masks.
-    pub fn circuit_index(self, capacity: crate::framework_hooks::HookLayout) -> CircuitIndex {
-        let pos = Self::all(capacity)
+    pub fn circuit_index(self, polys: usize) -> CircuitIndex {
+        let pos = Self::all(polys)
             .iter()
             .position(|&v| v == self)
             .expect("every variant appears in `all`");
@@ -464,10 +468,10 @@ impl RxIndex {
     /// `const` array, since the native side's count does not depend on the
     /// polynomial-slot count. See [`InternalCircuitIndex::all`] for why this
     /// one cannot.
-    pub fn all(capacity: crate::framework_hooks::HookLayout) -> Vec<Self> {
+    pub fn all(polys: usize) -> Vec<Self> {
         let mut all = Vec::new();
         all.extend(
-            (0..num_endoscaling_steps(capacity)).map(|step| Self::EndoscalingStep(step as u32)),
+            (0..num_endoscaling_steps(polys)).map(|step| Self::EndoscalingStep(step as u32)),
         );
         all.extend([
             Self::EndoscalarStage,
@@ -481,7 +485,7 @@ impl RxIndex {
             Self::BridgeF,
             Self::BridgeEval,
         ]);
-        all.extend((0..capacity.poly_query.polys).map(|i| Self::BridgeClaim(i as u32)));
+        all.extend((0..polys).map(|i| Self::BridgeClaim(i as u32)));
         all.extend([
             Self::ChildPointsStage(Side::Left),
             Self::ChildPointsStage(Side::Right),
@@ -517,26 +521,25 @@ pub mod stages {
 ///
 /// Circuits are registered as internal to ensure they occupy prefix indices
 /// before application steps.
-pub fn register_all<'params, C: Cycle, R: Rank>(
+pub fn register_all<'params, C: Cycle, R: Rank, L: ragu_primitives::vec::Len>(
     mut registry: RegistryBuilder<'params, C::ScalarField, R>,
-    capacity: crate::framework_hooks::HookLayout,
+    polys: usize,
 ) -> Result<RegistryBuilder<'params, C::ScalarField, R>> {
     let initial_internal_circuits = registry.num_internal_circuits();
 
     // Circuits first, then bondings - matching RegistryBuilder::finalize()'s
     // concatenation order and the layout `num_internal` documents.
     {
-        let num_points = num_endoscaling_points(capacity);
-        for step in 0..num_endoscaling_steps(capacity) {
+        for step in 0..num_endoscaling_steps(polys) {
             let step_circuit =
-                endoscalar::EndoscalingStep::<C::HostCurve, R>::new(step, num_points);
+                endoscalar::EndoscalingStep::<C::HostCurve, R, EndoPoints<L>>::new(step);
             registry = registry.register_internal_circuit(MultiStage::new(step_circuit))?;
         }
     }
 
     {
-        let chain = chain_layout::<C::HostCurve, R>(capacity);
-        let claim_layout = claim_run_layout::<C::HostCurve, R>(&chain, capacity);
+        let chain = chain_layout::<C::HostCurve, R>(polys);
+        let claim_layout = claim_run_layout::<C::HostCurve, R>(&chain, polys);
 
         // The fixed block, in BLOCK_FIXED order: endoscalar, points, points
         // final, then the eight bridge masks in chain order.
@@ -551,25 +554,25 @@ pub fn register_all<'params, C: Cycle, R: Rank>(
             registry = registry.register_bonding(chain.mask::<C::ScalarField, R>(stage.index())?);
         }
 
-        for slot in 0..capacity.poly_query.polys {
+        for slot in 0..polys {
             registry = registry.register_bonding(claim_layout.mask::<C::ScalarField, R>(slot)?);
         }
 
-        let circuit = circuits::loading::Circuit::<C::HostCurve, R>::new(capacity);
+        let circuit = circuits::loading::Circuit::<C::HostCurve, R, L>::new();
         registry = registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?);
 
         for side in [Side::Left, Side::Right] {
             // A copying circuit walks a CHILD of the proof being fused, but
             // every step in the application exposes the capacity — children
             // included — so the same value serves here.
-            let circuit = circuits::copying::Circuit::<C::HostCurve, R>::new(side, capacity);
+            let circuit = circuits::copying::Circuit::<C::HostCurve, R, L>::new(side);
             registry = registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?);
         }
     }
 
     assert_eq!(
         registry.num_internal_circuits(),
-        initial_internal_circuits + num_internal(capacity),
+        initial_internal_circuits + num_internal(polys),
         "internal circuit count mismatch"
     );
 

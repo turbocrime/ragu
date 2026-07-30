@@ -34,7 +34,10 @@ use ragu_core::{
     gadgets::{Bound, Gadget, Kind},
     maybe::Maybe,
 };
-use ragu_primitives::{Endoscalar, GadgetExt, NonzeroBank, Point};
+use ragu_primitives::{
+    Endoscalar, GadgetExt, NonzeroBank, Point,
+    vec::{FixedVec, Len},
+};
 
 /// Number of endoscaling operations per step. This is how many we can fit into
 /// a single circuit in our target circuit size.
@@ -48,6 +51,33 @@ pub(crate) const fn num_steps(num_points: usize) -> usize {
     let inputs = num_points - 1;
     let steps = inputs.div_ceil(ENDOSCALINGS_PER_STEP);
     if steps > 1 { steps } else { 1 }
+}
+
+/// Number of accumulation inputs for a point count `L`: every point after the
+/// first.
+///
+/// A [`Len`] computed from another `Len`, which is the whole reason the count
+/// travels as a type rather than a const: the point count is an expression in the
+/// application's poly count, and passing an expression as a const generic
+/// argument needs `generic_const_exprs`. [`Len::len`] is an ordinary function, so
+/// it may compute whatever it likes from generics.
+pub struct InputsLen<L: Len>(core::marker::PhantomData<L>);
+
+impl<L: Len> Len for InputsLen<L> {
+    fn len() -> usize {
+        L::len() - 1
+    }
+}
+
+/// Number of endoscaling steps — and so interstitials — for a point count `L`.
+///
+/// [`num_steps`] at the type level.
+pub struct NumStepsLen<L: Len>(core::marker::PhantomData<L>);
+
+impl<L: Len> Len for NumStepsLen<L> {
+    fn len() -> usize {
+        num_steps(L::len())
+    }
 }
 
 /// The points stage's wire width for `num_points` accumulated points; the
@@ -183,11 +213,10 @@ impl<C: CurveAffine> Clone for PointsWitness<C> {
     }
 }
 
-impl<C: CurveAffine, R: Rank> Clone for EndoscalingStep<C, R> {
+impl<C: CurveAffine, R: Rank, L: Len> Clone for EndoscalingStep<C, R, L> {
     fn clone(&self) -> Self {
         Self {
             step: self.step,
-            num_points: self.num_points,
             _marker: core::marker::PhantomData,
         }
     }
@@ -196,25 +225,31 @@ impl<C: CurveAffine, R: Rank> Clone for EndoscalingStep<C, R> {
 /// The accumulated points, as the circuit body names them: initial, inputs,
 /// and interstitials. See [`PointsWitness`].
 ///
-/// Deliberately **not** a gadget. [`PointsStage`] places these as an induced
-/// run of one-point slots, so this struct never crosses a stage boundary as a
-/// unit — which is what lets the accumulated point count stay a value.
+/// A gadget, as on `main`. The point count rides `L` rather than `main`'s
+/// `const NUM_POINTS`, because the count is an expression in the application's
+/// poly count and a const generic cannot carry an expression on stable Rust —
+/// see [`InputsLen`]. The derive keeps all three fields in one statement of
+/// order.
 ///
 /// Field order is the slot order [`PointsWitness::slot_points`] emits and
 /// [`from_slots`](Self::from_slots) consumes.
-pub struct Points<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
+#[derive(Gadget)]
+pub struct Points<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> {
+    #[ragu(gadget)]
     pub initial: Point<'dr, D, C>,
-    pub inputs: alloc::vec::Vec<Point<'dr, D, C>>,
-    pub interstitials: alloc::vec::Vec<Point<'dr, D, C>>,
+    #[ragu(gadget)]
+    pub inputs: FixedVec<Point<'dr, D, C>, InputsLen<L>>,
+    #[ragu(gadget)]
+    pub interstitials: FixedVec<Point<'dr, D, C>, NumStepsLen<L>>,
 }
 
-impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> Points<'dr, D, C> {
-    /// Rebuild the named view from the run's slots, for an accumulation of
-    /// `num_points` points.
-    pub fn from_slots(
-        slots: impl IntoIterator<Item = Point<'dr, D, C>>,
-        num_points: usize,
-    ) -> Result<Self> {
+impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> Points<'dr, D, C, L> {
+    /// Rebuild the named view from the run's slots.
+    ///
+    /// Takes no count: both widths come from `L`, which is what lets this be a
+    /// gadget. A run shorter than `L` describes is reported as
+    /// [`MalformedEncoding`](ragu_core::Error::MalformedEncoding).
+    pub fn from_slots(slots: impl IntoIterator<Item = Point<'dr, D, C>>) -> Result<Self> {
         let slots = &mut slots.into_iter();
         let mut next = || {
             slots.next().ok_or_else(|| {
@@ -224,14 +259,18 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> Points<'dr, D, C> {
             })
         };
 
+        let initial = next()?;
+        let inputs = (0..InputsLen::<L>::len())
+            .map(|_| next())
+            .collect::<Result<alloc::vec::Vec<_>>>()?;
+        let interstitials = (0..NumStepsLen::<L>::len())
+            .map(|_| next())
+            .collect::<Result<alloc::vec::Vec<_>>>()?;
+
         Ok(Points {
-            initial: next()?,
-            inputs: (0..num_points - 1)
-                .map(|_| next())
-                .collect::<Result<alloc::vec::Vec<_>>>()?,
-            interstitials: (0..num_steps(num_points))
-                .map(|_| next())
-                .collect::<Result<alloc::vec::Vec<_>>>()?,
+            initial,
+            inputs: inputs.try_into()?,
+            interstitials: interstitials.try_into()?,
         })
     }
 }
@@ -328,23 +367,21 @@ impl<C: CurveAffine, R: Rank> Stage<C::Base, R> for PointSlotStage<C, R> {
 ///   `inputs[N*ENDOSCALINGS_PER_STEP..(N+1)*ENDOSCALINGS_PER_STEP]` (clamped to bounds)
 ///
 /// The circuit constrains that `interstitials[step]` equals the Horner result.
-pub struct EndoscalingStep<C: CurveAffine, R: Rank> {
+///
+/// `L` is the accumulation's point count, carried as a [`Len`] so it can be an
+/// expression in the application's poly count — the same reason [`Points`] takes
+/// one.
+pub struct EndoscalingStep<C: CurveAffine, R: Rank, L: Len> {
     step: usize,
-    /// How many points the accumulation covers. A value rather than a type
-    /// parameter: it follows the children's shapes, which the application
-    /// fixes, and this is a circuit rather than a stage, so nothing inherits
-    /// it.
-    num_points: usize,
-    _marker: core::marker::PhantomData<(C, R)>,
+    _marker: core::marker::PhantomData<(C, R, L)>,
 }
 
-impl<C: CurveAffine, R: Rank> EndoscalingStep<C, R> {
-    /// Creates a new endoscaling step for an accumulation of `num_points`
-    /// points.
+impl<C: CurveAffine, R: Rank, L: Len> EndoscalingStep<C, R, L> {
+    /// Creates a new endoscaling step.
     ///
-    /// Panics if `step >= num_steps(num_points)`.
-    pub fn new(step: usize, num_points: usize) -> Self {
-        let num_steps = num_steps(num_points);
+    /// Panics if `step >= NumStepsLen::<L>::len()`.
+    pub fn new(step: usize) -> Self {
+        let num_steps = NumStepsLen::<L>::len();
         assert!(
             step < num_steps,
             "step {} exceeds available steps (num_steps = {})",
@@ -353,7 +390,6 @@ impl<C: CurveAffine, R: Rank> EndoscalingStep<C, R> {
         );
         Self {
             step,
-            num_points,
             _marker: core::marker::PhantomData,
         }
     }
@@ -361,7 +397,7 @@ impl<C: CurveAffine, R: Rank> EndoscalingStep<C, R> {
     /// Range of input indices to iterate over in the Horner loop.
     fn input_range(&self) -> core::ops::Range<usize> {
         let start = self.step * ENDOSCALINGS_PER_STEP;
-        let end = (start + ENDOSCALINGS_PER_STEP).min(self.num_points - 1);
+        let end = (start + ENDOSCALINGS_PER_STEP).min(InputsLen::<L>::len());
         start..end
     }
 }
@@ -374,7 +410,7 @@ pub struct EndoscalingStepWitness<'source, C: CurveAffine> {
     pub points: &'source PointsWitness<C>,
 }
 
-impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for EndoscalingStep<C, R> {
+impl<C: CurveAffine, R: Rank, L: Len> MultiStageCircuit<C::Base, R> for EndoscalingStep<C, R, L> {
     type Last = PointsStage<C, R>;
     type Instance<'source> = ();
     type Witness<'source> = EndoscalingStepWitness<'source, C>;
@@ -395,7 +431,7 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for EndoscalingStep<
         witness: DriverValue<D, Self::Witness<'source>>,
     ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>> {
         let (endoscalar_guard, dr) = dr.add_stage::<EndoscalarStage>()?;
-        let layout = points_run_layout::<C, R>(self.num_points);
+        let layout = points_run_layout::<C, R>(L::len());
         let (point_guards, dr) = dr.configure_induced_sized::<PointsStage<C, R>, _>(
             PointSlotStage::<C, R>::default(),
             &layout,
@@ -407,7 +443,7 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for EndoscalingStep<
         // circuits (see #172). This only constrains the Horner accumulation
         // relationship between inputs and interstitials.
         let endoscalar = endoscalar_guard.unenforced(dr, witness.as_ref().map(|w| w.endoscalar))?;
-        let points = Points::from_slots(
+        let points = Points::<D, C, L>::from_slots(
             point_guards
                 .into_iter()
                 .enumerate()
@@ -417,7 +453,6 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for EndoscalingStep<
                         .point)
                 })
                 .collect::<Result<alloc::vec::Vec<_>>>()?,
-            self.num_points,
         )?;
 
         // acc = initial or previous interstitial, depending on step index
@@ -472,7 +507,7 @@ mod tests {
         maybe::Maybe,
     };
     use ragu_pasta::{Ep, EpAffine, Fp, Fq};
-    use ragu_primitives::Endoscalar;
+    use ragu_primitives::{Endoscalar, vec::ConstLen};
     use ragu_testing::registry::TestRegistryBuilder;
 
     use super::{
@@ -582,7 +617,7 @@ mod tests {
         // Run each step through the multi-stage circuit and verify correctness.
         let layout = test_layout(NUM_POINTS);
         for step in 0..num_steps {
-            let step_circuit = EndoscalingStep::<EpAffine, R>::new(step, NUM_POINTS);
+            let step_circuit = EndoscalingStep::<EpAffine, R, ConstLen<NUM_POINTS>>::new(step);
             let mut builder = TestRegistryBuilder::new();
             let staged_h = builder.register_circuit(MultiStage::new(step_circuit.clone()))?;
             let endo_mask_h = builder.register_bonding(layout.mask(0)?);
@@ -655,7 +690,7 @@ mod tests {
         // Run each step through the multi-stage circuit.
         let layout = test_layout(NUM_POINTS);
         for step in 0..num_steps {
-            let step_circuit = EndoscalingStep::<EpAffine, R>::new(step, NUM_POINTS);
+            let step_circuit = EndoscalingStep::<EpAffine, R, ConstLen<NUM_POINTS>>::new(step);
             let mut builder = TestRegistryBuilder::new();
             let staged_h = builder.register_circuit(MultiStage::new(step_circuit.clone()))?;
             builder.register_bonding(layout.mask(0)?);
@@ -736,7 +771,7 @@ mod tests {
     fn test_input_range() {
         // Helper to get input_range for a given point count and step
         fn range<const NUM_POINTS: usize>(step: usize) -> core::ops::Range<usize> {
-            EndoscalingStep::<EpAffine, R>::new(step, NUM_POINTS).input_range()
+            EndoscalingStep::<EpAffine, R, ConstLen<NUM_POINTS>>::new(step).input_range()
         }
 
         // NUM_POINTS = 1: 0 inputs, 1 step

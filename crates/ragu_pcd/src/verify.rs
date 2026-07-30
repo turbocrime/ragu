@@ -153,10 +153,14 @@ impl<
             let z_nested = C::ScalarField::random(&mut rng);
             let mut nested_builder =
                 claims::Builder::new(&self.nested_registry, y_nested, z_nested, capacity);
-            nested_claims::build(&nested_source, &mut nested_builder, capacity)?;
+            nested_claims::build(
+                &nested_source,
+                &mut nested_builder,
+                capacity.poly_query.polys,
+            )?;
 
             let ky_source = nested::SingleProofKySource::<C::ScalarField>::new();
-            nested::ky_values(&ky_source, capacity)
+            nested::ky_values(&ky_source, capacity.poly_query.polys)
                 .zip(nested_builder.a.iter().zip(nested_builder.b.iter()))
                 .all(|(ky, (a, b))| a.revdot(b) == ky)
         };
@@ -193,7 +197,7 @@ impl<
                     slot,
                     alpha,
                     host,
-                    capacity,
+                    capacity.poly_query.polys,
                 )
                 .is_ok_and(|rebuilt| rebuilt == bridge_com)
         });

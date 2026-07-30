@@ -59,7 +59,7 @@ impl<'m, 'rx, F: PrimeField, R: Rank> Processor<&'rx sparse::Polynomial<F, R>>
         id: InternalCircuitIndex,
         rxs: impl Iterator<Item = &'rx sparse::Polynomial<F, R>>,
     ) {
-        let circuit_id = id.circuit_index(self.capacity);
+        let circuit_id = id.circuit_index(self.capacity.poly_query.polys);
         let rx = sum_polynomials(rxs);
         self.circuit_impl(circuit_id, rx);
     }
@@ -69,7 +69,7 @@ impl<'m, 'rx, F: PrimeField, R: Rank> Processor<&'rx sparse::Polynomial<F, R>>
         id: InternalCircuitIndex,
         groups: impl Iterator<Item = impl Iterator<Item = &'rx sparse::Polynomial<F, R>>>,
     ) -> Result<()> {
-        let circuit_id = id.circuit_index(self.capacity);
+        let circuit_id = id.circuit_index(self.capacity.poly_query.polys);
         let folded = self.fold_bonding_groups(groups);
         self.bonding_impl(circuit_id, folded);
         Ok(())
@@ -86,16 +86,12 @@ impl<'m, 'rx, F: PrimeField, R: Rank> Processor<&'rx sparse::Polynomial<F, R>>
 ///    and all `Bridge*` variants
 ///
 /// This ordering must match the ky_elements ordering from [`ky_values`].
-pub fn build<S, P>(
-    source: &S,
-    processor: &mut P,
-    capacity: crate::framework_hooks::HookLayout,
-) -> Result<()>
+pub fn build<S, P>(source: &S, processor: &mut P, polys: usize) -> Result<()>
 where
     S: Source<RxComponent = RxIndex>,
     P: Processor<S::Rx>,
 {
-    for id in InternalCircuitIndex::all(capacity) {
+    for id in InternalCircuitIndex::all(polys) {
         use InternalCircuitIndex::*;
         match id {
             EndoscalingStep(step) => {
@@ -114,7 +110,7 @@ where
                 processor.bonding_claim(id, source.rx(RxIndex::PointsStage))?;
             }
             PointsFinalStaged => {
-                let num_steps = super::num_endoscaling_steps(capacity);
+                let num_steps = super::num_endoscaling_steps(polys);
                 let final_rxs = (0..num_steps)
                     .flat_map(|step| source.rx(RxIndex::EndoscalingStep(step as u32)));
                 processor.bonding_claim(id, final_rxs)?;
@@ -198,11 +194,8 @@ pub trait KySource {
 /// Returns:
 /// - `num_steps` ones (for EndoscalingStep circuit checks, single-proof verification)
 /// - Infinite zeros (for stage checks)
-pub fn ky_values<S: KySource>(
-    source: &S,
-    capacity: crate::framework_hooks::HookLayout,
-) -> impl Iterator<Item = S::Ky> {
-    let num_steps = super::num_endoscaling_steps(capacity);
+pub fn ky_values<S: KySource>(source: &S, polys: usize) -> impl Iterator<Item = S::Ky> {
+    let num_steps = super::num_endoscaling_steps(polys);
 
     // Circuit checks: k(y) = 1 (for single-proof, num_circuit_claims = num_steps)
     core::iter::repeat_n(source.one(), num_steps)

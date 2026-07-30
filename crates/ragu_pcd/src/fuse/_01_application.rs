@@ -129,7 +129,7 @@ impl<
                 slot,
                 challenge::claim_bridge_alpha::<C>(builder.bridge_alpha(), slot),
                 host,
-                self.capacity(),
+                self.capacity().poly_query.polys,
             )?;
             if precheck && expected != witnessed.bridge_com {
                 return Err(Error::InvalidWitness(

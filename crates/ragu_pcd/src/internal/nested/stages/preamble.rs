@@ -19,7 +19,7 @@ use crate::{
 /// `b`, `registry_xy` and `p`) and the stashed poly-query claim commitments.
 ///
 /// Both children present the application's capacity, so one value sizes both.
-pub const fn num_points(capacity: crate::framework_hooks::HookLayout) -> usize {
+pub const fn num_points(polys: usize) -> usize {
     use crate::internal::nested::child_endoscaling_points;
 
     /// The leading slot [`Output::from_slots`] reads before either child's
@@ -28,13 +28,13 @@ pub const fn num_points(capacity: crate::framework_hooks::HookLayout) -> usize {
     /// which is `f.commitment`.
     const NATIVE_PREAMBLE_SLOT: usize = 1;
 
-    NATIVE_PREAMBLE_SLOT + 2 * child_endoscaling_points(capacity)
+    NATIVE_PREAMBLE_SLOT + 2 * child_endoscaling_points(polys)
 }
 
 /// This stage's wire width; the value-level source of the typed
 /// [`values()`](ragu_circuits::staging::Stage::values).
-pub const fn num_values(capacity: crate::framework_hooks::HookLayout) -> usize {
-    num_points(capacity) * 2
+pub const fn num_values(polys: usize) -> usize {
+    num_points(polys) * 2
 }
 
 /// Witness data for a single child proof in the preamble bridge stage.
@@ -385,8 +385,8 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> Output<'dr, D, C> {
 }
 
 /// This stage's slot count: one slot per point of [`num_points`].
-pub const fn num_slots(capacity: crate::framework_hooks::HookLayout) -> usize {
-    num_points(capacity)
+pub const fn num_slots(polys: usize) -> usize {
+    num_points(polys)
 }
 
 /// The witness body for one slot of the run: a single host-curve point.
@@ -428,7 +428,7 @@ mod tests {
     use ragu_pasta::EqAffine;
 
     use super::*;
-    use crate::internal::tests::{R, capacity_with_polys, stage_wire_count};
+    use crate::internal::tests::{R, stage_wire_count};
 
     /// The run's total width is exactly its slots' — the span this stage
     /// occupies in the chain has to be what the subdivision tiles, or every
@@ -436,10 +436,9 @@ mod tests {
     #[test]
     fn num_values_matches_slots() {
         for polys in [0, 1, 4, 8] {
-            let capacity = capacity_with_polys(polys);
             assert_eq!(
-                num_values(capacity),
-                num_slots(capacity) * stage_wire_count(&Slot::<EqAffine, R>::default()),
+                num_values(polys),
+                num_slots(polys) * stage_wire_count(&Slot::<EqAffine, R>::default()),
                 "polys={polys}"
             );
         }
@@ -451,7 +450,6 @@ mod tests {
     #[test]
     fn slot_points_matches_slot_count() {
         for polys in [0, 1, 4, 8] {
-            let capacity = capacity_with_polys(polys);
             let child = ChildWitness::<EqAffine> {
                 application: EqAffine::default(),
                 hashes_1: EqAffine::default(),
@@ -480,7 +478,7 @@ mod tests {
 
             assert_eq!(
                 witness.slot_points().len(),
-                num_slots(capacity),
+                num_slots(polys),
                 "polys={polys}"
             );
         }

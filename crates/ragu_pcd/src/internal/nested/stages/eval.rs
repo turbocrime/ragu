@@ -13,8 +13,8 @@ use ragu_primitives::{Point, io::Write};
 /// The slots this stage carries are the *current* step's, not a child's — but
 /// the capacity is the same either way, being declared once per application, so
 /// this takes the same value every other stage in the chain does.
-pub const fn num_values(capacity: crate::framework_hooks::HookLayout) -> usize {
-    2 * (1 + capacity.poly_query.polys)
+pub const fn num_values(polys: usize) -> usize {
+    2 * (1 + polys)
 }
 
 /// Witness data for this bridge stage.
@@ -113,8 +113,8 @@ impl<C: CurveAffine> Witness<C> {
 
 /// This stage's slot count at the application's declared `capacity`:
 /// `native_eval`, then one slot per poly-query claim.
-pub const fn num_slots(capacity: crate::framework_hooks::HookLayout) -> usize {
-    1 + capacity.poly_query.polys
+pub const fn num_slots(polys: usize) -> usize {
+    1 + polys
 }
 
 /// The witness body for one slot of the run: a single host-curve point.
@@ -140,7 +140,7 @@ mod tests {
     use ragu_pasta::EqAffine;
 
     use super::*;
-    use crate::internal::tests::{R, capacity_with_polys, stage_wire_count};
+    use crate::internal::tests::{R, stage_wire_count};
 
     /// The run's total width is exactly its slots' — the span this stage
     /// occupies in the chain has to be what the subdivision tiles, or the
@@ -148,10 +148,9 @@ mod tests {
     #[test]
     fn num_values_matches_slots() {
         for polys in [0, 1, 4, 8] {
-            let capacity = capacity_with_polys(polys);
             assert_eq!(
-                num_values(capacity),
-                num_slots(capacity) * stage_wire_count(&Slot::<EqAffine, R>::default()),
+                num_values(polys),
+                num_slots(polys) * stage_wire_count(&Slot::<EqAffine, R>::default()),
                 "polys={polys}"
             );
         }

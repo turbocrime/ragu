@@ -53,15 +53,6 @@ where
     );
 }
 
-/// A capacity with the given poly count, for shaped-stage tests.
-#[cfg(test)]
-pub fn capacity_with_polys(polys: usize) -> crate::framework_hooks::HookLayout {
-    crate::framework_hooks::HookLayout {
-        challenge: crate::framework_hooks::ChallengeLayout { calls: 1, width: 2 },
-        poly_query: crate::framework_hooks::PolyQueryLayout { polys, claims: 1 },
-    }
-}
-
 // When changing HEADER_SIZE, update the constraint counts by running:
 //   cargo test -p ragu_pcd --release print_internal_circuit -- --nocapture
 // Then copy-paste the output into the check_constraints! calls in the test below.
@@ -552,16 +543,10 @@ fn print_registry_digests() {
 fn nested_chain_layout_tiles_at_every_capacity() {
     use ragu_pasta::Pasta;
 
-    use crate::framework_hooks::{ChallengeLayout, HookLayout, PolyQueryLayout};
-
     type Host = <Pasta as ragu_arithmetic::Cycle>::HostCurve;
 
     for polys in [0, 1, 4, 8] {
-        let capacity = HookLayout {
-            challenge: ChallengeLayout { calls: 1, width: 2 },
-            poly_query: PolyQueryLayout { polys, claims: 1 },
-        };
-        let nested = crate::internal::nested::chain_layout::<Host, R>(capacity);
+        let nested = crate::internal::nested::chain_layout::<Host, R>(polys);
 
         for stage in 0..nested.len() {
             assert_eq!(
@@ -571,6 +556,49 @@ fn nested_chain_layout_tiles_at_every_capacity() {
             );
         }
     }
+}
+
+/// The endoscaling point count is one formula in two forms, and they agree.
+///
+/// `num_endoscaling_points` sizes the value-level layouts that *place* the points
+/// stage; `EndoPoints` is the [`Len`](ragu_primitives::vec::Len) that gives
+/// [`Points`](crate::internal::endoscalar::Points) its width as a gadget. A gadget
+/// wider than the span holding it is a wire-position bug that no other test here
+/// would attribute, so this pins the two together across the shapes the suite
+/// proves at.
+///
+/// The expected side is spelled out longhand rather than read from
+/// `num_endoscaling_points`: `1` for `f.commitment`, two per-child blocks of
+/// `RxIndex::NUM + 4 + polys`, and the current step's six components. Calling the
+/// function under test on both sides would assert `x == x`.
+#[test]
+fn endoscaling_points_len_matches_the_value_formula() {
+    use ragu_primitives::vec::{ConstLen, Len};
+
+    use crate::internal::{
+        native::{RxIndex, stages::eval::CURRENT_STEP_COMPONENTS},
+        nested::{EndoPoints, num_endoscaling_points},
+    };
+
+    fn check<const POLYS: usize>() {
+        let longhand = 1 + 2 * (RxIndex::NUM + 4 + POLYS) + CURRENT_STEP_COMPONENTS;
+
+        assert_eq!(
+            num_endoscaling_points(POLYS),
+            longhand,
+            "the value formula drifted at polys={POLYS}"
+        );
+        assert_eq!(
+            EndoPoints::<ConstLen<POLYS>>::len(),
+            longhand,
+            "the type-level count disagrees with the value formula at polys={POLYS}"
+        );
+    }
+
+    check::<0>();
+    check::<1>();
+    check::<4>();
+    check::<8>();
 }
 
 /// `ChainStage`'s discriminants are the indices `chain_layout` builds.
@@ -589,7 +617,7 @@ fn nested_chain_positions_match_layout() {
 
     type Host = <Pasta as ragu_arithmetic::Cycle>::HostCurve;
 
-    let chain = crate::internal::nested::chain_layout::<Host, R>(capacity_with_polys(4));
+    let chain = crate::internal::nested::chain_layout::<Host, R>(4);
 
     assert_eq!(
         chain.len(),

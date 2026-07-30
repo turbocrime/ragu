@@ -202,16 +202,6 @@ impl<
         }
     }
 
-    /// The application's slot capacity, straight from its declared parameters.
-    ///
-    /// Every application circuit exposes exactly these slots. Nothing is folded
-    /// from the registered steps, so this is available before the first one
-    /// arrives — which is what lets [`register`](Self::register) hand a circuit
-    /// to the registry immediately instead of holding it until
-    /// [`finalize`](Self::finalize).
-    const CAPACITY: framework_hooks::HookLayout =
-        framework_hooks::HookLayout::declared(POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH);
-
     /// Register a new application-defined [`Step`] in this context. The
     /// provided [`Step`]'s [`INDEX`](Step::INDEX) must be the next sequential
     /// index that has not been inserted yet.
@@ -338,11 +328,16 @@ impl<
 
         // Register nested internal circuits (no application steps, no headers).
         //
-        // Every circuit above is built at `CAPACITY`, which is uniform across one
-        // application because the internal circuits read a child's instance as a
-        // fixed-width record and any step's proof may be any fuse's child.
-        self.nested_registry =
-            internal::nested::register_all::<C, R>(self.nested_registry, Self::CAPACITY)?;
+        // The nested side needs exactly one number, `POLYS`, and takes it both as
+        // a value (for the layouts) and as a `Len` (for the gadgets that those
+        // layouts place). It is uniform across one application because the
+        // internal circuits read a child's instance as a fixed-width record and
+        // any step's proof may be any fuse's child.
+        self.nested_registry = internal::nested::register_all::<
+            C,
+            R,
+            ragu_primitives::vec::ConstLen<POLYS>,
+        >(self.nested_registry, POLYS)?;
 
         Ok(Application {
             native_registry: self.native_registry.finalize()?,
@@ -450,7 +445,7 @@ impl<
     ///   type produces N masks for a runtime N, so the runs need span
     ///   arithmetic regardless of where the counts live.
     pub(crate) fn nested_chain_layout(&self) -> ragu_circuits::staging::InducedStages {
-        internal::nested::chain_layout::<C::HostCurve, R>(self.capacity())
+        internal::nested::chain_layout::<C::HostCurve, R>(POLYS)
     }
 
     /// Seed a new computation by running a step with trivial inputs.

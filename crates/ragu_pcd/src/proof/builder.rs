@@ -631,7 +631,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     /// capacity. Every bridge rx is placed through it.
     fn nested_chain(&self) -> &ragu_circuits::staging::InducedStages {
         self.nested_chain
-            .get_or_init(|| nested::chain_layout::<C::HostCurve, R>(self.capacity))
+            .get_or_init(|| nested::chain_layout::<C::HostCurve, R>(self.capacity.poly_query.polys))
     }
 
     /// The eval bridge, written out rather than through [`cached_bridge!`]:
@@ -676,7 +676,12 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     ) -> Result<sparse::Polynomial<C::ScalarField, R>> {
         let host = self.claim_host_commitments()[slot];
         let alpha = crate::internal::challenge::claim_bridge_alpha::<C>(self.bridge_alpha, slot);
-        crate::internal::challenge::claim_bridge_rx::<C, R>(slot, alpha, host, self.capacity)
+        crate::internal::challenge::claim_bridge_rx::<C, R>(
+            slot,
+            alpha,
+            host,
+            self.capacity.poly_query.polys,
+        )
     }
 
     /// The proof's shared bridge-alpha source, so the prover-side claim bridge

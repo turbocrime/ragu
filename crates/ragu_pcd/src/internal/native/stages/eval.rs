@@ -243,7 +243,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const POLYS: usize, const CLAI
     type OutputKind = Kind![C::CircuitField; Output<'_, _, POLYS>];
 
     fn values() -> usize {
-        2 * crate::internal::nested::child_endoscaling_points_for(POLYS) + CURRENT_STEP_COMPONENTS
+        2 * crate::internal::nested::child_endoscaling_points(POLYS) + CURRENT_STEP_COMPONENTS
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

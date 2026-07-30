@@ -58,12 +58,10 @@ pub type Slot<C, R> = host_bridge::Stage<C, R, ()>;
 /// Builds only the claims run. `NestedLayouts::new` would eagerly build the
 /// chain plus all four runs — points, preamble, eval, claims — and discard
 /// three; `claim_run_layout` takes the chain and produces just this one.
-pub fn layout<C: CurveAffine, R: Rank>(
-    capacity: crate::framework_hooks::HookLayout,
-) -> InducedStages {
+pub fn layout<C: CurveAffine, R: Rank>(polys: usize) -> InducedStages {
     use crate::internal::nested::{chain_layout, claim_run_layout};
 
-    claim_run_layout::<C, R>(&chain_layout::<C, R>(capacity), capacity)
+    claim_run_layout::<C, R>(&chain_layout::<C, R>(polys), polys)
 }
 
 #[cfg(test)]
@@ -86,16 +84,12 @@ mod tests {
     #[test]
     fn layout_tiles_the_run() {
         for polys in [1, 3, 8] {
-            let capacity = crate::framework_hooks::HookLayout {
-                challenge: crate::framework_hooks::ChallengeLayout { calls: 1, width: 2 },
-                poly_query: crate::framework_hooks::PolyQueryLayout { polys, claims: 1 },
-            };
-            let layout = layout::<EqAffine, R>(capacity);
+            let layout = layout::<EqAffine, R>(polys);
 
             assert_eq!(layout.len(), polys, "one slot per polynomial");
             assert_eq!(
                 layout.skip_gates(0),
-                crate::internal::nested::chain_layout::<EqAffine, R>(capacity).final_skip_gates(),
+                crate::internal::nested::chain_layout::<EqAffine, R>(polys).final_skip_gates(),
                 "the first slot does not start where the chain ends"
             );
             for slot in 0..polys {

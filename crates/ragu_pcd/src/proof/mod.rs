@@ -642,7 +642,8 @@ impl<
         points_alpha: C::ScalarField,
         builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<C::HostCurve> {
-        let num_points = crate::internal::nested::num_endoscaling_points(self.capacity());
+        let num_points =
+            crate::internal::nested::num_endoscaling_points(self.capacity().poly_query.polys);
         assert_eq!(points.len(), num_points);
 
         let witness = PointsWitness::<C::HostCurve>::new(beta_endo, points);
@@ -670,7 +671,11 @@ impl<
         let num_steps = crate::internal::endoscalar::num_steps(num_points);
         let mut step_rxs = Vec::with_capacity(num_steps);
         for step in 0..num_steps {
-            let step_circuit = EndoscalingStep::<C::HostCurve, R>::new(step, num_points);
+            let step_circuit = EndoscalingStep::<
+                C::HostCurve,
+                R,
+                crate::internal::nested::EndoPoints<ragu_primitives::vec::ConstLen<POLYS>>,
+            >::new(step);
             let staged = MultiStage::new(step_circuit);
             let step_trace = staged
                 .trace(EndoscalingStepWitness {
@@ -681,7 +686,7 @@ impl<
             let step_rx = self.nested_registry.assemble(
                 &step_trace,
                 nested::InternalCircuitIndex::EndoscalingStep(step as u32)
-                    .circuit_index(self.capacity()),
+                    .circuit_index(self.capacity().poly_query.polys),
                 rng,
             )?;
             step_rxs.push(step_rx);
@@ -738,7 +743,7 @@ impl<
                             slot,
                         ),
                         padding_host,
-                        self.capacity(),
+                        self.capacity().poly_query.polys,
                     )
                     .expect("trivial padding bridge commitment")
                 })
@@ -869,7 +874,7 @@ impl<
         let beta_endo = extract_endoscalar(C::CircuitField::ONE);
         let p_commitment = {
             let mut points = Vec::with_capacity(crate::internal::nested::num_endoscaling_points(
-                self.capacity(),
+                self.capacity().poly_query.polys,
             ));
 
             // Initial: native_f commitment.

@@ -137,7 +137,7 @@ impl<
         // sets `nested_endoscalar_rx`, `nested_points_rx`, and
         // `nested_endoscaling_step_rxs` on the builder.
         let mut points = Vec::with_capacity(crate::internal::nested::num_endoscaling_points(
-            self.capacity(),
+            self.capacity().poly_query.polys,
         ));
         points.push(f.commitment);
         points.extend_from_slice(&commitments);

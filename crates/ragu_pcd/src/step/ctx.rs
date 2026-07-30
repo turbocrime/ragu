@@ -131,7 +131,7 @@ where
                 slot,
                 alpha,
                 host.take(),
-                capacity,
+                capacity.poly_query.polys,
             )
         })?;
         let bridge_com = Point::alloc(self.dr, bridge_com_value)?;
