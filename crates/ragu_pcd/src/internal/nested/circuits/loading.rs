@@ -166,7 +166,7 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
                 .collect::<Result<alloc::vec::Vec<_>>>()?,
             layouts.num_points,
         )?;
-        let preamble = stages::preamble::Output::from_slots(
+        let (preamble, preamble_claims) = stages::preamble::Output::from_slots(
             preamble_guards
                 .into_iter()
                 .map(|guard| Ok(guard.unenforced(dr, w!())?.host))
@@ -178,7 +178,9 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         let ab = ab_guard.unenforced(dr, w!())?;
         let query = query_guard.unenforced(dr, w!())?;
         let f_stage = f_guard.unenforced(dr, w!())?;
-        let eval = stages::eval::Output::from_slots(
+        // Loading reads only the dynamic tail: the fixed `native_eval` point is
+        // checked by `copying`, against the child's stashed copy.
+        let (_eval, eval_claims) = stages::eval::Output::from_slots(
             eval_guards
                 .into_iter()
                 .map(|guard| Ok(guard.unenforced(dr, w!())?.host))
@@ -194,7 +196,10 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         // in `compute_p` (_10_p.rs).
         let mut walker = Walker::new(&points);
 
-        for child in [&preamble.left, &preamble.right] {
+        for (child, child_claims) in [
+            (&preamble.left, &preamble_claims.left),
+            (&preamble.right, &preamble_claims.right),
+        ] {
             for &id in &RxIndex::ALL {
                 walker.enforce_equal(dr, &child[id])?;
             }
@@ -202,7 +207,7 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
             walker.enforce_equal(dr, &child.stashed_ab_b)?;
             walker.enforce_equal(dr, &child.stashed_registry_xy)?;
             walker.enforce_equal(dr, &child.stashed_p)?;
-            for stashed_claim in child.stashed_claims.iter() {
+            for stashed_claim in child_claims.claims.iter() {
                 walker.enforce_equal(dr, stashed_claim)?;
             }
         }
@@ -233,11 +238,11 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         // mirroring how `BridgeF.native_f` ties `bridge_f_commitment` above.
         assert_eq!(
             claim_bridges.len(),
-            eval.claims.len(),
+            eval_claims.claims.len(),
             "the claim-bridge run did not yield one slot per claim"
         );
         for (slot, bridge_host) in claim_bridges.iter().enumerate() {
-            bridge_host.enforce_equal(dr, &eval.claims[slot])?;
+            bridge_host.enforce_equal(dr, &eval_claims.claims[slot])?;
         }
 
         Ok(WithAux::new((), D::unit()))

@@ -135,7 +135,7 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
                 .collect::<Result<alloc::vec::Vec<_>>>()?,
             layouts.num_points,
         )?;
-        let preamble = stages::preamble::Output::from_slots(
+        let (preamble, preamble_claims) = stages::preamble::Output::from_slots(
             preamble_guards
                 .into_iter()
                 .map(|guard| Ok(guard.unenforced(dr, w!())?.host))
@@ -147,7 +147,7 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         let outer_error = outer_error_guard.unenforced(dr, w!())?;
         let ab = ab_guard.unenforced(dr, w!())?;
         let query = query_guard.unenforced(dr, w!())?;
-        let eval = stages::eval::Output::from_slots(
+        let (eval, eval_claims) = stages::eval::Output::from_slots(
             eval_guards
                 .into_iter()
                 .map(|guard| Ok(guard.unenforced(dr, w!())?.host))
@@ -159,6 +159,10 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         let child = match self.side {
             Side::Left => &preamble.left,
             Side::Right => &preamble.right,
+        };
+        let child_claims = match self.side {
+            Side::Left => &preamble_claims.left,
+            Side::Right => &preamble_claims.right,
         };
 
         // Enforce that each ChildWitness stash field matches the
@@ -186,7 +190,9 @@ impl<C: CurveAffine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
 
         // Poly-query claims: the stashed claim host commitments must match
         // the child's own record of them in its eval bridge stage.
-        for (stashed_claim, child_claim) in child.stashed_claims.iter().zip(eval.claims.iter()) {
+        for (stashed_claim, child_claim) in
+            child_claims.claims.iter().zip(eval_claims.claims.iter())
+        {
             stashed_claim.enforce_equal(dr, child_claim)?;
         }
 
