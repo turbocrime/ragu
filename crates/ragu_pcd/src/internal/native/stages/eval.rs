@@ -31,11 +31,12 @@ use ragu_primitives::{
     Element,
     allocator::Allocator,
     io::Write,
-    vec::{CollectFixed, ConstLen, FixedVec, Len},
+    vec::{CollectFixed, FixedVec, Len},
 };
 
 use crate::{
     Proof,
+    hook_layout::AppHooksLayout,
     internal::native::{RxComponent, RxValues},
 };
 
@@ -170,7 +171,7 @@ pub struct Witness<F> {
 /// of the coefficients for the weighted sum with $\beta$ via
 /// [`Horner`](ragu_circuits::horner::Horner) evaluation.
 #[derive(Gadget, Write)]
-pub struct ChildEvaluations<'dr, D: Driver<'dr>, const POLYS: usize> {
+pub struct ChildEvaluations<'dr, D: Driver<'dr>, J: AppHooksLayout> {
     #[ragu(gadget)]
     pub rx: RxValues<Element<'dr, D>>,
     #[ragu(gadget)]
@@ -185,27 +186,27 @@ pub struct ChildEvaluations<'dr, D: Driver<'dr>, const POLYS: usize> {
     /// so the [`Write`] order (and hence the $v$ Horner weighting) matches the
     /// `_10_p` accumulation order.
     #[ragu(gadget)]
-    pub claims: FixedVec<Element<'dr, D>, ConstLen<POLYS>>,
+    pub claims: FixedVec<Element<'dr, D>, J::PolyCount>,
     /// The child's claim-coordinate polynomial $q$ evaluated at $u$ — last, matching
     /// its `_10_p` fold position after the claim polynomials. Empty at
     /// `POLYS = 0`, where no `q` exists.
     #[ragu(gadget)]
-    pub q_eval: FixedVec<Element<'dr, D>, QEvalLen<POLYS>>,
+    pub q_eval: FixedVec<Element<'dr, D>, QEvalLen<J>>,
 }
 
-/// One `q` evaluation when the shape has polynomial slots, none otherwise —
+/// One `q` evaluation when the layout has polynomial slots, none otherwise —
 /// [`q_slots`](crate::internal::nested::q_slots) at the type level.
-pub struct QEvalLen<const POLYS: usize>;
+pub struct QEvalLen<J: AppHooksLayout>(PhantomData<J>);
 
-impl<const POLYS: usize> Len for QEvalLen<POLYS> {
+impl<J: AppHooksLayout> Len for QEvalLen<J> {
     fn len() -> usize {
-        crate::internal::nested::q_slots(POLYS)
+        crate::internal::nested::q_slots(J::polys())
     }
 }
 
-impl<'dr, D: Driver<'dr>, const POLYS: usize> ChildEvaluations<'dr, D, POLYS> {
-    /// Allocate child evaluations from pre-computed witness values. `POLYS` is
-    /// the child's poly-slot count, which sizes `claims`.
+impl<'dr, D: Driver<'dr>, J: AppHooksLayout> ChildEvaluations<'dr, D, J> {
+    /// Allocate child evaluations from pre-computed witness values. The
+    /// layout's poly-slot count sizes `claims`.
     pub fn alloc<A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
@@ -224,10 +225,10 @@ impl<'dr, D: Driver<'dr>, const POLYS: usize> ChildEvaluations<'dr, D, POLYS> {
                 witness.as_ref().map(|w| w.registry_xy_poly),
             )?,
             p_poly: Element::alloc(dr, allocator, witness.as_ref().map(|w| w.p_poly))?,
-            claims: ConstLen::<POLYS>::range()
+            claims: J::PolyCount::range()
                 .map(|i| Element::alloc(dr, allocator, witness.as_ref().map(|w| w.claims[i])))
                 .try_collect_fixed()?,
-            q_eval: QEvalLen::<POLYS>::range()
+            q_eval: QEvalLen::<J>::range()
                 .map(|i| Element::alloc(dr, allocator, witness.as_ref().map(|w| w.q_poly[i])))
                 .try_collect_fixed()?,
         })
@@ -238,11 +239,11 @@ impl<'dr, D: Driver<'dr>, const POLYS: usize> ChildEvaluations<'dr, D, POLYS> {
 ///
 /// This is stage communication data, not part of the circuit's public instance.
 #[derive(Gadget, Write)]
-pub struct Output<'dr, D: Driver<'dr>, const POLYS: usize> {
+pub struct Output<'dr, D: Driver<'dr>, J: AppHooksLayout> {
     #[ragu(gadget)]
-    pub left: ChildEvaluations<'dr, D, POLYS>,
+    pub left: ChildEvaluations<'dr, D, J>,
     #[ragu(gadget)]
-    pub right: ChildEvaluations<'dr, D, POLYS>,
+    pub right: ChildEvaluations<'dr, D, J>,
     #[ragu(gadget)]
     pub registry_wx0: Element<'dr, D>,
     #[ragu(gadget)]
@@ -258,12 +259,12 @@ pub struct Output<'dr, D: Driver<'dr>, const POLYS: usize> {
 }
 
 /// The eval stage of the fuse witness.
-pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: usize> {
-    _marker: PhantomData<(C, R)>,
+pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, J: AppHooksLayout> {
+    _marker: PhantomData<(C, R, J)>,
 }
 
-impl<C: Cycle, R, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: usize> Default
-    for Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>
+impl<C: Cycle, R, const HEADER_SIZE: usize, J: AppHooksLayout> Default
+    for Stage<C, R, HEADER_SIZE, J>
 {
     fn default() -> Self {
         Stage {
@@ -272,15 +273,15 @@ impl<C: Cycle, R, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: us
     }
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: usize>
-    staging::Stage<C::CircuitField, R> for Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+    staging::Stage<C::CircuitField, R> for Stage<C, R, HEADER_SIZE, J>
 {
-    type Parent = super::query::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>;
+    type Parent = super::query::Stage<C, R, HEADER_SIZE, J>;
     type Witness<'source> = &'source Witness<C::CircuitField>;
-    type OutputKind = Kind![C::CircuitField; Output<'_, _, POLYS>];
+    type OutputKind = Kind![C::CircuitField; Output<'_, _, J>];
 
     fn values() -> usize {
-        2 * crate::internal::nested::child_endoscaling_points(POLYS) + CURRENT_STEP_COMPONENTS
+        2 * crate::internal::nested::child_endoscaling_points(J::polys()) + CURRENT_STEP_COMPONENTS
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -334,14 +335,19 @@ mod tests {
     use ragu_pasta::Pasta;
 
     use super::*;
-    use crate::internal::tests::{HEADER_SIZE, R, assert_stage_values};
+    use crate::{
+        hook_layout::AppHooks,
+        internal::tests::{HEADER_SIZE, R, assert_stage_values},
+    };
 
     /// `values()` predicts the wire count at every slot count, not just one.
     /// This is what lets the stage's position in the chain come off its type.
     #[test]
     fn stage_values_matches_wire_count() {
         fn check<const POLYS: usize>() {
-            assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }, POLYS, 1>::default());
+            assert_stage_values(
+                &Stage::<Pasta, R, { HEADER_SIZE }, AppHooks<POLYS, 1, 0, 0>>::default(),
+            );
         }
         check::<0>();
         check::<1>();

@@ -95,8 +95,8 @@ fn dummy_app<
 >(
     pasta: &'params <Pasta as ragu_arithmetic::Cycle>::Params,
     steps: usize,
-) -> crate::Application<'params, Pasta, R, HDR, POLYS, CLAIMS, CHALLENGES, 2> {
-    ApplicationBuilder::<Pasta, R, HDR, POLYS, CLAIMS, CHALLENGES, 2>::new()
+) -> crate::Application<'params, Pasta, R, HDR, AppHooks<POLYS, CLAIMS, CHALLENGES, 2>> {
+    ApplicationBuilder::<Pasta, R, HDR, AppHooks<POLYS, CLAIMS, CHALLENGES, 2>>::new()
         .register_dummy_circuits(steps)
         .unwrap()
         .finalize(pasta)
@@ -235,14 +235,17 @@ fn print_internal_circuit_constraint_counts() {
 /// counts have to be named.
 mod pinned_chain {
     use super::{HEADER_SIZE, R};
-    use crate::internal::native::chain;
+    use crate::{AppHooks, internal::native::chain};
 
-    pub type Preamble = chain::Preamble<ragu_pasta::Pasta, R, HEADER_SIZE, 8, 1>;
-    pub type OuterError = chain::OuterError<ragu_pasta::Pasta, R, HEADER_SIZE, 8, 1>;
-    pub type InnerError = chain::InnerError<ragu_pasta::Pasta, R, HEADER_SIZE, 8, 1>;
-    pub type Query = chain::Query<ragu_pasta::Pasta, R, HEADER_SIZE, 8, 1>;
-    pub type Eval = chain::Eval<ragu_pasta::Pasta, R, HEADER_SIZE, 8, 1>;
-    pub type Challenges = chain::Challenges<ragu_pasta::Pasta, R, HEADER_SIZE, 8, 1, 1, 2>;
+    pub type Preamble = chain::Preamble<ragu_pasta::Pasta, R, HEADER_SIZE, AppHooks<8, 1, 1, 2>>;
+    pub type OuterError =
+        chain::OuterError<ragu_pasta::Pasta, R, HEADER_SIZE, AppHooks<8, 1, 1, 2>>;
+    pub type InnerError =
+        chain::InnerError<ragu_pasta::Pasta, R, HEADER_SIZE, AppHooks<8, 1, 1, 2>>;
+    pub type Query = chain::Query<ragu_pasta::Pasta, R, HEADER_SIZE, AppHooks<8, 1, 1, 2>>;
+    pub type Eval = chain::Eval<ragu_pasta::Pasta, R, HEADER_SIZE, AppHooks<8, 1, 1, 2>>;
+    pub type Challenges =
+        chain::Challenges<ragu_pasta::Pasta, R, HEADER_SIZE, AppHooks<8, 1, 1, 2>>;
 }
 
 /// Pins the native stages' gate geometry at a stated slot count.
@@ -682,8 +685,8 @@ mod capacity_is_per_application {
         ctx.derive_challenge(&handle.coords())?;
     });
 
-    fn gates<const POLYS: usize, const CLAIMS: usize, const CHALLENGES: usize>(
-        app: &Application<'_, Pasta, R, HS, POLYS, CLAIMS, CHALLENGES, 2>,
+    fn gates<J: crate::AppHooksLayout>(
+        app: &Application<'_, Pasta, R, HS, J>,
         id: InternalCircuitIndex,
     ) -> usize {
         app.native_registry.constraint_counts(id.circuit_index()).0
@@ -694,12 +697,12 @@ mod capacity_is_per_application {
         let pasta = Pasta::baked();
         // The declared polynomial capacity is the difference between these two
         // applications: `Light` witnesses none, `Heavy` witnesses two.
-        let light = ApplicationBuilder::<Pasta, R, HS, 0, 0, 0, 2>::new()
+        let light = ApplicationBuilder::<Pasta, R, HS, AppHooks<0, 0, 0, 2>>::new()
             .register(Light)
             .unwrap()
             .finalize(pasta)
             .unwrap();
-        let heavy = ApplicationBuilder::<Pasta, R, HS, 2, 3, 1, 2>::new()
+        let heavy = ApplicationBuilder::<Pasta, R, HS, AppHooks<2, 3, 1, 2>>::new()
             .register(Heavy)
             .unwrap()
             .finalize(pasta)
@@ -711,7 +714,7 @@ mod capacity_is_per_application {
         // values, so a `capacity()` that crossed two of them fails here rather
         // than downstream as a slot-count mismatch.
         assert_eq!(
-            light.capacity(),
+            light.hook_layout(),
             HookLayout {
                 challenge: ChallengeLayout { calls: 0, width: 2 },
                 poly_query: PolyQueryLayout {
@@ -721,7 +724,7 @@ mod capacity_is_per_application {
             }
         );
         assert_eq!(
-            heavy.capacity(),
+            heavy.hook_layout(),
             HookLayout {
                 challenge: ChallengeLayout { calls: 1, width: 2 },
                 poly_query: PolyQueryLayout {

@@ -11,7 +11,7 @@ use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::Element;
 
 use crate::{
-    Application, Pcd, Proof,
+    AppHooksLayout, Application, Pcd, Proof,
     header::Header,
     internal::{
         claims,
@@ -20,15 +20,8 @@ use crate::{
     },
 };
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> Application<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+    Application<'_, C, R, HEADER_SIZE, J>
 {
     /// Verifies some [`Pcd`] for the provided [`Header`].
     ///
@@ -75,7 +68,7 @@ impl<
         // indexed per *polynomial* — the loops below walk them over the poly
         // capacity. The two counts need not be equal, so gating a poly-indexed
         // vector on the query capacity would be a latent bug.
-        let capacity = self.capacity();
+        let capacity = self.hook_layout();
         if pcd.proof().application_claims().len() != capacity.poly_query.claims
             || pcd.proof().application_poly_coords().len() != capacity.poly_query.polys * 2
             || pcd.proof().claim_polys.len() != capacity.poly_query.polys
@@ -95,22 +88,18 @@ impl<
             Emulator::emulate_wireless((pcd.proof(), pcd.data().clone(), y), |dr, witness| {
                 let (proof, data, y) = witness.cast();
                 let y = Element::alloc(dr, &mut (), y)?;
-                let proof_inputs =
-                    ProofInputs::<_, C, HEADER_SIZE, POLYS, CLAIMS>::alloc_for_verify::<R, H>(
-                        dr,
-                        Maybe::clone(&proof),
-                        data,
-                    )?;
+                let proof_inputs = ProofInputs::<_, C, HEADER_SIZE, J>::alloc_for_verify::<R, H>(
+                    dr,
+                    Maybe::clone(&proof),
+                    data,
+                )?;
                 // The challenge slots live in their own stage, so they are
                 // allocated through the same helper that stage uses — one
                 // definition of the region's order, not two.
-                let challenges = crate::internal::native::stages::slots::alloc_challenges::<
-                    _,
-                    C,
-                    R,
-                    CHALLENGES,
-                    CHALLENGE_WIDTH,
-                >(dr, proof)?;
+                let challenges =
+                    crate::internal::native::stages::slots::alloc_challenges::<_, C, R, J>(
+                        dr, proof,
+                    )?;
 
                 let (unified_ky, unified_bridge_ky) = proof_inputs.unified_ky_values(dr, &y)?;
                 let unified_ky = *unified_ky.value().take();
@@ -365,9 +354,10 @@ mod tests {
     type TestR = ProductionRank;
     const HEADER_SIZE: usize = 4;
 
-    fn create_test_app() -> crate::Application<'static, Pasta, TestR, HEADER_SIZE, 0, 0, 0, 2> {
+    fn create_test_app()
+    -> crate::Application<'static, Pasta, TestR, HEADER_SIZE, crate::AppHooks<0, 0, 0, 2>> {
         let pasta = Pasta::baked();
-        ApplicationBuilder::<Pasta, TestR, HEADER_SIZE, 0, 0, 0, 2>::new()
+        ApplicationBuilder::<Pasta, TestR, HEADER_SIZE, crate::AppHooks<0, 0, 0, 2>>::new()
             .finalize(pasta)
             .expect("failed to create test application")
     }

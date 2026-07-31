@@ -8,20 +8,13 @@ use ragu_circuits::{polynomials::Rank, staging::StageExt as _};
 use ragu_core::Result;
 
 use crate::{
-    Application, Proof,
+    AppHooksLayout, Application, Proof,
     internal::{native, nested},
     proof::ProofBuilder,
 };
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> Application<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+    Application<'_, C, R, HEADER_SIZE, J>
 {
     pub(super) fn compute_preamble<'a, RNG: CryptoRngCore>(
         &self,
@@ -49,7 +42,7 @@ impl<
             builder.right_header(),
         )?;
 
-        let rx = native::chain::Preamble::<C, R, HEADER_SIZE, POLYS, CLAIMS>::rx(
+        let rx = native::chain::Preamble::<C, R, HEADER_SIZE, J>::rx(
             C::CircuitField::random(&mut *rng),
             &preamble_witness,
         )?;
@@ -59,15 +52,10 @@ impl<
         // The challenge slots are their own stage, last on the error branch,
         // and take the same witness the preamble does — they are a different
         // region of the same children's instances, not different data.
-        let challenges_rx = native::chain::Challenges::<
-            C,
-            R,
-            HEADER_SIZE,
-            POLYS,
-            CLAIMS,
-            CHALLENGES,
-            CHALLENGE_WIDTH,
-        >::rx(C::CircuitField::random(&mut *rng), &preamble_witness)?;
+        let challenges_rx = native::chain::Challenges::<C, R, HEADER_SIZE, J>::rx(
+            C::CircuitField::random(&mut *rng),
+            &preamble_witness,
+        )?;
         builder.set_native_challenges_rx(challenges_rx);
 
         Ok(preamble_witness)

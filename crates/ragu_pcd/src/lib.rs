@@ -61,6 +61,7 @@ mod fuse;
 #[cfg(feature = "unstable-fuzzing")]
 pub mod fuzz_utils;
 pub mod header;
+pub mod hook_layout;
 mod internal;
 pub mod poly_commitment;
 mod proof;
@@ -71,11 +72,12 @@ use alloc::collections::BTreeMap;
 use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 
 use header::Header;
-pub use poly_commitment::{PolyCommitment, PolyHandle};
 // `ClaimOpening` and `ChallengeOpening` are deliberately *not* re-exported.
 // Both describe a slot of a proof's instance, and the accessors that return
 // them are `pub(crate)`: see `Proof::application_claims` for why a proof's
 // slot lists are not a public reporting surface.
+pub use hook_layout::{AppHooks, AppHooksLayout};
+pub use poly_commitment::{PolyCommitment, PolyHandle};
 pub use proof::{Pcd, Proof};
 use ragu_arithmetic::{CryptoRngCore, Cycle};
 use ragu_circuits::{
@@ -92,26 +94,17 @@ pub(crate) const RAGU_TAG: &[u8] = b"FIXME";
 
 /// Builder for an [`Application`] for proof-carrying data.
 ///
-/// `POLYS` is how many polynomials any one step may witness — the expensive
-/// axis: a bridge stage, a commitment, an MSM, and an endoscaling point per
-/// child, each. `CLAIMS` is how many opening claims any one step may
-/// enforce — the cheap axis: one instance triple, one `_08_f` quotient, one
-/// `compute_v` triple. Claim slots trade against `HEADER_SIZE`, both being
-/// terms in the same $k(Y)$ Horner loop; an application that asks for more
-/// than its circuits can hold fails at
-/// [`finalize`](ApplicationBuilder::finalize) with
-/// [`GateBoundExceeded`](ragu_core::Error::GateBoundExceeded).
+/// An application declares its capacity as two parameters: `HEADER_SIZE`,
+/// the width of one encoded header, and `J`, the hook capacities as one
+/// type — usually written inline as [`AppHooks`]:
 ///
-/// `CHALLENGES` is how many
-/// [`derive_challenge`](step::StepCtx::derive_challenge) calls any one step
-/// may make, and `CHALLENGE_WIDTH` the widest input one call may pass, in
-/// field elements — a [`PolyHandle::coords`](PolyHandle::coords) pair is two;
-/// the width's cost is
-/// [`ChallengeLayout::permutations`](framework_hooks::ChallengeLayout::permutations),
-/// paid by the internal `challenge_binding` circuit per `(child, slot)`.
+/// ```text
+/// ApplicationBuilder<'params, Pasta, ProductionRank, 4, AppHooks<3, 3, 1, 6>>
+/// ```
 ///
-/// Together with `HEADER_SIZE` these five are the whole of an application
-/// circuit's instance width (`InstanceLen::len` is the single statement):
+/// See [`AppHooksLayout`] for what each hook number prices; together with
+/// `HEADER_SIZE` they are the whole of an application circuit's instance
+/// width (`InstanceLen::len` is the single statement):
 ///
 /// ```text
 /// 3·HEADER_SIZE + 2·POLYS + 4·CLAIMS + CHALLENGES·(CHALLENGE_WIDTH + 1) + 2·POLYS
@@ -120,6 +113,11 @@ pub(crate) const RAGU_TAG: &[u8] = b"FIXME";
 /// (the trailing `2·POLYS` is the coordinate instance region: each slot's
 /// host commitment affine coordinates, canonically embedded).
 ///
+/// Claim slots trade against `HEADER_SIZE`, both being terms in the same
+/// $k(Y)$ Horner loop; an application that asks for more than its circuits
+/// can hold fails at [`finalize`](ApplicationBuilder::finalize) with
+/// [`GateBoundExceeded`](ragu_core::Error::GateBoundExceeded).
+///
 /// Every term is declared, so a step's circuit shape is final the moment it
 /// registers — see the crate docs.
 pub struct ApplicationBuilder<
@@ -127,10 +125,7 @@ pub struct ApplicationBuilder<
     C: Cycle,
     R: Rank,
     const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
+    J: AppHooksLayout,
 > {
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
@@ -139,35 +134,19 @@ pub struct ApplicationBuilder<
     /// Test-only: see [`ApplicationBuilder::skip_claim_precheck_for_testing`].
     #[cfg(feature = "unstable-fuzzing")]
     skip_claim_precheck: bool,
-    _marker: PhantomData<[(); HEADER_SIZE]>,
+    _marker: PhantomData<(J, [(); HEADER_SIZE])>,
 }
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> Default
-    for ApplicationBuilder<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout> Default
+    for ApplicationBuilder<'_, C, R, HEADER_SIZE, J>
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<
-    'params,
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> ApplicationBuilder<'params, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+    ApplicationBuilder<'params, C, R, HEADER_SIZE, J>
 {
     /// Create an empty [`ApplicationBuilder`] for proof-carrying data. The
     /// cycle's runtime parameters are not needed until
@@ -206,16 +185,9 @@ impl<
         // comes from a declared parameter.
         self.native_registry =
             self.native_registry
-                .register_circuit(MultiStage::new(Adapter::<
-                    C,
-                    S,
-                    R,
-                    HEADER_SIZE,
-                    POLYS,
-                    CLAIMS,
-                    CHALLENGES,
-                    CHALLENGE_WIDTH,
-                >::new(step, None)))?;
+                .register_circuit(MultiStage::new(Adapter::<C, S, R, HEADER_SIZE, J>::new(
+                    step, None,
+                )))?;
         self.num_application_steps += 1;
 
         Ok(self)
@@ -246,21 +218,18 @@ impl<
     pub fn finalize(
         mut self,
         params: &'params C::Params,
-    ) -> Result<Application<'params, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>>
-    {
+    ) -> Result<Application<'params, C, R, HEADER_SIZE, J>> {
         // The internal steps are built at the same declared capacity as the
         // application's own, so their circuits join the registry in
         // circuit-index order: internal steps first, then application steps.
-        let rerandomize =
-            Adapter::<C, _, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>::new(
-                step::internal::rerandomize::Rerandomize::<()>::new(),
-                Some(params),
-            );
-        let trivial =
-            Adapter::<C, _, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>::new(
-                step::internal::trivial::Trivial::new(),
-                Some(params),
-            );
+        let rerandomize = Adapter::<C, _, R, HEADER_SIZE, J>::new(
+            step::internal::rerandomize::Rerandomize::<()>::new(),
+            Some(params),
+        );
+        let trivial = Adapter::<C, _, R, HEADER_SIZE, J>::new(
+            step::internal::trivial::Trivial::new(),
+            Some(params),
+        );
 
         let (total_circuits, log2_circuits) =
             internal::native::total_circuit_counts(self.num_application_steps);
@@ -274,15 +243,11 @@ impl<
         // every application circuit exposes exactly it.
         //
         // First, register internal circuits and masks
-        self.native_registry = internal::native::register_all::<
-            C,
-            R,
-            HEADER_SIZE,
-            POLYS,
-            CLAIMS,
-            CHALLENGES,
-            CHALLENGE_WIDTH,
-        >(self.native_registry, params, log2_circuits)?;
+        self.native_registry = internal::native::register_all::<C, R, HEADER_SIZE, J>(
+            self.native_registry,
+            params,
+            log2_circuits,
+        )?;
 
         // Then, register internal steps
         self.native_registry = self
@@ -304,14 +269,11 @@ impl<
         );
 
         // Register nested internal circuits (no application steps, no
-        // headers). The nested side needs exactly one number, `POLYS`, taken
-        // both as a value (for the layouts) and as a `Len` (for the gadgets
-        // those layouts place).
-        self.nested_registry = internal::nested::register_all::<
-            C,
-            R,
-            ragu_primitives::vec::ConstLen<POLYS>,
-        >(self.nested_registry, POLYS)?;
+        // headers). The nested side needs exactly one number, the poly-slot
+        // count, taken both as a value (for the layouts) and as a `Len` (for
+        // the gadgets those layouts place).
+        self.nested_registry =
+            internal::nested::register_all::<C, R, J::PolyCount>(self.nested_registry, J::polys())?;
 
         Ok(Application {
             native_registry: self.native_registry.finalize()?,
@@ -357,16 +319,7 @@ impl<
 }
 
 /// The recursion context that is used to create and verify proof-carrying data.
-pub struct Application<
-    'params,
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> {
+pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout> {
     native_registry: Registry<'params, C::CircuitField, R>,
     nested_registry: Registry<'params, C::ScalarField, R>,
     params: &'params C::Params,
@@ -377,27 +330,20 @@ pub struct Application<
     /// [`ApplicationBuilder::skip_claim_precheck_for_testing`].
     #[cfg(feature = "unstable-fuzzing")]
     pub(crate) skip_claim_precheck: bool,
-    _marker: PhantomData<[(); HEADER_SIZE]>,
+    _marker: PhantomData<(J, [(); HEADER_SIZE])>,
 }
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> Application<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+    Application<'_, C, R, HEADER_SIZE, J>
 {
     /// The application's settled slot capacity — the shape every application
     /// circuit's instance has, and every proof's slot lists.
     ///
-    /// Read off this type's own const parameters rather than stored, so it is the
-    /// same value every circuit was registered at and there is no second
+    /// Read off this type's own layout parameter rather than stored, so it is
+    /// the same value every circuit was registered at and there is no second
     /// representation to keep in step.
-    pub(crate) const fn capacity(&self) -> framework_hooks::HookLayout {
-        framework_hooks::HookLayout::declared(POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH)
+    pub(crate) fn hook_layout(&self) -> framework_hooks::HookLayout {
+        J::hook_layout()
     }
 
     /// The nested bridge chain's value-level geometry at this application's
@@ -410,7 +356,7 @@ impl<
     /// *runs* of per-slot bridge stages, which need span arithmetic to cut
     /// one mask per slot from a single span.
     pub(crate) fn nested_chain_layout(&self) -> ragu_circuits::staging::InducedStages {
-        internal::nested::chain_layout::<C::HostCurve, R>(POLYS)
+        internal::nested::chain_layout::<C::HostCurve, R>(J::polys())
     }
 
     /// Seed a new computation by running a step with trivial inputs.

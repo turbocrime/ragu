@@ -571,15 +571,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     }
 }
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> crate::Application<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::AppHooksLayout>
+    crate::Application<'_, C, R, HEADER_SIZE, J>
 {
     /// Runs endoscaling over the host-curve commitments that feed
     /// `PointsStage`, in the order `compute_p` (`_10_p.rs`)
@@ -601,7 +594,7 @@ impl<
         builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<C::HostCurve> {
         let num_points =
-            crate::internal::nested::num_endoscaling_points(self.capacity().poly_query.polys);
+            crate::internal::nested::num_endoscaling_points(self.hook_layout().poly_query.polys);
         assert_eq!(points.len(), num_points);
 
         // The assertion above checks the slice against the *value* formula; the
@@ -609,7 +602,7 @@ impl<
         // by. Two independent sides of the same obligation.
         let witness = PointsWitness::<
             C::HostCurve,
-            crate::internal::nested::EndoPoints<ragu_primitives::vec::ConstLen<POLYS>>,
+            crate::internal::nested::EndoPoints<J::PolyCount>,
         >::new(beta_endo, points)?;
 
         // Placed through the value-level chain, not `StageExt::rx`, whose
@@ -638,7 +631,7 @@ impl<
             let step_circuit = EndoscalingStep::<
                 C::HostCurve,
                 R,
-                crate::internal::nested::EndoPoints<ragu_primitives::vec::ConstLen<POLYS>>,
+                crate::internal::nested::EndoPoints<J::PolyCount>,
             >::new(step);
             let staged = MultiStage::new(step_circuit);
             let step_trace = staged
@@ -650,7 +643,7 @@ impl<
             let step_rx = self.nested_registry.assemble(
                 &step_trace,
                 nested::InternalCircuitIndex::EndoscalingStep(step as u32)
-                    .circuit_index(self.capacity().poly_query.polys),
+                    .circuit_index(self.hook_layout().poly_query.polys),
                 rng,
             )?;
             step_rxs.push(step_rx);
@@ -686,7 +679,7 @@ impl<
             .native_registry
             .xy(C::CircuitField::ONE, C::CircuitField::ONE);
 
-        let mut builder = ProofBuilder::new(self.params, C::ScalarField::ONE, self.capacity());
+        let mut builder = ProofBuilder::new(self.params, C::ScalarField::ONE, self.hook_layout());
 
         builder.set_circuit_id(CircuitIndex::new(0));
         builder.set_left_header(vec![C::CircuitField::ZERO; HEADER_SIZE]);
@@ -702,7 +695,7 @@ impl<
         // polynomial.
         let (padding_host, padding_x, padding_y) =
             crate::internal::challenge::padding_claim::<C>(self.params);
-        let padding_coord_pair = if self.capacity().poly_query.polys == 0 {
+        let padding_coord_pair = if self.hook_layout().poly_query.polys == 0 {
             None
         } else {
             Some(
@@ -711,19 +704,19 @@ impl<
             )
         };
         let padding_coords: alloc::vec::Vec<C::CircuitField> =
-            (0..self.capacity().poly_query.polys)
+            (0..self.hook_layout().poly_query.polys)
                 .flat_map(|_| padding_coord_pair.expect("a nonzero capacity has a padding pair"))
                 .collect();
         builder.set_application_polys(
             padding_coords,
             vec![
                 crate::internal::challenge::padding_poly::<C, R>();
-                self.capacity().poly_query.polys
+                self.hook_layout().poly_query.polys
             ],
-            vec![padding_host; self.capacity().poly_query.polys],
+            vec![padding_host; self.hook_layout().poly_query.polys],
         );
         builder.set_application_claims(
-            (0..self.capacity().poly_query.claims)
+            (0..self.hook_layout().poly_query.claims)
                 .map(|_| crate::framework_hooks::PolyQueryClaim {
                     coords: padding_coord_pair
                         .expect("a claim slot requires a polynomial slot to name"),
@@ -737,12 +730,12 @@ impl<
         // the adapter's padding, so the binding circuit can re-derive every
         // slot uniformly.
         builder.set_application_challenges(
-            (0..self.capacity().challenge.calls)
+            (0..self.hook_layout().challenge.calls)
                 .map(|_| {
                     let (inputs, challenge) = crate::internal::challenge::elements_challenge::<C>(
                         self.params,
                         &[],
-                        self.capacity().challenge.width,
+                        self.hook_layout().challenge.width,
                     )
                     .expect("trivial padding challenge");
                     ChallengeOpening { inputs, challenge }
@@ -835,20 +828,20 @@ impl<
         // The claim-coordinate q for a trivial proof's padding hosts — the
         // same value a parent recomputes when it folds this proof, since q is
         // deterministic from the recorded hosts. Empty at zero capacity.
-        let padding_q: alloc::vec::Vec<C::HostCurve> = if self.capacity().poly_query.polys == 0 {
+        let padding_q: alloc::vec::Vec<C::HostCurve> = if self.hook_layout().poly_query.polys == 0 {
             alloc::vec::Vec::new()
         } else {
             alloc::vec![
                 crate::internal::challenge::claim_coord_commitment::<C, R>(
                     self.params,
-                    core::iter::repeat_n(padding_host, self.capacity().poly_query.polys),
+                    core::iter::repeat_n(padding_host, self.hook_layout().poly_query.polys),
                 )
                 .expect("the padding host has canonical coordinates")
             ]
         };
         let p_commitment = {
             let mut points = Vec::with_capacity(crate::internal::nested::num_endoscaling_points(
-                self.capacity().poly_query.polys,
+                self.hook_layout().poly_query.polys,
             ));
 
             // Initial: native_f commitment.
@@ -867,7 +860,7 @@ impl<
                 points.push(host_commitment); // AbB
                 points.push(registry_xy_commitment); // RegistryXY
                 points.push(host_commitment); // P placeholder
-                for _ in 0..self.capacity().poly_query.polys {
+                for _ in 0..self.hook_layout().poly_query.polys {
                     points.push(padding_host); // claim slots
                 }
                 points.extend_from_slice(&padding_q); // claim-coordinate q, when polys > 0
@@ -918,7 +911,7 @@ impl<
                 stashed_ab_b: host_commitment,
                 stashed_registry_xy: registry_xy_commitment,
                 stashed_p: p_commitment,
-                stashed_claims: alloc::vec![padding_host; self.capacity().poly_query.polys],
+                stashed_claims: alloc::vec![padding_host; self.hook_layout().poly_query.polys],
                 stashed_q: padding_q.clone(),
             };
             // Placed through the value-level chain: the preamble sits after

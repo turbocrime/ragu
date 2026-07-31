@@ -19,29 +19,25 @@ use ff::PrimeField;
 use ragu_arithmetic::{CryptoRngCore, Cycle, poly_mul, poly_with_roots};
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::Result;
-use ragu_pcd::{Application, ApplicationBuilder, Pcd};
+use ragu_pcd::{AppHooks, Application, ApplicationBuilder, Pcd};
 
 use self::step::{
     ConcatSequences, ConcatSequencesWitness, MergeSets, MergeSetsWitness, SeedSequence,
     SeedSequenceWitness, SeedSet, SeedSetWitness, SeqHeader, SetHeader,
 };
 
-/// The shared capacity. One header slot is reserved for the suffix, so the
+/// The shared header size. One slot is reserved for the suffix, so the
 /// sequence header's three elements (name + length) need `HEADER_SIZE = 4`;
 /// the set header's two fit inside it.
 pub const HEADER_SIZE: usize = 4;
-pub const POLYS: usize = 3;
-pub const CLAIMS: usize = 3;
-pub const CHALLENGES: usize = 1;
-pub const CHALLENGE_WIDTH: usize = 6;
 
 /// An [`Application`] at the shared capacity.
 pub type CollectionsApp<'params, C, R> =
-    Application<'params, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>;
+    Application<'params, C, R, HEADER_SIZE, AppHooks<3, 3, 1, 6>>;
 
 /// An [`ApplicationBuilder`] at the shared capacity.
 pub type CollectionsAppBuilder<'params, C, R> =
-    ApplicationBuilder<'params, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>;
+    ApplicationBuilder<'params, C, R, HEADER_SIZE, AppHooks<3, 3, 1, 6>>;
 
 /// All four collection steps registered and finalized: the one application
 /// every collection test proves through — two singleton seeds, two fuses

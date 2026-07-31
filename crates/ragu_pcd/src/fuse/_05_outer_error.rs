@@ -20,7 +20,7 @@ use ragu_primitives::{Element, vec::FixedVec};
 
 use super::claims::{FoldKey, FuseBuilder, TrackedPoly};
 use crate::{
-    Application,
+    AppHooksLayout, Application,
     internal::{
         fold_revdot, native,
         native::stages::outer_error::{ChildKyValues, KyValues},
@@ -30,15 +30,8 @@ use crate::{
 
 type NativeNumGroups = <native::RevdotParameters as fold_revdot::Parameters>::NumGroups;
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> Application<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+    Application<'_, C, R, HEADER_SIZE, J>
 {
     pub(super) fn outer_error_terms<'dr, 'rx, D, RNG: CryptoRngCore>(
         &self,
@@ -83,19 +76,15 @@ impl<
                 let (preamble_witness, inner_error_terms, y, mu, nu) = witness.cast();
                 let allocator = &mut ();
 
-                let preamble =
-                    native::stages::preamble::Stage::<C, R, HEADER_SIZE, POLYS, CLAIMS>::default()
-                        .witness(dr, preamble_witness.as_ref().map(|w| *w))?;
+                let preamble = native::stages::preamble::Stage::<C, R, HEADER_SIZE, J>::default()
+                    .witness(dr, preamble_witness.as_ref().map(|w| *w))?;
                 // The challenge slots are their own stage, so the k(Y) fold
                 // reads them from there rather than from the preamble.
                 let challenges = native::stages::slots::ChallengesStage::<
                     C,
                     R,
                     HEADER_SIZE,
-                    POLYS,
-                    CLAIMS,
-                    CHALLENGES,
-                    CHALLENGE_WIDTH,
+                    J,
                     native::RevdotParameters,
                 >::default()
                 .witness(dr, preamble_witness.as_ref().map(|w| *w))?;
@@ -180,7 +169,7 @@ impl<
         outer_error_witness: &native::stages::outer_error::Witness<C, native::RevdotParameters>,
         builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<()> {
-        let rx = native::chain::OuterError::<C, R, HEADER_SIZE, POLYS, CLAIMS>::rx(
+        let rx = native::chain::OuterError::<C, R, HEADER_SIZE, J>::rx(
             C::CircuitField::random(&mut *rng),
             outer_error_witness,
         )?;

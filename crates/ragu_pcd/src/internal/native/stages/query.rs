@@ -31,6 +31,7 @@ use ragu_primitives::{Element, allocator::Allocator};
 
 use crate::{
     Proof,
+    hook_layout::AppHooksLayout,
     internal::native::{
         InternalCircuitIndex, InternalCircuitValues, RxComponent, RxIndex, RxValues,
     },
@@ -280,12 +281,12 @@ pub struct Output<'dr, D: Driver<'dr>> {
 /// Shape-free: every child contributes the same wire count here (one
 /// evaluation per rx component plus five scalars), so nothing about this
 /// stage's geometry depends on a step's hook counts.
-pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: usize> {
-    _marker: PhantomData<(C, R)>,
+pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, J: AppHooksLayout> {
+    _marker: PhantomData<(C, R, J)>,
 }
 
-impl<C: Cycle, R, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: usize> Default
-    for Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>
+impl<C: Cycle, R, const HEADER_SIZE: usize, J: AppHooksLayout> Default
+    for Stage<C, R, HEADER_SIZE, J>
 {
     fn default() -> Self {
         Stage {
@@ -309,10 +310,10 @@ pub fn num_values() -> usize {
     InternalCircuitIndex::NUM + 1 + 2 * child_num_values()
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: usize>
-    staging::Stage<C::CircuitField, R> for Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+    staging::Stage<C::CircuitField, R> for Stage<C, R, HEADER_SIZE, J>
 {
-    type Parent = super::preamble::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>;
+    type Parent = super::preamble::Stage<C, R, HEADER_SIZE, J>;
     type Witness<'source> = &'source Witness<C>;
     type OutputKind = Kind![C::CircuitField; Output<'_, _>];
 
@@ -348,10 +349,13 @@ mod tests {
     use ragu_pasta::Pasta;
 
     use super::*;
-    use crate::internal::tests::{HEADER_SIZE, R, assert_stage_values};
+    use crate::{
+        hook_layout::AppHooks,
+        internal::tests::{HEADER_SIZE, R, assert_stage_values},
+    };
 
     #[test]
     fn stage_values_matches_wire_count() {
-        assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }, 1, 1>::default());
+        assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }, AppHooks<1, 1, 0, 0>>::default());
     }
 }

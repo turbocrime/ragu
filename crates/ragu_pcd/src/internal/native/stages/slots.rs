@@ -50,30 +50,25 @@ use ragu_core::{
 use ragu_primitives::{
     Element,
     consistent::Consistent,
-    vec::{CollectFixed, ConstLen, FixedVec, Len},
+    vec::{CollectFixed, Len},
 };
 
-use super::preamble::{ChallengeInstance, Witness};
-use crate::Proof;
+use super::preamble::{ChallengeInstance, ChallengeVec, Witness};
+use crate::{Proof, hook_layout::AppHooksLayout};
 
 /// The challenges both children derived, in slot order: the elements each was
 /// hashed from, and the challenge itself.
 ///
-/// Both children present the application's shape, so one set of counts sizes
+/// Both children present the application's layout, so one set of counts sizes
 /// both.
 #[derive(Gadget, Consistent)]
-pub struct ChallengesOutput<
-    'dr,
-    D: Driver<'dr>,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> {
+pub struct ChallengesOutput<'dr, D: Driver<'dr>, J: AppHooksLayout> {
     /// The left child's challenge slots.
     #[ragu(gadget)]
-    pub left: FixedVec<ChallengeInstance<'dr, D, CHALLENGE_WIDTH>, ConstLen<CHALLENGES>>,
+    pub left: ChallengeVec<'dr, D, J>,
     /// The right child's challenge slots.
     #[ragu(gadget)]
-    pub right: FixedVec<ChallengeInstance<'dr, D, CHALLENGE_WIDTH>, ConstLen<CHALLENGES>>,
+    pub right: ChallengeVec<'dr, D, J>,
 }
 
 /// The challenge slots of both children.
@@ -100,33 +95,16 @@ pub struct ChallengesOutput<
 /// `hashes_2` and `inner_collapse` finish on other branches and never name
 /// these counts.
 ///
-/// `HEADER_SIZE`, `POLYS` and `CLAIMS` appear here only to name the parent
-/// stage; nothing in this stage reads them. They stay because their regions
-/// stay in the shared prefix — see the module docs for why those two cannot
-/// follow the challenges down here.
-pub struct ChallengesStage<
-    C: Cycle,
-    R,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-    FP,
-> {
-    _marker: PhantomData<(C, R, FP)>,
+/// `HEADER_SIZE` appears here only to name the parent stage; nothing in this
+/// stage reads it. It stays because its region stays in the shared prefix —
+/// see the module docs for why the header and slot regions cannot follow the
+/// challenges down here.
+pub struct ChallengesStage<C: Cycle, R, const HEADER_SIZE: usize, J: AppHooksLayout, FP> {
+    _marker: PhantomData<(C, R, J, FP)>,
 }
 
-impl<
-    C: Cycle,
-    R,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-    FP,
-> Default for ChallengesStage<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH, FP>
+impl<C: Cycle, R, const HEADER_SIZE: usize, J: AppHooksLayout, FP> Default
+    for ChallengesStage<C, R, HEADER_SIZE, J, FP>
 {
     fn default() -> Self {
         ChallengesStage {
@@ -145,20 +123,16 @@ impl<
     C: Cycle,
     R: Rank,
     const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
+    J: AppHooksLayout,
     FP: crate::internal::fold_revdot::Parameters,
-> staging::Stage<C::CircuitField, R>
-    for ChallengesStage<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH, FP>
+> staging::Stage<C::CircuitField, R> for ChallengesStage<C, R, HEADER_SIZE, J, FP>
 {
-    type Parent = super::outer_error::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, FP>;
+    type Parent = super::outer_error::Stage<C, R, HEADER_SIZE, J, FP>;
     type Witness<'source> = &'source Witness<'source, C, R, HEADER_SIZE>;
-    type OutputKind = Kind![C::CircuitField; ChallengesOutput<'_, _, CHALLENGES, CHALLENGE_WIDTH>];
+    type OutputKind = Kind![C::CircuitField; ChallengesOutput<'_, _, J>];
 
     fn values() -> usize {
-        num_values(CHALLENGES, CHALLENGE_WIDTH)
+        num_values(J::challenges(), J::challenge_width())
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -170,14 +144,8 @@ impl<
         Self: 'dr,
     {
         Ok(ChallengesOutput {
-            left: alloc_challenges::<D, C, R, CHALLENGES, CHALLENGE_WIDTH>(
-                dr,
-                witness.as_ref().map(|w| w.left.proof),
-            )?,
-            right: alloc_challenges::<D, C, R, CHALLENGES, CHALLENGE_WIDTH>(
-                dr,
-                witness.as_ref().map(|w| w.right.proof),
-            )?,
+            left: alloc_challenges::<D, C, R, J>(dr, witness.as_ref().map(|w| w.left.proof))?,
+            right: alloc_challenges::<D, C, R, J>(dr, witness.as_ref().map(|w| w.right.proof))?,
         })
     }
 }
@@ -193,17 +161,16 @@ pub(crate) fn alloc_challenges<
     D: Driver<'dr, F = C::CircuitField>,
     C: Cycle,
     R: Rank,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
+    J: AppHooksLayout,
 >(
     dr: &mut D,
     proof: DriverValue<D, &Proof<C, R>>,
-) -> Result<FixedVec<ChallengeInstance<'dr, D, CHALLENGE_WIDTH>, ConstLen<CHALLENGES>>> {
+) -> Result<ChallengeVec<'dr, D, J>> {
     let allocator = &mut ();
-    ConstLen::<CHALLENGES>::range()
+    J::ChallengeCount::range()
         .map(|i| {
             Ok(ChallengeInstance {
-                inputs: ConstLen::<CHALLENGE_WIDTH>::range()
+                inputs: J::ChallengeWidth::range()
                     .map(|j| {
                         Element::alloc(
                             dr,
@@ -231,7 +198,10 @@ mod tests {
     use ragu_pasta::Pasta;
 
     use super::*;
-    use crate::internal::tests::{HEADER_SIZE, R, assert_stage_values};
+    use crate::{
+        hook_layout::AppHooks,
+        internal::tests::{HEADER_SIZE, R, assert_stage_values},
+    };
 
     /// The stage is sized by its own two axes and nothing else — the property
     /// that lets it be an ordinary typed stage rather than a value-level run.
@@ -241,10 +211,7 @@ mod tests {
             Pasta,
             R,
             { HEADER_SIZE },
-            1,
-            1,
-            2,
-            2,
+            AppHooks<1, 1, 2, 2>,
             crate::internal::native::RevdotParameters,
         >::default());
         assert_eq!(num_values(2, 2), 2 * 3 * 2);

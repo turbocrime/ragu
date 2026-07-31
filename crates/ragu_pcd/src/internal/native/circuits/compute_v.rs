@@ -74,10 +74,13 @@ use super::super::{
     },
     unified::{self, OutputBuilder},
 };
-use crate::internal::{
-    claims::Source,
-    fold_revdot::{Parameters, fold_two_layer},
-    native::RevdotParameters,
+use crate::{
+    hook_layout::AppHooksLayout,
+    internal::{
+        claims::Source,
+        fold_revdot::{Parameters, fold_two_layer},
+        native::RevdotParameters,
+    },
 };
 
 /// Circuit that computes and verifies the claimed evaluation value [$v$].
@@ -87,13 +90,11 @@ use crate::internal::{
 ///
 /// [module-level documentation]: self
 /// [$v$]: unified::Output::v
-pub struct Circuit<C: Cycle, R, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: usize> {
-    _marker: PhantomData<(C, R)>,
+pub struct Circuit<C: Cycle, R, const HEADER_SIZE: usize, J: AppHooksLayout> {
+    _marker: PhantomData<(C, R, J)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: usize>
-    Circuit<C, R, HEADER_SIZE, POLYS, CLAIMS>
-{
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout> Circuit<C, R, HEADER_SIZE, J> {
     pub fn new() -> MultiStage<C::CircuitField, R, Self> {
         MultiStage::new(Circuit {
             _marker: PhantomData,
@@ -120,10 +121,10 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     pub eval_witness: &'a native_eval::Witness<C::CircuitField>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: usize>
-    MultiStageCircuit<C::CircuitField, R> for Circuit<C, R, HEADER_SIZE, POLYS, CLAIMS>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+    MultiStageCircuit<C::CircuitField, R> for Circuit<C, R, HEADER_SIZE, J>
 {
-    type Last = native_eval::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>;
+    type Last = native_eval::Stage<C, R, HEADER_SIZE, J>;
 
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, R, HEADER_SIZE>;
@@ -152,11 +153,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const POLYS: usize, const CLAI
         // Set up multi-stage circuit pipeline: preamble -> query -> eval.
         // Each stage provides data needed for the v computation.
         let (preamble, builder) =
-            builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>>()?;
-        let (query, builder) =
-            builder.add_stage::<native_query::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>>()?;
-        let (eval, builder) =
-            builder.add_stage::<native_eval::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>>()?;
+            builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE, J>>()?;
+        let (query, builder) = builder.add_stage::<native_query::Stage<C, R, HEADER_SIZE, J>>()?;
+        let (eval, builder) = builder.add_stage::<native_eval::Stage<C, R, HEADER_SIZE, J>>()?;
         let dr = builder.finish();
 
         // Preamble is enforced because it contains child proof data that must
@@ -355,19 +354,14 @@ struct Denominators<'dr, D: Driver<'dr>> {
 
 impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
     #[allow(clippy::too_many_arguments)]
-    fn new<
-        C: Cycle<CircuitField = D::F>,
-        const HEADER_SIZE: usize,
-        const POLYS: usize,
-        const CLAIMS: usize,
-    >(
+    fn new<C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize, J: AppHooksLayout>(
         dr: &mut D,
         u: &Element<'dr, D>,
         w: &Element<'dr, D>,
         x: &Element<'dr, D>,
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
-        preamble: &native_preamble::Output<'dr, D, C, HEADER_SIZE, POLYS, CLAIMS>,
+        preamble: &native_preamble::Output<'dr, D, C, HEADER_SIZE, J>,
     ) -> Result<Self>
     where
         D::F: ragu_arithmetic::ff::PrimeField,
@@ -671,18 +665,16 @@ fn poly_queries<
     D: Driver<'dr>,
     C: Cycle<CircuitField = D::F>,
     const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
+    J: AppHooksLayout,
 >(
-    eval: &'a native_eval::Output<'dr, D, POLYS>,
+    eval: &'a native_eval::Output<'dr, D, J>,
     query: &'a native_query::Output<'dr, D>,
     preamble: &'a native_preamble::Output<
         'dr,
         D,
         C,
         HEADER_SIZE,
-        POLYS,
-        CLAIMS,
+        J,
     >,
     d: &'a Denominators<'dr, D>,
     computed_ax: &'a Element<'dr, D>,

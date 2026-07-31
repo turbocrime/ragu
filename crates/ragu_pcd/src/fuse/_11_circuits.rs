@@ -3,20 +3,13 @@ use ragu_circuits::{CircuitExt, polynomials::Rank};
 use ragu_core::Result;
 
 use crate::{
-    Application,
+    AppHooksLayout, Application,
     internal::{native, native::total_circuit_counts},
     proof::ProofBuilder,
 };
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> Application<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+    Application<'_, C, R, HEADER_SIZE, J>
 {
     pub(super) fn compute_internal_circuits<RNG: CryptoRngCore>(
         &self,
@@ -57,8 +50,7 @@ impl<
             C,
             R,
             HEADER_SIZE,
-            POLYS,
-            CLAIMS,
+            J,
             native::RevdotParameters,
         >::new(
             self.params,
@@ -80,8 +72,7 @@ impl<
             C,
             R,
             HEADER_SIZE,
-            POLYS,
-            CLAIMS,
+            J,
             native::RevdotParameters,
         >::new(self.params)
         .trace(native::circuits::hashes_2::Witness {
@@ -99,8 +90,7 @@ impl<
             C,
             R,
             HEADER_SIZE,
-            POLYS,
-            CLAIMS,
+            J,
             native::RevdotParameters,
         >::new()
         .trace(native::circuits::inner_collapse::Witness {
@@ -120,10 +110,7 @@ impl<
             C,
             R,
             HEADER_SIZE,
-            POLYS,
-            CLAIMS,
-            CHALLENGES,
-            CHALLENGE_WIDTH,
+            J,
             native::RevdotParameters,
         >::new()
         .trace(native::circuits::outer_collapse::Witness {
@@ -139,7 +126,7 @@ impl<
         )?;
 
         let (compute_v_trace, unified) =
-            native::circuits::compute_v::Circuit::<C, R, HEADER_SIZE, POLYS, CLAIMS>::new()
+            native::circuits::compute_v::Circuit::<C, R, HEADER_SIZE, J>::new()
                 .trace(native::circuits::compute_v::Witness {
                     unified,
                     preamble_witness,
@@ -153,20 +140,13 @@ impl<
             &mut *rng,
         )?;
 
-        let (challenge_binding_trace, unified) = native::circuits::challenge_binding::Circuit::<
-            C,
-            R,
-            HEADER_SIZE,
-            POLYS,
-            CLAIMS,
-            CHALLENGES,
-            CHALLENGE_WIDTH,
-        >::new(self.params)
-        .trace(native::circuits::challenge_binding::Witness {
-            unified,
-            preamble_witness,
-        })?
-        .into_parts();
+        let (challenge_binding_trace, unified) =
+            native::circuits::challenge_binding::Circuit::<C, R, HEADER_SIZE, J>::new(self.params)
+                .trace(native::circuits::challenge_binding::Witness {
+                    unified,
+                    preamble_witness,
+                })?
+                .into_parts();
         let challenge_binding_rx = self.native_registry.assemble(
             &challenge_binding_trace,
             native::InternalCircuitIndex::ChallengeBindingCircuit.circuit_index(),

@@ -23,7 +23,8 @@ use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::{GadgetExt, Point, vec::CollectFixed};
 
 use crate::{
-    Application, Pcd, RAGU_TAG, internal::transcript::Transcript, proof::ProofBuilder, step::Step,
+    AppHooksLayout, Application, Pcd, RAGU_TAG, internal::transcript::Transcript,
+    proof::ProofBuilder, step::Step,
 };
 
 /// Ephemeral native-field data for $f(X)$, used only during the fuse step.
@@ -46,15 +47,8 @@ struct NativeSPrime<C: Cycle, R: Rank> {
     registry_wx1_commitment: C::HostCurve,
 }
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> Application<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+    Application<'_, C, R, HEADER_SIZE, J>
 {
     /// Fuse two [`Pcd`] into one using a provided [`Step`].
     ///
@@ -86,7 +80,7 @@ impl<
         let mut builder = ProofBuilder::new(
             self.params,
             C::ScalarField::random(&mut *rng),
-            self.capacity(),
+            self.hook_layout(),
         );
 
         let (left, right, application_data, application_aux) =

@@ -96,6 +96,7 @@ use super::super::{
 };
 use crate::{
     RAGU_TAG,
+    hook_layout::AppHooksLayout,
     internal::{fold_revdot, transcript::Transcript},
 };
 
@@ -132,13 +133,12 @@ pub struct Circuit<
     C: Cycle,
     R,
     const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
+    J: AppHooksLayout,
     FP: fold_revdot::Parameters,
 > {
     params: &'params C::Params,
     log2_circuits: u32,
-    _marker: PhantomData<(R, FP)>,
+    _marker: PhantomData<(R, J, FP)>,
 }
 
 impl<
@@ -146,10 +146,9 @@ impl<
     C: Cycle,
     R: Rank,
     const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
+    J: AppHooksLayout,
     FP: fold_revdot::Parameters,
-> Circuit<'params, C, R, HEADER_SIZE, POLYS, CLAIMS, FP>
+> Circuit<'params, C, R, HEADER_SIZE, J, FP>
 {
     /// Creates a new multi-stage circuit.
     ///
@@ -194,16 +193,10 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_rev
     pub outer_error_witness: &'a native_outer_error::Witness<C, FP>,
 }
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    FP: fold_revdot::Parameters,
-> MultiStageCircuit<C::CircuitField, R> for Circuit<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, FP>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout, FP: fold_revdot::Parameters>
+    MultiStageCircuit<C::CircuitField, R> for Circuit<'_, C, R, HEADER_SIZE, J, FP>
 {
-    type Last = native_outer_error::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, FP>;
+    type Last = native_outer_error::Stage<C, R, HEADER_SIZE, J, FP>;
 
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, R, HEADER_SIZE, FP>;
@@ -230,10 +223,9 @@ impl<
         Self: 'dr,
     {
         let (preamble, builder) =
-            builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>>()?;
+            builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE, J>>()?;
         let (outer_error, builder) =
-            builder
-                .add_stage::<native_outer_error::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, FP>>()?;
+            builder.add_stage::<native_outer_error::Stage<C, R, HEADER_SIZE, J, FP>>()?;
         let dr = builder.finish();
 
         let preamble = preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;

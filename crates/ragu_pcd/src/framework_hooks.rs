@@ -421,7 +421,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
 
     /// The application's slot capacities; what
     /// [`finish_slots`](crate::step::StepCtx) pads to.
-    pub(crate) fn capacity(&self) -> HookLayout {
+    pub(crate) fn hook_layout(&self) -> HookLayout {
         self.capacity
     }
 

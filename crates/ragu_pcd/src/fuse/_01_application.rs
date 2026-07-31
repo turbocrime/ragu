@@ -25,7 +25,7 @@ use ragu_circuits::{
 use ragu_core::{Error, Result};
 
 use crate::{
-    Application, Header, Pcd, Proof,
+    AppHooksLayout, Application, Header, Pcd, Proof,
     framework_hooks::FrameworkAux,
     internal::challenge,
     proof::ProofBuilder,
@@ -35,15 +35,8 @@ use crate::{
     },
 };
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> Application<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+    Application<'_, C, R, HEADER_SIZE, J>
 {
     pub(super) fn compute_application_proof<'source, RNG: CryptoRngCore, S: Step<C>>(
         &self,
@@ -64,16 +57,10 @@ impl<
         // The same capacity registration used — it comes off the same const
         // parameters — so the same instance width the registry committed to.
         // Building the adapter here only wraps the step.
-        let (trace, aux) = MultiStage::new(Adapter::<
-            C,
-            S,
-            R,
-            HEADER_SIZE,
-            POLYS,
-            CLAIMS,
-            CHALLENGES,
-            CHALLENGE_WIDTH,
-        >::new(step, Some(self.params)))
+        let (trace, aux) = MultiStage::new(Adapter::<C, S, R, HEADER_SIZE, J>::new(
+            step,
+            Some(self.params),
+        ))
         .trace((left_data, right_data, witness))?
         .into_parts();
         let rx = self.native_registry.assemble(

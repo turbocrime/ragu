@@ -74,7 +74,7 @@ use super::super::{
     stages::{outer_error, preamble, slots},
     unified::{self, OutputBuilder},
 };
-use crate::internal::fold_revdot;
+use crate::{hook_layout::AppHooksLayout, internal::fold_revdot};
 
 /// Circuit that verifies layer 2 of the two-layer revdot reduction.
 ///
@@ -86,25 +86,14 @@ pub struct Circuit<
     C: Cycle,
     R,
     const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
+    J: AppHooksLayout,
     FP: fold_revdot::Parameters,
 > {
-    _marker: PhantomData<(C, R, FP)>,
+    _marker: PhantomData<(C, R, J, FP)>,
 }
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-    FP: fold_revdot::Parameters,
-> Circuit<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH, FP>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout, FP: fold_revdot::Parameters>
+    Circuit<C, R, HEADER_SIZE, J, FP>
 {
     /// Creates a new multi-stage circuit for layer 2 revdot verification.
     pub fn new() -> MultiStage<C::CircuitField, R, Self> {
@@ -139,25 +128,15 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_rev
     pub outer_error_witness: &'a outer_error::Witness<C, FP>,
 }
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-    FP: fold_revdot::Parameters,
-> MultiStageCircuit<C::CircuitField, R>
-    for Circuit<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH, FP>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout, FP: fold_revdot::Parameters>
+    MultiStageCircuit<C::CircuitField, R> for Circuit<C, R, HEADER_SIZE, J, FP>
 {
     /// The challenge slots are the last stage of the error chain, and this
     /// circuit folds a child's *whole* instance into $k(Y)$ — challenge slots
     /// included — so it reaches all the way down. `hashes_1`, `hashes_2` and
-    /// `inner_collapse` stop at the error stages above and never name these
-    /// counts.
-    type Last =
-        slots::ChallengesStage<C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH, FP>;
+    /// `inner_collapse` stop at the error stages above and never name the
+    /// challenge capacities.
+    type Last = slots::ChallengesStage<C, R, HEADER_SIZE, J, FP>;
 
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, R, HEADER_SIZE, FP>;
@@ -183,20 +162,11 @@ impl<
     where
         Self: 'dr,
     {
-        let (preamble, builder) =
-            builder.add_stage::<preamble::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>>()?;
+        let (preamble, builder) = builder.add_stage::<preamble::Stage<C, R, HEADER_SIZE, J>>()?;
         let (outer_error, builder) =
-            builder.add_stage::<outer_error::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, FP>>()?;
-        let (challenges, builder) = builder.add_stage::<slots::ChallengesStage<
-            C,
-            R,
-            HEADER_SIZE,
-            POLYS,
-            CLAIMS,
-            CHALLENGES,
-            CHALLENGE_WIDTH,
-            FP,
-        >>()?;
+            builder.add_stage::<outer_error::Stage<C, R, HEADER_SIZE, J, FP>>()?;
+        let (challenges, builder) =
+            builder.add_stage::<slots::ChallengesStage<C, R, HEADER_SIZE, J, FP>>()?;
         let dr = builder.finish();
 
         let preamble = preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;

@@ -195,7 +195,7 @@ where
     /// challenge immediately, so the step body can evaluate polynomials at it
     /// right away.
     pub fn derive_challenge(&mut self, inputs: &[Element<'dr, D>]) -> Result<Element<'dr, D>> {
-        let width = self.hooks.capacity().challenge.width;
+        let width = self.hooks.hook_layout().challenge.width;
         if inputs.len() > width {
             return Err(ragu_core::Error::InvalidWitness(
                 "derive_challenge received more elements than a challenge slot absorbs".into(),
@@ -261,7 +261,7 @@ where
     /// out of every `Step::witness` signature with it.
     pub(crate) fn finish_slots<R: Rank>(&mut self) -> Result<()> {
         let allocator = &mut ragu_primitives::allocator::Standard::new();
-        let capacity = self.hooks.capacity();
+        let capacity = self.hooks.hook_layout();
 
         // Polynomials first, so every query slot has something to name.
         while self.hooks.polys_filled() < capacity.poly_query.polys {

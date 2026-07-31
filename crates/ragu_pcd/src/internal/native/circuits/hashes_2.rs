@@ -78,7 +78,10 @@ use super::super::{
     stages::{outer_error as native_outer_error, preamble as native_preamble},
     unified::{self, OutputBuilder},
 };
-use crate::internal::{fold_revdot, transcript::Transcript};
+use crate::{
+    hook_layout::AppHooksLayout,
+    internal::{fold_revdot, transcript::Transcript},
+};
 
 /// Second hash circuit for Fiat-Shamir challenge derivation.
 ///
@@ -91,12 +94,11 @@ pub struct Circuit<
     C: Cycle,
     R,
     const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
+    J: AppHooksLayout,
     FP: fold_revdot::Parameters,
 > {
     params: &'params C::Params,
-    _marker: PhantomData<(R, FP)>,
+    _marker: PhantomData<(R, J, FP)>,
 }
 
 impl<
@@ -104,10 +106,9 @@ impl<
     C: Cycle,
     R: Rank,
     const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
+    J: AppHooksLayout,
     FP: fold_revdot::Parameters,
-> Circuit<'params, C, R, HEADER_SIZE, POLYS, CLAIMS, FP>
+> Circuit<'params, C, R, HEADER_SIZE, J, FP>
 {
     /// Creates a new multi-stage circuit.
     ///
@@ -139,16 +140,10 @@ pub struct Witness<'a, C: Cycle, FP: fold_revdot::Parameters> {
     pub outer_error_witness: &'a native_outer_error::Witness<C, FP>,
 }
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    FP: fold_revdot::Parameters,
-> MultiStageCircuit<C::CircuitField, R> for Circuit<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, FP>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout, FP: fold_revdot::Parameters>
+    MultiStageCircuit<C::CircuitField, R> for Circuit<'_, C, R, HEADER_SIZE, J, FP>
 {
-    type Last = native_outer_error::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, FP>;
+    type Last = native_outer_error::Stage<C, R, HEADER_SIZE, J, FP>;
 
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, FP>;
@@ -174,11 +169,9 @@ impl<
     where
         Self: 'dr,
     {
-        let builder =
-            builder.skip_stage::<native_preamble::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>>()?;
+        let builder = builder.skip_stage::<native_preamble::Stage<C, R, HEADER_SIZE, J>>()?;
         let (outer_error, builder) =
-            builder
-                .add_stage::<native_outer_error::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, FP>>()?;
+            builder.add_stage::<native_outer_error::Stage<C, R, HEADER_SIZE, J, FP>>()?;
         let dr = builder.finish();
 
         let outer_error =

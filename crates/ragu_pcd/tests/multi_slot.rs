@@ -16,7 +16,7 @@ use ragu_arithmetic::{
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::Result;
 use ragu_pasta::Pasta;
-use ragu_pcd::ApplicationBuilder;
+use ragu_pcd::{AppHooks, ApplicationBuilder};
 use ragu_testing::pcd::poly_query::{CommitAndOpen, CommitAndOpenWitness, poly};
 
 type R = ProductionRank;
@@ -28,7 +28,7 @@ const HEADER_SIZE: usize = 4;
 #[test]
 fn the_pinned_slotted_shape_proves_and_verifies() -> Result<()> {
     let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, 2, 3, 1, 2>::new()
+    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, AppHooks<2, 3, 1, 2>>::new()
         .register(CommitAndOpen::<Pasta, R>::new(Pasta::circuit_poseidon(
             pasta,
         )))?

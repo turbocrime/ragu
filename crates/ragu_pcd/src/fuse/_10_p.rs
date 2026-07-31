@@ -21,7 +21,7 @@ use ragu_primitives::{Element, extract_endoscalar, lift_endoscalar};
 
 use super::{NativeF, NativeSPrime, RegistryWy};
 use crate::{
-    Application, Proof,
+    AppHooksLayout, Application, Proof,
     internal::native::{RxComponent, RxIndex},
     proof::ProofBuilder,
 };
@@ -44,15 +44,8 @@ impl<C: Cycle, R: Rank> Accumulator<'_, C, R> {
     }
 }
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> Application<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+    Application<'_, C, R, HEADER_SIZE, J>
 {
     pub(super) fn compute_p<'dr, D, RNG: ragu_arithmetic::CryptoRngCore>(
         &self,
@@ -151,7 +144,7 @@ impl<
         // sets `nested_endoscalar_rx`, `nested_points_rx`, and
         // `nested_endoscaling_step_rxs` on the builder.
         let mut points = Vec::with_capacity(crate::internal::nested::num_endoscaling_points(
-            self.capacity().poly_query.polys,
+            self.hook_layout().poly_query.polys,
         ));
         points.push(f.commitment);
         points.extend_from_slice(&commitments);

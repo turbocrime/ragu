@@ -34,7 +34,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_pcd::{
-    Application, ApplicationBuilder, Pcd, PolyCommitment,
+    AppHooks, Application, ApplicationBuilder, Pcd, PolyCommitment,
     header::{Header, Suffix},
     step::{Encoded, Index, Step, StepCtx},
 };
@@ -302,30 +302,15 @@ impl<C: Cycle, R: Rank> Step<C> for OpenAndHash<'_, C, R> {
     }
 }
 
-/// The capacity the two fixtures above are exercised at.
-///
-/// One polynomial, opened twice, with one challenge derived over a two-point
-/// input: [`CommitAndOpen`] witnesses the polynomial, derives the challenge and
-/// opens at it, and its `claimed_y` path opens the same polynomial a second time
-/// — which is why `CLAIMS` exceeds `POLYS`. [`OpenAndHash`] fits inside the same
-/// shape with one polynomial and one claim.
+/// The header size the two fixtures above are exercised at.
 pub const HEADER_SIZE: usize = 4;
-/// See [`HEADER_SIZE`].
-pub const POLYS: usize = 1;
-/// See [`HEADER_SIZE`].
-pub const CLAIMS: usize = 2;
-/// See [`HEADER_SIZE`].
-pub const CHALLENGES: usize = 1;
-/// See [`HEADER_SIZE`].
-pub const CHALLENGE_WIDTH: usize = 2;
 
 /// An [`Application`] at the fixtures' declared capacity.
-pub type OpenApp<'params, C, R> =
-    Application<'params, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>;
+pub type OpenApp<'params, C, R> = Application<'params, C, R, HEADER_SIZE, AppHooks<1, 2, 1, 2>>;
 
 /// An [`ApplicationBuilder`] at the fixtures' declared capacity.
 pub type OpenAppBuilder<'params, C, R> =
-    ApplicationBuilder<'params, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>;
+    ApplicationBuilder<'params, C, R, HEADER_SIZE, AppHooks<1, 2, 1, 2>>;
 
 /// A polynomial from small integer coefficients.
 pub fn poly<F: PrimeField, R: Rank>(coeffs: &[u64]) -> sparse::Polynomial<F, R> {

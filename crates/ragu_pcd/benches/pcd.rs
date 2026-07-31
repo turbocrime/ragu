@@ -8,7 +8,7 @@ use gungraun::{library_benchmark, library_benchmark_group, main};
 use ragu_arithmetic::Cycle;
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_pasta::{Fp, Pasta};
-use ragu_pcd::{Application, ApplicationBuilder, Pcd};
+use ragu_pcd::{AppHooks, Application, ApplicationBuilder, Pcd};
 use ragu_testing::pcd::nontrivial;
 use rand::rngs::StdRng;
 use setup::{
@@ -24,7 +24,7 @@ fn register(
     ),
 ) {
     black_box(
-        ApplicationBuilder::<Pasta, ProductionRank, 4, 0, 0, 0, 2>::new()
+        ApplicationBuilder::<Pasta, ProductionRank, 4, AppHooks<0, 0, 0, 2>>::new()
             .register(leaf)
             .unwrap()
             .register(hash)
@@ -36,7 +36,7 @@ fn register(
 #[bench::finalize()]
 fn finalize(
     (app, pasta): (
-        ApplicationBuilder<'static, Pasta, ProductionRank, 4, 0, 0, 0, 2>,
+        ApplicationBuilder<'static, Pasta, ProductionRank, 4, AppHooks<0, 0, 0, 2>>,
         &'static <Pasta as Cycle>::Params,
     ),
 ) {
@@ -52,7 +52,7 @@ library_benchmark_group!(
 #[bench::seed()]
 fn seed(
     (app, poseidon_params, mut rng): (
-        Application<'static, Pasta, ProductionRank, 4, 0, 0, 0, 2>,
+        Application<'static, Pasta, ProductionRank, 4, AppHooks<0, 0, 0, 2>>,
         &'static <Pasta as Cycle>::CircuitPoseidon,
         StdRng,
     ),
@@ -69,7 +69,7 @@ fn seed(
 #[bench::fuse()]
 fn fuse(
     (app, leaf1, leaf2, poseidon_params, mut rng): (
-        Application<'static, Pasta, ProductionRank, 4, 0, 0, 0, 2>,
+        Application<'static, Pasta, ProductionRank, 4, AppHooks<0, 0, 0, 2>>,
         Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
         Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
         &'static <Pasta as Cycle>::CircuitPoseidon,
@@ -95,7 +95,7 @@ library_benchmark_group!(
 #[bench::verify_leaf()]
 fn verify_leaf(
     (app, leaf, mut rng): (
-        Application<'static, Pasta, ProductionRank, 4, 0, 0, 0, 2>,
+        Application<'static, Pasta, ProductionRank, 4, AppHooks<0, 0, 0, 2>>,
         Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
         StdRng,
     ),
@@ -107,7 +107,7 @@ fn verify_leaf(
 #[bench::verify_node()]
 fn verify_node(
     (app, node, mut rng): (
-        Application<'static, Pasta, ProductionRank, 4, 0, 0, 0, 2>,
+        Application<'static, Pasta, ProductionRank, 4, AppHooks<0, 0, 0, 2>>,
         Pcd<Pasta, ProductionRank, nontrivial::InternalNode>,
         StdRng,
     ),
@@ -119,7 +119,7 @@ fn verify_node(
 #[bench::rerandomize()]
 fn rerandomize(
     (app, node, mut rng): (
-        Application<'static, Pasta, ProductionRank, 4, 0, 0, 0, 2>,
+        Application<'static, Pasta, ProductionRank, 4, AppHooks<0, 0, 0, 2>>,
         Pcd<Pasta, ProductionRank, nontrivial::InternalNode>,
         StdRng,
     ),

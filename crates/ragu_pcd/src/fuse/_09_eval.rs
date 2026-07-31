@@ -10,17 +10,10 @@ use ragu_core::{Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::Element;
 
 use super::{NativeSPrime, RegistryWy};
-use crate::{Application, Proof, internal::native, proof::ProofBuilder};
+use crate::{AppHooksLayout, Application, Proof, internal::native, proof::ProofBuilder};
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> Application<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+    Application<'_, C, R, HEADER_SIZE, J>
 {
     pub(super) fn compute_eval<'dr, D, RNG: CryptoRngCore>(
         &self,
@@ -53,7 +46,7 @@ impl<
                 registry_xy: builder.native_registry_xy_poly().eval(u),
             },
         };
-        let rx = native::chain::Eval::<C, R, HEADER_SIZE, POLYS, CLAIMS>::rx(
+        let rx = native::chain::Eval::<C, R, HEADER_SIZE, J>::rx(
             C::CircuitField::random(&mut *rng),
             &eval_witness,
         )?;

@@ -14,17 +14,10 @@ use ragu_core::{Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::Element;
 
 use super::RegistryWy;
-use crate::{Application, Proof, internal::native, proof::ProofBuilder};
+use crate::{AppHooksLayout, Application, Proof, internal::native, proof::ProofBuilder};
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> Application<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+    Application<'_, C, R, HEADER_SIZE, J>
 {
     pub(super) fn compute_query<'dr, D, RNG: CryptoRngCore>(
         &self,
@@ -73,7 +66,7 @@ impl<
             ),
         };
 
-        let rx = native::chain::Query::<C, R, HEADER_SIZE, POLYS, CLAIMS>::rx(
+        let rx = native::chain::Query::<C, R, HEADER_SIZE, J>::rx(
             C::CircuitField::random(&mut *rng),
             &query_witness,
         )?;

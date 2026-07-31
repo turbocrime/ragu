@@ -8,17 +8,10 @@ use ragu_circuits::{polynomials::Rank, registry::RegistryAt};
 use ragu_core::Result;
 
 use super::NativeSPrime;
-use crate::{Application, Proof, internal::nested, proof::ProofBuilder};
+use crate::{AppHooksLayout, Application, Proof, internal::nested, proof::ProofBuilder};
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> Application<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+    Application<'_, C, R, HEADER_SIZE, J>
 {
     pub(super) fn compute_s_prime<RNG: CryptoRngCore>(
         &self,

@@ -36,22 +36,15 @@ use ragu_primitives::{Element, vec::FixedVec};
 
 use super::claims::{FoldKey, FuseProofSource, TrackedPoly};
 use crate::{
-    Application,
+    AppHooksLayout, Application,
     internal::{fold_revdot, native},
     proof::ProofBuilder,
 };
 
 type NativeNumGroups = <native::RevdotParameters as fold_revdot::Parameters>::NumGroups;
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> Application<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+    Application<'_, C, R, HEADER_SIZE, J>
 {
     pub(super) fn compute_ab<'dr, D>(
         &self,

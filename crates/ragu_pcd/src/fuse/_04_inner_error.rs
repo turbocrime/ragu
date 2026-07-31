@@ -17,20 +17,13 @@ use super::{
     claims::{FuseBuilder, FuseProofSource},
 };
 use crate::{
-    Application,
+    AppHooksLayout, Application,
     internal::{claims, fold_revdot, native, nested},
     proof::ProofBuilder,
 };
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> Application<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+    Application<'_, C, R, HEADER_SIZE, J>
 {
     pub(super) fn inner_error_terms<'dr, 'rx, D, RNG: CryptoRngCore>(
         &self,
@@ -93,7 +86,8 @@ impl<
         let y = *y.value().take();
         let z = *z.value().take();
 
-        let mut claims_builder = claims::Builder::new(&self.native_registry, y, z, self.capacity());
+        let mut claims_builder =
+            claims::Builder::new(&self.native_registry, y, z, self.hook_layout());
         native::claims::build(source, &mut claims_builder)?;
 
         let inner_error_witness =
@@ -103,7 +97,7 @@ impl<
                     &claims_builder.b,
                 ),
             };
-        let native_rx = native::chain::InnerError::<C, R, HEADER_SIZE, POLYS, CLAIMS>::rx(
+        let native_rx = native::chain::InnerError::<C, R, HEADER_SIZE, J>::rx(
             C::CircuitField::random(&mut *rng),
             &inner_error_witness,
         )?;

@@ -20,9 +20,23 @@ use ragu_primitives::{
     vec::{CollectFixed, ConstLen, FixedVec},
 };
 
-use crate::{Proof, header::Header, internal::native::unified, step::internal::padded};
+use crate::{
+    Proof, header::Header, hook_layout::AppHooksLayout, internal::native::unified,
+    step::internal::padded,
+};
 
 type HeaderVec<'dr, D, const HEADER_SIZE: usize> = FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>>;
+
+/// One child's polynomial slots, in slot order — the [`HeaderVec`] of the
+/// poly-slot region.
+pub type PolyVec<'dr, D, J> = FixedVec<PolyInstance<'dr, D>, <J as AppHooksLayout>::PolyCount>;
+
+/// One child's poly-query claim slots, in slot order.
+pub type ClaimVec<'dr, D, J> = FixedVec<ClaimInstance<'dr, D>, <J as AppHooksLayout>::ClaimCount>;
+
+/// One child's challenge slots, in slot order.
+pub type ChallengeVec<'dr, D, J> =
+    FixedVec<ChallengeInstance<'dr, D, J>, <J as AppHooksLayout>::ChallengeCount>;
 
 /// A single poly-query claim instance witnessed from a child proof: the opened
 /// polynomial's embedded commitment coordinates and the $(x, y)$ opening. The
@@ -64,9 +78,9 @@ pub struct PolyInstance<'dr, D: Driver<'dr>> {
 /// (every input element, then the challenge) matches the challenge-slot
 /// region of the application circuit's instance.
 #[derive(Gadget, Consistent)]
-pub struct ChallengeInstance<'dr, D: Driver<'dr>, const CHALLENGE_WIDTH: usize> {
+pub struct ChallengeInstance<'dr, D: Driver<'dr>, J: AppHooksLayout> {
     #[ragu(gadget)]
-    pub inputs: FixedVec<Element<'dr, D>, ConstLen<CHALLENGE_WIDTH>>,
+    pub inputs: FixedVec<Element<'dr, D>, J::ChallengeWidth>,
     #[ragu(gadget)]
     pub challenge: Element<'dr, D>,
 }
@@ -129,8 +143,7 @@ pub struct ProofInputs<
     D: Driver<'dr>,
     C: Cycle<CircuitField = D::F>,
     const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
+    J: AppHooksLayout,
 > {
     /// Headers this child proof claimed for its own children.
     #[ragu(gadget)]
@@ -141,12 +154,12 @@ pub struct ProofInputs<
     /// The poly-query claim instances this child proof raised, in slot order.
     /// Unused slots hold the canonical padding claim.
     #[ragu(gadget)]
-    pub claims: FixedVec<ClaimInstance<'dr, D>, ConstLen<CLAIMS>>,
+    pub claims: ClaimVec<'dr, D, J>,
     /// The polynomials this child proof witnessed, in slot order. Unused slots
     /// hold the canonical padding polynomial. Each claim above carries the
     /// embedded commitment coordinates of one of these.
     #[ragu(gadget)]
-    pub polys: FixedVec<PolyInstance<'dr, D>, ConstLen<POLYS>>,
+    pub polys: PolyVec<'dr, D, J>,
     #[ragu(gadget)]
     pub circuit_id: Element<'dr, D>,
     #[ragu(gadget)]
@@ -158,9 +171,8 @@ impl<
     D: Driver<'dr, F = C::CircuitField>,
     C: Cycle,
     const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-> ProofInputs<'dr, D, C, HEADER_SIZE, POLYS, CLAIMS>
+    J: AppHooksLayout,
+> ProofInputs<'dr, D, C, HEADER_SIZE, J>
 {
     /// Compute unified k(y) and unified+bridged k(y) values simultaneously,
     /// sharing computation.
@@ -211,11 +223,11 @@ impl<
     /// here. The fold still walks one contiguous instance; only which stage
     /// each region's wires live in differs, and that is deliberate — see that
     /// module for why the slot regions do not belong on the chain's root.
-    pub fn application_ky<const CHALLENGES: usize, const CHALLENGE_WIDTH: usize>(
+    pub fn application_ky(
         &self,
         dr: &mut D,
         y: &Element<'dr, D>,
-        challenges: &FixedVec<ChallengeInstance<'dr, D, CHALLENGE_WIDTH>, ConstLen<CHALLENGES>>,
+        challenges: &ChallengeVec<'dr, D, J>,
     ) -> Result<Element<'dr, D>> {
         let mut ky = Horner::new(y);
         self.children.left.write(dr, &mut ky)?;
@@ -254,9 +266,8 @@ impl<
     D: Driver<'dr, F = C::CircuitField>,
     C: Cycle,
     const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-> ProofInputs<'dr, D, C, HEADER_SIZE, POLYS, CLAIMS>
+    J: AppHooksLayout,
+> ProofInputs<'dr, D, C, HEADER_SIZE, J>
 {
     /// Allocate ProofInputs from a proof reference and pre-computed output
     /// header. The slot counts are circuit-construction parameters: they fix
@@ -267,8 +278,8 @@ impl<
         proof: DriverValue<D, &Proof<C, R>>,
         output_header: DriverValue<D, &FixedVec<D::F, ConstLen<HEADER_SIZE>>>,
     ) -> Result<Self> {
-        let num_polys = POLYS;
-        let num_queries = CLAIMS;
+        let num_polys = J::polys();
+        let num_queries = J::claims();
         fn alloc_header<'dr, D: Driver<'dr>, const N: usize>(
             dr: &mut D,
             allocator: &mut (),
@@ -407,13 +418,12 @@ pub struct Output<
     D: Driver<'dr>,
     C: Cycle<CircuitField = D::F>,
     const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
+    J: AppHooksLayout,
 > {
     #[ragu(gadget)]
-    pub left: ProofInputs<'dr, D, C, HEADER_SIZE, POLYS, CLAIMS>,
+    pub left: ProofInputs<'dr, D, C, HEADER_SIZE, J>,
     #[ragu(gadget)]
-    pub right: ProofInputs<'dr, D, C, HEADER_SIZE, POLYS, CLAIMS>,
+    pub right: ProofInputs<'dr, D, C, HEADER_SIZE, J>,
 }
 
 impl<
@@ -421,9 +431,8 @@ impl<
     D: Driver<'dr>,
     C: Cycle<CircuitField = D::F>,
     const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-> Output<'dr, D, C, HEADER_SIZE, POLYS, CLAIMS>
+    J: AppHooksLayout,
+> Output<'dr, D, C, HEADER_SIZE, J>
 {
     /// Returns true if both child proofs are trivial proofs.
     pub fn is_base_case(
@@ -439,12 +448,12 @@ impl<
 
 /// Both children present the application's shape, so one set of slot counts
 /// sizes both.
-pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: usize> {
-    _marker: PhantomData<(C, R)>,
+pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, J: AppHooksLayout> {
+    _marker: PhantomData<(C, R, J)>,
 }
 
-impl<C: Cycle, R, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: usize> Default
-    for Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>
+impl<C: Cycle, R, const HEADER_SIZE: usize, J: AppHooksLayout> Default
+    for Stage<C, R, HEADER_SIZE, J>
 {
     fn default() -> Self {
         Stage {
@@ -453,14 +462,14 @@ impl<C: Cycle, R, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: us
     }
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: usize>
-    staging::Stage<C::CircuitField, R> for Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+    staging::Stage<C::CircuitField, R> for Stage<C, R, HEADER_SIZE, J>
 {
     type Parent = ();
     type Witness<'source> = &'source Witness<'source, C, R, HEADER_SIZE>;
     type OutputKind = Kind![
         C::CircuitField;
-        Output<'_, _, C, HEADER_SIZE, POLYS, CLAIMS>
+        Output<'_, _, C, HEADER_SIZE, J>
     ];
 
     fn values() -> usize {
@@ -469,7 +478,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const POLYS: usize, const CLAI
         // commitment's embedded affine coordinates. The challenge slots are
         // their own stage — see [`slots`](super::slots) for why the chain's
         // root does not hold them.
-        2 * (3 * HEADER_SIZE + 2 * POLYS + 4 * CLAIMS + 1 + unified::NUM_WIRES)
+        2 * (3 * HEADER_SIZE + 2 * J::polys() + 4 * J::claims() + 1 + unified::NUM_WIRES)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -501,14 +510,19 @@ mod tests {
     use ragu_pasta::Pasta;
 
     use super::*;
-    use crate::internal::tests::{HEADER_SIZE, R, assert_stage_values};
+    use crate::{
+        hook_layout::AppHooks,
+        internal::tests::{HEADER_SIZE, R, assert_stage_values},
+    };
 
     /// `values()` predicts the wire count at every slot count, not just one.
     /// This is what lets the stage's position in the chain come off its type.
     #[test]
     fn stage_values_matches_wire_count() {
         fn check<const POLYS: usize>() {
-            assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }, POLYS, 1>::default());
+            assert_stage_values(
+                &Stage::<Pasta, R, { HEADER_SIZE }, AppHooks<POLYS, 1, 0, 0>>::default(),
+            );
         }
         check::<0>();
         check::<1>();

@@ -77,6 +77,7 @@ use super::super::{
     stages::{outer_error, preamble, slots},
     unified::{self, OutputBuilder},
 };
+use crate::hook_layout::AppHooksLayout;
 
 /// Circuit that re-derives every child challenge from its point.
 ///
@@ -84,30 +85,13 @@ use super::super::{
 /// performed by this circuit.
 ///
 /// [module-level documentation]: self
-pub struct Circuit<
-    'params,
-    C: Cycle,
-    R,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> {
+pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, J: AppHooksLayout> {
     params: &'params C::Params,
-    _marker: PhantomData<(R,)>,
+    _marker: PhantomData<(R, J)>,
 }
 
-impl<
-    'params,
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> Circuit<'params, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+    Circuit<'params, C, R, HEADER_SIZE, J>
 {
     /// Creates a new multi-stage circuit.
     ///
@@ -133,30 +117,13 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     pub preamble_witness: &'a preamble::Witness<'a, C, R, HEADER_SIZE>,
 }
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> MultiStageCircuit<C::CircuitField, R>
-    for Circuit<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+    MultiStageCircuit<C::CircuitField, R> for Circuit<'_, C, R, HEADER_SIZE, J>
 {
     /// The challenge slots are last in the error chain, and this circuit exists
     /// to re-derive each of them, so it reaches down to that stage. Everything
     /// between is skipped.
-    type Last = slots::ChallengesStage<
-        C,
-        R,
-        HEADER_SIZE,
-        POLYS,
-        CLAIMS,
-        CHALLENGES,
-        CHALLENGE_WIDTH,
-        RevdotParameters,
-    >;
+    type Last = slots::ChallengesStage<C, R, HEADER_SIZE, J, RevdotParameters>;
 
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, R, HEADER_SIZE>;
@@ -182,15 +149,9 @@ impl<
     where
         Self: 'dr,
     {
-        let builder = builder.skip_stage::<preamble::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>>()?;
-        let builder = builder.skip_stage::<outer_error::Stage<
-            C,
-            R,
-            HEADER_SIZE,
-            POLYS,
-            CLAIMS,
-            RevdotParameters,
-        >>()?;
+        let builder = builder.skip_stage::<preamble::Stage<C, R, HEADER_SIZE, J>>()?;
+        let builder =
+            builder.skip_stage::<outer_error::Stage<C, R, HEADER_SIZE, J, RevdotParameters>>()?;
         let (challenges, builder) = builder.add_stage::<Self::Last>()?;
         let dr = builder.finish();
 

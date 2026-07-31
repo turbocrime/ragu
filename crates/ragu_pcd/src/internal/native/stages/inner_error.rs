@@ -18,7 +18,10 @@ use ragu_primitives::{
     vec::{FixedVec, Len},
 };
 
-use crate::internal::fold_revdot::{self, NumErrorTerms};
+use crate::{
+    hook_layout::AppHooksLayout,
+    internal::fold_revdot::{self, NumErrorTerms},
+};
 
 /// Witness data for the inner error stage (layer 1).
 ///
@@ -43,28 +46,30 @@ pub struct Output<'dr, D: Driver<'dr>, FP: fold_revdot::Parameters> {
 }
 
 /// The inner error stage (layer 1) of the fuse witness.
-#[derive(Default)]
 pub struct Stage<
     C: Cycle,
     R,
     const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
+    J: AppHooksLayout,
     FP: fold_revdot::Parameters,
 > {
-    _marker: PhantomData<(C, R, FP)>,
+    _marker: PhantomData<(C, R, J, FP)>,
 }
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    FP: fold_revdot::Parameters,
-> staging::Stage<C::CircuitField, R> for Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, FP>
+impl<C: Cycle, R, const HEADER_SIZE: usize, J: AppHooksLayout, FP: fold_revdot::Parameters> Default
+    for Stage<C, R, HEADER_SIZE, J, FP>
 {
-    type Parent = super::outer_error::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, FP>;
+    fn default() -> Self {
+        Stage {
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout, FP: fold_revdot::Parameters>
+    staging::Stage<C::CircuitField, R> for Stage<C, R, HEADER_SIZE, J, FP>
+{
+    type Parent = super::outer_error::Stage<C, R, HEADER_SIZE, J, FP>;
     type Witness<'source> = &'source Witness<C, FP>;
     type OutputKind = Kind![C::CircuitField; Output<'_, _, FP>];
 
@@ -98,13 +103,22 @@ mod tests {
     use ragu_pasta::Pasta;
 
     use super::*;
-    use crate::internal::{
-        native::RevdotParameters,
-        tests::{HEADER_SIZE, R, assert_stage_values},
+    use crate::{
+        hook_layout::AppHooks,
+        internal::{
+            native::RevdotParameters,
+            tests::{HEADER_SIZE, R, assert_stage_values},
+        },
     };
 
     #[test]
     fn stage_values_matches_wire_count() {
-        assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }, 1, 1, RevdotParameters>::default());
+        assert_stage_values(&Stage::<
+            Pasta,
+            R,
+            { HEADER_SIZE },
+            AppHooks<1, 1, 0, 0>,
+            RevdotParameters,
+        >::default());
     }
 }

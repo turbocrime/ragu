@@ -21,7 +21,8 @@ use ragu_primitives::{
 use super::super::{Step, StepCtx};
 use crate::{
     Header,
-    framework_hooks::{FrameworkAux, FrameworkHooks, HookLayout},
+    framework_hooks::{FrameworkAux, FrameworkHooks},
+    hook_layout::AppHooksLayout,
 };
 
 /// Length of an application circuit's public instance: the three headers, then
@@ -33,7 +34,7 @@ use crate::{
 /// A query carries the name of the polynomial it opens — the same allocated
 /// wires, written at two instance positions, so no constraint is spent making
 /// them agree. A repeat opening costs a query slot and no polynomial slot.
-pub fn instance_len(header_size: usize, capacity: HookLayout) -> usize {
+pub fn instance_len(header_size: usize, capacity: crate::framework_hooks::HookLayout) -> usize {
     header_size * 3
         + capacity.poly_query.polys * 2
         + capacity.poly_query.claims * 4
@@ -43,33 +44,18 @@ pub fn instance_len(header_size: usize, capacity: HookLayout) -> usize {
 /// [`instance_len`] as a [`Len`](ragu_primitives::vec::Len), so the application
 /// circuit's instance can be a `FixedVec`.
 ///
-/// It is a computed length, not one of the declared consts, so it cannot ride
-/// as a const-generic argument on stable — hence a type that computes it. The
-/// arithmetic is not restated here: this calls [`instance_len`] on the capacity
-/// its own const parameters declare, so the `FixedVec`'s length and the number
-/// of elements the adapter writes are one statement.
-pub struct InstanceLen<
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
->;
+/// It is a computed length, not a declared const, so it cannot ride as a
+/// const-generic argument on stable — hence a type that computes it. The
+/// arithmetic is not restated here: this calls [`instance_len`] on the
+/// capacity its own parameters declare, so the `FixedVec`'s length and the
+/// number of elements the adapter writes are one statement.
+pub struct InstanceLen<const HEADER_SIZE: usize, J: AppHooksLayout>(PhantomData<J>);
 
-impl<
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> ragu_primitives::vec::Len
-    for InstanceLen<HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+impl<const HEADER_SIZE: usize, J: AppHooksLayout> ragu_primitives::vec::Len
+    for InstanceLen<HEADER_SIZE, J>
 {
     fn len() -> usize {
-        instance_len(
-            HEADER_SIZE,
-            HookLayout::declared(POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH),
-        )
+        instance_len(HEADER_SIZE, J::hook_layout())
     }
 }
 
@@ -93,10 +79,7 @@ pub(crate) struct Adapter<
     S,
     R: Rank,
     const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
+    J: AppHooksLayout,
 > {
     step: S,
     /// The cycle's runtime parameters, absent during registration.
@@ -108,32 +91,16 @@ pub(crate) struct Adapter<
     /// one place that reads them — [`witness`](MultiStageCircuit::witness) —
     /// does so inside a `try_just` that a structure-only driver discards.
     params: Option<&'params C::Params>,
-    _marker: PhantomData<(C, R)>,
+    _marker: PhantomData<(C, R, J)>,
 }
 
-impl<
-    'params,
-    C: Cycle,
-    S: Step<C>,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> Adapter<'params, C, S, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+    Adapter<'params, C, S, R, HEADER_SIZE, J>
 {
-    /// The application's declared slot capacities — what this circuit's
-    /// instance exposes and what [`StepCtx::finish_slots`] pads to. Read off
-    /// this type's own const parameters, so it agrees with the shape the type
-    /// states; see the crate docs for why capacity is declared.
-    pub(crate) const CAPACITY: HookLayout =
-        HookLayout::declared(POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH);
-
-    /// Wraps `step` for registration/keygen at [`CAPACITY`](Self::CAPACITY) —
-    /// the only constructor, and it takes no capacity: the counts are this
-    /// type's const parameters. A step that asks for more slots is rejected
-    /// by the hooks at the call that exceeds the capacity.
+    /// Wraps `step` for registration/keygen at the layout's capacity — the
+    /// only constructor, and it takes no capacity: the counts are this
+    /// type's `J` parameter. A step that asks for more slots is
+    /// rejected by the hooks at the call that exceeds the capacity.
     ///
     /// `params` is `None` at registration, which runs before the cycle
     /// parameters exist and needs only the circuit's structure; see the
@@ -147,17 +114,8 @@ impl<
     }
 }
 
-impl<
-    C: Cycle,
-    S: Step<C> + Send + Sync,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> MultiStageCircuit<C::CircuitField, R>
-    for Adapter<'_, C, S, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+    MultiStageCircuit<C::CircuitField, R> for Adapter<'_, C, S, R, HEADER_SIZE, J>
 {
     /// An application circuit has no stages: a challenge input is a point,
     /// already a commitment, so there is nothing to compress into a committed
@@ -177,7 +135,7 @@ impl<
         C::CircuitField;
         ragu_primitives::vec::FixedVec<
             Element<'_, _>,
-            InstanceLen<HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>,
+            InstanceLen<HEADER_SIZE, J>,
         >
     ];
     type Aux<'source> = AdapterAux<'source, C, S, HEADER_SIZE>;
@@ -216,7 +174,7 @@ impl<
             })
         })?;
 
-        let mut hooks = FrameworkHooks::new(Self::CAPACITY, Maybe::clone(&params));
+        let mut hooks = FrameworkHooks::new(J::hook_layout(), Maybe::clone(&params));
         let ((left, right, output), output_data, step_aux) = {
             let mut ctx = StepCtx::<'_, '_, _, C>::new(dr, &mut hooks);
             let body = self
@@ -230,7 +188,7 @@ impl<
         };
         let outputs = hooks.into_outputs();
 
-        let mut elements = Vec::with_capacity(instance_len(HEADER_SIZE, Self::CAPACITY));
+        let mut elements = Vec::with_capacity(instance_len(HEADER_SIZE, J::hook_layout()));
         left.write(dr, &mut elements)?;
         right.write(dr, &mut elements)?;
         output.write(dr, &mut elements)?;
@@ -310,7 +268,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        framework_hooks::{ChallengeLayout, PolyQueryLayout},
+        AppHooks,
+        framework_hooks::{ChallengeLayout, HookLayout, PolyQueryLayout},
         header::{Header, Suffix},
         step::{Encoded, Index, Step},
     };
@@ -472,7 +431,7 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        type Subject = Adapter<'static, Pasta, TestStep, TestR, HEADER_SIZE, 0, 0, 0, 2>;
+        type Subject = Adapter<'static, Pasta, TestStep, TestR, HEADER_SIZE, AppHooks<0, 0, 0, 2>>;
         let adapter = Subject::new(TestStep, Some(Pasta::baked()));
         let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
 
@@ -482,7 +441,10 @@ mod tests {
             .into_output();
 
         // Output should have 3 * HEADER_SIZE elements (left + right + output headers)
-        assert_eq!(output.len(), instance_len(HEADER_SIZE, Subject::CAPACITY));
+        assert_eq!(
+            output.len(),
+            instance_len(HEADER_SIZE, AppHooks::<0, 0, 0, 2>::hook_layout())
+        );
     }
 
     #[test]
@@ -490,7 +452,7 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE, 0, 0, 0, 2>::new(
+        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE, AppHooks<0, 0, 0, 2>>::new(
             TestStep,
             Some(Pasta::baked()),
         );
@@ -570,10 +532,11 @@ mod tests {
         }
 
         // The step derives three challenges; the application declared two.
-        let adapter = Adapter::<Pasta, TooManyChallenges, TestR, HEADER_SIZE, 0, 0, 2, 2>::new(
-            TooManyChallenges,
-            Some(Pasta::baked()),
-        );
+        let adapter =
+            Adapter::<Pasta, TooManyChallenges, TestR, HEADER_SIZE, AppHooks<0, 0, 2, 2>>::new(
+                TooManyChallenges,
+                Some(Pasta::baked()),
+            );
 
         let mut dr: Emulator<Wireless<Empty, Fp>> = Emulator::counter();
         let error = MultiStage::new(adapter)
@@ -596,7 +559,8 @@ mod tests {
         let mut dr: Emulator<Wireless<Empty, Fp>> = Emulator::counter();
         let dr = &mut dr;
 
-        type Subject = Adapter<'static, Pasta, ChallengeStep, TestR, HEADER_SIZE, 0, 0, 1, 2>;
+        type Subject =
+            Adapter<'static, Pasta, ChallengeStep, TestR, HEADER_SIZE, AppHooks<0, 0, 1, 2>>;
         let adapter = Subject::new(ChallengeStep, Some(Pasta::baked()));
 
         let output = MultiStage::new(adapter)
@@ -604,6 +568,9 @@ mod tests {
             .expect("structure-only synthesis should succeed")
             .into_output();
 
-        assert_eq!(output.len(), instance_len(HEADER_SIZE, Subject::CAPACITY));
+        assert_eq!(
+            output.len(),
+            instance_len(HEADER_SIZE, AppHooks::<0, 0, 1, 2>::hook_layout())
+        );
     }
 }

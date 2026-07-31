@@ -8,7 +8,7 @@ use ragu_circuits::{
 use ragu_core::Result;
 use ragu_primitives::vec::ConstLen;
 
-use crate::{internal::fold_revdot::Parameters, step};
+use crate::{hook_layout::AppHooksLayout, internal::fold_revdot::Parameters, step};
 
 /// Default parameters for native revdot folding
 #[derive(Clone, Copy, Default)]
@@ -40,45 +40,27 @@ pub mod chain {
     use super::{RevdotParameters, stages};
 
     /// preamble — the shared root of every branch.
-    pub type Preamble<C, R, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: usize> =
-        stages::preamble::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>;
+    pub type Preamble<C, R, const HEADER_SIZE: usize, J> =
+        stages::preamble::Stage<C, R, HEADER_SIZE, J>;
 
     /// outer_error — the error branch's first stage.
-    pub type OuterError<C, R, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: usize> =
-        stages::outer_error::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, RevdotParameters>;
+    pub type OuterError<C, R, const HEADER_SIZE: usize, J> =
+        stages::outer_error::Stage<C, R, HEADER_SIZE, J, RevdotParameters>;
 
     /// inner_error — an error-branch leaf.
-    pub type InnerError<C, R, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: usize> =
-        stages::inner_error::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, RevdotParameters>;
+    pub type InnerError<C, R, const HEADER_SIZE: usize, J> =
+        stages::inner_error::Stage<C, R, HEADER_SIZE, J, RevdotParameters>;
 
     /// The challenge slots — the other error-branch leaf, sibling of
     /// [`InnerError`].
-    pub type Challenges<
-        C,
-        R,
-        const HEADER_SIZE: usize,
-        const POLYS: usize,
-        const CLAIMS: usize,
-        const CHALLENGES: usize,
-        const CHALLENGE_WIDTH: usize,
-    > = stages::slots::ChallengesStage<
-        C,
-        R,
-        HEADER_SIZE,
-        POLYS,
-        CLAIMS,
-        CHALLENGES,
-        CHALLENGE_WIDTH,
-        RevdotParameters,
-    >;
+    pub type Challenges<C, R, const HEADER_SIZE: usize, J> =
+        stages::slots::ChallengesStage<C, R, HEADER_SIZE, J, RevdotParameters>;
 
     /// query — the query branch's first stage.
-    pub type Query<C, R, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: usize> =
-        stages::query::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>;
+    pub type Query<C, R, const HEADER_SIZE: usize, J> = stages::query::Stage<C, R, HEADER_SIZE, J>;
 
     /// eval — the query branch's leaf.
-    pub type Eval<C, R, const HEADER_SIZE: usize, const POLYS: usize, const CLAIMS: usize> =
-        stages::eval::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS>;
+    pub type Eval<C, R, const HEADER_SIZE: usize, J> = stages::eval::Stage<C, R, HEADER_SIZE, J>;
 }
 
 pub mod circuits {
@@ -419,16 +401,7 @@ pub enum RxComponent {
 ///
 /// Does not register internal steps (rerandomize, trivial); those are
 /// registered by the caller after this function returns.
-pub fn register_all<
-    'params,
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
->(
+pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>(
     mut registry: RegistryBuilder<'params, C::CircuitField, R>,
     params: &'params C::Params,
     log2_circuits: u32,
@@ -442,51 +415,41 @@ pub fn register_all<
             C,
             R,
             HEADER_SIZE,
-            POLYS,
-            CLAIMS,
+            J,
             RevdotParameters,
         >::new(params, log2_circuits))?;
         registry = registry.register_internal_circuit(circuits::hashes_2::Circuit::<
             C,
             R,
             HEADER_SIZE,
-            POLYS,
-            CLAIMS,
+            J,
             RevdotParameters,
         >::new(params))?;
         registry = registry.register_internal_circuit(circuits::inner_collapse::Circuit::<
             C,
             R,
             HEADER_SIZE,
-            POLYS,
-            CLAIMS,
+            J,
             RevdotParameters,
         >::new())?;
         registry = registry.register_internal_circuit(circuits::outer_collapse::Circuit::<
             C,
             R,
             HEADER_SIZE,
-            POLYS,
-            CLAIMS,
-            CHALLENGES,
-            CHALLENGE_WIDTH,
+            J,
             RevdotParameters,
         >::new())?;
         registry = registry.register_internal_circuit(circuits::compute_v::Circuit::<
             C,
             R,
             HEADER_SIZE,
-            POLYS,
-            CLAIMS,
+            J,
         >::new())?;
         registry = registry.register_internal_circuit(circuits::challenge_binding::Circuit::<
             C,
             R,
             HEADER_SIZE,
-            POLYS,
-            CLAIMS,
-            CHALLENGES,
-            CHALLENGE_WIDTH,
+            J,
         >::new(params))?;
     }
 
@@ -498,37 +461,16 @@ pub fn register_all<
         // order. Every stage's geometry follows from its `Parent` chain and its
         // `values()`, both compile-time, so the masks come straight off the
         // types.
-        registry = registry.register_bonding(Preamble::<C, R, HEADER_SIZE, POLYS, CLAIMS>::mask()?);
-        registry =
-            registry.register_bonding(InnerError::<C, R, HEADER_SIZE, POLYS, CLAIMS>::mask()?);
-        registry =
-            registry.register_bonding(OuterError::<C, R, HEADER_SIZE, POLYS, CLAIMS>::mask()?);
-        registry = registry.register_bonding(Query::<C, R, HEADER_SIZE, POLYS, CLAIMS>::mask()?);
-        registry = registry.register_bonding(Eval::<C, R, HEADER_SIZE, POLYS, CLAIMS>::mask()?);
-        registry = registry.register_bonding(Challenges::<
-            C,
-            R,
-            HEADER_SIZE,
-            POLYS,
-            CLAIMS,
-            CHALLENGES,
-            CHALLENGE_WIDTH,
-        >::mask()?);
-        registry = registry
-            .register_bonding(InnerError::<C, R, HEADER_SIZE, POLYS, CLAIMS>::final_mask()?);
-        registry = registry
-            .register_bonding(OuterError::<C, R, HEADER_SIZE, POLYS, CLAIMS>::final_mask()?);
-        registry =
-            registry.register_bonding(Eval::<C, R, HEADER_SIZE, POLYS, CLAIMS>::final_mask()?);
-        registry = registry.register_bonding(Challenges::<
-            C,
-            R,
-            HEADER_SIZE,
-            POLYS,
-            CLAIMS,
-            CHALLENGES,
-            CHALLENGE_WIDTH,
-        >::final_mask()?);
+        registry = registry.register_bonding(Preamble::<C, R, HEADER_SIZE, J>::mask()?);
+        registry = registry.register_bonding(InnerError::<C, R, HEADER_SIZE, J>::mask()?);
+        registry = registry.register_bonding(OuterError::<C, R, HEADER_SIZE, J>::mask()?);
+        registry = registry.register_bonding(Query::<C, R, HEADER_SIZE, J>::mask()?);
+        registry = registry.register_bonding(Eval::<C, R, HEADER_SIZE, J>::mask()?);
+        registry = registry.register_bonding(Challenges::<C, R, HEADER_SIZE, J>::mask()?);
+        registry = registry.register_bonding(InnerError::<C, R, HEADER_SIZE, J>::final_mask()?);
+        registry = registry.register_bonding(OuterError::<C, R, HEADER_SIZE, J>::final_mask()?);
+        registry = registry.register_bonding(Eval::<C, R, HEADER_SIZE, J>::final_mask()?);
+        registry = registry.register_bonding(Challenges::<C, R, HEADER_SIZE, J>::final_mask()?);
     }
 
     assert_eq!(

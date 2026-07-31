@@ -17,7 +17,7 @@ use ragu_primitives::Element;
 
 use super::{NativeF, NativeSPrime, RegistryWy};
 use crate::{
-    Application, Proof,
+    AppHooksLayout, Application, Proof,
     internal::{
         native,
         native::{RxComponent, RxIndex},
@@ -26,15 +26,8 @@ use crate::{
     proof::ProofBuilder,
 };
 
-impl<
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    const POLYS: usize,
-    const CLAIMS: usize,
-    const CHALLENGES: usize,
-    const CHALLENGE_WIDTH: usize,
-> Application<'_, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+    Application<'_, C, R, HEADER_SIZE, J>
 {
     pub(super) fn compute_f<'dr, D, RNG: CryptoRngCore>(
         &self,
