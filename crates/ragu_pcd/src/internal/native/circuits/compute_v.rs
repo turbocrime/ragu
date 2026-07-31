@@ -779,15 +779,38 @@ fn select_claim<'dr, D: Driver<'dr>, A: ragu_primitives::allocator::Allocator<'d
         "one evaluation per polynomial slot"
     );
 
-    // The prover-side match: which slot holds this claim's name. The search
-    // itself carries no weight — only the constraints below bind the
-    // resulting bits.
+    // The prover-side match: the FIRST slot holding this claim's name. The
+    // search itself carries no weight — only the constraints below bind the
+    // resulting bits — but it must set exactly one bit even when several
+    // slots share a name (padding slots routinely do: they all hold the
+    // padding polynomial), or the sum-to-one constraint below is violated
+    // and no proof exists. First-match also keeps this resolution aligned
+    // with `_08_f`'s and `verify`'s native `.position()` matches; for
+    // duplicate names any choice is sound (equal names mean equal
+    // polynomials under binding, so every candidate slot has the same
+    // evaluation).
+    let matched = {
+        let target = [coords[0].value(), coords[1].value()];
+        let name_values: Vec<[_; 2]> = names
+            .iter()
+            .map(|name| [name[0].value(), name[1].value()])
+            .collect();
+        D::just(move || {
+            let [target_0, target_1] = target;
+            let target = [*target_0.take(), *target_1.take()];
+            name_values
+                .into_iter()
+                .position(|[name_0, name_1]| [*name_0.take(), *name_1.take()] == target)
+                // A name matching no slot sets no bit at all, so the
+                // sum-to-one constraint fails — the fail-closed arm.
+                .unwrap_or(usize::MAX)
+        })
+    };
     let mut bits = Vec::with_capacity(names.len());
-    for name in names {
-        let [target_0, target_1] = [coords[0].value(), coords[1].value()];
-        let [slot_0, slot_1] = [name[0].value(), name[1].value()];
+    for j in 0..names.len() {
+        let matched = Maybe::clone(&matched);
         let value = D::just(move || {
-            if *target_0.take() == *slot_0.take() && *target_1.take() == *slot_1.take() {
+            if matched.take() == j {
                 D::F::ONE
             } else {
                 D::F::ZERO
