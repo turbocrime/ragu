@@ -91,34 +91,15 @@ pub(crate) fn host_commitment<C: Cycle, R: Rank>(
     Ok(host)
 }
 
-/// The 128-bit blind source for poly-query claim `slot`, extracted from the
-/// same power of `bridge_alpha` the full-width blind used to be.
-///
-/// A claim bridge's blind must be endoscalar-width where every other stage's
-/// is full-width, because the step *opens* this stage's commitment: it
-/// recomputes `α·G₀ + Σ wᵢ·Gᵢ` from its own witnessed bits and the blind's
-/// contribution is a scalar multiplication a step can only perform through
-/// [`Endoscalar::group_scale`](ragu_primitives::Endoscalar), i.e. by
-/// `lift(e)` for a 128-bit `e`. Extracting `e` from the `bridge_alpha` power
-/// keeps main's structure — one carried seed, per-slot distinct derivations,
-/// recomputable wherever the rx is rebuilt — and narrows only the width, to
-/// the same 128 bits of unpredictability every endoscalar challenge in the
-/// framework carries.
-pub(crate) fn claim_bridge_endo<C: Cycle>(bridge_alpha: C::ScalarField, slot: usize) -> u128 {
-    ragu_primitives::extract_endoscalar(
-        bridge_alpha.pow_vartime([bridge_alpha_exponent(RxIndex::BridgeClaim(slot as u32))]),
-    )
-}
-
-/// The stage blind for poly-query claim `slot`: the lift of
-/// [`claim_bridge_endo`]. Must agree everywhere the claim bridge is built (the
-/// prover-side `StepCtx` and the `ProofBuilder`), or the claim's `bridge_com`
-/// would not match the rx the proof carries.
+/// The stage blind for poly-query claim `slot`, derived from the proof's
+/// shared `bridge_alpha` source. Must agree everywhere the claim bridge is
+/// built (the prover-side `StepCtx` and the `ProofBuilder`), or the claim's
+/// `bridge_com` would not match the rx the proof carries.
 pub(crate) fn claim_bridge_alpha<C: Cycle>(
     bridge_alpha: C::ScalarField,
     slot: usize,
 ) -> C::ScalarField {
-    ragu_primitives::lift_endoscalar(claim_bridge_endo::<C>(bridge_alpha, slot))
+    bridge_alpha.pow_vartime([bridge_alpha_exponent(RxIndex::BridgeClaim(slot as u32))])
 }
 
 /// Builds poly-query claim `slot`'s bridge stage rx: a stage whose wires are
