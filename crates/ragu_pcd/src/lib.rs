@@ -22,9 +22,8 @@
 //! They are declared rather than folded from the registered steps because
 //! handing a circuit to the registry *measures* it: the registry synthesizes the
 //! circuit and freezes its shape. A shape derived from a maximum over steps is
-//! not settled until the last one arrives, which is what once forced hand-over
-//! to wait for [`finalize`](ApplicationBuilder::finalize). Declared, an
-//! application's shape is known before the first step registers, so
+//! not settled until the last one arrives. Declared, an application's shape is
+//! known before the first step registers, so
 //! [`register`](ApplicationBuilder::register) hands each circuit over on the
 //! spot.
 //!
@@ -73,10 +72,10 @@ use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 
 use header::Header;
 pub use poly_commitment::{PolyCommitment, PolyHandle};
-// `ClaimOpening` and `ChallengeOpening` are deliberately *not* re-exported, so
-// this list matches `main`'s. Both describe a slot of a proof's instance, and the
-// accessors that return them are `pub(crate)`: see `Proof::application_claims`
-// for why a proof's slot lists are not a public reporting surface.
+// `ClaimOpening` and `ChallengeOpening` are deliberately *not* re-exported.
+// Both describe a slot of a proof's instance, and the accessors that return
+// them are `pub(crate)`: see `Proof::application_claims` for why a proof's
+// slot lists are not a public reporting surface.
 pub use proof::{Pcd, Proof};
 use ragu_arithmetic::{CryptoRngCore, Cycle};
 use ragu_circuits::{

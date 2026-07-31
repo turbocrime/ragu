@@ -150,9 +150,8 @@ where
                 // satisfied vacuously. `loading` configures the eval stage and
                 // the claim-bridge run and enforces that they agree slot by
                 // slot, so both belong in the trace that claim is checked
-                // against. While they were omitted that check was vacuous;
-                // `claim_bridge_stage_must_be_tied_to_the_recorded_host` in
-                // `tests/recursive_claims.rs` is the regression test.
+                // against; `claim_bridge_stage_must_be_tied_to_the_recorded_host`
+                // in `tests/recursive_claims.rs` is the regression test.
                 //
                 // The claim slots are an application parameter, so this arm
                 // cannot be the fixed `.zip()` chain the others are. It builds

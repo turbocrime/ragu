@@ -10,19 +10,14 @@
 //! [`loading`](super::super::circuits::loading) circuit).
 //!
 //! Each slot gets its own stage — and therefore its own commitment — because
-//! the consumer needs a per-polynomial handle. Committing all slots in one
-//! stage (as [`super::eval`] does for its stashed copies) would yield a single
-//! commitment that cannot identify an individual claim.
+//! a claim needs a per-polynomial handle; contrast [`super::eval`], which
+//! deliberately commits all its slots at once as a single stashed copy.
 //!
 //! A step's own view of the host commitment — its four 128-bit limbs — does
 //! not come from this stage. It comes from the claim-lift polynomial `q`
 //! riding the accumulator: see
 //! [`claim_lift_poly`](crate::internal::challenge::claim_lift_poly) and
-//! [`StepCtx::poly_limbs`](crate::step::StepCtx::poly_limbs). (An earlier
-//! revision carried the coordinates' 508 *bits* here so a step could open
-//! `bridge_com` in-circuit; every circuit is capped at 2048 gates and the
-//! opening needs ~3.6k, so no consumer of the bits could ever exist and the
-//! stage returned to coordinate wires.)
+//! [`StepCtx::poly_limbs`](crate::step::StepCtx::poly_limbs).
 //!
 //! ## Why this family is a run
 //!
@@ -108,9 +103,9 @@ mod tests {
         assert_stage_values(&Slot::<EqAffine, R>::default());
     }
 
-    /// The layout tiles the run: one slot per claim, each two gates wide,
-    /// anchored where the nested chain ends — at whatever capacity it is
-    /// asked for, not at one blessed shape.
+    /// The layout tiles the run: one slot per claim, each one gate (two
+    /// wires) wide, anchored where the nested chain ends — at whatever
+    /// capacity it is asked for, not at one blessed shape.
     #[test]
     fn layout_tiles_the_run() {
         for polys in [1, 3, 8] {

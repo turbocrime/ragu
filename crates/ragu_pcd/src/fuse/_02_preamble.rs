@@ -82,7 +82,7 @@ impl<
     ) -> Result<()> {
         // The preamble stage is an induced run, so its wires come from the
         // slot list rather than from a stage body. The run is still one
-        // commitment, so this is the same rx the fixed-vector gadget produced.
+        // commitment, so this is the same rx a whole-stage body would produce.
         let witness = nested::stages::preamble::Witness {
             native_preamble: builder.native_preamble_commitment(),
             left: nested::stages::preamble::ChildWitness::from_proof(self.params, left)?,

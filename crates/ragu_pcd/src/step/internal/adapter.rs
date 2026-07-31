@@ -174,10 +174,9 @@ impl<
 > MultiStageCircuit<C::CircuitField, R>
     for Adapter<'_, C, S, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
 {
-    /// An application circuit has no stages. Challenge derivation used to need
-    /// one per slot — a committed partial trace to compress the inputs into —
-    /// but a challenge input is a point, which is already a commitment, so
-    /// there is nothing left to stage.
+    /// An application circuit has no stages: a challenge input is a point,
+    /// already a commitment, so there is nothing to compress into a committed
+    /// partial trace and nothing to stage.
     type Last = ();
     type Instance<'source> = (
         FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,

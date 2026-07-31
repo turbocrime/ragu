@@ -86,8 +86,8 @@ impl<
                 let preamble =
                     native::stages::preamble::Stage::<C, R, HEADER_SIZE, POLYS, CLAIMS>::default()
                         .witness(dr, preamble_witness.as_ref().map(|w| *w))?;
-                // The challenge slots are their own stage now, so the k(Y)
-                // fold reads them from there rather than from the preamble.
+                // The challenge slots are their own stage, so the k(Y) fold
+                // reads them from there rather than from the preamble.
                 let challenges = native::stages::slots::ChallengesStage::<
                     C,
                     R,

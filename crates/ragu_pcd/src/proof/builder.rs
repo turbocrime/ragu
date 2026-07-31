@@ -639,7 +639,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     /// The eval bridge, written out rather than through [`cached_bridge!`]:
     /// its stage is an induced run of one-point slots, so its wires come from
     /// the slot list rather than from a stage body. The run is still one
-    /// commitment, so this is the same rx the fixed-vector gadget produced.
+    /// commitment, so this is the same rx a whole-stage body would produce.
     pub(crate) fn bridge_eval_rx(&self) -> Result<&sparse::Polynomial<C::ScalarField, R>> {
         if let Some(rx) = self.bridge_eval_rx.get() {
             return Ok(rx);
@@ -690,14 +690,6 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     /// (built in `StepCtx`) uses the same blind this builder will.
     pub(crate) fn bridge_alpha(&self) -> C::ScalarField {
         self.bridge_alpha
-    }
-
-    /// The nested-curve commitment to claim `slot`'s bridge stage — the value
-    /// carried as that claim's `bridge_com`.
-    pub(crate) fn claim_bridge_commitment(&self, slot: usize) -> Result<C::NestedCurve> {
-        Ok(self
-            .claim_bridge_rx(slot)?
-            .commit_to_affine(C::nested_generators(self.params)))
     }
 
     /// The claim host commitments, for the eval bridge stage witness. Requires

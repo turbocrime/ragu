@@ -81,9 +81,9 @@ pub struct StageBuilder<
     driver: &'a mut D,
     on_finish: fn(&mut D),
     /// The next gate this builder will reserve at — advanced by every
-    /// [`reserve_slot`](StageBuilder::reserve_slot), which after
-    /// [`configure_stage`](StageBuilder::configure_stage) was folded into it is
-    /// the single place wires are allocated.
+    /// [`reserve_slot`](StageBuilder::reserve_slot), the single place wires
+    /// are allocated ([`configure_stage`](StageBuilder::configure_stage)
+    /// delegates to it).
     ///
     /// This exists so [`configure_induced_sized`](StageBuilder::configure_induced_sized)
     /// can check a run's layout against where the builder *actually is*, rather

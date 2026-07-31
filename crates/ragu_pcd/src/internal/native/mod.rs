@@ -110,8 +110,8 @@ pub enum InternalCircuitIndex {
     EvalStage,
     ChallengesStage,
     // Final stage masks. There is no `PreambleFinalStaged`: no circuit ends at
-    // the preamble now that the challenge slots are their own stage — both
-    // `challenge_binding` and `outer_collapse` end at that stage instead.
+    // the preamble — both `challenge_binding` and `outer_collapse` end at the
+    // challenge-slot stage.
     InnerErrorFinalStaged,
     OuterErrorFinalStaged,
     EvalFinalStaged,

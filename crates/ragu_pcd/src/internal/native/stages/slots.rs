@@ -15,7 +15,7 @@
 //! the region name its counts. `hashes_1`, `hashes_2` and `inner_collapse`
 //! finish upstream and stay free of `CHALLENGES` and `CHALLENGE_WIDTH`.
 //!
-//! ## Why only the challenges moved
+//! ## Why the poly and claim slots are not here too
 //!
 //! A region can leave the root only if every circuit that reads it can end on
 //! one branch, because [`Last`](ragu_circuits::staging::MultiStageCircuit::Last)
@@ -35,8 +35,7 @@
 //! [`ApplicationBuilder`](crate::ApplicationBuilder), so the stage's width is a
 //! compile-time expression in its own consts and
 //! [`values()`](ragu_circuits::staging::Stage::values) is an ordinary number.
-//! Nothing here needs a value-level layout — this is the same typed staging
-//! every stage on `main` uses.
+//! Nothing here needs a value-level layout — this is ordinary typed staging.
 
 use core::marker::PhantomData;
 
@@ -89,11 +88,11 @@ pub struct ChallengesOutput<
 ///
 /// That position is chosen for cost, not taste. A circuit's trace spans every
 /// gate up to its last stage, so a stage placed further down the chain charges
-/// every circuit that reaches it for the stages it skips on the way. Putting
-/// this after `inner_error` made `outer_collapse` — already the largest
-/// internal circuit — skip that stage's ~400 gates and exceed the 2048-gate
-/// bound. As a sibling it starts where `inner_error` does, so the two circuits
-/// that reach it pay nothing extra.
+/// every circuit that reaches it for the stages it skips on the way: placed
+/// after `inner_error`, `outer_collapse` — already the largest internal
+/// circuit — skips that stage's ~400 gates and exceeds the 2048-gate bound.
+/// As a sibling it starts where `inner_error` does, so the two circuits that
+/// reach it pay nothing extra.
 ///
 /// The two circuits that read challenges are `outer_collapse`, which folds a
 /// child's whole instance into $k(Y)$, and `challenge_binding`, which

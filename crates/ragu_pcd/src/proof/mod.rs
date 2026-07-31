@@ -573,13 +573,6 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         self.claim_host_commitments.iter().map(|c| c.0)
     }
 
-    /// Overwrites a claim's host commitment, for the corruption helpers in
-    /// [`fuzz_utils`](crate::fuzz_utils).
-    #[cfg(feature = "unstable-fuzzing")]
-    pub(crate) fn set_claim_host_commitment(&mut self, slot: usize, host: C::HostCurve) {
-        self.claim_host_commitments[slot] = Cached(host);
-    }
-
     pub(crate) fn native_registry_xy_commitment(&self) -> C::HostCurve {
         self.native_registry_xy_commitment.0
     }
@@ -686,8 +679,8 @@ impl<
         )?;
         // The points stage is an induced run, so its wires come from the slot
         // list rather than from a stage body — `rx` over the flat values is
-        // what `rx_configured` would have computed from the old fixed-vector
-        // gadget, and the run is still one commitment.
+        // the same rx a whole-stage body would produce, and the run is still
+        // one commitment.
         let points_rx = chain.rx(
             nested::ChainStage::Points.index(),
             points_alpha,

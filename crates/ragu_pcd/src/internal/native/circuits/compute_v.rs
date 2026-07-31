@@ -754,44 +754,13 @@ fn poly_queries<
 /// The first two together force exactly one entry to be set; the last forces
 /// *which*. Without booleanity the first two are underdetermined for more than
 /// two slots — a prover could spread weight across several entries and blend
-/// their evaluations freely — so the cheap-looking version of this is unsound.
+/// their evaluations freely — so all four are load-bearing.
 ///
-/// # Why the key is a commitment and not an index
-///
-/// Both coordinates must match, so this costs `2·POLYS` multiplications more
-/// than keying on a one-element index would (an index key is `Σ j·b_j`, a
-/// scaling by circuit constants rather than a multiplication). That is paid
-/// deliberately. An index is a name that has to be resolved, and a resolution
-/// that goes wrong denotes a different polynomial *silently* — the circuit
-/// still opens, and a false claim gets a passing proof. A commitment is the
-/// thing itself; a mismatch selects nothing and no proof exists. The failure
-/// mode moves from fail-open to fail-closed.
-///
-/// It also makes this circuit and `_08_f` agree by construction rather than by
-/// convention: `_08_f` finds the polynomial by matching the same commitment
-/// natively, so the two resolutions key on one unforgeable value instead of two
-/// mechanisms that a comment has to keep in step.
-///
-/// # If two slots carried the same commitment
-///
-/// A slot's `bridge_com` is derived from the slot — the blind is
-/// `bridge_alpha^(5+slot)` — so two slots cannot collide on an honest path. A
-/// dishonest prover can still put one point in two slots, and then this one-hot
-/// may select a different slot than `_08_f`'s first match. That is a **liveness**
-/// failure, not a soundness one: `_08_f` folds slot `j`'s polynomial into
-/// $f(X)$ while this circuit takes slot `k`'s evaluation, so $v$ disagrees with
-/// the accumulator and no proof exists — unless the two polynomials are equal,
-/// in which case nothing was misrepresented. Constraining the one-hot to the
-/// *first* match would cost a pairwise-distinctness check per slot to rule out
-/// a case that already cannot produce a passing proof.
-///
-/// A cheaper keying — one-hot against `bridge_com.x + γ·bridge_com.y` for a transcript
-/// challenge `γ` drawn after the commitments are pinned — is possible and is
-/// deliberately not used: it saves `POLYS` multiplications per claim, which at
-/// the polynomial counts in play is a couple of gates, in exchange for a
-/// Schwartz–Zippel argument a reviewer has to check. It becomes worth
-/// revisiting somewhere around `POLYS = 8`, and can be added without touching
-/// the claim format.
+/// The key is the commitment, not an index: an index is a name that has to be
+/// resolved, and a resolution that goes wrong denotes a different polynomial
+/// silently, where a commitment mismatch selects nothing and no proof exists.
+/// `_08_f` matches the same commitment natively, so the two resolutions agree
+/// by construction.
 fn select_claim<
     'dr,
     D: Driver<'dr>,

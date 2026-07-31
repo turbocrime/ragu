@@ -8,55 +8,11 @@
 //! elements a consumer hashes, and lifting them into the instance-bound form
 //! the accumulator consumes.
 //!
-//! # Soundness
-//!
-//! What makes the witnessed limbs *provably* the commitment's is a chain in
-//! which every link is either an in-circuit constraint or the accumulator:
-//!
-//! 1. **Limbs → lifts.** The limbs are allocated as boolean-constrained bits
-//!    and both the packed elements and their [`Endoscalar::lift`]s are derived
-//!    from the *same* bits, in this circuit. `lift` is injective on 128-bit
-//!    inputs (`qa/lean/Ragu/Contrib/EndoscalarProof.lean`), so equal lifts
-//!    mean equal limbs.
-//! 2. **Lifts → the proof.** Each lift is an instance wire in the
-//!    application circuit's trailing lift region, folded into its $k(Y)$ —
-//!    enforced against the committed application rx by `outer_collapse` at
-//!    every fuse and natively at root.
-//! 3. **Lifts → the recorded hosts.** The claim-lift polynomial $q$ has the
-//!    *recorded* host commitments' canonical limb lifts as coefficients
-//!    ([`claim_lift_poly`](crate::internal::challenge::claim_lift_poly), a
-//!    deterministic function — never carried, rebuilt everywhere). At root,
-//!    `verify` recomputes every slot's lifts from the recorded host and
-//!    compares. At every fuse, the parent's `compute_v` Horner-walks the
-//!    child's lift wires to $q(u)$ and enforces it against the eval stage's
-//!    carried value, which the $(P, u, v)$ accumulator folds alongside $q$
-//!    itself.
-//! 4. **Recorded hosts → the folded polynomials.** `verify` recomputes each
-//!    `commit(claim_polys[slot])` natively at root; recursively, the hosts
-//!    are stashed, endoscaled into $P$, and folded with their polynomials by
-//!    `_10_p` (with the claim-bridge stages tied to them by `loading` and
-//!    `copying`).
-//!
-//! The binding rests on the discrete-log-relation assumption over the
-//! commitment generators (`book/src/protocol/prelim/assumptions.md`). The
-//! generators are nothing-up-my-sleeve: hash-to-curve under the domain
-//! `"Ragu-Parameters"` over an index counter (`ragu_pasta`'s
-//! `params_for_curve`), so no party can know a relation among them.
-//!
-//! **Parity.** Link 3's fuse-time leg compares $q(u)$ *as folded* — the
-//! commitment-to-carried-polynomial link for the accumulated $q$ is the
-//! framework-wide deferred PCS opening, the same link `bridge_f`, `native_p`
-//! and every commitment in the system rest on. The limb capability is
-//! therefore exactly as strong as the framework's own bridges: fail-closed at
-//! root today, and it inherits the deferred work whenever that lands, with no
-//! further change here.
-//!
-//! **Canonicity.** [`host_limbs`](crate::internal::challenge::host_limbs)
-//! rejects coordinates at or above `2^254`, so a commitment has exactly one
-//! limb decomposition and the in-circuit values are bit-identical to the
-//! native split of `to_repr()` into 16-byte halves — the same split consumers
-//! outside the proof compute. One digest per commitment, in and out of
-//! circuit.
+//! What makes the witnessed limbs the commitment's is enforced elsewhere:
+//! the lifts are instance wires folded into the application circuit's $k(Y)$;
+//! at every fuse the parent's `compute_v` re-derives the claim-lift
+//! polynomial's $q(u)$ from them and enforces it against the folded value;
+//! at root, `verify` recomputes them from the recorded host commitment.
 
 use ragu_core::{
     Result,

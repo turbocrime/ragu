@@ -222,23 +222,16 @@ where
     ///
     /// # Soundness status
     ///
-    /// A claim's `bridge_com` is the commitment of that claim's **bridge stage** — a
-    /// polynomial the proof carries, whose wires are the claim's host
-    /// commitment, which the `loading` circuit ties to the host point the
+    /// A claim's `bridge_com` is the commitment of that claim's **bridge
+    /// stage** — a polynomial the proof carries, whose wires are the claim's
+    /// host commitment, tied by the `loading` circuit to the host point the
     /// parent folds and endoscales. That is the framework's own idiom for
     /// crossing the curve boundary (compare `bridge_f_commitment` and
-    /// `bridge_f_rx`, which predate poly-query), so a claim inherits exactly
-    /// its guarantees and exactly its one gap: no commitment in the system is
-    /// yet bound to the polynomial it commits to, the framework-wide deferred
-    /// PCS opening. A **root** proof's own claims are not affected —
-    /// [`Application::verify`](crate::Application::verify) rebuilds the bridge
-    /// stage and compares.
-    ///
-    /// The full chain, and what each link rests on, is documented once in
-    /// [`framework_hooks`](crate::framework_hooks). The executable
-    /// demonstration is `poly_query_com_is_not_bound_to_the_folded_polynomial`
-    /// in `tests/recursive_claims.rs`, which is the acceptance gate for the
-    /// deferred work.
+    /// `bridge_f_rx`), so a claim inherits exactly its guarantees, including
+    /// the framework-wide deferred PCS opening; a **root** proof's own claims
+    /// are checked natively by
+    /// [`Application::verify`](crate::Application::verify). See
+    /// [`framework_hooks`](crate::framework_hooks) for the chain.
     pub fn enforce_poly_query<R: Rank>(
         &mut self,
         commitment: &PolyHandle<'dr, D, C, R>,

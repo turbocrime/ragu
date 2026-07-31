@@ -36,10 +36,10 @@ pub struct Witness<C: CurveAffine> {
 
 /// This stage's points, as the circuit body names them.
 ///
-/// A gadget, as on `main`, whose `native_eval` field is `main`'s whole list. The
-/// claim block is a field too rather than a separate type: `FixedVec`'s length is
-/// a [`Len`], so a member whose count is the application's poly capacity is still
-/// a gadget member, and the derive states the order of both parts once.
+/// A gadget. The claim block is a field rather than a separate type:
+/// `FixedVec`'s length is a [`Len`], so a member whose count is the
+/// application's poly capacity is still a gadget member, and the derive states
+/// the order of both parts once.
 ///
 /// `claims` is last, so the wire order is `native_eval` then one slot per claim —
 /// the order [`Witness::slot_points`] emits.
@@ -105,9 +105,9 @@ pub type Slot<C, R> = super::host_bridge::Stage<C, R, ()>;
 /// It holds the run's position in the `Parent` chain; the framework reaches
 /// the layout and [`Slot`] instead, never this stage's own geometry.
 ///
-/// The whole run is masked and committed as **one** stage, exactly as it was
-/// when it held a fixed vector — the subdivision decides where wires land, not
-/// how many commitments there are. That matters here: a per-slot commitment
+/// The whole run is masked and committed as **one** stage — the subdivision
+/// decides where wires land, not how many commitments there are. That matters
+/// here: a per-slot commitment
 /// would defeat the point of this stage, which is a *single* stashed copy the
 /// parent's copying circuit can check (see [`super::claim_bridge`], which
 /// deliberately does the opposite).

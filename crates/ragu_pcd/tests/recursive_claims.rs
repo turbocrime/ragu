@@ -150,23 +150,16 @@ fn forged_challenge_is_rejected_directly_and_recursively() -> Result<()> {
     Ok(())
 }
 
-/// **S2 — `loading` does not enforce the claim-bridge binding.**
-///
-/// A regression test for a defect this branch introduced in `68cde75a`, not a
-/// deferred framework gap.
+/// **S2 — the claim-bridge tie must not be vacuous.**
 ///
 /// `loading` configures the eval stage and the claim-bridge run and enforces
-/// `claim_bridges[slot].host == eval.claims[slot]` — the constraint whose own
-/// comment calls it *"what makes `bridge_com` bound to that host commitment"*.
-/// But a bonding claim asserts `a.revdot(s_y) == 0` over the **sum of the rxs
-/// supplied**, and the `Loading` group in `internal/nested/claims.rs` supplies
-/// only the seven rxs `main` needed, omitting `BridgeEval` and every
-/// `BridgeClaim(slot)`. Those wires are therefore zero in `a`, and the
-/// constraint reduces to `0 == 0`.
-///
-/// `copying` in the same file supplies all eight stages it configures, and
-/// `main`'s `loading` supplies exactly the seven it configures — so the rule is
-/// not in doubt, and this is a missed edit rather than a convention.
+/// `claim_bridges[slot].host == eval.claims[slot]`. A bonding claim asserts
+/// `a.revdot(s_y) == 0` over the **sum of the rxs supplied**, so that
+/// constraint only binds if the `Loading` group in
+/// `internal/nested/claims.rs` supplies `BridgeEval` and every
+/// `BridgeClaim(slot)` alongside the stages `main` supplies — a configured
+/// stage left out contributes zero wires and its constraints hold vacuously.
+/// This is the regression test for that group.
 ///
 /// **The adversary.** Rebuild the carried claim-bridge stage in slot 0 so it
 /// witnesses a host commitment the proof does not record, and change nothing
@@ -176,9 +169,6 @@ fn forged_challenge_is_rejected_directly_and_recursively() -> Result<()> {
 /// rx — has no reason to fire. The substituted rx is a well-formed stage for the
 /// same slot with the same blind, so that slot's own `BridgeClaim` bonding claim
 /// still holds. Exactly one check in the system is supposed to reject this.
-///
-/// This test asserts the **correct** behaviour, so it fails until the `Loading`
-/// group is fixed. It is the acceptance gate for that work.
 #[test]
 fn claim_bridge_stage_must_be_tied_to_the_recorded_host() -> Result<()> {
     let pasta = Pasta::baked();
@@ -205,8 +195,8 @@ fn claim_bridge_stage_must_be_tied_to_the_recorded_host() -> Result<()> {
         !app.verify(&tampered, &mut rng)?,
         "the loading circuit must reject a claim-bridge stage that witnesses a \
          host commitment the proof does not record for that slot — if this \
-         fails, the `Loading` bonding group is still missing BridgeEval and \
-         BridgeClaim(slot), so the constraint at loading.rs:251-253 is vacuous"
+         fails, the `Loading` bonding group is missing BridgeEval or \
+         BridgeClaim(slot), making the tie vacuous"
     );
 
     // And recursively. A fuse must be immediately sound: it need not carry a
@@ -215,12 +205,12 @@ fn claim_bridge_stage_must_be_tied_to_the_recorded_host() -> Result<()> {
     // claim names the polynomial it opens, and what the child's step derived
     // its Fiat-Shamir challenges from.
     //
-    // The parent already binds the child's *host* commitments: they are stashed
-    // into its preamble stage, walked into its points accumulation by `loading`,
-    // and cross-checked against the child's carried eval stage by `copying`.
-    // What it must also establish is that the child's `bridge_com` bridges that
-    // same host commitment, which needs the child's claim-bridge run carried
-    // and tied — `ChildStageRx` has seven fields and this is not one of them.
+    // The parent binds the child's *host* commitments (stashed into its
+    // preamble stage, walked into its points accumulation by `loading`,
+    // cross-checked against the child's carried eval stage by `copying`) and
+    // must also establish that the child's `bridge_com` bridges that same
+    // host commitment — the child's claim-bridge run, carried on the proof
+    // and tied by `copying`'s `enforce_names`.
     let leaf2 = seed_leaf(&app, pasta, &mut rng, &[2, 7, 1, 8])?;
     let p3 = poly(&[5, 5, 5]);
     let com3 = app.commit_polynomial(&p3)?;
@@ -255,25 +245,25 @@ fn claim_bridge_stage_must_be_tied_to_the_recorded_host() -> Result<()> {
     Ok(())
 }
 
-/// **S1 — the claim commitment is not bound to the folded polynomial.**
+/// **S1 — a claim's commitment desynced from the folded polynomial is
+/// rejected.**
 ///
 /// A claim's instance-bound `bridge_com` is what the *step* sees: its Fiat-Shamir
 /// challenge and header hash are derived from it. The polynomial the *parent*
 /// folds into `f(X)` and the PCS accumulator is carried separately, under its
-/// own host-curve commitment. Every piece is individually pinned — `bridge_com` by
-/// the child's `k(Y)`, the host commitment by `copying` against the child's
-/// eval bridge stage, and the fold by `loading`/endoscaling — but nothing ties
-/// `bridge_com` to the host commitment except a prover-side pre-check that the code
-/// itself documents as carrying no soundness weight.
+/// own host-curve commitment.
 ///
-/// So the adversary is a prover who declines to run that pre-check and hands
-/// in a child that is internally consistent everywhere, desynced only between
-/// `bridge_com` (which commits to `P`) and the carried polynomial `P'`. The step's
+/// The adversary is a prover who declines to run the fuse-time pre-check
+/// (which carries no soundness weight) and hands in a child that is
+/// internally consistent everywhere, desynced only between `bridge_com`
+/// (which commits to `P`) and the carried polynomial `P'`. The step's
 /// challenge `z` is bound to `P`, yet the statement the parent enforces is
 /// about `P'`.
 ///
-/// Root verification catches this (`verify.rs` re-derives `bridge(host)` and
-/// compares it to `bridge_com`). An interior fuse does not — that is the gap.
+/// Root verification catches it directly (`verify.rs` re-derives
+/// `bridge(host)` and compares it to `bridge_com`); an interior fuse catches
+/// it through the lift chain — see the assertion below for the attribution
+/// and the named residual.
 #[test]
 fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
     use ragu_pcd::PolyCommitment;
@@ -325,7 +315,7 @@ fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
         "root verify must reject a claim whose bridge_com does not bridge its host"
     );
 
-    // Fused as a child, the desync goes unnoticed.
+    // Fused as a child, the desync is caught by the lift chain.
     let leaf2 = seed_leaf(&app, pasta, &mut rng, &[2, 7, 1, 8])?;
 
     let p3 = poly(&[5, 5, 5]);
@@ -353,7 +343,7 @@ fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
             // its `bridge_com` and challenges were derived from) and are bound
             // to the child's committed application rx through k(Y). The
             // framework polynomial `q` is built from the *recomputed* host of
-            // the polynomial actually folded (P's prime's), and the parent's
+            // the polynomial actually folded (P''s), and the parent's
             // `compute_v` enforces that the child's instance lifts Horner to
             // q(u). Limb decomposition is injective, so two different hosts
             // can never satisfy it: the parent's own compute_v trace is

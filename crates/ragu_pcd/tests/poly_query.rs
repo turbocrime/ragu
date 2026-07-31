@@ -108,15 +108,3 @@ fn dishonest_evaluation_is_rejected() -> Result<()> {
     );
     Ok(())
 }
-
-// The old `mismatched_commitment_is_rejected` test constructed a witness whose
-// commitment bound one polynomial and whose coefficients were another. The
-// `PolyCommitment` handle from `commit_polynomial` now bundles the two, so an
-// honest caller can no longer express that mismatch through the API. The
-// interior malicious-prover version of this case is covered by the poly-query
-// binding (S1) test on the enforcement path.
-
-// The multiset merge end-to-end test lived here; `Multiset`/`MergeMultisets`
-// were a consumer concern and have been removed. The framework's poly-query
-// path is exercised by the `CommitAndOpen`/`OpenAndHash` tests above and by
-// `recursive_claims.rs`.

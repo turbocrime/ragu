@@ -118,8 +118,8 @@ impl<F: Field, R: Rank> Stage<F, R> for EndoscalarStage {
 
 /// Witness for the points stage: initial, inputs, and interstitials.
 ///
-/// Typed by the same [`Len`] as the [`Points`] gadget it witnesses, as on `main`,
-/// so the two sides of the stage cannot disagree about how many points there are.
+/// Typed by the same [`Len`] as the [`Points`] gadget it witnesses, so the two
+/// sides of the stage cannot disagree about how many points there are.
 pub struct PointsWitness<C: CurveAffine, L: Len> {
     /// Initial accumulator (base case for step 0).
     pub initial: C,
@@ -233,11 +233,10 @@ impl<C: CurveAffine, R: Rank, L: Len> Clone for EndoscalingStep<C, R, L> {
 /// The accumulated points, as the circuit body names them: initial, inputs,
 /// and interstitials. See [`PointsWitness`].
 ///
-/// A gadget, as on `main`. The point count rides `L` rather than `main`'s
-/// `const NUM_POINTS`, because the count is an expression in the application's
-/// poly count and a const generic cannot carry an expression on stable Rust —
-/// see [`InputsLen`]. The derive keeps all three fields in one statement of
-/// order.
+/// A gadget. The point count rides `L` because it is an expression in the
+/// application's poly count and a const generic cannot carry an expression on
+/// stable Rust — see [`InputsLen`]. The derive keeps all three fields in one
+/// statement of order.
 ///
 /// Field order is the slot order [`PointsWitness::slot_points`] emits and
 /// [`from_slots`](Self::from_slots) consumes.
@@ -312,9 +311,8 @@ pub fn points_run_layout<C: CurveAffine, R: Rank>(
 /// the run's position in the `Parent` chain; the framework reaches the layout
 /// and [`PointSlotStage`] instead, never this stage's own geometry.
 ///
-/// The whole run is masked and committed as **one** stage, exactly as it was
-/// when it held fixed vectors — the subdivision decides where wires land, not
-/// how many commitments there are.
+/// The whole run is masked and committed as **one** stage — the subdivision
+/// decides where wires land, not how many commitments there are.
 pub type PointsStage<C, R> = crate::internal::Run<C, R, EndoscalarStage>;
 
 /// One slot of a [`PointsStage`] run: a single curve point.
@@ -524,8 +522,7 @@ mod tests {
     };
 
     /// The value-level layout of an endoscaling step circuit's two stages:
-    /// the endoscalar, then the points at the given count. Where the typed
-    /// masks and rx used to come from.
+    /// the endoscalar, then the points at the given count.
     fn test_layout(num_points: usize) -> InducedStages {
         InducedStages::new(alloc::vec![
             <EndoscalarStage as Stage<Fp, R>>::values(),

@@ -203,7 +203,7 @@ where
     )
 }
 
-/// The claim-bridge run's layout: one slot of coordinate-bit wires per
+/// The claim-bridge run's layout: one slot of host-coordinate wires per
 /// witnessed polynomial (the slot's width is its stage's `values()`),
 /// anchored right after the chain `chain` describes.
 ///

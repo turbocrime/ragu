@@ -153,8 +153,8 @@ pub struct Witness<C: CurveAffine> {
 /// One child proof's **fixed** points in the preamble bridge stage, as the
 /// circuit body names them.
 ///
-/// A gadget, as on `main`: the derive places these wires from the field list, so
-/// the field list is the one statement of their order.
+/// A gadget: the derive places these wires from the field list, so the field
+/// list is the one statement of their order.
 ///
 /// The child's poly-query claims are the last field rather than a separate type.
 /// `FixedVec`'s length is a [`Len`], so a member whose count is the application's
@@ -230,8 +230,8 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len>
     /// Stashed commitment to the child's claim-lift polynomial `q` — one point
     /// when the shape has polynomial slots, none otherwise, at its `_10_p`
     /// fold position after the claims. Loading enforces it against the
-    /// [`PointsStage`] inputs; the tie from `C_q` to the claim-bridge bits is
-    /// the limb tie family's, and lands with it.
+    /// [`PointsStage`] inputs; `C_q` ↔ `q` is the deferred PCS opening, like
+    /// every accumulated commitment's.
     #[ragu(gadget)]
     pub stashed_q: FixedVec<Point<'dr, D, C>, QStashLen<L>>,
 }
@@ -369,8 +369,6 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> ChildOutput<'dr, 
 }
 
 /// The preamble bridge stage's points, as the circuit body names them.
-///
-/// A gadget, as on `main`.
 #[derive(Gadget, Write)]
 pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> {
     /// Point commitment from the native preamble stage.
@@ -421,9 +419,8 @@ pub type Slot<C, R> = super::host_bridge::Stage<C, R, ()>;
 /// run's position in the `Parent` chain; the framework reaches the layout and
 /// [`Slot`] instead, never this stage's own geometry.
 ///
-/// The whole run is masked and committed as **one** stage, exactly as it was
-/// when it held a fixed vector — the subdivision decides where wires land, not
-/// how many commitments there are.
+/// The whole run is masked and committed as **one** stage — the subdivision
+/// decides where wires land, not how many commitments there are.
 pub type Stage<C, R> = crate::internal::Run<C, R, PointsStage<C, R>>;
 
 impl<C: CurveAffine> Witness<C> {

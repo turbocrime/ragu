@@ -487,9 +487,8 @@ mod tests {
     /// A run that follows an earlier stage must be anchored past it: the cursor
     /// has moved, so a layout still anchored at the SYSTEM gate is rejected.
     ///
-    /// This is the case the old `start_gate` parameter could not catch. Every
-    /// production caller passed `layout.skip_gates(0)`, so the check compared the
-    /// layout to itself and a layout anchored anywhere at all was accepted.
+    /// This is what the builder's own cursor buys: a start value derived from
+    /// the layout would compare the layout to itself and accept any anchor.
     #[test]
     fn induced_run_must_account_for_stages_before_it() {
         use ragu_core::{

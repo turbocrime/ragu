@@ -87,10 +87,7 @@
 //! has yet, `bridge_f` and the endoscaling commitments included — so the chain
 //! reaches exactly the same parity as the framework's own bridges and no
 //! further. `Application::verify` closes it for a root proof's own claims and
-//! challenges; interior nodes inherit the framework's status quo. The
-//! acceptance gate for that work is
-//! `poly_query_com_is_not_bound_to_the_folded_polynomial` in
-//! `tests/recursive_claims.rs`.
+//! challenges.
 //!
 //! The framework collects the resulting outputs through the adapter's `Aux` for
 //! later fuse-time processing. New framework hooks (e.g. transcript threading)

@@ -199,10 +199,8 @@ impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> MultiStageCircuit<C:
         }
 
         // And the child's claim-bridge stages must witness those same host
-        // commitments. Without this the parent binds only the *host* side: the
-        // child's `bridge_com` — what its step derived challenges from, and
-        // what each claim names its polynomial by — could bridge some other
-        // point entirely, and every place the parent looks would still agree.
+        // commitments — `bridge_com` is what the child's step derived
+        // challenges from, and what each claim names its polynomial by.
         // `loading` makes this check for the current step; a fuse must make it
         // for the child it folds.
         let child_claim_bridges = claim_guards
