@@ -203,6 +203,24 @@ impl<
                 .is_ok_and(|rebuilt| rebuilt == bridge_com)
         });
 
+        // And the lift instance region: every slot's four lift wires must be
+        // the lifts of the recorded host's canonical limbs. A fused child has
+        // this enforced in-circuit — `compute_v` re-derives the claim-lift
+        // polynomial's q(u) from these wires — but a root proof's own lifts
+        // have not been folded yet, so the verifier recomputes them natively,
+        // exactly as it recomputes the bridge commitments above. Without this
+        // a root-only proof could hash forged limbs into its step.
+        let poly_lifts = poly_commitments
+            && (0..capacity.poly_query.polys).all(|slot| {
+                let host = pcd.proof().claim_host_commitment(slot);
+                crate::internal::challenge::host_limbs(host).is_ok_and(|limbs| {
+                    (0..4).all(|k| {
+                        pcd.proof().application_lifts()[4 * slot + k]
+                            == ragu_primitives::lift_endoscalar::<C::CircuitField>(limbs[k])
+                    })
+                })
+            });
+
         // Then each query, against the polynomial its bridge commitment
         // identifies. A commitment matching no polynomial slot fails the check
         // rather than panicking: it is instance data, so a malformed proof can
@@ -238,6 +256,7 @@ impl<
             && nested_revdot_claims
             && registry_xy_claim
             && poly_query_claims
+            && poly_lifts
             && derived_challenges)
     }
 }

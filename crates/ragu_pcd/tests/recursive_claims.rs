@@ -378,3 +378,70 @@ fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
 
     Ok(())
 }
+
+/// **The lift region is bound: a forged lift wire is rejected at root and
+/// through a fuse.**
+///
+/// A step's view of its commitment — the four limbs `poly_limbs` hands it —
+/// is provable because each limb's lift is an instance wire, and that wire is
+/// checked twice: natively at root, where `verify` recomputes every slot's
+/// lifts from the recorded host commitment, and in-circuit at every fuse,
+/// where the parent's `compute_v` re-derives the claim-lift polynomial's
+/// $q(u)$ from the child's lift wires and enforces it against the eval
+/// stage's carried value (which the accumulator folds).
+///
+/// **The adversary.** Flip one lift wire's recorded value and nothing else:
+/// the hosts, claim polynomials and bridge commitments all stay put, so every
+/// other check keeps passing and a rejection is attributable to the lift
+/// binding alone.
+#[test]
+fn forged_lift_wires_are_rejected_directly_and_recursively() -> Result<()> {
+    let pasta = Pasta::baked();
+    let app = open_app::<Pasta, R>(pasta)?;
+    let mut rng = StdRng::seed_from_u64(2027);
+
+    let honest = seed_leaf(&app, pasta, &mut rng, &[3, 1, 4, 1, 5])?;
+    assert!(app.verify(&honest, &mut rng)?, "the honest leaf verifies");
+
+    let mut tampered = seed_leaf(&app, pasta, &mut rng, &[3, 1, 4, 1, 5])?;
+    tampered.corrupt_application_lift(0, Fp::from(0xbad));
+
+    assert!(
+        !app.verify(&tampered, &mut rng)?,
+        "root verify must recompute the lift region from the recorded hosts \
+         and reject a forged wire"
+    );
+
+    // And recursively: the parent's `compute_v` Horner-walks the child's lift
+    // wires to q(u); a forged wire makes its own trace unsatisfiable.
+    let leaf2 = seed_leaf(&app, pasta, &mut rng, &[2, 7, 1, 8])?;
+    let p3 = poly(&[5, 5, 5]);
+    let com3 = app.commit_polynomial(&p3)?;
+    let x = Fp::from(11u64);
+    let y = p3.eval(x);
+
+    let fused = app.fuse(
+        &mut rng,
+        OpenAndHash::new(Pasta::circuit_poseidon(pasta)),
+        OpenAndHashWitness {
+            commitment: com3,
+            x,
+            y,
+        },
+        tampered,
+        leaf2,
+    );
+
+    match fused {
+        Err(e) => std::eprintln!("interior fuse rejected the forged lift: {e:?}"),
+        Ok((parent, ())) => {
+            assert!(
+                !app.verify(&parent, &mut rng)?,
+                "a parent of a child with a forged lift wire must not verify: \
+                 compute_v re-derives q(u) from exactly these wires"
+            );
+        }
+    }
+
+    Ok(())
+}

@@ -141,6 +141,20 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         Ok(())
     }
 
+    /// Replaces one lift instance wire's recorded value, leaving everything
+    /// else — the recorded hosts, the claim polynomials, the bridge
+    /// commitments — untouched.
+    ///
+    /// Models a prover whose step hashed limbs that are not the recorded
+    /// host's. Exactly two checks are supposed to reject it: at root, `verify`
+    /// recomputes every slot's lifts from the recorded host; fused as a child,
+    /// the parent's `compute_v` re-derives the claim-lift polynomial's $q(u)$
+    /// from these wires and enforces it against the eval stage's carried
+    /// value.
+    pub fn corrupt_application_lift(&mut self, index: usize, value: C::CircuitField) {
+        self.application_lifts[index] = value;
+    }
+
     /// The instance-bound opening $(x, y)$ this proof claims in `slot`.
     ///
     /// The read counterpart to [`Corruption::ClaimY`], and the only way out of
@@ -176,6 +190,11 @@ impl<C: Cycle, R: Rank, H: crate::Header<C::CircuitField>> crate::Pcd<C, R, H> {
         host: C::HostCurve,
     ) {
         self.proof_mut().corrupt_claim_poly(slot, poly, host);
+    }
+
+    /// Apply [`Proof::corrupt_application_lift`] to the underlying proof.
+    pub fn corrupt_application_lift(&mut self, index: usize, value: C::CircuitField) {
+        self.proof_mut().corrupt_application_lift(index, value);
     }
 
     /// Apply [`Proof::corrupt_claim_bridge_host`] to the underlying proof.
