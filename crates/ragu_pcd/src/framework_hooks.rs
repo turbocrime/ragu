@@ -99,7 +99,7 @@ use ragu_core::{
     drivers::{Driver, DriverValue},
     maybe::Maybe,
 };
-use ragu_primitives::Element;
+use ragu_primitives::{Element, vec::Len};
 
 /// A single witnessed polynomial: its embedded commitment coordinates and its
 /// coefficients.
@@ -213,7 +213,7 @@ pub struct FrameworkHooks<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     /// The application's declared slot capacities: what every circuit's
     /// instance exposes, what padding fills to, and what each hook checks
     /// calls against.
-    capacity: HookLayout,
+    hook_layout: HookLayout,
 }
 
 /// Every hook's output as plain values, for the fuse.
@@ -249,6 +249,72 @@ fn collect_values<'dr, D: Driver<'dr>, T: Send>(
     values: Vec<DriverValue<D, T>>,
 ) -> Result<DriverValue<D, Vec<T>>> {
     D::try_just(move || Ok(values.into_iter().map(Maybe::take).collect()))
+}
+
+/// The hook capacities of an application, as type-level lengths on a marker
+/// type. Usually written as [`AppHooks`] rather than implemented by hand.
+///
+/// Each member is a [`Len`], so it slots directly into the `FixedVec`s the
+/// framework sizes with it; the plain numbers are read back through the
+/// provided accessors ([`polys`](Self::polys), [`claims`](Self::claims),
+/// [`challenges`](Self::challenges),
+/// [`challenge_width`](Self::challenge_width)).
+///
+/// [`PolyCount`](Self::PolyCount) is how many
+/// [`witness_polynomial`](crate::step::StepCtx::witness_polynomial) slots
+/// any one step may fill — the expensive axis: a bridge stage, a
+/// commitment, an MSM, and an endoscaling point per child, each.
+/// [`ClaimCount`](Self::ClaimCount) is how many
+/// [`enforce_poly_query`](crate::step::StepCtx::enforce_poly_query) claims
+/// it may raise — the cheap axis: one instance triple, one `_08_f`
+/// quotient, one `compute_v` triple. A repeat opening costs a claim slot
+/// and no polynomial slot.
+///
+/// [`ChallengeCount`](Self::ChallengeCount) is how many
+/// [`derive_challenge`](crate::step::StepCtx::derive_challenge) calls any
+/// one step may make, and [`ChallengeWidth`](Self::ChallengeWidth) the
+/// widest input one call may pass, in field elements — a
+/// [`coords`](crate::PolyHandle::coords) pair is two; the width's cost is
+/// [`ChallengeLayout::permutations`](crate::framework_hooks::ChallengeLayout::permutations),
+/// paid by the internal `challenge_binding` circuit per `(child, slot)`.
+///
+/// Every step of an application exposes exactly these counts, whatever it
+/// uses; unused slots are padded by the framework, and a step that asks for
+/// more than the declared capacity is refused at the call that exceeds it.
+pub trait HookConfig: Send + Sync + 'static {
+    /// Polynomial witnesses committed per step.
+    type PolyWitnesses: Len;
+    /// Polynomial queries enforced per step.
+    type PolyQueries: Len;
+    /// Challenges derived per step.
+    type ChallengeDerivations: Len;
+    /// Input elements one challenge derivation may absorb.
+    type ChallengeWidth: Len;
+
+    /// The declared capacities as the value every circuit is built from —
+    /// the [`framework_hooks`](crate::framework_hooks) form of this layout.
+    fn hook_layout() -> HookLayout {
+        HookLayout {
+            challenge: Self::challenge_layout(),
+            poly_query: Self::poly_query_layout(),
+        }
+    }
+
+    /// The challenge layout for this application.
+    fn challenge_layout() -> ChallengeLayout {
+        ChallengeLayout {
+            calls: Self::ChallengeDerivations::len(),
+            width: Self::ChallengeWidth::len(),
+        }
+    }
+
+    /// The poly-query layout for this application.
+    fn poly_query_layout() -> PolyQueryLayout {
+        PolyQueryLayout {
+            polys: Self::PolyWitnesses::len(),
+            claims: Self::PolyQueries::len(),
+        }
+    }
 }
 
 /// The slot capacities an application declares, as the value that travels
@@ -409,20 +475,20 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     /// declared, so nothing has to be learned from the step body first — each
     /// hook simply refuses a call past the capacity, at the call that exceeds
     /// it.
-    pub(crate) fn new(capacity: HookLayout, params: DriverValue<D, &'dr C::Params>) -> Self {
+    pub(crate) fn new(hook_layout: HookLayout, params: DriverValue<D, &'dr C::Params>) -> Self {
         Self {
             poly_queries: Vec::new(),
             witnessed_polys: Vec::new(),
             challenge_pairs: Vec::new(),
             params,
-            capacity,
+            hook_layout,
         }
     }
 
     /// The application's slot capacities; what
     /// [`finish_slots`](crate::step::StepCtx) pads to.
     pub(crate) fn hook_layout(&self) -> HookLayout {
-        self.capacity
+        self.hook_layout
     }
 
     /// The cycle parameters, for the hook bodies that compute witness values.
@@ -436,7 +502,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     /// deterministic.
     pub(crate) fn next_poly_slot(&self) -> Result<usize> {
         let slot = self.witnessed_polys.len();
-        if slot >= self.capacity.poly_query.polys {
+        if slot >= self.hook_layout.poly_query.polys {
             return Err(Error::InvalidWitness(
                 "step witnessed more polynomials than there are polynomial slots".into(),
             ));
@@ -468,7 +534,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     /// the work of filling it — the challenge twin of
     /// [`next_poly_slot`](Self::next_poly_slot).
     pub(crate) fn reserve_challenge_slot(&self) -> Result<()> {
-        if self.challenge_pairs.len() >= self.capacity.challenge.calls {
+        if self.challenge_pairs.len() >= self.hook_layout.challenge.calls {
             return Err(Error::InvalidWitness(
                 "step derived more challenges than there are challenge slots".into(),
             ));
@@ -485,7 +551,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
         inputs: Vec<Element<'dr, D>>,
         challenge: Element<'dr, D>,
     ) {
-        debug_assert_eq!(inputs.len(), self.capacity.challenge.width);
+        debug_assert_eq!(inputs.len(), self.hook_layout.challenge.width);
         self.challenge_pairs
             .push(ChallengeWires { inputs, challenge });
     }
@@ -523,7 +589,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
         x: Element<'dr, D>,
         y: Element<'dr, D>,
     ) -> Result<()> {
-        if self.poly_queries.len() >= self.capacity.poly_query.claims {
+        if self.poly_queries.len() >= self.hook_layout.poly_query.claims {
             return Err(Error::InvalidWitness(
                 "step enforced more poly-queries than there are query slots".into(),
             ));

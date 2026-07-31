@@ -23,7 +23,7 @@ use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::{GadgetExt, Point, vec::CollectFixed};
 
 use crate::{
-    AppHooksLayout, Application, Pcd, RAGU_TAG, internal::transcript::Transcript,
+    Application, Pcd, RAGU_TAG, framework_hooks::HookConfig, internal::transcript::Transcript,
     proof::ProofBuilder, step::Step,
 };
 
@@ -47,7 +47,7 @@ struct NativeSPrime<C: Cycle, R: Rank> {
     registry_wx1_commitment: C::HostCurve,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
     Application<'_, C, R, HEADER_SIZE, J>
 {
     /// Fuse two [`Pcd`] into one using a provided [`Step`].

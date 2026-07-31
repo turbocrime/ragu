@@ -96,7 +96,7 @@ use super::super::{
 };
 use crate::{
     RAGU_TAG,
-    hook_layout::AppHooksLayout,
+    framework_hooks::HookConfig,
     internal::{fold_revdot, transcript::Transcript},
 };
 
@@ -133,7 +133,7 @@ pub struct Circuit<
     C: Cycle,
     R,
     const HEADER_SIZE: usize,
-    J: AppHooksLayout,
+    J: HookConfig,
     FP: fold_revdot::Parameters,
 > {
     params: &'params C::Params,
@@ -146,7 +146,7 @@ impl<
     C: Cycle,
     R: Rank,
     const HEADER_SIZE: usize,
-    J: AppHooksLayout,
+    J: HookConfig,
     FP: fold_revdot::Parameters,
 > Circuit<'params, C, R, HEADER_SIZE, J, FP>
 {
@@ -193,7 +193,7 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_rev
     pub outer_error_witness: &'a native_outer_error::Witness<C, FP>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout, FP: fold_revdot::Parameters>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig, FP: fold_revdot::Parameters>
     MultiStageCircuit<C::CircuitField, R> for Circuit<'_, C, R, HEADER_SIZE, J, FP>
 {
     type Last = native_outer_error::Stage<C, R, HEADER_SIZE, J, FP>;

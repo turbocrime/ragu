@@ -75,7 +75,7 @@ use super::super::{
     unified::{self, OutputBuilder},
 };
 use crate::{
-    hook_layout::AppHooksLayout,
+    framework_hooks::HookConfig,
     internal::{
         claims::Source,
         fold_revdot::{Parameters, fold_two_layer},
@@ -90,11 +90,11 @@ use crate::{
 ///
 /// [module-level documentation]: self
 /// [$v$]: unified::Output::v
-pub struct Circuit<C: Cycle, R, const HEADER_SIZE: usize, J: AppHooksLayout> {
+pub struct Circuit<C: Cycle, R, const HEADER_SIZE: usize, J: HookConfig> {
     _marker: PhantomData<(C, R, J)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout> Circuit<C, R, HEADER_SIZE, J> {
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig> Circuit<C, R, HEADER_SIZE, J> {
     pub fn new() -> MultiStage<C::CircuitField, R, Self> {
         MultiStage::new(Circuit {
             _marker: PhantomData,
@@ -121,7 +121,7 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     pub eval_witness: &'a native_eval::Witness<C::CircuitField>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
     MultiStageCircuit<C::CircuitField, R> for Circuit<C, R, HEADER_SIZE, J>
 {
     type Last = native_eval::Stage<C, R, HEADER_SIZE, J>;
@@ -354,7 +354,7 @@ struct Denominators<'dr, D: Driver<'dr>> {
 
 impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
     #[allow(clippy::too_many_arguments)]
-    fn new<C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize, J: AppHooksLayout>(
+    fn new<C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize, J: HookConfig>(
         dr: &mut D,
         u: &Element<'dr, D>,
         w: &Element<'dr, D>,
@@ -665,7 +665,7 @@ fn poly_queries<
     D: Driver<'dr>,
     C: Cycle<CircuitField = D::F>,
     const HEADER_SIZE: usize,
-    J: AppHooksLayout,
+    J: HookConfig,
 >(
     eval: &'a native_eval::Output<'dr, D, J>,
     query: &'a native_query::Output<'dr, D>,

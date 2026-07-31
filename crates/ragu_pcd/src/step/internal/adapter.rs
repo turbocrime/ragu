@@ -21,8 +21,7 @@ use ragu_primitives::{
 use super::super::{Step, StepCtx};
 use crate::{
     Header,
-    framework_hooks::{FrameworkAux, FrameworkHooks},
-    hook_layout::AppHooksLayout,
+    framework_hooks::{FrameworkAux, FrameworkHooks, HookConfig},
 };
 
 /// Length of an application circuit's public instance: the three headers, then
@@ -49,9 +48,9 @@ pub fn instance_len(header_size: usize, capacity: crate::framework_hooks::HookLa
 /// arithmetic is not restated here: this calls [`instance_len`] on the
 /// capacity its own parameters declare, so the `FixedVec`'s length and the
 /// number of elements the adapter writes are one statement.
-pub struct InstanceLen<const HEADER_SIZE: usize, J: AppHooksLayout>(PhantomData<J>);
+pub struct InstanceLen<const HEADER_SIZE: usize, J: HookConfig>(PhantomData<J>);
 
-impl<const HEADER_SIZE: usize, J: AppHooksLayout> ragu_primitives::vec::Len
+impl<const HEADER_SIZE: usize, J: HookConfig> ragu_primitives::vec::Len
     for InstanceLen<HEADER_SIZE, J>
 {
     fn len() -> usize {
@@ -73,14 +72,7 @@ pub(crate) struct AdapterAux<'source, C: Cycle, S: Step<C>, const HEADER_SIZE: u
     pub framework: FrameworkAux<C>,
 }
 
-pub(crate) struct Adapter<
-    'params,
-    C: Cycle,
-    S,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    J: AppHooksLayout,
-> {
+pub(crate) struct Adapter<'params, C: Cycle, S, R: Rank, const HEADER_SIZE: usize, J: HookConfig> {
     step: S,
     /// The cycle's runtime parameters, absent during registration.
     ///
@@ -94,7 +86,7 @@ pub(crate) struct Adapter<
     _marker: PhantomData<(C, R, J)>,
 }
 
-impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
     Adapter<'params, C, S, R, HEADER_SIZE, J>
 {
     /// Wraps `step` for registration/keygen at the layout's capacity — the
@@ -114,7 +106,7 @@ impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize, J: AppHoo
     }
 }
 
-impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
     MultiStageCircuit<C::CircuitField, R> for Adapter<'_, C, S, R, HEADER_SIZE, J>
 {
     /// An application circuit has no stages: a challenge input is a point,
@@ -268,7 +260,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        AppHooks,
+        AppHooks, NoHooks,
         framework_hooks::{ChallengeLayout, HookLayout, PolyQueryLayout},
         header::{Header, Suffix},
         step::{Encoded, Index, Step},
@@ -431,7 +423,7 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        type Subject = Adapter<'static, Pasta, TestStep, TestR, HEADER_SIZE, AppHooks<0, 0, 0, 2>>;
+        type Subject = Adapter<'static, Pasta, TestStep, TestR, HEADER_SIZE, NoHooks>;
         let adapter = Subject::new(TestStep, Some(Pasta::baked()));
         let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
 
@@ -452,7 +444,7 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE, AppHooks<0, 0, 0, 2>>::new(
+        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE, NoHooks>::new(
             TestStep,
             Some(Pasta::baked()),
         );

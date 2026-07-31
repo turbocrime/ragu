@@ -20,7 +20,8 @@ use ragu_primitives::{Element, vec::FixedVec};
 
 use super::claims::{FoldKey, FuseBuilder, TrackedPoly};
 use crate::{
-    AppHooksLayout, Application,
+    Application,
+    framework_hooks::HookConfig,
     internal::{
         fold_revdot, native,
         native::stages::outer_error::{ChildKyValues, KyValues},
@@ -30,7 +31,7 @@ use crate::{
 
 type NativeNumGroups = <native::RevdotParameters as fold_revdot::Parameters>::NumGroups;
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
     Application<'_, C, R, HEADER_SIZE, J>
 {
     pub(super) fn outer_error_terms<'dr, 'rx, D, RNG: CryptoRngCore>(

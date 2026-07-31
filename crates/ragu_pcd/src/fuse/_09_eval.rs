@@ -10,9 +10,11 @@ use ragu_core::{Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::Element;
 
 use super::{NativeSPrime, RegistryWy};
-use crate::{AppHooksLayout, Application, Proof, internal::native, proof::ProofBuilder};
+use crate::{
+    Application, Proof, framework_hooks::HookConfig, internal::native, proof::ProofBuilder,
+};
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
     Application<'_, C, R, HEADER_SIZE, J>
 {
     pub(super) fn compute_eval<'dr, D, RNG: CryptoRngCore>(

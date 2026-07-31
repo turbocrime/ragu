@@ -21,7 +21,8 @@ use ragu_primitives::{Element, extract_endoscalar, lift_endoscalar};
 
 use super::{NativeF, NativeSPrime, RegistryWy};
 use crate::{
-    AppHooksLayout, Application, Proof,
+    Application, Proof,
+    framework_hooks::HookConfig,
     internal::native::{RxComponent, RxIndex},
     proof::ProofBuilder,
 };
@@ -44,7 +45,7 @@ impl<C: Cycle, R: Rank> Accumulator<'_, C, R> {
     }
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
     Application<'_, C, R, HEADER_SIZE, J>
 {
     pub(super) fn compute_p<'dr, D, RNG: ragu_arithmetic::CryptoRngCore>(

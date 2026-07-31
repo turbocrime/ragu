@@ -61,7 +61,6 @@ mod fuse;
 #[cfg(feature = "unstable-fuzzing")]
 pub mod fuzz_utils;
 pub mod header;
-pub mod hook_layout;
 mod internal;
 pub mod poly_commitment;
 mod proof;
@@ -71,12 +70,8 @@ mod verify;
 use alloc::collections::BTreeMap;
 use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 
+use framework_hooks::HookConfig;
 use header::Header;
-// `ClaimOpening` and `ChallengeOpening` are deliberately *not* re-exported.
-// Both describe a slot of a proof's instance, and the accessors that return
-// them are `pub(crate)`: see `Proof::application_claims` for why a proof's
-// slot lists are not a public reporting surface.
-pub use hook_layout::{AppHooks, AppHooksLayout};
 pub use poly_commitment::{PolyCommitment, PolyHandle};
 pub use proof::{Pcd, Proof};
 use ragu_arithmetic::{CryptoRngCore, Cycle};
@@ -86,11 +81,41 @@ use ragu_circuits::{
     staging::MultiStage,
 };
 use ragu_core::{Error, Result};
+use ragu_primitives::vec::{ConstLen, Len};
 use step::{Step, internal::adapter::Adapter};
 
 /// Domain separation tag for Ragu PCD protocol.
 // FIXME: choose a permanent domain separation tag before release.
 pub(crate) const RAGU_TAG: &[u8] = b"FIXME";
+
+/// The usual way to declare an application's hook capacity:
+///
+/// ```rust
+/// use ragu_circuits::polynomials::ProductionRank;
+/// use ragu_pasta::Pasta;
+/// use ragu_pcd::{AppHooks, Application};
+///
+/// type MyApp<'params> = Application<'params, Pasta, ProductionRank, 4, AppHooks<3, 3, 1, 6>>;
+/// ```
+pub struct AppHooks<
+    const POLYS: usize,
+    const QUERIES: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+>;
+
+/// Convenience alias for an application that does not use hooks.
+pub type NoHooks = AppHooks<0, 0, 0, 0>;
+
+impl<const PW: usize, const PQ: usize, const CD: usize, const CW: usize> HookConfig
+    for AppHooks<PW, PQ, CD, CW>
+{
+    type PolyWitnesses = ConstLen<PW>;
+    type PolyQueries = ConstLen<PQ>;
+
+    type ChallengeDerivations = ConstLen<CD>;
+    type ChallengeWidth = ConstLen<CW>;
+}
 
 /// Builder for an [`Application`] for proof-carrying data.
 ///
@@ -120,13 +145,7 @@ pub(crate) const RAGU_TAG: &[u8] = b"FIXME";
 ///
 /// Every term is declared, so a step's circuit shape is final the moment it
 /// registers — see the crate docs.
-pub struct ApplicationBuilder<
-    'params,
-    C: Cycle,
-    R: Rank,
-    const HEADER_SIZE: usize,
-    J: AppHooksLayout,
-> {
+pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig> {
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
     num_application_steps: usize,
@@ -137,7 +156,7 @@ pub struct ApplicationBuilder<
     _marker: PhantomData<(J, [(); HEADER_SIZE])>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout> Default
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig> Default
     for ApplicationBuilder<'_, C, R, HEADER_SIZE, J>
 {
     fn default() -> Self {
@@ -145,7 +164,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout> Default
     }
 }
 
-impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
     ApplicationBuilder<'params, C, R, HEADER_SIZE, J>
 {
     /// Create an empty [`ApplicationBuilder`] for proof-carrying data. The
@@ -272,8 +291,10 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
         // headers). The nested side needs exactly one number, the poly-slot
         // count, taken both as a value (for the layouts) and as a `Len` (for
         // the gadgets those layouts place).
-        self.nested_registry =
-            internal::nested::register_all::<C, R, J::PolyCount>(self.nested_registry, J::polys())?;
+        self.nested_registry = internal::nested::register_all::<C, R, J::PolyWitnesses>(
+            self.nested_registry,
+            J::PolyWitnesses::len(),
+        )?;
 
         Ok(Application {
             native_registry: self.native_registry.finalize()?,
@@ -319,7 +340,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
 }
 
 /// The recursion context that is used to create and verify proof-carrying data.
-pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout> {
+pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig> {
     native_registry: Registry<'params, C::CircuitField, R>,
     nested_registry: Registry<'params, C::ScalarField, R>,
     params: &'params C::Params,
@@ -333,7 +354,7 @@ pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: 
     _marker: PhantomData<(J, [(); HEADER_SIZE])>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
     Application<'_, C, R, HEADER_SIZE, J>
 {
     /// The application's settled slot capacity — the shape every application
@@ -356,7 +377,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
     /// *runs* of per-slot bridge stages, which need span arithmetic to cut
     /// one mask per slot from a single span.
     pub(crate) fn nested_chain_layout(&self) -> ragu_circuits::staging::InducedStages {
-        internal::nested::chain_layout::<C::HostCurve, R>(J::polys())
+        internal::nested::chain_layout::<C::HostCurve, R>(J::PolyWitnesses::len())
     }
 
     /// Seed a new computation by running a step with trivial inputs.

@@ -2,7 +2,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use ragu_arithmetic::Cycle;
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_pasta::{Fp, Pasta};
-use ragu_pcd::{AppHooks, ApplicationBuilder};
+use ragu_pcd::{ApplicationBuilder, NoHooks};
 use ragu_testing::pcd::nontrivial;
 use rand::{SeedableRng, rngs::StdRng};
 
@@ -10,7 +10,7 @@ fn fuse_bench(c: &mut Criterion) {
     let pasta = Pasta::baked();
     let poseidon_params = Pasta::circuit_poseidon(pasta);
 
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4, AppHooks<0, 0, 0, 2>>::new()
+    let app = ApplicationBuilder::<Pasta, ProductionRank, 4, NoHooks>::new()
         .register(nontrivial::WitnessLeaf { poseidon_params })
         .unwrap()
         .register(nontrivial::Hash2 { poseidon_params })

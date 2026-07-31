@@ -8,12 +8,13 @@ use ragu_circuits::{polynomials::Rank, staging::StageExt as _};
 use ragu_core::Result;
 
 use crate::{
-    AppHooksLayout, Application, Proof,
+    Application, Proof,
+    framework_hooks::HookConfig,
     internal::{native, nested},
     proof::ProofBuilder,
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
     Application<'_, C, R, HEADER_SIZE, J>
 {
     pub(super) fn compute_preamble<'a, RNG: CryptoRngCore>(

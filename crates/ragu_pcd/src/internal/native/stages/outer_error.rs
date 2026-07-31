@@ -20,7 +20,7 @@ use ragu_primitives::{
 };
 
 use crate::{
-    hook_layout::AppHooksLayout,
+    framework_hooks::HookConfig,
     internal::fold_revdot::{self, NumErrorTerms},
 };
 
@@ -107,17 +107,12 @@ pub struct Output<
 }
 
 /// The outer error stage (layer 2) of the fuse witness.
-pub struct Stage<
-    C: Cycle,
-    R,
-    const HEADER_SIZE: usize,
-    J: AppHooksLayout,
-    FP: fold_revdot::Parameters,
-> {
+pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, J: HookConfig, FP: fold_revdot::Parameters>
+{
     _marker: PhantomData<(C, R, J, FP)>,
 }
 
-impl<C: Cycle, R, const HEADER_SIZE: usize, J: AppHooksLayout, FP: fold_revdot::Parameters> Default
+impl<C: Cycle, R, const HEADER_SIZE: usize, J: HookConfig, FP: fold_revdot::Parameters> Default
     for Stage<C, R, HEADER_SIZE, J, FP>
 {
     fn default() -> Self {
@@ -127,7 +122,7 @@ impl<C: Cycle, R, const HEADER_SIZE: usize, J: AppHooksLayout, FP: fold_revdot::
     }
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout, FP: fold_revdot::Parameters>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig, FP: fold_revdot::Parameters>
     staging::Stage<C::CircuitField, R> for Stage<C, R, HEADER_SIZE, J, FP>
 {
     type Parent = super::preamble::Stage<C, R, HEADER_SIZE, J>;
@@ -207,7 +202,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        hook_layout::AppHooks,
+        AppHooks,
         internal::{
             native::RevdotParameters,
             tests::{HEADER_SIZE, R, assert_stage_values},

@@ -25,8 +25,8 @@ use ragu_circuits::{
 use ragu_core::{Error, Result};
 
 use crate::{
-    AppHooksLayout, Application, Header, Pcd, Proof,
-    framework_hooks::FrameworkAux,
+    Application, Header, Pcd, Proof,
+    framework_hooks::{FrameworkAux, HookConfig},
     internal::challenge,
     proof::ProofBuilder,
     step::{
@@ -35,7 +35,7 @@ use crate::{
     },
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
     Application<'_, C, R, HEADER_SIZE, J>
 {
     pub(super) fn compute_application_proof<'source, RNG: CryptoRngCore, S: Step<C>>(

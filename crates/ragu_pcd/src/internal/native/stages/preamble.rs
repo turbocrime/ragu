@@ -17,11 +17,11 @@ use ragu_primitives::{
     Boolean, Element, GadgetExt,
     allocator::Allocator,
     consistent::Consistent,
-    vec::{CollectFixed, ConstLen, FixedVec},
+    vec::{CollectFixed, ConstLen, FixedVec, Len},
 };
 
 use crate::{
-    Proof, header::Header, hook_layout::AppHooksLayout, internal::native::unified,
+    Proof, framework_hooks::HookConfig, header::Header, internal::native::unified,
     step::internal::padded,
 };
 
@@ -29,14 +29,14 @@ type HeaderVec<'dr, D, const HEADER_SIZE: usize> = FixedVec<Element<'dr, D>, Con
 
 /// One child's polynomial slots, in slot order — the [`HeaderVec`] of the
 /// poly-slot region.
-pub type PolyVec<'dr, D, J> = FixedVec<PolyInstance<'dr, D>, <J as AppHooksLayout>::PolyCount>;
+pub type PolyVec<'dr, D, J> = FixedVec<PolyInstance<'dr, D>, <J as HookConfig>::PolyWitnesses>;
 
 /// One child's poly-query claim slots, in slot order.
-pub type ClaimVec<'dr, D, J> = FixedVec<ClaimInstance<'dr, D>, <J as AppHooksLayout>::ClaimCount>;
+pub type ClaimVec<'dr, D, J> = FixedVec<ClaimInstance<'dr, D>, <J as HookConfig>::PolyQueries>;
 
 /// One child's challenge slots, in slot order.
 pub type ChallengeVec<'dr, D, J> =
-    FixedVec<ChallengeInstance<'dr, D, J>, <J as AppHooksLayout>::ChallengeCount>;
+    FixedVec<ChallengeInstance<'dr, D, J>, <J as HookConfig>::ChallengeDerivations>;
 
 /// A single poly-query claim instance witnessed from a child proof: the opened
 /// polynomial's embedded commitment coordinates and the $(x, y)$ opening. The
@@ -78,7 +78,7 @@ pub struct PolyInstance<'dr, D: Driver<'dr>> {
 /// (every input element, then the challenge) matches the challenge-slot
 /// region of the application circuit's instance.
 #[derive(Gadget, Consistent)]
-pub struct ChallengeInstance<'dr, D: Driver<'dr>, J: AppHooksLayout> {
+pub struct ChallengeInstance<'dr, D: Driver<'dr>, J: HookConfig> {
     #[ragu(gadget)]
     pub inputs: FixedVec<Element<'dr, D>, J::ChallengeWidth>,
     #[ragu(gadget)]
@@ -143,7 +143,7 @@ pub struct ProofInputs<
     D: Driver<'dr>,
     C: Cycle<CircuitField = D::F>,
     const HEADER_SIZE: usize,
-    J: AppHooksLayout,
+    J: HookConfig,
 > {
     /// Headers this child proof claimed for its own children.
     #[ragu(gadget)]
@@ -166,13 +166,8 @@ pub struct ProofInputs<
     pub unified: unified::Output<'dr, D, C>,
 }
 
-impl<
-    'dr,
-    D: Driver<'dr, F = C::CircuitField>,
-    C: Cycle,
-    const HEADER_SIZE: usize,
-    J: AppHooksLayout,
-> ProofInputs<'dr, D, C, HEADER_SIZE, J>
+impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usize, J: HookConfig>
+    ProofInputs<'dr, D, C, HEADER_SIZE, J>
 {
     /// Compute unified k(y) and unified+bridged k(y) values simultaneously,
     /// sharing computation.
@@ -261,13 +256,8 @@ impl<
     }
 }
 
-impl<
-    'dr,
-    D: Driver<'dr, F = C::CircuitField>,
-    C: Cycle,
-    const HEADER_SIZE: usize,
-    J: AppHooksLayout,
-> ProofInputs<'dr, D, C, HEADER_SIZE, J>
+impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usize, J: HookConfig>
+    ProofInputs<'dr, D, C, HEADER_SIZE, J>
 {
     /// Allocate ProofInputs from a proof reference and pre-computed output
     /// header. The slot counts are circuit-construction parameters: they fix
@@ -278,8 +268,8 @@ impl<
         proof: DriverValue<D, &Proof<C, R>>,
         output_header: DriverValue<D, &FixedVec<D::F, ConstLen<HEADER_SIZE>>>,
     ) -> Result<Self> {
-        let num_polys = J::polys();
-        let num_queries = J::claims();
+        let num_polys = J::PolyWitnesses::len();
+        let num_queries = J::PolyQueries::len();
         fn alloc_header<'dr, D: Driver<'dr>, const N: usize>(
             dr: &mut D,
             allocator: &mut (),
@@ -418,7 +408,7 @@ pub struct Output<
     D: Driver<'dr>,
     C: Cycle<CircuitField = D::F>,
     const HEADER_SIZE: usize,
-    J: AppHooksLayout,
+    J: HookConfig,
 > {
     #[ragu(gadget)]
     pub left: ProofInputs<'dr, D, C, HEADER_SIZE, J>,
@@ -426,13 +416,8 @@ pub struct Output<
     pub right: ProofInputs<'dr, D, C, HEADER_SIZE, J>,
 }
 
-impl<
-    'dr,
-    D: Driver<'dr>,
-    C: Cycle<CircuitField = D::F>,
-    const HEADER_SIZE: usize,
-    J: AppHooksLayout,
-> Output<'dr, D, C, HEADER_SIZE, J>
+impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize, J: HookConfig>
+    Output<'dr, D, C, HEADER_SIZE, J>
 {
     /// Returns true if both child proofs are trivial proofs.
     pub fn is_base_case(
@@ -448,13 +433,11 @@ impl<
 
 /// Both children present the application's shape, so one set of slot counts
 /// sizes both.
-pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, J: AppHooksLayout> {
+pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, J: HookConfig> {
     _marker: PhantomData<(C, R, J)>,
 }
 
-impl<C: Cycle, R, const HEADER_SIZE: usize, J: AppHooksLayout> Default
-    for Stage<C, R, HEADER_SIZE, J>
-{
+impl<C: Cycle, R, const HEADER_SIZE: usize, J: HookConfig> Default for Stage<C, R, HEADER_SIZE, J> {
     fn default() -> Self {
         Stage {
             _marker: PhantomData,
@@ -462,8 +445,8 @@ impl<C: Cycle, R, const HEADER_SIZE: usize, J: AppHooksLayout> Default
     }
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
-    staging::Stage<C::CircuitField, R> for Stage<C, R, HEADER_SIZE, J>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig> staging::Stage<C::CircuitField, R>
+    for Stage<C, R, HEADER_SIZE, J>
 {
     type Parent = ();
     type Witness<'source> = &'source Witness<'source, C, R, HEADER_SIZE>;
@@ -478,7 +461,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
         // commitment's embedded affine coordinates. The challenge slots are
         // their own stage — see [`slots`](super::slots) for why the chain's
         // root does not hold them.
-        2 * (3 * HEADER_SIZE + 2 * J::polys() + 4 * J::claims() + 1 + unified::NUM_WIRES)
+        2 * (3 * HEADER_SIZE
+            + 2 * J::PolyWitnesses::len()
+            + 4 * J::PolyQueries::len()
+            + 1
+            + unified::NUM_WIRES)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -511,7 +498,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        hook_layout::AppHooks,
+        AppHooks,
         internal::tests::{HEADER_SIZE, R, assert_stage_values},
     };
 

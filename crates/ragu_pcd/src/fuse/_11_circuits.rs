@@ -3,12 +3,13 @@ use ragu_circuits::{CircuitExt, polynomials::Rank};
 use ragu_core::Result;
 
 use crate::{
-    AppHooksLayout, Application,
+    Application,
+    framework_hooks::HookConfig,
     internal::{native, native::total_circuit_counts},
     proof::ProofBuilder,
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
     Application<'_, C, R, HEADER_SIZE, J>
 {
     pub(super) fn compute_internal_circuits<RNG: CryptoRngCore>(

@@ -36,7 +36,7 @@ use ragu_primitives::{
 
 use crate::{
     Proof,
-    hook_layout::AppHooksLayout,
+    framework_hooks::HookConfig,
     internal::native::{RxComponent, RxValues},
 };
 
@@ -171,7 +171,7 @@ pub struct Witness<F> {
 /// of the coefficients for the weighted sum with $\beta$ via
 /// [`Horner`](ragu_circuits::horner::Horner) evaluation.
 #[derive(Gadget, Write)]
-pub struct ChildEvaluations<'dr, D: Driver<'dr>, J: AppHooksLayout> {
+pub struct ChildEvaluations<'dr, D: Driver<'dr>, J: HookConfig> {
     #[ragu(gadget)]
     pub rx: RxValues<Element<'dr, D>>,
     #[ragu(gadget)]
@@ -186,7 +186,7 @@ pub struct ChildEvaluations<'dr, D: Driver<'dr>, J: AppHooksLayout> {
     /// so the [`Write`] order (and hence the $v$ Horner weighting) matches the
     /// `_10_p` accumulation order.
     #[ragu(gadget)]
-    pub claims: FixedVec<Element<'dr, D>, J::PolyCount>,
+    pub claims: FixedVec<Element<'dr, D>, J::PolyWitnesses>,
     /// The child's claim-coordinate polynomial $q$ evaluated at $u$ — last, matching
     /// its `_10_p` fold position after the claim polynomials. Empty at
     /// `POLYS = 0`, where no `q` exists.
@@ -196,15 +196,15 @@ pub struct ChildEvaluations<'dr, D: Driver<'dr>, J: AppHooksLayout> {
 
 /// One `q` evaluation when the layout has polynomial slots, none otherwise —
 /// [`q_slots`](crate::internal::nested::q_slots) at the type level.
-pub struct QEvalLen<J: AppHooksLayout>(PhantomData<J>);
+pub struct QEvalLen<J: HookConfig>(PhantomData<J>);
 
-impl<J: AppHooksLayout> Len for QEvalLen<J> {
+impl<J: HookConfig> Len for QEvalLen<J> {
     fn len() -> usize {
-        crate::internal::nested::q_slots(J::polys())
+        crate::internal::nested::q_slots(J::PolyWitnesses::len())
     }
 }
 
-impl<'dr, D: Driver<'dr>, J: AppHooksLayout> ChildEvaluations<'dr, D, J> {
+impl<'dr, D: Driver<'dr>, J: HookConfig> ChildEvaluations<'dr, D, J> {
     /// Allocate child evaluations from pre-computed witness values. The
     /// layout's poly-slot count sizes `claims`.
     pub fn alloc<A: Allocator<'dr, D>>(
@@ -225,7 +225,7 @@ impl<'dr, D: Driver<'dr>, J: AppHooksLayout> ChildEvaluations<'dr, D, J> {
                 witness.as_ref().map(|w| w.registry_xy_poly),
             )?,
             p_poly: Element::alloc(dr, allocator, witness.as_ref().map(|w| w.p_poly))?,
-            claims: J::PolyCount::range()
+            claims: J::PolyWitnesses::range()
                 .map(|i| Element::alloc(dr, allocator, witness.as_ref().map(|w| w.claims[i])))
                 .try_collect_fixed()?,
             q_eval: QEvalLen::<J>::range()
@@ -239,7 +239,7 @@ impl<'dr, D: Driver<'dr>, J: AppHooksLayout> ChildEvaluations<'dr, D, J> {
 ///
 /// This is stage communication data, not part of the circuit's public instance.
 #[derive(Gadget, Write)]
-pub struct Output<'dr, D: Driver<'dr>, J: AppHooksLayout> {
+pub struct Output<'dr, D: Driver<'dr>, J: HookConfig> {
     #[ragu(gadget)]
     pub left: ChildEvaluations<'dr, D, J>,
     #[ragu(gadget)]
@@ -259,13 +259,11 @@ pub struct Output<'dr, D: Driver<'dr>, J: AppHooksLayout> {
 }
 
 /// The eval stage of the fuse witness.
-pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, J: AppHooksLayout> {
+pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, J: HookConfig> {
     _marker: PhantomData<(C, R, J)>,
 }
 
-impl<C: Cycle, R, const HEADER_SIZE: usize, J: AppHooksLayout> Default
-    for Stage<C, R, HEADER_SIZE, J>
-{
+impl<C: Cycle, R, const HEADER_SIZE: usize, J: HookConfig> Default for Stage<C, R, HEADER_SIZE, J> {
     fn default() -> Self {
         Stage {
             _marker: PhantomData,
@@ -273,15 +271,16 @@ impl<C: Cycle, R, const HEADER_SIZE: usize, J: AppHooksLayout> Default
     }
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
-    staging::Stage<C::CircuitField, R> for Stage<C, R, HEADER_SIZE, J>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig> staging::Stage<C::CircuitField, R>
+    for Stage<C, R, HEADER_SIZE, J>
 {
     type Parent = super::query::Stage<C, R, HEADER_SIZE, J>;
     type Witness<'source> = &'source Witness<C::CircuitField>;
     type OutputKind = Kind![C::CircuitField; Output<'_, _, J>];
 
     fn values() -> usize {
-        2 * crate::internal::nested::child_endoscaling_points(J::polys()) + CURRENT_STEP_COMPONENTS
+        2 * crate::internal::nested::child_endoscaling_points(J::PolyWitnesses::len())
+            + CURRENT_STEP_COMPONENTS
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -336,7 +335,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        hook_layout::AppHooks,
+        AppHooks,
         internal::tests::{HEADER_SIZE, R, assert_stage_values},
     };
 

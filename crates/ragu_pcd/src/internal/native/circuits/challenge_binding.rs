@@ -77,7 +77,7 @@ use super::super::{
     stages::{outer_error, preamble, slots},
     unified::{self, OutputBuilder},
 };
-use crate::hook_layout::AppHooksLayout;
+use crate::framework_hooks::HookConfig;
 
 /// Circuit that re-derives every child challenge from its point.
 ///
@@ -85,12 +85,12 @@ use crate::hook_layout::AppHooksLayout;
 /// performed by this circuit.
 ///
 /// [module-level documentation]: self
-pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, J: AppHooksLayout> {
+pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, J: HookConfig> {
     params: &'params C::Params,
     _marker: PhantomData<(R, J)>,
 }
 
-impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
     Circuit<'params, C, R, HEADER_SIZE, J>
 {
     /// Creates a new multi-stage circuit.
@@ -117,7 +117,7 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     pub preamble_witness: &'a preamble::Witness<'a, C, R, HEADER_SIZE>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
     MultiStageCircuit<C::CircuitField, R> for Circuit<'_, C, R, HEADER_SIZE, J>
 {
     /// The challenge slots are last in the error chain, and this circuit exists

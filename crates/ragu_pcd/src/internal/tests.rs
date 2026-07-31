@@ -685,7 +685,7 @@ mod capacity_is_per_application {
         ctx.derive_challenge(&handle.coords())?;
     });
 
-    fn gates<J: crate::AppHooksLayout>(
+    fn gates<J: crate::framework_hooks::HookConfig>(
         app: &Application<'_, Pasta, R, HS, J>,
         id: InternalCircuitIndex,
     ) -> usize {
@@ -697,7 +697,7 @@ mod capacity_is_per_application {
         let pasta = Pasta::baked();
         // The declared polynomial capacity is the difference between these two
         // applications: `Light` witnesses none, `Heavy` witnesses two.
-        let light = ApplicationBuilder::<Pasta, R, HS, AppHooks<0, 0, 0, 2>>::new()
+        let light = ApplicationBuilder::<Pasta, R, HS, NoHooks>::new()
             .register(Light)
             .unwrap()
             .finalize(pasta)

@@ -8,7 +8,7 @@ use ragu_circuits::{
 use ragu_core::Result;
 use ragu_primitives::vec::ConstLen;
 
-use crate::{hook_layout::AppHooksLayout, internal::fold_revdot::Parameters, step};
+use crate::{framework_hooks::HookConfig, internal::fold_revdot::Parameters, step};
 
 /// Default parameters for native revdot folding
 #[derive(Clone, Copy, Default)]
@@ -401,7 +401,7 @@ pub enum RxComponent {
 ///
 /// Does not register internal steps (rerandomize, trivial); those are
 /// registered by the caller after this function returns.
-pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>(
+pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>(
     mut registry: RegistryBuilder<'params, C::CircuitField, R>,
     params: &'params C::Params,
     log2_circuits: u32,

@@ -11,7 +11,8 @@ use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::Element;
 
 use crate::{
-    AppHooksLayout, Application, Pcd, Proof,
+    Application, Pcd, Proof,
+    framework_hooks::HookConfig,
     header::Header,
     internal::{
         claims,
@@ -20,7 +21,7 @@ use crate::{
     },
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
     Application<'_, C, R, HEADER_SIZE, J>
 {
     /// Verifies some [`Pcd`] for the provided [`Header`].
@@ -354,10 +355,9 @@ mod tests {
     type TestR = ProductionRank;
     const HEADER_SIZE: usize = 4;
 
-    fn create_test_app()
-    -> crate::Application<'static, Pasta, TestR, HEADER_SIZE, crate::AppHooks<0, 0, 0, 2>> {
+    fn create_test_app() -> crate::Application<'static, Pasta, TestR, HEADER_SIZE, crate::NoHooks> {
         let pasta = Pasta::baked();
-        ApplicationBuilder::<Pasta, TestR, HEADER_SIZE, crate::AppHooks<0, 0, 0, 2>>::new()
+        ApplicationBuilder::<Pasta, TestR, HEADER_SIZE, crate::NoHooks>::new()
             .finalize(pasta)
             .expect("failed to create test application")
     }

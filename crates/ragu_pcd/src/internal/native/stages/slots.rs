@@ -54,7 +54,7 @@ use ragu_primitives::{
 };
 
 use super::preamble::{ChallengeInstance, ChallengeVec, Witness};
-use crate::{Proof, hook_layout::AppHooksLayout};
+use crate::{Proof, framework_hooks::HookConfig};
 
 /// The challenges both children derived, in slot order: the elements each was
 /// hashed from, and the challenge itself.
@@ -62,7 +62,7 @@ use crate::{Proof, hook_layout::AppHooksLayout};
 /// Both children present the application's layout, so one set of counts sizes
 /// both.
 #[derive(Gadget, Consistent)]
-pub struct ChallengesOutput<'dr, D: Driver<'dr>, J: AppHooksLayout> {
+pub struct ChallengesOutput<'dr, D: Driver<'dr>, J: HookConfig> {
     /// The left child's challenge slots.
     #[ragu(gadget)]
     pub left: ChallengeVec<'dr, D, J>,
@@ -99,11 +99,11 @@ pub struct ChallengesOutput<'dr, D: Driver<'dr>, J: AppHooksLayout> {
 /// stage reads it. It stays because its region stays in the shared prefix —
 /// see the module docs for why the header and slot regions cannot follow the
 /// challenges down here.
-pub struct ChallengesStage<C: Cycle, R, const HEADER_SIZE: usize, J: AppHooksLayout, FP> {
+pub struct ChallengesStage<C: Cycle, R, const HEADER_SIZE: usize, J: HookConfig, FP> {
     _marker: PhantomData<(C, R, J, FP)>,
 }
 
-impl<C: Cycle, R, const HEADER_SIZE: usize, J: AppHooksLayout, FP> Default
+impl<C: Cycle, R, const HEADER_SIZE: usize, J: HookConfig, FP> Default
     for ChallengesStage<C, R, HEADER_SIZE, J, FP>
 {
     fn default() -> Self {
@@ -123,7 +123,7 @@ impl<
     C: Cycle,
     R: Rank,
     const HEADER_SIZE: usize,
-    J: AppHooksLayout,
+    J: HookConfig,
     FP: crate::internal::fold_revdot::Parameters,
 > staging::Stage<C::CircuitField, R> for ChallengesStage<C, R, HEADER_SIZE, J, FP>
 {
@@ -132,7 +132,7 @@ impl<
     type OutputKind = Kind![C::CircuitField; ChallengesOutput<'_, _, J>];
 
     fn values() -> usize {
-        num_values(J::challenges(), J::challenge_width())
+        num_values(J::ChallengeDerivations::len(), J::ChallengeWidth::len())
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -161,13 +161,13 @@ pub(crate) fn alloc_challenges<
     D: Driver<'dr, F = C::CircuitField>,
     C: Cycle,
     R: Rank,
-    J: AppHooksLayout,
+    J: HookConfig,
 >(
     dr: &mut D,
     proof: DriverValue<D, &Proof<C, R>>,
 ) -> Result<ChallengeVec<'dr, D, J>> {
     let allocator = &mut ();
-    J::ChallengeCount::range()
+    J::ChallengeDerivations::range()
         .map(|i| {
             Ok(ChallengeInstance {
                 inputs: J::ChallengeWidth::range()
@@ -199,7 +199,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        hook_layout::AppHooks,
+        AppHooks,
         internal::tests::{HEADER_SIZE, R, assert_stage_values},
     };
 

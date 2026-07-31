@@ -571,7 +571,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     }
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::AppHooksLayout>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::HookConfig>
     crate::Application<'_, C, R, HEADER_SIZE, J>
 {
     /// Runs endoscaling over the host-curve commitments that feed
@@ -602,7 +602,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::AppHooksLayout>
         // by. Two independent sides of the same obligation.
         let witness = PointsWitness::<
             C::HostCurve,
-            crate::internal::nested::EndoPoints<J::PolyCount>,
+            crate::internal::nested::EndoPoints<J::PolyWitnesses>,
         >::new(beta_endo, points)?;
 
         // Placed through the value-level chain, not `StageExt::rx`, whose
@@ -631,7 +631,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::AppHooksLayout>
             let step_circuit = EndoscalingStep::<
                 C::HostCurve,
                 R,
-                crate::internal::nested::EndoPoints<J::PolyCount>,
+                crate::internal::nested::EndoPoints<J::PolyWitnesses>,
             >::new(step);
             let staged = MultiStage::new(step_circuit);
             let step_trace = staged

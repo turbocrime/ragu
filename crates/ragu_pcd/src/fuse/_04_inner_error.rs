@@ -17,12 +17,13 @@ use super::{
     claims::{FuseBuilder, FuseProofSource},
 };
 use crate::{
-    AppHooksLayout, Application,
+    Application,
+    framework_hooks::HookConfig,
     internal::{claims, fold_revdot, native, nested},
     proof::ProofBuilder,
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
     Application<'_, C, R, HEADER_SIZE, J>
 {
     pub(super) fn inner_error_terms<'dr, 'rx, D, RNG: CryptoRngCore>(

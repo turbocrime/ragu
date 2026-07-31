@@ -31,7 +31,7 @@ use ragu_primitives::{Element, allocator::Allocator};
 
 use crate::{
     Proof,
-    hook_layout::AppHooksLayout,
+    framework_hooks::HookConfig,
     internal::native::{
         InternalCircuitIndex, InternalCircuitValues, RxComponent, RxIndex, RxValues,
     },
@@ -281,13 +281,11 @@ pub struct Output<'dr, D: Driver<'dr>> {
 /// Shape-free: every child contributes the same wire count here (one
 /// evaluation per rx component plus five scalars), so nothing about this
 /// stage's geometry depends on a step's hook counts.
-pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, J: AppHooksLayout> {
+pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, J: HookConfig> {
     _marker: PhantomData<(C, R, J)>,
 }
 
-impl<C: Cycle, R, const HEADER_SIZE: usize, J: AppHooksLayout> Default
-    for Stage<C, R, HEADER_SIZE, J>
-{
+impl<C: Cycle, R, const HEADER_SIZE: usize, J: HookConfig> Default for Stage<C, R, HEADER_SIZE, J> {
     fn default() -> Self {
         Stage {
             _marker: PhantomData,
@@ -310,8 +308,8 @@ pub fn num_values() -> usize {
     InternalCircuitIndex::NUM + 1 + 2 * child_num_values()
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
-    staging::Stage<C::CircuitField, R> for Stage<C, R, HEADER_SIZE, J>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig> staging::Stage<C::CircuitField, R>
+    for Stage<C, R, HEADER_SIZE, J>
 {
     type Parent = super::preamble::Stage<C, R, HEADER_SIZE, J>;
     type Witness<'source> = &'source Witness<C>;
@@ -350,7 +348,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        hook_layout::AppHooks,
+        AppHooks,
         internal::tests::{HEADER_SIZE, R, assert_stage_values},
     };
 
