@@ -61,11 +61,9 @@ impl<
     )> {
         let (left_proof, left_data) = left.into_parts();
         let (right_proof, right_data) = right.into_parts();
-        // The same capacity registration used, so the same instance width the
-        // registry committed to — it comes off the same const parameters, so
-        // there is nothing to pass and nothing that could disagree. Building the
-        // adapter here costs nothing beyond wrapping the step: there is no dry
-        // run of the body to repeat per fuse.
+        // The same capacity registration used — it comes off the same const
+        // parameters — so the same instance width the registry committed to.
+        // Building the adapter here only wraps the step.
         let (trace, aux) = MultiStage::new(Adapter::<
             C,
             S,

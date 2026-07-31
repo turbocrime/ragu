@@ -57,22 +57,11 @@ where
 //   cargo test -p ragu_pcd --release print_internal_circuit -- --nocapture
 // Then copy-paste the output into the check_constraints! calls in the test below.
 //
-// This is not a free test parameter. It is the widest header the framework
-// claims to support, and it trades directly against the claim slots: both are
-// charged to `outer_collapse`, the largest internal circuit, at roughly 13
-// gates per header element and 12 per slot. Measured against its 2048-gate
-// bound, back when the slot count was a framework constant:
-//
-//     4 slots, header 100 -> 2044   (4 gates spare)
-//     8 slots, header  90 -> 1962
-//     8 slots, header  84 -> 1884
-//     8 slots, header  60 -> 1572
-//
-// So a slot costs about one header element, and ten elements of header bought
-// four more claim slots. That constant is gone — claim slots are now whatever
-// header space is left before `GateBoundExceeded` trips, since claim slots and
-// header elements are terms in the same k(Y) Horner loop. The measurements
-// stand as the exchange rate.
+// This is the widest header the framework claims to support, and it trades
+// directly against the claim slots: both are terms in the same k(Y) Horner
+// loop, charged to `outer_collapse` — the largest internal circuit — at
+// roughly 13 gates per header element and 12 per slot against its 2048-gate
+// bound. A slot costs about one header element.
 pub const HEADER_SIZE: usize = 90;
 
 // Number of dummy application circuits to register before testing internal
@@ -82,17 +71,14 @@ const NUM_APP_STEPS: usize = 6000;
 
 /// The header size the slotted shape pins at.
 ///
-/// Small on purpose. [`HEADER_SIZE`] is 90 because the no-slot shape exists to
-/// measure how much header an application can afford; the slotted shape exists
-/// to cover the *slot* regions, and pairing a 90-element header with real slots
-/// would push `hashes_2` against its gate bound for no gain.
+/// Small on purpose: the slotted shape exists to cover the *slot* regions,
+/// and a 90-element header alongside real slots pushes `hashes_2` against
+/// its gate bound for no gain.
 const SLOTTED_HEADER_SIZE: usize = 4;
 
-/// Dummy application circuits for the slotted shape.
-///
-/// The no-slot shape registers [`NUM_APP_STEPS`] to show the internal circuits
-/// survive a large application; the slotted shape does not need to re-prove
-/// that, and building 6000 circuits twice would double this file's runtime.
+/// Dummy application circuits for the slotted shape. The no-slot shape
+/// already registers [`NUM_APP_STEPS`] to show the internal circuits survive
+/// a large application; a small count here keeps this file's runtime down.
 const NUM_SLOTTED_APP_STEPS: usize = 6;
 
 /// Builds a dummy application at a stated shape.
@@ -159,14 +145,10 @@ fn test_internal_circuit_constraint_counts() {
     check_constraints!(app, Hashes2Circuit,          mul = 1954, lin = 2951);
     check_constraints!(app, InnerCollapseCircuit,    mul = 1831, lin = 1918);
     check_constraints!(app, OuterCollapseCircuit,    mul = 1848, lin = 2742);
-    // `ComputeV` grew by 13: it iterates the internal circuits, and the
-    // challenge slots added a stage mask and a final-trace mask.
-    //
-    // `ChallengeBinding` grew by 186 — exactly `OuterError`'s gates. It reaches
-    // the challenge slots on the branch below `OuterError`, and a circuit's
-    // trace spans every gate up to its last stage, so it pays for the stage it
-    // skips on the way. That is the price of keeping `OuterCollapse` — which
-    // needs both `OuterError` and the challenge slots — able to reach both.
+    // `ChallengeBinding`'s count includes `OuterError`'s 186 gates: it
+    // reaches the challenge slots on the branch below `OuterError`, and a
+    // circuit's trace spans every gate up to its last stage, so it pays for
+    // the stage it skips on the way.
     check_constraints!(app, ComputeVCircuit,         mul = 1239, lin = 1819);
     check_constraints!(app, ChallengeBindingCircuit, mul =  518, lin =   71);
 }
@@ -189,25 +171,18 @@ fn test_slotted_internal_circuit_constraint_counts() {
 
     let app = dummy_app::<SLOTTED_HEADER_SIZE, 2, 3, 1>(pasta, NUM_SLOTTED_APP_STEPS);
 
-    // All six moved +8 gates when the preamble stage gained the lift region's
-    // wires (four per polynomial slot per child — a stage span cost, no
-    // constraints). `OuterCollapse` moved a further +16/+32 because its
-    // `application_ky` Horner folds the sixteen new lift wires — the fold
-    // doing exactly its job.
+    // All six span the preamble stage, so all six include the lift region's
+    // wires (four per polynomial slot per child); `OuterCollapse`'s
+    // `application_ky` Horner additionally folds them.
     check_constraints!(app, Hashes1Circuit,          mul = 1156, lin = 1834);
     check_constraints!(app, Hashes2Circuit,          mul = 1720, lin = 2951);
     check_constraints!(app, InnerCollapseCircuit,    mul = 1597, lin = 1918);
     check_constraints!(app, OuterCollapseCircuit,    mul =  817, lin = 1138);
     // The two that read the slot regions, and the reason this shape is pinned
-    // at all. `ComputeV` carries the per-claim resolution — a one-hot over the
-    // polynomial slots, keyed on the claim's commitment — so it moves whenever
-    // that keying or the claim count does. `ChallengeBinding` is 865 here
-    // against 518 with no slots, because an application that derives a
-    // challenge has one to bind.
-    // ComputeV gained +17 gates / +34 constraints when it started re-deriving
-    // each child's q(u) from the lift instance wires (two 8-term Horner walks
-    // and their equality against the eval stage's carried q(u)) — the
-    // constraint that makes a step's instance lifts binding.
+    // at all. `ComputeV` carries the per-claim one-hot resolution and the
+    // per-child q(u) re-derivation from the lift instance wires, so it moves
+    // whenever those do. `ChallengeBinding` is 865 here against 518 with no
+    // slots: an application that derives a challenge has one to bind.
     check_constraints!(app, ComputeVCircuit,         mul = 1124, lin = 2093);
     check_constraints!(app, ChallengeBindingCircuit, mul =  865, lin = 1225);
 }
@@ -256,11 +231,8 @@ fn print_internal_circuit_constraint_counts() {
 }
 
 /// The stage types `test_internal_stage_parameters` pins, at eight polynomial
-/// slots.
-///
-/// The geometry is a function of the declared slot counts, so the counts have
-/// to be named — there is no single "the" layout, which is the point of the
-/// branch these numbers were re-pinned on.
+/// slots. The geometry is a function of the declared slot counts, so the
+/// counts have to be named.
 mod pinned_chain {
     use super::{HEADER_SIZE, R};
     use crate::internal::native::chain;
@@ -291,10 +263,6 @@ fn test_internal_stage_parameters() {
         }};
     }
 
-    // Last moved when the accumulator gained the claim-lift polynomial `q`:
-    // the eval stage carries one q(u) per child (two more values, one gate).
-    // Before that, the lift instance region widened the preamble by four
-    // wires per polynomial slot per child and shifted every stage below it.
     check_stage!(pinned_chain::Preamble,   "Preamble",   skip =   1, num = 352);
     check_stage!(pinned_chain::OuterError, "OuterError", skip = 353, num = 186);
     check_stage!(pinned_chain::InnerError, "InnerError", skip = 539, num = 399);
@@ -344,59 +312,12 @@ fn test_native_registry_digest() {
 
     let app = dummy_app::<HEADER_SIZE, 0, 0, 0>(pasta, NUM_APP_STEPS);
 
-    // Changed when challenge derivation moved into application-circuit stages:
-    // every application circuit gained `NUM_CHALLENGE_SLOTS` staged wire
-    // regions and `NUM_CHALLENGE_SLOTS * 3` instance elements (the bridged
-    // stage commitment and its challenge, per slot). Changed again when the
-    // `challenge_binding` circuit landed: the native registry gained that
-    // circuit, a `PreambleFinalStaged` mask, and one more `RxIndex` component
-    // (which widens the `query` and `eval` stages by one evaluation per child).
-    // Changed again when unused challenge slots started being *filled* rather
-    // than skipped: a skipped slot left its `CHALLENGE_WIDTH` reserved wires
-    // unconstrained inside a region the stage commits, so each padded slot now
-    // pins them to zero. Changed again when slot padding stopped being its own
-    // routine and started calling `derive_challenge` — which, like every real
-    // call, takes a fresh gate allocator, so a padded slot's challenge element
-    // no longer shares a gate with the next slot's. Changed again when the
-    // challenge stages became `RxIndex` variants: they moved from their own
-    // position in the `_10_p` accumulation into the `RxIndex::ALL` block, and
-    // `compute_v` gained the poly-query triple every other rx component has
-    // (four more per fuse, one per child per slot). Changed again when the
-    // query-slot count went from 4 to 8 and `HEADER_SIZE` from 100 to 90
-    // — both change the width of every application circuit's instance.
-    //
-    // Changed again when `derive_challenge` became points-only. The challenge
-    // stages are gone, so the native registry lost the per-slot stage masks,
-    // the per-count final-trace masks, and the `ChallengeStage` rx components
-    // — which shrinks `RxIndex::ALL`, and with it every stage that carries one
-    // evaluation per rx component. What grew is the instance: a slot now
-    // carries `2 * challenge.width + 1` elements where it carried
-    // three, so the preamble stage and its readers widen by two per slot per
-    // child.
-    //
-    // Changed again — and now **per application** — when the slot capacity
-    // became a set of declared const parameters rather than a framework
-    // constant. This digest is *this test application's*: its dummy
-    // steps witness no polynomials, raise no claims and derive no challenges,
-    // so every slot-dependent width collapses. `challenge_binding` in
-    // particular falls from 1534 gates to 332, because an application that
-    // never derives a challenge has nothing to bind. Another application's
-    // digest will differ, which is the point.
-    //
-    // Changed again when the challenge slots became their own stage. Two
-    // circuits gained stages — `outer_collapse` and `challenge_binding` both
-    // end at the new stage now — so their entries in `native::claims::build`
-    // fold two more rx components. `compute_v` builds that same claim list
-    // in-circuit, and the extra components are evaluations folded into linear
-    // combinations it already had, so its wiring moves while its gate counts do
-    // not. That is why this digest changed and
-    // `test_internal_circuit_constraint_counts` did not.
-    //
-    // **Unmoved** by a claim naming its polynomial by commitment rather than by
-    // index — because this shape declares no slots at all, so the claim region
-    // it touches is empty. That blindness is why
-    // [`test_slotted_registry_digests`] exists: this pin covers the shape-free
-    // wiring, that one covers the slot regions.
+    // The digest is per application: capacity is a set of declared const
+    // parameters, and this test application declares
+    // `POLYS = 0, CLAIMS = 0, CHALLENGES = 0`, so every slot-dependent width
+    // collapses. That is also this pin's blind spot — a change confined to
+    // the slot regions cannot move it; [`test_slotted_registry_digests`]
+    // covers those.
     let expected = fp!(0x2bb64a4adaa9e869d9187bec77ae9f8c8788703ca013ff9bae02b6fdbc02dec0);
 
     assert_eq!(
@@ -424,25 +345,19 @@ fn test_slotted_registry_digests() {
 
     let app = dummy_app::<SLOTTED_HEADER_SIZE, 2, 3, 1>(pasta, NUM_SLOTTED_APP_STEPS);
 
-    // Last moved when the accumulator gained the claim-lift polynomial `q`:
-    // the eval stage carries one q(u) per child and `compute_v` re-derives it
-    // from the lift instance wires.
-    //
-    // Both `POLYS = 0` digests holding is the check: `q_slots(0) = 0`, so the
-    // limb feature vanishes entirely at that shape and its digests must not
-    // move.
+    // Covers the limb machinery: the eval stage carries one q(u) per child
+    // and `compute_v` re-derives it from the lift instance wires. The
+    // `POLYS = 0` digests holding alongside is the isolation check:
+    // `q_slots(0) = 0`, so the feature vanishes at that shape.
     assert_eq!(
         app.native_registry.digest(),
         fp!(0x190861265b03c475295efdccae505bedc909d54c418b4742cf14cf099c8eab66),
         "Native registry digest changed unexpectedly at a slotted shape!"
     );
-    // Last moved when the claim-bridge stages returned to carrying the host
-    // point's two coordinate wires: the 508-bit encoding existed for an
-    // in-step opening the 2048-gate cap ruled out, so no consumer of the bits
-    // could ever exist and each slot went back from 254 gates to one. The
-    // native digest holding at the same time is the check that the revert
-    // reached exactly the nested encoding — the limb machinery (`q`, the lift
-    // instance region, `compute_v`'s re-derivation) is all native and stayed.
+    // Covers the nested side of the claim machinery: one coordinate-pair
+    // slot per claim bridge, the stashed `C_q`, and the endoscaling growth.
+    // The limb machinery itself (`q`, the lift instance region, `compute_v`'s
+    // re-derivation) is all native and must move only the digest above.
     assert_eq!(
         app.nested_registry.digest(),
         fq!(0x3158d084e78957d7df2a0123baddfd948e4e7f3d920327f78c5b851eb3444d67),
@@ -461,43 +376,12 @@ fn test_nested_registry_digest() {
 
     let app = dummy_app::<HEADER_SIZE, 0, 0, 0>(pasta, NUM_APP_STEPS);
 
-    // Changed when the per-claim bridge stages were added: the nested registry
-    // gained one bonding mask per poly-query claim slot
-    // (`InternalCircuitIndex::BridgeClaim`), and the `Loading` circuit's final
-    // stage moved from `eval` to the last claim-bridge stage. Changed again
-    // when challenge stages joined the accumulation: the nested preamble
-    // stashes two more commitments per child and the endoscaling point list
-    // grew by `2 * NUM_CHALLENGE_SLOTS`. Changed again when the challenge
-    // bridge stages landed: one more bonding mask per challenge slot, the eval
-    // bridge widened to record them, and `Loading`'s final stage moved from the
-    // last claim bridge to the last challenge bridge. Changed again when the
-    // `challenge_binding` circuit landed: its rx joins the per-child
-    // commitment walk, so `NUM_ENDOSCALING_POINTS` grew by two and the nested
-    // preamble stashes one more commitment per child. Changed again when the
-    // challenge stages became `RxIndex` variants: the point count is unchanged,
-    // but they moved within the per-child block, from after the poly-query
-    // claims to inside the `RxIndex::ALL` run. Changed again when the
-    // query-slot count went from 4 to 8: four more claim-bridge masks,
-    // four more stashed commitments per child, and eight more endoscaling
-    // points.
-    //
-    // Changed again when `derive_challenge` became points-only. A challenge is
-    // now hashed from points the step already holds, so nothing about it
-    // crosses the curve boundary: the challenge bridge stages and their
-    // bonding masks are gone, `Loading`'s final stage moved back from the last
-    // challenge bridge to the last claim bridge, the eval and preamble bridges
-    // no longer stash challenge-stage commitments, and the endoscaling point
-    // list shrank by `2 * NUM_CHALLENGE_SLOTS` per child.
-    //
-    // Changed again when the slot capacity became per-application: this test
-    // application's steps use no slots, so the claim-bridge run is empty, the
-    // eval and preamble bridges carry no stashed claims, and the endoscaling
-    // point list loses a point per slot per child. See the native digest.
-    //
-    // That is also this pin's blind spot: with no slots there is no claim-bridge
-    // run, no stashed claim, and no per-slot endoscaling point, so a change to
-    // any of them cannot move this number. [`test_slotted_registry_digests`]
-    // covers that shape.
+    // Per application, like the native digest above: at
+    // `POLYS = 0, CLAIMS = 0, CHALLENGES = 0` the claim-bridge run is empty,
+    // the eval and preamble bridges carry no stashed claims, and the
+    // endoscaling point list carries no per-slot points — so a change
+    // confined to any of those cannot move this number.
+    // [`test_slotted_registry_digests`] covers that shape.
     let expected = fq!(0x06bb3145242fd72534249a81cf321e7e4608d2610f745aa4eafa42887528f9d9);
 
     assert_eq!(
@@ -551,16 +435,14 @@ fn print_registry_digests() {
 /// The nested chain layout tiles — every stage starts where its predecessor
 /// ended — at every capacity.
 ///
-/// The masks cut from it are functions of precisely these offsets, so a chain
-/// that stopped tiling would silently misplace every stage after the break.
-/// Checked across capacities on purpose: the bug this guards against is
-/// geometry that is right at one blessed shape and wrong at every other, which
-/// is exactly what asserting against a fixed placeholder could not catch.
+/// The masks cut from it are functions of precisely these offsets, so a break
+/// in tiling silently misplaces every stage after it. Checked across
+/// capacities: the bug this guards against is geometry that is right at one
+/// blessed shape and wrong at every other.
 ///
 /// Only the nested chain needs this. The native chain is typed, so
 /// [`Stage::skip_gates`](ragu_circuits::staging::Stage::skip_gates) *is*
-/// `Parent::skip_gates() + Parent::num_gates()` by definition and tiling is not
-/// something it can get wrong.
+/// `Parent::skip_gates() + Parent::num_gates()` by definition.
 #[test]
 fn nested_chain_layout_tiles_at_every_capacity() {
     use ragu_pasta::Pasta;
@@ -676,21 +558,15 @@ fn test_rx_index_all_exhaustive() {
     assert_eq!(collected.as_slice(), RxIndex::ALL);
 }
 
-/// The branch's acceptance gate: a light application's recursion is
-/// **measurably smaller** than a heavy one's.
+/// A light application's recursion is **measurably smaller** than a heavy
+/// one's: two applications, identical but for the capacity they declare, and
+/// every internal circuit the heavy one registers is strictly larger —
+/// capacity is the application's own declaration, not a framework constant.
 ///
-/// Two applications, identical but for the capacity they declare. Every internal
-/// circuit the heavy application registers must be strictly larger, because its
-/// capacity comes from its own declaration rather than from a framework
-/// constant — which is the whole point of the exercise.
-///
-/// A framework constant would make these two identical.
-///
-/// Each application's single step is written to match what it declares — `Light`
-/// calls no hook, `Heavy` witnesses two polynomials, opens one of them twice and
-/// derives a challenge — but the *bodies do not drive the measurement*. Nothing
-/// registers a step by running it, so the gate counts below come from the
-/// declared consts alone. The two steps are here so the declarations read as
+/// Each application's single step is written to match what it declares —
+/// `Light` calls no hook, `Heavy` witnesses two polynomials, opens one of
+/// them twice and derives a challenge — but the gate counts come from the
+/// declared consts alone; the steps are here so the declarations read as
 /// something an application would really ask for.
 mod capacity_is_per_application {
     use ragu_arithmetic::ff::Field;
@@ -799,7 +675,7 @@ mod capacity_is_per_application {
             ctx.witness_polynomial::<R, 2>([Maybe::clone(&commitment), commitment])?;
         let zero = Element::alloc(ctx.dr, &mut Standard::new(), D::just(|| Fp::ZERO))?;
         // One polynomial opened twice, the other once: three claims over two
-        // polynomials, which is the split this branch exists for.
+        // polynomials.
         ctx.enforce_poly_query(&handle, zero.clone(), zero.clone())?;
         ctx.enforce_poly_query(&handle, zero.clone(), zero.clone())?;
         ctx.enforce_poly_query(&other, zero.clone(), zero)?;
@@ -856,8 +732,7 @@ mod capacity_is_per_application {
         );
 
         // Every internal circuit that reads a child's slots is strictly
-        // smaller in the light application. Under a framework constant these
-        // would be equal — that equality is exactly what this branch removed.
+        // smaller in the light application.
         for id in [
             InternalCircuitIndex::Hashes1Circuit,
             InternalCircuitIndex::OuterCollapseCircuit,

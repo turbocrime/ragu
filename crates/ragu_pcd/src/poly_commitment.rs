@@ -101,21 +101,16 @@ impl<C: Cycle, R: Rank> PolyCommitment<C, R> {
 /// [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query) to
 /// raise the claim.
 ///
-/// # Two commitments, and this is not the polynomial's
+/// # Two commitments
 ///
-/// [`PolyCommitment`]'s host commitment is `commit(polynomial)` — the real
-/// thing, on the host curve, canonical for that polynomial. It cannot be a
-/// [`Point`] in a
-/// step: `Point` requires the curve's base field to be the circuit's field, and
-/// `HostCurve::Base` is the *scalar* field.
-///
-/// So what a step sees is `bridge_com`: the commitment of this claim's bridge
-/// stage, whose wires *are* `host`'s coordinates, blinded by
-/// `bridge_alpha^(5 + slot)`. It is a function of `(host, slot, bridge_alpha,
-/// capacity)`, so the same polynomial in a different slot or a different proof
-/// has a different `bridge_com`. It identifies a polynomial *within one proof*,
-/// which is what a claim needs, and it is not homomorphic in the polynomial —
-/// coordinates are not linear in the point.
+/// [`PolyCommitment`]'s host commitment is `commit(polynomial)`, canonical
+/// for that polynomial — and unrepresentable as a [`Point`] in a step, since
+/// `Point` requires the curve's base field to be the circuit's field and
+/// `HostCurve::Base` is the *scalar* field. What a step sees is `bridge_com`:
+/// the commitment of this claim's bridge stage, whose wires *are* `host`'s
+/// coordinates, blinded by `bridge_alpha^(5 + slot)`. As a function of
+/// `(host, slot, bridge_alpha, capacity)` it identifies a polynomial *within
+/// one proof*, which is what a claim needs.
 pub struct PolyHandle<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> {
     bridge_com: Point<'dr, D, C::NestedCurve>,
     polynomial: DriverValue<D, sparse::Polynomial<D::F, R>>,

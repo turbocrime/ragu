@@ -21,21 +21,15 @@ use crate::internal::nested::{
 /// in the order that assigns their exponents.
 ///
 /// A stage's blind is `bridge_alpha^(i + 1)` for its position `i` here; the
-/// series starts at 1 because `α⁰ = 1` is no blind at all. The requirement is
-/// that no two bridge stages share a blind — deriving every exponent from a
-/// single ordering makes that true *by construction*, rather than by separate
-/// rules per family that have to be kept in agreement. It also means the layout
-/// follows the slot counts automatically.
+/// series starts at 1 because `α⁰ = 1` is no blind at all. Deriving every
+/// exponent from a single ordering keeps all blinds distinct by construction.
+/// `preamble`, `s_prime`, `inner_error` and `f` are absent: the fuse stages
+/// blind them with an in-circuit challenge, and [`bridge_alpha_exponent`]
+/// panics on them.
 ///
-/// Not every bridge stage is here. `preamble`, `s_prime`, `inner_error` and `f`
-/// are set by the fuse stages, which blind them with an in-circuit challenge
-/// instead — [`bridge_alpha_exponent`] panics on those.
-///
-/// This is the *specification* of the ordering, not the implementation of it:
-/// [`bridge_alpha_exponent`] computes a position directly, and
-/// `bridge_alpha_exponents_are_the_expected_series` checks it against this iterator. Keeping the
-/// ordering written out as a series is what makes "no two bridge stages share a
-/// blind" checkable rather than merely asserted.
+/// This is the *specification* of the ordering:
+/// `bridge_alpha_exponents_are_the_expected_series` checks
+/// [`bridge_alpha_exponent`]'s direct computation against it.
 #[cfg(test)]
 fn blinded_bridges(num_polys: usize) -> impl Iterator<Item = RxIndex> {
     // The four `cached_bridge!` stages first, then the per-slot claim bridges,
@@ -57,11 +51,10 @@ const NUM_CACHED_BRIDGES: u64 = 4;
 /// The exponent of `bridge_alpha` for a blinded bridge stage — its position in
 /// [`blinded_bridges`], offset past the unusable zeroth power.
 ///
-/// Computed directly rather than by searching the series. The claim slots come
-/// last, so an exponent never depends on how many there are — only on the
-/// position of the entry itself, which is why this needs no capacity and can
-/// stay a free function every caller reaches. `bridge_alpha_exponents_are_the_expected_series` pins
-/// this against [`blinded_bridges`] so the two orderings cannot drift.
+/// The claim slots come last, so an exponent depends only on the entry's own
+/// position — no capacity parameter needed.
+/// `bridge_alpha_exponents_are_the_expected_series` pins this against
+/// [`blinded_bridges`].
 pub(crate) fn bridge_alpha_exponent(idx: RxIndex) -> u64 {
     match idx {
         RxIndex::BridgeOuterError => 1,
@@ -101,10 +94,9 @@ pub(crate) fn host_commitment<C: Cycle, R: Rank>(
 ///
 /// Two short of a limb's 128, which is what makes the decomposition canonical:
 /// the largest value `lo + 2^128·hi` can then take is `2^254 - 1`, below both
-/// Pasta moduli, so no coordinate has a wrapped second decomposition and no
-/// comparison against the modulus is ever needed. The cost is a completeness
-/// bound rather than a soundness one: a commitment with a coordinate at or
-/// above `2^254` — a `~2^-129` fraction of the field — cannot be witnessed.
+/// Pasta moduli, so no coordinate has a wrapped second decomposition. The cost
+/// is a completeness bound: a commitment with a coordinate at or above `2^254`
+/// — a `~2^-129` fraction of the field — cannot be witnessed.
 const HIGH_BITS: usize = 126;
 
 /// The four 128-bit limbs `[x_lo, x_hi, y_lo, y_hi]` of a host commitment's
@@ -163,9 +155,8 @@ fn split_coordinate(bytes: &[u8]) -> Result<(u128, u128)> {
 /// `[x_lo, x_hi, y_lo, y_hi]`, slot-major.
 ///
 /// Fully deterministic from the recorded hosts — any party can rebuild it, so
-/// it is never carried, and its commitment is recomputable wherever it must be
-/// checked. Empty when there are no slots: the limb feature vanishes at
-/// `POLYS = 0`.
+/// it is rebuilt rather than carried. Empty when there are no slots: the limb
+/// feature vanishes at `POLYS = 0`.
 ///
 /// `q` is what binds a step's instance-bound lifts to the real commitments:
 /// `_10_p` folds `(q, commit(q))` into the accumulator, `compute_v` re-derives
@@ -198,9 +189,8 @@ pub(crate) fn claim_lift_commitment<C: Cycle, R: Rank>(
 }
 
 /// The stage blind for poly-query claim `slot`, derived from the proof's
-/// shared `bridge_alpha` source. Must agree everywhere the claim bridge is
-/// built (the prover-side `StepCtx` and the `ProofBuilder`), or the claim's
-/// `bridge_com` would not match the rx the proof carries.
+/// shared `bridge_alpha` source. Shared so the claim bridge's two build sites
+/// (the prover-side `StepCtx` and the `ProofBuilder`) agree.
 pub(crate) fn claim_bridge_alpha<C: Cycle>(
     bridge_alpha: C::ScalarField,
     slot: usize,
@@ -209,12 +199,8 @@ pub(crate) fn claim_bridge_alpha<C: Cycle>(
 }
 
 /// Builds poly-query claim `slot`'s bridge stage rx: a stage whose wires are
-/// the claim's host commitment.
-///
-/// The slot is an index into the claim-bridge run's layout rather than a
-/// distinct type, so this reads the stage's position off the layout instead of
-/// dispatching. That is what lets the slot count be an application parameter:
-/// there is nothing here to widen when it changes.
+/// the claim's host commitment. The slot is an index into the claim-bridge
+/// run's layout, so the slot count can be an application parameter.
 pub(crate) fn claim_bridge_rx<C: Cycle, R: Rank>(
     slot: usize,
     alpha: C::ScalarField,
@@ -252,16 +238,11 @@ pub(crate) fn claim_bridge_commitment<C: Cycle, R: Rank>(
 /// A slot cannot be padded with zeros — `commit(0)` is the identity, which no
 /// [`Point`](ragu_primitives::Point) can witness — so the padding is a *real*
 /// claim that happens to be trivially true: the constant polynomial $1$, whose
-/// value at any $x$ is $1$. Nothing about it is special-cased downstream; it
-/// travels the same path as a claim the step raised.
-///
-/// The commitment needs no multi-scalar multiplication. `commit` sends the
-/// coefficient of $X^d$ to `g[d]`, so committing $1$ is exactly `g[0]` — which
-/// is also why it can never be the identity.
+/// commitment is exactly `g[0]` and whose value at any $x$ is $1$. It travels
+/// the same path as a claim the step raised.
 ///
 /// The three values are returned together because they are one claim: $y$ is
-/// [`padding_poly`] evaluated at $x$, and changing either end alone would make
-/// the claim false.
+/// [`padding_poly`] evaluated at $x$.
 pub(crate) fn padding_claim<C: Cycle>(
     params: &C::Params,
 ) -> (C::HostCurve, C::CircuitField, C::CircuitField) {
@@ -284,8 +265,7 @@ pub(crate) fn padding_poly<C: Cycle, R: Rank>() -> sparse::Polynomial<C::Circuit
 /// [`ChallengeLayout::width`](crate::framework_hooks::ChallengeLayout::width)
 /// whether or not the caller supplied them all, so the prover, the root
 /// verifier, and the `challenge_binding` circuit agree on the sponge's shape
-/// by construction. Like [`padding_claim`], a fixed generator can never be
-/// the identity.
+/// by construction.
 pub(crate) fn sentinel_point<C: Cycle>(params: &C::Params) -> C::NestedCurve {
     use ragu_arithmetic::FixedGenerators;
 

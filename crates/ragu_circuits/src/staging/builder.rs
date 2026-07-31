@@ -355,11 +355,10 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
             guards.push(self.reserve_slot(stage.clone(), layout.width(slot))?);
         }
 
-        // No end-of-run check here, deliberately: `reserve_slot` advances the
+        // No end-of-run check, deliberately: `reserve_slot` advances the
         // cursor by `width.div_ceil(2)` per slot and `final_skip_gates` is
-        // `skip_gates(0)` plus that same sum, so comparing them would be
-        // comparing the layout to itself — the vacuous shape this cursor exists
-        // to replace. The start check is the one with two independent sides.
+        // `skip_gates(0)` plus that same sum — the two sides are the same
+        // computation. The start check is the one with two independent sides.
 
         Ok((
             guards,

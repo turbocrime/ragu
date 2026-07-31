@@ -87,23 +87,14 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     /// Rebuild the carried claim-bridge stage rx in `slot` so that it witnesses
     /// `host` instead of the host commitment this proof records for that slot.
     ///
-    /// Nothing else moves: `claim_host_commitments[slot]` still holds the real
-    /// host, so the eval bridge stage still records it, and the instance-bound
-    /// `bridge_com` is untouched — so neither the application circuit's $k(Y)$
-    /// nor the native root-verify check
-    /// (`verify.rs`, which *recomputes* the bridge commitment from the recorded
-    /// host rather than reading the carried rx) has any reason to fire.
-    ///
-    /// The substituted rx is a *well-formed* claim-bridge stage for the same
-    /// slot with the same blind, so that slot's own `BridgeClaim` bonding claim
-    /// still holds too. Exactly one check in the system is supposed to reject
-    /// this: the `loading` circuit's
-    /// `claim_bridges[slot].host == eval.claims[slot]`.
-    ///
-    /// That makes this the isolating adversary for that constraint, and the
-    /// reason it is a distinct entry point rather than a
-    /// [`Corruption`] variant is that it needs a `HostCurve` point, not a field
-    /// element.
+    /// Nothing else moves: the recorded host, the instance-bound `bridge_com`,
+    /// the child's $k(Y)$, and the slot's own `BridgeClaim` bonding claim all
+    /// stay intact, so exactly one check in the system is supposed to reject
+    /// this — the `loading` circuit's
+    /// `claim_bridges[slot].host == eval.claims[slot]`. That makes this the
+    /// isolating adversary for that constraint. A distinct entry point rather
+    /// than a [`Corruption`] variant because it takes a `HostCurve` point,
+    /// not a field element.
     pub fn corrupt_claim_bridge_host(
         &mut self,
         slot: usize,
@@ -134,19 +125,12 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 
     /// The instance-bound opening $(x, y)$ this proof claims in `slot`.
     ///
-    /// The read counterpart to [`Corruption::ClaimY`], and the only way out of
-    /// the crate to see a claim slot at all. It exists for one job: letting a
-    /// test establish *what* a proof claims before asserting how the verifier
-    /// treats it, so a rejection can be attributed to the desync under test
-    /// rather than to any of the other ways a malformed proof fails.
-    ///
-    /// Not a general proof-inspection API, which is why it is behind this
-    /// feature. A consumer's contract with a proof is
-    /// [`Application::verify`](crate::Application::verify), and it already checks
-    /// every slot list's length, every claim against the polynomial its
-    /// commitment names, and every carried polynomial against its recorded host
-    /// commitment — so a test that reads these back to re-assert them is
-    /// restating the verifier.
+    /// Exists for one job: letting a test establish *what* a proof claims
+    /// before asserting how the verifier treats it, so a rejection can be
+    /// attributed to the desync under test. Behind this feature because a
+    /// consumer's contract with a proof is
+    /// [`Application::verify`](crate::Application::verify), which checks the
+    /// slot lists itself.
     pub fn claim_opening_for_testing(&self, slot: usize) -> (C::CircuitField, C::CircuitField) {
         let claim = &self.application_claims[slot];
         (claim.x, claim.y)

@@ -30,13 +30,10 @@ use crate::{
 /// opening — four elements per slot), then the challenge slots (the coordinates
 /// of every input point, then the challenge).
 ///
-/// A query carries the commitment of the polynomial it opens rather than an
-/// index into the polynomial slots. It is the *same* commitment — the same
+/// A query carries the commitment of the polynomial it opens — the same
 /// allocated [`Point`](ragu_primitives::Point), written at two instance
-/// positions — so the two cannot disagree, and no constraint is spent making
-/// them agree. A repeat opening still costs a query slot and no polynomial
-/// slot; it costs one element more than an index would, and buys a reference
-/// that cannot be mis-resolved.
+/// positions, so no constraint is spent making them agree. A repeat opening
+/// costs a query slot and no polynomial slot.
 pub fn instance_len(header_size: usize, capacity: HookLayout) -> usize {
     header_size * 3
         + capacity.poly_query.polys * 2
@@ -129,26 +126,16 @@ impl<
 > Adapter<'params, C, S, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>
 {
     /// The application's declared slot capacities — what this circuit's
-    /// instance exposes and what [`StepCtx::finish_slots`] pads to.
-    ///
-    /// Read off this type's own const parameters, so it cannot disagree with the
-    /// shape the type states. Known before the first step registers, because the
-    /// application declares it rather than the framework folding it over the
-    /// registered steps: that is what lets a circuit be handed to the registry on
-    /// the spot, since hand-over *measures* a circuit and a shape folded from the
-    /// steps would not be settled until the last one arrived.
+    /// instance exposes and what [`StepCtx::finish_slots`] pads to. Read off
+    /// this type's own const parameters, so it agrees with the shape the type
+    /// states; see the crate docs for why capacity is declared.
     pub(crate) const CAPACITY: HookLayout =
         HookLayout::declared(POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH);
 
-    /// Wraps `step` for registration/keygen at [`CAPACITY`](Self::CAPACITY).
-    ///
-    /// The only constructor, and it takes no capacity: the application declares
-    /// its slot counts as const parameters, so there is nothing to discover from
-    /// the step, no second phase to settle, and no way for a caller to hand in a
-    /// capacity other than the one this type is instantiated at. A step that asks
-    /// for more slots than the capacity is rejected by the hooks at the call that
-    /// exceeds it, which names the offending call rather than reporting a
-    /// mismatched total afterwards.
+    /// Wraps `step` for registration/keygen at [`CAPACITY`](Self::CAPACITY) —
+    /// the only constructor, and it takes no capacity: the counts are this
+    /// type's const parameters. A step that asks for more slots is rejected
+    /// by the hooks at the call that exceeds the capacity.
     ///
     /// `params` is `None` at registration, which runs before the cycle
     /// parameters exist and needs only the circuit's structure; see the
@@ -558,11 +545,6 @@ mod tests {
 
     /// A step body that derives more challenges than the application declared
     /// is rejected by the hook, at the call that exceeds the capacity.
-    ///
-    /// There is no separate reconciliation pass to catch this: the capacity is
-    /// declared, so the very first over-budget call has everything it needs to
-    /// refuse — and refusing there names the offending call rather than a
-    /// mismatched total after the fact.
     #[test]
     fn a_step_that_exceeds_the_declared_capacity_is_rejected() {
         struct TooManyChallenges;

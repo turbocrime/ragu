@@ -143,35 +143,18 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 /// nested-curve **bridge** commitment `bridge_com`, the opening point `x`, and
 /// the claimed evaluation `y` (the opened polynomial satisfies $p(x) = y$).
 ///
-/// Named fields rather than a positional `(bridge_com, x, y)` tuple so
-/// downstream folding code reads `claim.x` / `claim.y` instead of `claim.1` /
-/// `claim.2`.
+/// The claim names its polynomial by commitment: `bridge_com` is the same
+/// value the proof's [`application_polys`](Proof::application_polys) carries
+/// for that polynomial — in the step's own circuit the same *wire*, allocated
+/// once by `witness_polynomial` and written into both the polynomial region
+/// and every claim that opens it.
 ///
-/// # The claim names its polynomial by commitment, not by index
-///
-/// `bridge_com` is the same value the proof's
-/// [`application_polys`](Proof::application_polys) carries for that
-/// polynomial — and in the step's own circuit it is the same *wire*: the
-/// commitment is allocated once by `witness_polynomial` and written into both
-/// the polynomial region and every claim that opens it. So the two cannot
-/// disagree; they are not two copies.
-///
-/// Naming by commitment rather than by index is deliberate. An index is a name
-/// that must be resolved, and a resolution that goes wrong denotes a different
-/// polynomial *silently* — the circuit still opens. A commitment is the thing
-/// itself.
-///
-/// # Why `bridge_com` rather than `com`
-///
-/// It is not the commitment *to the polynomial*. It commits to this claim's
-/// bridge stage, whose wires are the coordinates of the polynomial's host
-/// commitment, blinded by `bridge_alpha^(5+slot)` and placed at that slot's
-/// offset in the bridge run. So it is a function of `(host, slot, bridge_alpha,
-/// capacity)`: it identifies exactly one slot of one proof and cannot be
-/// relocated to another, which is precisely the property a claim needs, and a
-/// mismatch finds no polynomial and produces no proof. It is *not* canonical for
-/// the polynomial across proofs or slots, and it is not homomorphic in it. The
-/// polynomial's own commitment is
+/// `bridge_com` commits to this claim's bridge stage — whose wires are the
+/// coordinates of the polynomial's host commitment, blinded by
+/// `bridge_alpha^(5+slot)` at that slot's offset in the bridge run. It is a
+/// function of `(host, slot, bridge_alpha, capacity)`: it identifies exactly
+/// one slot of one proof, which is the property a claim needs. The
+/// polynomial's own canonical commitment is
 /// [`PolyCommitment`](crate::PolyCommitment)'s host commitment.
 #[derive(Clone, Copy, Debug)]
 pub struct ClaimOpening<Curve, F> {
@@ -443,26 +426,20 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     /// bound to the application circuit's $k(Y)$ and recursively enforced when
     /// this proof is fused as a child.
     ///
-    /// Crate-internal, with the two slot lists below it. A proof's slot lists are
-    /// the verifier's working data, not a reporting surface: a consumer's contract
-    /// is [`Application::verify`](crate::Application::verify), which checks each
-    /// of these itself — every list's length against the declared capacity, then
-    /// every claim against the polynomial its commitment names, then every carried
-    /// polynomial against its recorded host commitment. Reading them back to
-    /// re-assert any of that restates the verifier. The one legitimate outside
-    /// read is a test establishing what a proof claims *before* checking how the
-    /// verifier treats it, so a rejection can be attributed; that goes through
+    /// Crate-internal, with the two slot lists below it: a proof's slot lists
+    /// are the verifier's working data, and the consumer's contract is
+    /// [`Application::verify`](crate::Application::verify), which checks each
+    /// of these itself. The one legitimate outside read — a test establishing
+    /// what a proof claims so a rejection can be attributed — goes through
     /// `Proof::claim_opening_for_testing`, behind `unstable-fuzzing`.
     pub(crate) fn application_claims(&self) -> &[ClaimOpening<C::NestedCurve, C::CircuitField>] {
         &self.application_claims
     }
 
     /// The nested-curve commitments to the polynomials this proof's circuit
-    /// witnessed, in slot order — always
-    /// the application's poly capacity, with unused slots
-    /// holding the canonical padding polynomial. A claim names one of these by
-    /// carrying it, not by index; the commitment appears here once, not once per
-    /// claim.
+    /// witnessed, in slot order — always the application's poly capacity,
+    /// with unused slots holding the canonical padding polynomial. A claim
+    /// names one of these by carrying it.
     pub(crate) fn application_polys(&self) -> &[C::NestedCurve] {
         &self.application_polys
     }

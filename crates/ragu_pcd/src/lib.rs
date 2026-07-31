@@ -92,53 +92,34 @@ pub(crate) const RAGU_TAG: &[u8] = b"FIXME";
 
 /// Builder for an [`Application`] for proof-carrying data.
 ///
-/// `CHALLENGE_WIDTH` is the widest input a
-/// [`derive_challenge`](step::StepCtx::derive_challenge) call may pass, in
-/// curve points. Every challenge slot's instance region holds exactly that
-/// many, with the positions a caller leaves empty taking a sentinel.
+/// `POLYS` is how many polynomials any one step may witness — the expensive
+/// axis: a bridge stage, a commitment, an MSM, and an endoscaling point per
+/// child, each. `CLAIMS` is how many opening claims any one step may
+/// enforce — the cheap axis: one instance triple, one `_08_f` quotient, one
+/// `compute_v` triple. Claim slots trade against `HEADER_SIZE`, both being
+/// terms in the same $k(Y)$ Horner loop; an application that asks for more
+/// than its circuits can hold fails at
+/// [`finalize`](ApplicationBuilder::finalize) with
+/// [`GateBoundExceeded`](ragu_core::Error::GateBoundExceeded).
 ///
-/// Points are the natural unit here: a caller passes points, and the instance
-/// stores points. What the width *costs* is derived from it —
-/// [`ChallengeLayout::permutations`](framework_hooks::ChallengeLayout::permutations)
-/// gives the `⌈2·width / RATE⌉` absorb permutations, paid by the internal
-/// `challenge_binding` circuit once per `(child, slot)` rather than out of any
-/// step's gate budget.
-///
-/// `POLYS` is how many polynomials any one step may witness. Declared for the
-/// same reason: a polynomial slot is the expensive axis — a bridge stage, a
-/// commitment, an MSM, and an endoscaling point per child — so how many an
-/// application is willing to pay for is its choice, not something to be learned
-/// by running its steps.
-///
-/// `CLAIMS` is how many opening claims any one step may enforce. A claim is the
-/// cheap axis — one instance triple, one `_08_f` quotient, one `compute_v`
-/// triple, no commitment and no endoscaling point — and claim slots trade
-/// against `HEADER_SIZE`, since both are terms in the same $k(Y)$ Horner loop.
-/// An application that asks for more of either than its circuits can hold fails
-/// at [`finalize`](ApplicationBuilder::finalize) with
-/// [`GateBoundExceeded`](ragu_core::Error::GateBoundExceeded); there is no
-/// arithmetic to do in advance, just a number to lower.
-///
-/// `CHALLENGES` is how many [`derive_challenge`](step::StepCtx::derive_challenge)
-/// calls any one step may make — the *number* of calls, where `CHALLENGE_WIDTH`
-/// fixes how wide each one is.
+/// `CHALLENGES` is how many
+/// [`derive_challenge`](step::StepCtx::derive_challenge) calls any one step
+/// may make, and `CHALLENGE_WIDTH` the widest input one call may pass, in
+/// curve points; the width's cost is
+/// [`ChallengeLayout::permutations`](framework_hooks::ChallengeLayout::permutations),
+/// paid by the internal `challenge_binding` circuit per `(child, slot)`.
 ///
 /// Together with `HEADER_SIZE` these five are the whole of an application
-/// circuit's instance width:
+/// circuit's instance width (`InstanceLen::len` is the single statement):
 ///
 /// ```text
-/// 3·HEADER_SIZE + 2·POLYS + 4·CLAIMS + CHALLENGES·(2·CHALLENGE_WIDTH + 1)
+/// 3·HEADER_SIZE + 2·POLYS + 4·CLAIMS + CHALLENGES·(2·CHALLENGE_WIDTH + 1) + 4·POLYS
 /// ```
 ///
-/// A polynomial slot is its bridge commitment, one point, two wires. A claim is
-/// that commitment again plus the $(x, y)$ opening, four wires. A challenge slot
-/// is `CHALLENGE_WIDTH` points plus the challenge itself. The single statement
-/// of this is `InstanceLen::len`.
+/// (the trailing `4·POLYS` is the lift instance region).
 ///
 /// Every term is declared, so a step's circuit shape is final the moment it
-/// registers. That is the point of declaring them: hand-over to the registry
-/// *measures* a circuit, and a shape folded from the steps is not settled until
-/// the last step has arrived.
+/// registers — see the crate docs.
 pub struct ApplicationBuilder<
     'params,
     C: Cycle,
@@ -217,15 +198,10 @@ impl<
         self.prevent_duplicate_suffixes::<S::Left>()?;
         self.prevent_duplicate_suffixes::<S::Right>()?;
 
-        // Building the adapter needs no cycle parameters — it stores the step,
-        // the declared capacity and a marker — which is what lets registration
-        // happen here, before `finalize` supplies them.
-        //
-        // Hand-over is immediate: it freezes the circuit's shape, and the shape
-        // is settled, because every term of the instance comes from a declared
-        // parameter rather than from a maximum over steps still to arrive. A
-        // step that asks for more slots than were declared is rejected by the
-        // hooks at the call that exceeds the capacity.
+        // Building the adapter needs no cycle parameters, so registration
+        // happens here, before `finalize` supplies them. Hand-over freezes
+        // the circuit's shape, which is settled: every term of the instance
+        // comes from a declared parameter.
         self.native_registry =
             self.native_registry
                 .register_circuit(MultiStage::new(Adapter::<
@@ -325,13 +301,10 @@ impl<
             "final circuit count mismatch"
         );
 
-        // Register nested internal circuits (no application steps, no headers).
-        //
-        // The nested side needs exactly one number, `POLYS`, and takes it both as
-        // a value (for the layouts) and as a `Len` (for the gadgets that those
-        // layouts place). It is uniform across one application because the
-        // internal circuits read a child's instance as a fixed-width record and
-        // any step's proof may be any fuse's child.
+        // Register nested internal circuits (no application steps, no
+        // headers). The nested side needs exactly one number, `POLYS`, taken
+        // both as a value (for the layouts) and as a `Len` (for the gadgets
+        // those layouts place).
         self.nested_registry = internal::nested::register_all::<
             C,
             R,
@@ -428,21 +401,12 @@ impl<
     /// The nested bridge chain's value-level geometry at this application's
     /// capacity.
     ///
-    /// Two separate things keep this value-level, and they are worth telling
-    /// apart:
-    ///
-    /// - The chain's three shape-carrying stages state no width of their own —
-    ///   their `values()` is
-    ///   [`shape_dependent_stage`](internal::shape_dependent_stage) — so their
-    ///   positions cannot come from their types. That is a consequence of
-    ///   keeping the slot counts off the nested stage types, not a language
-    ///   limit; putting them back would let this chain be typed the way
-    ///   [`internal::native::chain`] is, at the cost of the counts becoming
-    ///   viral through the seven stages below them.
-    /// - The chain ends in *runs* of per-slot bridge stages, and a run cuts one
-    ///   mask per slot from a single span. That one is a language limit: no
-    ///   type produces N masks for a runtime N, so the runs need span
-    ///   arithmetic regardless of where the counts live.
+    /// Two things keep this value-level: the chain's three shape-carrying
+    /// stages state no width of their own (their `values()` is
+    /// [`shape_dependent_stage`](internal::shape_dependent_stage), keeping
+    /// the slot counts off the nested stage types), and the chain ends in
+    /// *runs* of per-slot bridge stages, which need span arithmetic to cut
+    /// one mask per slot from a single span.
     pub(crate) fn nested_chain_layout(&self) -> ragu_circuits::staging::InducedStages {
         internal::nested::chain_layout::<C::HostCurve, R>(POLYS)
     }

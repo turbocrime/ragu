@@ -37,24 +37,18 @@
 //!   application circuit gets the application's challenge capacity in slots, each
 //!   absorbing exactly [`ChallengeLayout::width`] of them.
 //!
-//! ## Slot counts are declared, not discovered
+//! ## Slot counts are declared
 //!
 //! How many times a step body may call each hook is a property of the
 //! application, declared on [`ApplicationBuilder`](crate::ApplicationBuilder)
-//! and carried here as [`HookLayout`]. Nothing is learned by running the body
-//! first: each hook simply refuses a call past the capacity, at the call that
-//! exceeds it, with [`Error::InvalidWitness`].
+//! and carried here as [`HookLayout`]. Each hook refuses a call past the
+//! capacity, at the call that exceeds it, with [`Error::InvalidWitness`] —
+//! see the crate docs for why capacity is declared rather than folded from
+//! the registered steps.
 //!
-//! That is what makes a circuit's shape final the moment its step registers —
-//! hand-over to the registry *measures* a circuit, and a shape folded from the
-//! steps would not be settled until the last step arrived.
-//!
-//! How many *points* a call passes is not a structural quantity either: every
-//! slot's instance region holds [`ChallengeLayout::width`] points, with the
-//! positions a call leaves empty filled by a fixed sentinel. So a call's point
-//! count is witness data, not structure. That width is not discovered either —
-//! the application declares the absorb permutations it is willing to pay for,
-//! and the width follows from the Poseidon rate.
+//! A call's point count is witness data, not structure: every slot's instance
+//! region holds [`ChallengeLayout::width`] points, with the positions a call
+//! leaves empty filled by a fixed sentinel.
 //!
 //! ## Challenge soundness
 //!
@@ -161,10 +155,8 @@ pub struct ChallengeWires<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
 /// One of these per [`witness_polynomial`](crate::step::StepCtx::witness_polynomial)
 /// call. `bridge_com` is the polynomial's identity *within this proof*, and a
 /// claim that opens it carries **this same [`Point`]** — `enforce_polynomial_query`
-/// reads it from here rather than accepting one from the caller. So the
-/// polynomial region and the claim region hold one wire at two instance
-/// positions, not two copies that could disagree, and nothing has to enforce
-/// their equality.
+/// reads it from here, so the polynomial region and the claim region hold one
+/// wire at two instance positions and their equality needs no constraint.
 pub struct PolyWires<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     /// The bridge commitment point, as witnessed by the step.
     pub bridge_com: Point<'dr, D, C>,
@@ -190,13 +182,9 @@ pub struct PolyWires<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
 /// call. Several queries may carry the same `bridge_com` — that is the point of
 /// the split, and it is why a repeat opening costs only these four elements.
 pub struct QueryWires<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
-    /// The opened polynomial's bridge commitment.
-    ///
-    /// **This is the same [`Point`] the polynomial's own slot holds**, not a
-    /// copy of it: `witness_polynomial` allocates the bridge commitment once and
-    /// the handle lends it out, so writing it into the polynomial region and into
-    /// this claim writes one wire at two instance positions. The two therefore
-    /// cannot disagree, and no constraint is needed to make them agree.
+    /// The opened polynomial's bridge commitment — **the same [`Point`] the
+    /// polynomial's own slot holds**, one wire written at two instance
+    /// positions.
     pub bridge_com: Point<'dr, D, C>,
     /// The opening point.
     pub x: Element<'dr, D>,
@@ -228,19 +216,13 @@ pub struct FrameworkHooks<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     witnessed_polys: Vec<PolyWires<'dr, D, C::NestedCurve>>,
     /// The `(points, challenge)` record each
     /// [`derive_challenge`](crate::step::StepCtx::derive_challenge) call
-    /// produced, in slot order. Its length *is* the call count — how many
-    /// points a call passed needs no recording, every slot holding the same
-    /// number.
+    /// produced, in slot order. Its length *is* the call count.
     challenge_pairs: Vec<ChallengeWires<'dr, D, C::NestedCurve>>,
     /// The proof-level values the hooks commit to. See [`ProofValues`].
     proof_values: DriverValue<D, ProofValues<'dr, C>>,
-    /// The application's declared slot capacities.
-    ///
-    /// Every application circuit exposes exactly this many slots, whatever its
-    /// own step used, because the internal circuits read a child's instance as
-    /// a fixed-width record. A step that needs fewer pays for the difference
-    /// in padding; a step that needs more is rejected here, at the call that
-    /// exceeds the capacity.
+    /// The application's declared slot capacities: what every circuit's
+    /// instance exposes, what padding fills to, and what each hook checks
+    /// calls against.
     capacity: HookLayout,
 }
 
@@ -248,9 +230,8 @@ pub struct FrameworkHooks<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
 ///
 /// The value-level counterpart of [`FrameworkHookOutputs`], which holds
 /// in-circuit wires. A step circuit's `Aux` carries one of these beside the
-/// step's own `Aux`, so the framework's contribution stays one named thing
-/// rather than a handful of sibling fields — and so adding a hook means adding
-/// a field here, which the compiler then forces every reader to acknowledge.
+/// step's own `Aux`; adding a hook means adding a field here, which the
+/// compiler forces every drain site to acknowledge.
 pub struct FrameworkAux<C: Cycle> {
     /// The step's witnessed polynomials, padded to the application's poly
     /// capacity, in slot order — matching the instance layout the circuit
@@ -298,14 +279,10 @@ pub struct HookLayout {
 }
 
 impl HookLayout {
-    /// The capacity an application's declared parameters state.
-    ///
-    /// The one place the four consts on
-    /// [`ApplicationBuilder`](crate::ApplicationBuilder) turn into the value
-    /// every circuit is built from, so nothing downstream can hold a capacity
-    /// that disagrees with the type it came from. `const` so its callers can be
-    /// associated constants: a capacity that is read off a type's own parameters
-    /// on demand is one representation, where a stored copy of it would be two.
+    /// The capacity an application's declared parameters state — the one place
+    /// the four consts on [`ApplicationBuilder`](crate::ApplicationBuilder)
+    /// turn into the value every circuit is built from. `const` so its callers
+    /// can be associated constants.
     pub const fn declared(polys: usize, claims: usize, calls: usize, width: usize) -> Self {
         Self {
             challenge: ChallengeLayout { calls, width },
@@ -316,44 +293,30 @@ impl HookLayout {
 
 /// What the challenge-derivation hook requires of a step's circuit.
 ///
-/// Kept apart from [`PolyQueryLayout`] because the two are independent
-/// framework hooks: challenge derivation provides sound Fiat–Shamir, poly-query
-/// provides recursive opening enforcement, and neither implies the other. They
-/// share only the [`HookLayout`] that carries them, which is an implementation
-/// convenience rather than a relationship between the features.
+/// Kept apart from [`PolyQueryLayout`]: the two hooks are independent
+/// features, sharing only the [`HookLayout`] that carries them.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ChallengeLayout {
     /// [`derive_challenge`](crate::step::StepCtx::derive_challenge) calls.
     pub calls: usize,
-    /// The challenge width: how many input points one call absorbs, in curve
-    /// points.
-    ///
-    /// Every call's instance region holds exactly this many, with the positions
-    /// a caller leaves empty taking a fixed sentinel — so it is a width, not a
-    /// count of points actually supplied.
-    ///
-    /// **Declared by the application**, as a width in points — the natural unit,
-    /// since a caller passes points and the instance stores points. What that
-    /// width *costs* is derived from it: see
+    /// The challenge width: how many input points one call absorbs. Every
+    /// call's instance region holds exactly this many, with the positions a
+    /// caller leaves empty taking a fixed sentinel. Its cost is
     /// [`permutations`](ChallengeLayout::permutations).
     pub width: usize,
 }
 
 impl ChallengeLayout {
-    /// The absorb permutations one call of this width costs, at `rate`.
-    ///
-    /// A point contributes two coordinates and a permutation absorbs `rate` of
-    /// them, so a width of `w` points costs `⌈2w / rate⌉` permutations. This is
-    /// the cost side of the declared width, paid by `challenge_binding` once per
-    /// `(child, slot)` rather than out of any step's gate budget.
+    /// The absorb permutations one call of this width costs, at `rate`:
+    /// `⌈2w / rate⌉` (a point is two coordinates). Paid by
+    /// `challenge_binding` once per `(child, slot)`, out of the framework's
+    /// gate budget.
     pub const fn permutations(width: usize, rate: usize) -> usize {
         (2 * width).div_ceil(rate)
     }
 }
 
 /// What the poly-query hook requires of a step's circuit.
-///
-/// Two counts, not one, and that separation is the point of the mechanism.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PolyQueryLayout {
     /// [`witness_polynomial`](crate::step::StepCtx::witness_polynomial) calls —
@@ -361,28 +324,18 @@ pub struct PolyQueryLayout {
     /// plus two endoscaling points (one per child) in the next fuse.
     pub polys: usize,
     /// [`enforce_poly_query`](crate::step::StepCtx::enforce_poly_query) claims —
-    /// the cheap count. Four instance elements, one quotient in `_08_f`, one
-    /// term in `compute_v`; no bridge stage of its own, no commitment to
-    /// compute, no MSM, no endoscaling point.
-    ///
-    /// Tracked separately from [`polys`](Self::polys) because several claims may
-    /// carry the same commitment — the pool is flat, so a step spends it however
-    /// it likes rather than against a per-polynomial allowance. Collapsing the
-    /// two numbers into one would tax every additional claim at the polynomial
-    /// rate, which is the opposite of what this mechanism is for.
+    /// the cheap count: four instance elements, one quotient in `_08_f`, one
+    /// term in `compute_v`. A separate flat pool, so several claims can open
+    /// one polynomial at the claim rate.
     pub claims: usize,
 }
 
 /// The proof-level values a hook needs to compute a witness: the cycle
 /// parameters, and the proof's bridge blind source.
 ///
-/// A [`DriverValue`] rather than an `Option`, because its absence is exactly
-/// the driver's absence of values — unlike [`HookLayout`], which
-/// distinguishes two passes that are *both* structure-only. Every use sits
-/// inside a `try_just` that a structure-only driver discards, so no hook body
-/// has an absent case to handle. The adapter assembles this once, in its
-/// `witness`, from the blinds the driver carried and the parameters it was
-/// built with.
+/// A [`DriverValue`] because its absence is exactly the driver's absence of
+/// values: every use sits inside a `try_just` that a structure-only driver
+/// discards. The adapter assembles this once, in its `witness`.
 pub struct ProofValues<'dr, C: Cycle> {
     pub(crate) params: &'dr C::Params,
     pub(crate) bridge_alpha: C::ScalarField,
@@ -397,7 +350,7 @@ impl<'dr, C: Cycle> ProofValues<'dr, C> {
     }
 }
 
-// Hand-written: `derive` would demand `C: Clone`/`C: Copy`, but the fields are
+// Hand-written to avoid `derive`'s `C: Clone`/`C: Copy` bounds; the fields are
 // a shared reference and a field element, both `Copy` for every `Cycle`.
 impl<C: Cycle> Clone for ProofValues<'_, C> {
     fn clone(&self) -> Self {
@@ -550,12 +503,9 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     }
 
     /// Records a witnessed polynomial in `slot`, which
-    /// [`next_poly_slot`](Self::next_poly_slot) returned to the caller.
-    ///
-    /// Takes the slot rather than re-deriving it: the caller already holds it —
-    /// it needs it to pick the bridge stage before the commitment exists — so
-    /// asking again would be a second capacity check whose answer is already
-    /// known. The debug assertion pins that the two agree.
+    /// [`next_poly_slot`](Self::next_poly_slot) returned to the caller — the
+    /// caller already holds it to pick the bridge stage before the commitment
+    /// exists. The debug assertion pins that the two agree.
     pub(crate) fn record_polynomial(
         &mut self,
         slot: usize,
@@ -582,7 +532,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     /// # Errors
     ///
     /// Rejects a second call for the same slot: the first call's wires are
-    /// already the slot's instance wires, and a second set could disagree.
+    /// already the slot's instance wires.
     pub(crate) fn record_lifts(&mut self, slot: usize, lifts: [Element<'dr, D>; 4]) -> Result<()> {
         let wires = self.witnessed_polys.get_mut(slot).ok_or_else(|| {
             Error::InvalidWitness("poly_limbs called for a slot that was never witnessed".into())
@@ -597,13 +547,9 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     }
 
     /// Allocates plain value-filled lift wires for every slot the step did not
-    /// open, so the instance's lift region is always fully populated.
-    ///
-    /// Free wires are fail-closed here: the accumulator forces every slot's
-    /// lift wires to be lift images of the recorded host's canonical bits, so
-    /// an unopened slot's wires are constrained by the fold exactly as an
-    /// opened slot's are — the difference is only where booleanity of the
-    /// underlying bits is paid for.
+    /// open, so the instance's lift region is always fully populated. The
+    /// accumulator constrains an unopened slot's wires exactly as an opened
+    /// slot's; only where booleanity of the underlying bits is paid differs.
     pub(crate) fn fill_missing_lifts(&mut self, dr: &mut D) -> Result<()>
     where
         D::F: ragu_arithmetic::ff::WithSmallOrderMulGroup<3>,
@@ -633,12 +579,8 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     }
 
     /// Checks that another challenge slot is available, before the caller does
-    /// the work of filling it.
-    ///
-    /// The challenge twin of [`next_poly_slot`](Self::next_poly_slot):
-    /// reserving and recording are separate calls so the failure comes before
-    /// the sponge runs, and the count itself lives in one place —
-    /// `challenge_pairs`.
+    /// the work of filling it — the challenge twin of
+    /// [`next_poly_slot`](Self::next_poly_slot).
     pub(crate) fn reserve_challenge_slot(&self) -> Result<()> {
         if self.challenge_pairs.len() >= self.capacity.challenge.calls {
             return Err(Error::InvalidWitness(
@@ -678,18 +620,13 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     /// must not depend on witness values and must not exceed
     /// the application's claim capacity (checked here).
     ///
-    /// # The claim carries the commitment, and never a slot index
-    ///
     /// `bridge_com` is the [`Point`] the caller's
-    /// [`PolyHandle`](crate::PolyHandle) holds, so the claim's `bridge_com` and
-    /// the polynomial region's are the *same wire*, not two copies that could
-    /// drift. Provenance holds by construction: a `PolyHandle` can only come
-    /// from [`witness_polynomial`](crate::step::StepCtx::witness_polynomial), so
-    /// there is no slot index to resolve and nothing to check that a resolution
-    /// went to a polynomial this step actually witnessed.
-    ///
-    /// Claims may be raised in any order and several may open one polynomial;
-    /// a repeat opening costs a claim slot and no polynomial slot.
+    /// [`PolyHandle`](crate::PolyHandle) holds — the same wire the polynomial
+    /// region writes — and a `PolyHandle` can only come from
+    /// [`witness_polynomial`](crate::step::StepCtx::witness_polynomial), so a
+    /// claim names a witnessed polynomial by construction. Claims may be
+    /// raised in any order and several may open one polynomial; a repeat
+    /// opening costs a claim slot and no polynomial slot.
     ///
     /// # Errors
     ///
@@ -713,12 +650,10 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     /// Fills one unused claim slot with the canonical padding query.
     ///
     /// Separate from [`enforce_polynomial_query`](Self::enforce_polynomial_query)
-    /// because padding has no [`PolyHandle`](crate::PolyHandle) to name — it runs
-    /// after the step body, against slot 0, whose `bridge_com` this container
-    /// already holds. Keeping the lookup here means the *step-facing* path never
-    /// takes a slot index, which is the point: an index is a name that has to be
-    /// resolved, and a resolution that goes wrong denotes a different polynomial
-    /// silently.
+    /// because padding has no [`PolyHandle`](crate::PolyHandle) to name — it
+    /// runs after the step body, against slot 0, whose `bridge_com` this
+    /// container already holds; the step-facing path stays free of slot
+    /// indices.
     ///
     /// # Errors
     ///
@@ -758,13 +693,10 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     }
 
     /// The value of the first witnessed polynomial at $x = 0$ — its constant
-    /// term.
-    ///
-    /// [`StepCtx::finish_slots`](crate::step::StepCtx) uses this to make a
-    /// padding query trivially true without special-casing it downstream: the
-    /// claim it raises is a real opening of a real polynomial, and it pairs with
+    /// term. [`StepCtx::finish_slots`](crate::step::StepCtx) pairs this with
     /// the `bridge_com` [`enforce_padding_query`](Self::enforce_padding_query)
-    /// reads from the same slot.
+    /// reads from the same slot, so a padding query is a real, trivially true
+    /// opening.
     ///
     /// # Errors
     ///

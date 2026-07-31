@@ -72,17 +72,11 @@ pub(crate) fn enforce_names<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>>(
 
 /// The layout subdividing [`Run`] into one slot per claim.
 ///
-/// A free function taking `capacity` rather than a method on
-/// [`ProofBuilder`](crate::proof::ProofBuilder), because it has two callers
-/// holding different state and both must produce a bit-identical commitment:
-/// `ProofBuilder::claim_bridge_rx` has the builder, while
-/// `StepCtx::witness_polynomial` runs during witnessing with no builder at all,
-/// only the capacity off its hooks. Caching this on the builder would fix one
-/// path and reintroduce the divergence this shape prevents.
-///
-/// Builds only the claims run. `NestedLayouts::new` would eagerly build the
-/// chain plus all four runs — points, preamble, eval, claims — and discard
-/// three; `claim_run_layout` takes the chain and produces just this one.
+/// A free function taking `capacity`: its two callers —
+/// `ProofBuilder::claim_bridge_rx` and `StepCtx::witness_polynomial`, which
+/// runs during witnessing with no builder at all — must produce a
+/// bit-identical commitment from different state. Builds only the claims run,
+/// where `NestedLayouts::new` builds all four.
 pub fn layout<C: CurveAffine, R: Rank>(polys: usize) -> InducedStages {
     use crate::internal::nested::{chain_layout, claim_run_layout};
 

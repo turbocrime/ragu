@@ -183,10 +183,8 @@ pub fn chain_layout<HC: ragu_arithmetic::CurveAffine, R: Rank>(
 /// commitments there are.
 ///
 /// `nested_chain_layout_tiles_at_every_capacity` pins that each run's slots sum
-/// to the span they subdivide.
-/// The slot width comes from `Slot` itself, so the layout and the stage it tiles
-/// cannot disagree about how wide a slot is — a literal here would survive a
-/// slot stage gaining a field.
+/// to the span they subdivide. The slot width comes from `Slot` itself, so the
+/// layout and the stage it tiles agree by construction.
 pub fn run_layout<F, R, Slot>(
     chain: &ragu_circuits::staging::InducedStages,
     stage: ChainStage,
@@ -355,10 +353,9 @@ impl InternalCircuitIndex {
     /// (circuits before masks), since [`circuit_index()`](Self::circuit_index)
     /// derives indices from position in this list.
     ///
-    /// A runtime `Vec` rather than a `const` array: the length depends on the
-    /// polynomial-slot count, which is an application parameter, and a length
-    /// computed from a generic cannot size an array on stable Rust. The order
-    /// is what matters here, and it is identical either way.
+    /// A runtime `Vec`: the length depends on the polynomial-slot count, an
+    /// application parameter, and a length computed from a generic cannot
+    /// size an array on stable Rust.
     pub fn all(polys: usize) -> Vec<Self> {
         let mut all = Vec::new();
         all.extend(
