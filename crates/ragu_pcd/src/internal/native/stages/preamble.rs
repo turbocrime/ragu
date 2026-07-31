@@ -14,7 +14,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Boolean, Element, GadgetExt, Point,
+    Boolean, Element, GadgetExt,
     allocator::Allocator,
     consistent::Consistent,
     vec::{CollectFixed, ConstLen, FixedVec},
@@ -25,21 +25,21 @@ use crate::{Proof, header::Header, internal::native::unified, step::internal::pa
 type HeaderVec<'dr, D, const HEADER_SIZE: usize> = FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>>;
 
 /// A single poly-query claim instance witnessed from a child proof: the opened
-/// polynomial's nested-curve bridge commitment and the $(x, y)$ opening. The
-/// wire layout (bridge_com.x, bridge_com.y, x, y) matches the claim-slot region
-/// of the application circuit's instance, so writing these into the
+/// polynomial's embedded commitment coordinates and the $(x, y)$ opening. The
+/// wire layout (coords, x, y) matches the claim-slot region of the application
+/// circuit's instance, so writing these into the
 /// [`application_ky`](ProofInputs::application_ky) Horner binds them to the
 /// child's committed application rx.
 ///
-/// `bridge_com` is the same value one of [`ProofInputs::polys`] holds — in the
-/// child's own circuit it is literally the same wire, since the commitment is
-/// allocated once and written at both instance positions. The parent does not
-/// have to enforce that: a trace satisfying the child's registered wiring cannot
-/// have them differ, and the revdot identity is what carries it here.
+/// `coords` are the same values one of [`ProofInputs::polys`] holds — in the
+/// child's own circuit literally the same wires, since the pair is allocated
+/// once and written at both instance positions. The parent does not have to
+/// enforce that: a trace satisfying the child's registered wiring cannot have
+/// them differ, and the revdot identity is what carries it here.
 #[derive(Gadget, Consistent)]
-pub struct ClaimInstance<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
+pub struct ClaimInstance<'dr, D: Driver<'dr>> {
     #[ragu(gadget)]
-    pub bridge_com: Point<'dr, D, C::NestedCurve>,
+    pub coords: FixedVec<Element<'dr, D>, ConstLen<2>>,
     #[ragu(gadget)]
     pub x: Element<'dr, D>,
     #[ragu(gadget)]
@@ -47,20 +47,14 @@ pub struct ClaimInstance<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
 }
 
 /// A single witnessed polynomial as the application circuit's instance exposes
-/// it: its nested-curve bridge commitment. The wire layout (bridge_com.x,
-/// bridge_com.y) matches the polynomial-slot region of that instance.
+/// it: its host commitment's affine coordinates, canonically embedded in the
+/// circuit field. The wire layout matches the polynomial-slot region of that
+/// instance.
 ///
 /// One per polynomial, not one per query — see
 /// [`instance_len`](crate::step::internal::adapter::instance_len).
 #[derive(Gadget, Consistent)]
-pub struct PolyInstance<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
-    #[ragu(gadget)]
-    pub bridge_com: Point<'dr, D, C::NestedCurve>,
-    /// The slot's two coordinate instance wires: the host commitment's affine
-    /// coordinates, canonically embedded in the circuit field. They live in
-    /// the instance's trailing coordinate region (after the challenge slots),
-    /// so the k(y) fold reads them in a separate pass after everything else —
-    /// this struct groups them with their slot, the *layout* does not.
+pub struct PolyInstance<'dr, D: Driver<'dr>> {
     #[ragu(gadget)]
     pub coords: FixedVec<Element<'dr, D>, ConstLen<2>>,
 }
@@ -147,12 +141,12 @@ pub struct ProofInputs<
     /// The poly-query claim instances this child proof raised, in slot order.
     /// Unused slots hold the canonical padding claim.
     #[ragu(gadget)]
-    pub claims: FixedVec<ClaimInstance<'dr, D, C>, ConstLen<CLAIMS>>,
+    pub claims: FixedVec<ClaimInstance<'dr, D>, ConstLen<CLAIMS>>,
     /// The polynomials this child proof witnessed, in slot order. Unused slots
     /// hold the canonical padding polynomial. Each claim above carries the
-    /// commitment of one of these.
+    /// embedded commitment coordinates of one of these.
     #[ragu(gadget)]
-    pub polys: FixedVec<PolyInstance<'dr, D, C>, ConstLen<POLYS>>,
+    pub polys: FixedVec<PolyInstance<'dr, D>, ConstLen<POLYS>>,
     #[ragu(gadget)]
     pub circuit_id: Element<'dr, D>,
     #[ragu(gadget)]
@@ -228,10 +222,10 @@ impl<
         self.children.right.write(dr, &mut ky)?;
         self.output_header.write(dr, &mut ky)?;
         for poly in self.polys.iter() {
-            poly.bridge_com.write(dr, &mut ky)?;
+            poly.coords.write(dr, &mut ky)?;
         }
         for claim in self.claims.iter() {
-            claim.bridge_com.write(dr, &mut ky)?;
+            claim.coords.write(dr, &mut ky)?;
             claim.x.write(dr, &mut ky)?;
             claim.y.write(dr, &mut ky)?;
         }
@@ -240,12 +234,6 @@ impl<
                 input.write(dr, &mut ky)?;
             }
             pair.challenge.write(dr, &mut ky)?;
-        }
-        // The coordinate region trails the instance (see the adapter's write
-        // order), so it folds last even though each slot's wires are grouped
-        // with the slot's `PolyInstance`.
-        for poly in self.polys.iter() {
-            poly.coords.write(dr, &mut ky)?;
         }
         ky.finish_ky(dr)
     }
@@ -310,19 +298,6 @@ impl<
             output_header: alloc_header(dr, allocator, output_header.as_ref().map(|h| &h[..]))?,
             polys: {
                 D::try_just(|| {
-                    if proof.as_ref().take().application_polys().len() != num_polys {
-                        return Err(Error::MalformedEncoding(
-                            alloc::format!(
-                                "proof carries {} polynomial commitments, not the configured {}",
-                                proof.as_ref().take().application_polys().len(),
-                                num_polys,
-                            )
-                            .into(),
-                        ));
-                    }
-                    Ok(())
-                })?;
-                D::try_just(|| {
                     if proof.as_ref().take().application_poly_coords().len() != num_polys * 2 {
                         return Err(Error::MalformedEncoding(
                             "proof does not carry exactly two coordinate values per polynomial \
@@ -335,10 +310,6 @@ impl<
                 (0..num_polys)
                     .map(|i| {
                         Ok(PolyInstance {
-                            bridge_com: Point::alloc(
-                                dr,
-                                proof.as_ref().map(|p| p.application_polys()[i]),
-                            )?,
                             coords: (0..2)
                                 .map(|k| {
                                     Element::alloc(
@@ -367,10 +338,15 @@ impl<
                 (0..num_queries)
                     .map(|i| {
                         Ok(ClaimInstance {
-                            bridge_com: Point::alloc(
-                                dr,
-                                proof.as_ref().map(|p| p.application_claims()[i].bridge_com),
-                            )?,
+                            coords: (0..2)
+                                .map(|k| {
+                                    Element::alloc(
+                                        dr,
+                                        allocator,
+                                        proof.as_ref().map(|p| p.application_claims()[i].coords[k]),
+                                    )
+                                })
+                                .try_collect_fixed()?,
                             x: Element::alloc(
                                 dr,
                                 allocator,
@@ -488,12 +464,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const POLYS: usize, const CLAI
     ];
 
     fn values() -> usize {
-        // Four wires per claim: the opened polynomial's commitment, then the
-        // $(x, y)$ opening. Two more per polynomial slot for its commitment,
-        // plus two for its coordinate region wires. The challenge slots are
+        // Four wires per claim: the opened polynomial's name, then the
+        // $(x, y)$ opening. Two per polynomial slot for its name — the host
+        // commitment's embedded affine coordinates. The challenge slots are
         // their own stage — see [`slots`](super::slots) for why the chain's
         // root does not hold them.
-        2 * (3 * HEADER_SIZE + 2 * POLYS + 4 * CLAIMS + 2 * POLYS + 1 + unified::NUM_WIRES)
+        2 * (3 * HEADER_SIZE + 2 * POLYS + 4 * CLAIMS + 1 + unified::NUM_WIRES)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

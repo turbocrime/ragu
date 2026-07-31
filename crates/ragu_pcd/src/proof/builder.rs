@@ -328,19 +328,16 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     /// [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query),
     /// padded by the adapter to exactly
     /// the application's poly capacity and
-    /// pre-checked natively by fuse. The claim *instances* (bridge_com, x, y),
+    /// pre-checked natively by fuse. The claim *instances* (coords, x, y),
     /// the claim polynomials, and the host commitments are persisted in the
     /// [`Proof`] so the parent fuse can enforce the claims recursively.
-    application_claims:
-        Vec<crate::framework_hooks::PolyQueryClaim<C::NestedCurve, C::CircuitField>>,
-    /// The nested-curve commitment the instance exposes per polynomial slot,
-    /// in slot order — one per polynomial, not one per query.
-    application_polys: Vec<C::NestedCurve>,
+    application_claims: Vec<crate::framework_hooks::PolyQueryClaim<C::CircuitField>>,
     /// The coordinate instance wires' values, two per polynomial slot: the
-    /// host commitment's embedded affine coordinates.
+    /// host commitment's embedded affine coordinates — one name per
+    /// polynomial, not one per query.
     application_poly_coords: Vec<C::CircuitField>,
     /// The claim polynomials, in slot order (paired with
-    /// `application_polys`).
+    /// `application_poly_coords`).
     claim_polys: Vec<sparse::Polynomial<C::CircuitField, R>>,
     /// The claims' host-curve commitments, in slot order.
     claim_host_commitments: Option<Vec<C::HostCurve>>,
@@ -434,7 +431,6 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             child_left_stage_rx: None,
             child_right_stage_rx: None,
             application_claims: Vec::new(),
-            application_polys: Vec::new(),
             application_poly_coords: Vec::new(),
             application_challenges: Vec::new(),
             claim_polys: Vec::new(),
@@ -667,38 +663,13 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             .get_or_init(|| rx.commit_to_affine(C::nested_generators(self.params))))
     }
 
-    /// Derives the bridge stage rx for poly-query claim `slot`.
-    ///
-    /// The stage's wires are that claim's host commitment, so committing this
-    /// rx yields the claim's instance-bound `bridge_com` — making `bridge_com` the
-    /// commitment of a polynomial the proof carries, at parity with every
-    /// other cross-curve commitment. The per-slot stage types differ (they
-    /// chain through `Parent`), so this cannot use the `cached_bridge!` macro.
-    pub(crate) fn claim_bridge_rx(
-        &self,
-        slot: usize,
-    ) -> Result<sparse::Polynomial<C::ScalarField, R>> {
-        let host = self.claim_host_commitments()[slot];
-        let alpha = crate::internal::challenge::claim_bridge_alpha::<C>(self.bridge_alpha, slot);
-        crate::internal::challenge::claim_bridge_rx::<C, R>(
-            slot,
-            alpha,
-            host,
-            self.capacity.poly_query.polys,
-        )
-    }
-
-    /// The proof's shared bridge-alpha source, so the prover-side claim bridge
-    /// (built in `StepCtx`) uses the same blind this builder will.
+    /// The proof's shared bridge-alpha source.
     pub(crate) fn bridge_alpha(&self) -> C::ScalarField {
         self.bridge_alpha
     }
 
     /// The claim host commitments, for the eval bridge stage witness. Requires
     /// `set_application_claims` to have been called.
-    /// Borrowed rather than cloned: `claim_bridge_rx` wants one `Copy` element
-    /// per slot, so returning an owned `Vec` cloned the whole list per slot.
-    /// The one caller that needs ownership takes it at its own site.
     fn claim_host_commitments(&self) -> &[C::HostCurve] {
         self.claim_host_commitments
             .as_deref()
@@ -776,25 +747,23 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         self.application_challenges = challenges;
     }
 
-    /// Sets the per-step **polynomials** for this fuse step: the nested-curve
-    /// commitments the instance exposes, the polynomials themselves, and their
-    /// host commitments, all in slot order. May only be called once.
+    /// Sets the per-step **polynomials** for this fuse step: the embedded
+    /// commitment coordinates the instance exposes, the polynomials
+    /// themselves, and their host commitments, all in slot order. May only be
+    /// called once.
     pub(crate) fn set_application_polys(
         &mut self,
-        coms: Vec<C::NestedCurve>,
         coords: Vec<C::CircuitField>,
         claim_polys: Vec<sparse::Polynomial<C::CircuitField, R>>,
         claim_host_commitments: Vec<C::HostCurve>,
     ) {
         assert!(
-            self.application_polys.is_empty(),
+            self.application_poly_coords.is_empty(),
             "double-set: application_polys"
         );
-        assert_eq!(coms.len(), self.capacity.poly_query.polys);
         assert_eq!(coords.len(), self.capacity.poly_query.polys * 2);
         assert_eq!(claim_polys.len(), self.capacity.poly_query.polys);
         assert_eq!(claim_host_commitments.len(), self.capacity.poly_query.polys);
-        self.application_polys = coms;
         self.application_poly_coords = coords;
         self.claim_polys = claim_polys;
         self.claim_host_commitments = Some(claim_host_commitments);
@@ -805,7 +774,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     /// recorded. May only be called once.
     pub(crate) fn set_application_claims(
         &mut self,
-        claims: Vec<crate::framework_hooks::PolyQueryClaim<C::NestedCurve, C::CircuitField>>,
+        claims: Vec<crate::framework_hooks::PolyQueryClaim<C::CircuitField>>,
     ) {
         assert!(
             self.application_claims.is_empty(),
@@ -885,12 +854,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             };
         }
 
-        let claim_bridge_rxs = (0..self.capacity.poly_query.polys)
-            .map(|slot| self.claim_bridge_rx(slot))
-            .collect::<Result<alloc::vec::Vec<_>>>()?;
-
         Ok(Proof {
-            claim_bridge_rxs,
             bridge_alpha: self.bridge_alpha,
 
             circuit_id: take!(circuit_id),
@@ -985,12 +949,11 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
                 .application_claims
                 .iter()
                 .map(|c| super::ClaimOpening {
-                    bridge_com: c.bridge_com,
+                    coords: c.coords,
                     x: c.x,
                     y: c.y,
                 })
                 .collect(),
-            application_polys: self.application_polys,
             application_poly_coords: self.application_poly_coords,
             claim_polys: self.claim_polys,
             claim_host_commitments: self

@@ -12,66 +12,22 @@ use ragu_arithmetic::{
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{Error, Result};
 
-use crate::internal::nested::{
-    RxIndex,
-    stages::{claim_bridge, host_bridge},
-};
+use crate::internal::nested::RxIndex;
 
-/// The bridge stages whose blinds come from the proof's shared `bridge_alpha`,
-/// in the order that assigns their exponents.
-///
-/// A stage's blind is `bridge_alpha^(i + 1)` for its position `i` here; the
-/// series starts at 1 because `α⁰ = 1` is no blind at all. Deriving every
-/// exponent from a single ordering keeps all blinds distinct by construction.
-/// `preamble`, `s_prime`, `inner_error` and `f` are absent: the fuse stages
-/// blind them with an in-circuit challenge, and [`bridge_alpha_exponent`]
-/// panics on them.
-///
-/// This is the *specification* of the ordering:
-/// `bridge_alpha_exponents_are_the_expected_series` checks
-/// [`bridge_alpha_exponent`]'s direct computation against it.
-#[cfg(test)]
-fn blinded_bridges(num_polys: usize) -> impl Iterator<Item = RxIndex> {
-    // The four `cached_bridge!` stages first, then the per-slot claim bridges,
-    // which chain through `Parent` and so cannot use that macro.
-    [
-        RxIndex::BridgeOuterError,
-        RxIndex::BridgeAB,
-        RxIndex::BridgeQuery,
-        RxIndex::BridgeEval,
-    ]
-    .into_iter()
-    .chain((0..num_polys).map(|slot| RxIndex::BridgeClaim(slot as u32)))
-}
-
-/// How many entries [`blinded_bridges`] yields before the per-slot claim
-/// bridges: the four `cached_bridge!` stages.
-const NUM_CACHED_BRIDGES: u64 = 4;
-
-/// The exponent of `bridge_alpha` for a blinded bridge stage — its position in
-/// [`blinded_bridges`], offset past the unusable zeroth power.
-///
-/// The claim slots come last, so an exponent depends only on the entry's own
-/// position — no capacity parameter needed.
-/// `bridge_alpha_exponents_are_the_expected_series` pins this against
-/// [`blinded_bridges`].
+/// The exponent of `bridge_alpha` for a blinded bridge stage: its position in
+/// the ordering `outer_error`, `ab`, `query`, `eval`, offset past the
+/// unusable zeroth power. Deriving every exponent from a single ordering
+/// keeps all blinds distinct by construction. `preamble`, `s_prime`,
+/// `inner_error` and `f` are absent: the fuse stages blind them with an
+/// in-circuit challenge, and this panics on them.
 pub(crate) fn bridge_alpha_exponent(idx: RxIndex) -> u64 {
     match idx {
         RxIndex::BridgeOuterError => 1,
         RxIndex::BridgeAB => 2,
         RxIndex::BridgeQuery => 3,
         RxIndex::BridgeEval => 4,
-        RxIndex::BridgeClaim(slot) => NUM_CACHED_BRIDGES + u64::from(slot) + 1,
         _ => panic!("not blinded from bridge_alpha: {idx:?}"),
     }
-}
-
-/// Commits a bridge stage rx on the nested generators.
-fn commit_bridge<C: Cycle, R: Rank>(
-    params: &C::Params,
-    rx: sparse::Polynomial<C::ScalarField, R>,
-) -> C::NestedCurve {
-    rx.commit_to_affine(C::nested_generators(params))
 }
 
 /// The host-curve commitment to a poly-query polynomial, rejecting the
@@ -199,49 +155,6 @@ pub(crate) fn claim_coord_commitment<C: Cycle, R: Rank>(
         .commit_to_affine::<C::HostCurve>(C::host_generators(params)))
 }
 
-/// The stage blind for poly-query claim `slot`, derived from the proof's
-/// shared `bridge_alpha` source. Shared so the claim bridge's two build sites
-/// (the prover-side `StepCtx` and the `ProofBuilder`) agree.
-pub(crate) fn claim_bridge_alpha<C: Cycle>(
-    bridge_alpha: C::ScalarField,
-    slot: usize,
-) -> C::ScalarField {
-    bridge_alpha.pow_vartime([bridge_alpha_exponent(RxIndex::BridgeClaim(slot as u32))])
-}
-
-/// Builds poly-query claim `slot`'s bridge stage rx: a stage whose wires are
-/// the claim's host commitment. The slot is an index into the claim-bridge
-/// run's layout, so the slot count can be an application parameter.
-pub(crate) fn claim_bridge_rx<C: Cycle, R: Rank>(
-    slot: usize,
-    alpha: C::ScalarField,
-    host: C::HostCurve,
-    polys: usize,
-) -> Result<sparse::Polynomial<C::ScalarField, R>> {
-    let witness = host_bridge::Witness { host };
-    claim_bridge::layout::<C::HostCurve, R>(polys).rx_configured(
-        slot,
-        alpha,
-        &claim_bridge::Slot::<C::HostCurve, R>::default(),
-        &witness,
-    )
-}
-
-/// The nested-curve commitment to claim `slot`'s bridge stage — the value a
-/// claim carries as its `bridge_com`.
-pub(crate) fn claim_bridge_commitment<C: Cycle, R: Rank>(
-    params: &C::Params,
-    slot: usize,
-    alpha: C::ScalarField,
-    host: C::HostCurve,
-    polys: usize,
-) -> Result<C::NestedCurve> {
-    Ok(commit_bridge::<C, R>(
-        params,
-        claim_bridge_rx::<C, R>(slot, alpha, host, polys)?,
-    ))
-}
-
 /// The canonical padding claim for an unused poly-query slot (see
 /// the application's poly capacity): its host commitment
 /// and its opening $(x, y) = (0, 1)$.
@@ -328,8 +241,6 @@ pub(crate) fn elements_challenge<C: Cycle>(
 
 #[cfg(test)]
 mod tests {
-    use alloc::vec::Vec;
-
     use super::*;
 
     /// The limbs are the coordinates: `lo + 2^128·hi`, recomposed in the
@@ -389,34 +300,16 @@ mod tests {
     /// Pins the `bridge_alpha` exponent series.
     ///
     /// These blinds are prover-side — derived at proof time, never part of a
-    /// circuit — so **no registry digest covers them**. Reordering
-    /// [`blinded_bridges`] would silently change every blind from the edit
-    /// onward, and two stages colliding on one blind would be silent too. This
-    /// test is the only thing that would notice.
-    ///
-    /// Distinctness follows from mapping the whole series through
-    /// [`bridge_alpha_exponent`] and getting `1..=n` with no gaps: that is only
-    /// possible if every entry lands on its own exponent. This is also what ties
-    /// the direct computation in `bridge_alpha_exponent` to the ordering
-    /// [`blinded_bridges`] declares, so the two cannot drift apart.
+    /// circuit — so **no registry digest covers them**. Two stages colliding
+    /// on one blind would be silent; this test is the only thing that would
+    /// notice.
     #[test]
     fn bridge_alpha_exponents_are_the_expected_series() {
-        const POLYS: usize = 8;
-        let series: Vec<u64> = blinded_bridges(POLYS).map(bridge_alpha_exponent).collect();
-        let expected: Vec<u64> = (1..=series.len() as u64).collect();
-        assert_eq!(series, expected, "exponents must be 1..=n with no gaps");
-
-        // The four cached bridges, then the claim slots. Spelled out so a
-        // reordering has to be deliberate.
+        // Spelled out so a reordering has to be deliberate.
         assert_eq!(bridge_alpha_exponent(RxIndex::BridgeOuterError), 1);
         assert_eq!(bridge_alpha_exponent(RxIndex::BridgeAB), 2);
         assert_eq!(bridge_alpha_exponent(RxIndex::BridgeQuery), 3);
         assert_eq!(bridge_alpha_exponent(RxIndex::BridgeEval), 4);
-        assert_eq!(bridge_alpha_exponent(RxIndex::BridgeClaim(0)), 5);
-        assert_eq!(
-            bridge_alpha_exponent(RxIndex::BridgeClaim(POLYS as u32 - 1)),
-            4 + POLYS as u64
-        );
     }
 
     /// The bridges the fuse stages blind with an in-circuit challenge are not

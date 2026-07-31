@@ -125,7 +125,7 @@ impl<C: CurveAffine> ChildWitness<C> {
             stashed_ab_b: proof.native_commitment(RxComponent::AbB),
             stashed_registry_xy: proof.native_registry_xy_commitment(),
             stashed_p: proof.native_p_commitment(),
-            stashed_claims: (0..proof.application_polys().len())
+            stashed_claims: (0..proof.claim_host_commitments().len())
                 .map(|i| proof.claim_host_commitment(i))
                 .collect(),
             stashed_q: if proof.claim_host_commitments().len() == 0 {

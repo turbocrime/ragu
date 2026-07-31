@@ -107,10 +107,8 @@ pub type Slot<C, R> = super::host_bridge::Stage<C, R, ()>;
 ///
 /// The whole run is masked and committed as **one** stage — the subdivision
 /// decides where wires land, not how many commitments there are. That matters
-/// here: a per-slot commitment
-/// would defeat the point of this stage, which is a *single* stashed copy the
-/// parent's copying circuit can check (see [`super::claim_bridge`], which
-/// deliberately does the opposite).
+/// here: a per-slot commitment would defeat the point of this stage, which is
+/// a *single* stashed copy the parent's copying circuit can check.
 pub type Stage<C, R> = crate::internal::Run<C, R, super::f::Stage<C, R>>;
 
 #[cfg(test)]

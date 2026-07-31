@@ -174,17 +174,17 @@ fn test_slotted_internal_circuit_constraint_counts() {
     // All six span the preamble stage, so all six include the coordinate
     // region's wires (two per polynomial slot per child); `OuterCollapse`'s
     // `application_ky` Horner additionally folds them.
-    check_constraints!(app, Hashes1Circuit,          mul = 1152, lin = 1834);
-    check_constraints!(app, Hashes2Circuit,          mul = 1716, lin = 2951);
-    check_constraints!(app, InnerCollapseCircuit,    mul = 1593, lin = 1918);
-    check_constraints!(app, OuterCollapseCircuit,    mul =  799, lin = 1114);
+    check_constraints!(app, Hashes1Circuit,          mul = 1148, lin = 1834);
+    check_constraints!(app, Hashes2Circuit,          mul = 1712, lin = 2951);
+    check_constraints!(app, InnerCollapseCircuit,    mul = 1589, lin = 1918);
+    check_constraints!(app, OuterCollapseCircuit,    mul =  787, lin = 1098);
     // The two that read the slot regions, and the reason this shape is pinned
     // at all. `ComputeV` carries the per-claim one-hot resolution and the
     // per-child q(u) re-derivation from the coordinate instance wires, so it
-    // moves whenever those do. `ChallengeBinding` is 859 here against 518
+    // moves whenever those do. `ChallengeBinding` is 855 here against 518
     // with no slots: an application that derives a challenge has one to bind.
-    check_constraints!(app, ComputeVCircuit,         mul = 1112, lin = 2077);
-    check_constraints!(app, ChallengeBindingCircuit, mul =  859, lin = 1225);
+    check_constraints!(app, ComputeVCircuit,         mul = 1078, lin = 2007);
+    check_constraints!(app, ChallengeBindingCircuit, mul =  855, lin = 1225);
 }
 
 /// Prints the counts `test_internal_circuit_constraint_counts` pins, so a
@@ -263,15 +263,15 @@ fn test_internal_stage_parameters() {
         }};
     }
 
-    check_stage!(pinned_chain::Preamble,   "Preamble",   skip =   1, num = 336);
-    check_stage!(pinned_chain::OuterError, "OuterError", skip = 337, num = 186);
-    check_stage!(pinned_chain::InnerError, "InnerError", skip = 523, num = 399);
-    check_stage!(pinned_chain::Query,      "Query",      skip = 337, num =  27);
-    check_stage!(pinned_chain::Eval,       "Eval",       skip = 364, num =  29);
+    check_stage!(pinned_chain::Preamble,   "Preamble",   skip =   1, num = 320);
+    check_stage!(pinned_chain::OuterError, "OuterError", skip = 321, num = 186);
+    check_stage!(pinned_chain::InnerError, "InnerError", skip = 507, num = 399);
+    check_stage!(pinned_chain::Query,      "Query",      skip = 321, num =  27);
+    check_stage!(pinned_chain::Eval,       "Eval",       skip = 348, num =  29);
     // A sibling of InnerError, not a successor: both start where OuterError
     // ends, so a circuit reaching the challenge slots is not charged for
     // InnerError's gates.
-    check_stage!(pinned_chain::Challenges, "Challenges", skip = 523, num =   3);
+    check_stage!(pinned_chain::Challenges, "Challenges", skip = 507, num =   3);
 }
 
 /// Helper test to print current stage parameters in copy-pasteable format.
@@ -351,17 +351,17 @@ fn test_slotted_registry_digests() {
     // `q_slots(0) = 0`, so the feature vanishes at that shape.
     assert_eq!(
         app.native_registry.digest(),
-        fp!(0x0f26abf6695ce526ea7f6dcd9262172e9cd068e05f0ba65ec5b40d966b496a9a),
+        fp!(0x325fdfbe3950edd8fcddb1fcc2f2993378ff5a13f36b2be2d48babc94f48d05f),
         "Native registry digest changed unexpectedly at a slotted shape!"
     );
-    // Covers the nested side of the claim machinery: one coordinate-pair
-    // slot per claim bridge, the stashed `C_q`, and the endoscaling growth.
-    // The limb machinery itself (`q`, the coordinate instance region,
-    // `compute_v`'s re-derivation) is all native and must move only the
-    // digest above.
+    // Covers the nested side of the claim machinery: the stashed claim host
+    // commitments and `C_q` in the preamble run, the eval stage's claim
+    // slots, and the endoscaling growth. The limb machinery itself (`q`, the
+    // coordinate instance region, `compute_v`'s re-derivation) is all native
+    // and must move only the digest above.
     assert_eq!(
         app.nested_registry.digest(),
-        fq!(0x3158d084e78957d7df2a0123baddfd948e4e7f3d920327f78c5b851eb3444d67),
+        fq!(0x04dd2f0651e20dd6aed682818e4b40e1f54c80f7fab5149395f3ec45de9b9340),
         "Nested registry digest changed unexpectedly at a slotted shape!"
     );
 }

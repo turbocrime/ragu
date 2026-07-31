@@ -115,9 +115,6 @@ where
                     .flat_map(|step| source.rx(RxIndex::EndoscalingStep(step as u32)));
                 processor.bonding_claim(id, final_rxs)?;
             }
-            BridgeClaim(slot) => {
-                processor.bonding_claim(id, source.rx(RxIndex::BridgeClaim(slot)))?;
-            }
             BridgePreamble => {
                 processor.bonding_claim(id, source.rx(RxIndex::BridgePreamble))?;
             }
@@ -147,71 +144,36 @@ where
                 // A bonding claim is checked against the *sum* of these rxs, so
                 // a configured stage that is left out contributes zero wires —
                 // and every constraint the circuit places over it is then
-                // satisfied vacuously. `loading` configures the eval stage and
-                // the claim-bridge run and enforces that they agree slot by
-                // slot, so both belong in the trace that claim is checked
-                // against; `claim_bridge_stage_must_be_tied_to_the_recorded_host`
-                // in `tests/recursive_claims.rs` is the regression test.
-                //
-                // The claim slots are an application parameter, so this arm
-                // cannot be the fixed `.zip()` chain the others are. It builds
-                // the same thing a chain would — one group per proof, holding
-                // every stage of that proof's trace — by accumulation instead.
-                let mut groups: alloc::vec::Vec<alloc::vec::Vec<S::Rx>> = source
+                // satisfied vacuously.
+                let loading_rxs = source
                     .rx(RxIndex::PointsStage)
-                    .map(|rx| alloc::vec![rx])
-                    .collect();
-
-                let fixed = [
-                    RxIndex::BridgePreamble,
-                    RxIndex::BridgeSPrime,
-                    RxIndex::BridgeInnerError,
-                    RxIndex::BridgeAB,
-                    RxIndex::BridgeQuery,
-                    RxIndex::BridgeF,
-                    RxIndex::BridgeEval,
-                ];
-                let claim_slots = (0..polys).map(|slot| RxIndex::BridgeClaim(slot as u32));
-                for component in fixed.into_iter().chain(claim_slots) {
-                    for (group, rx) in groups.iter_mut().zip(source.rx(component)) {
-                        group.push(rx);
-                    }
-                }
-
-                processor
-                    .grouped_bonding_claim(id, groups.into_iter().map(|group| group.into_iter()))?;
+                    .zip(source.rx(RxIndex::BridgePreamble))
+                    .zip(source.rx(RxIndex::BridgeSPrime))
+                    .zip(source.rx(RxIndex::BridgeInnerError))
+                    .zip(source.rx(RxIndex::BridgeAB))
+                    .zip(source.rx(RxIndex::BridgeQuery))
+                    .zip(source.rx(RxIndex::BridgeF))
+                    .map(|((((((pts, pre), sp), ie), ab), q), f)| {
+                        [pts, pre, sp, ie, ab, q, f].into_iter()
+                    });
+                processor.grouped_bonding_claim(id, loading_rxs)?;
             }
             Copying(side) => {
                 // As in `Loading`: every stage the circuit configures must be
                 // supplied, or its constraints hold vacuously over zero wires.
-                // `copying` configures the child's claim-bridge run, whose
-                // length is the application's poly capacity, so this arm
-                // accumulates per-proof groups rather than zipping a fixed
-                // tuple.
-                let mut groups: alloc::vec::Vec<alloc::vec::Vec<S::Rx>> = source
+                let copying_rxs = source
                     .rx(RxIndex::ChildPointsStage(side))
-                    .map(|rx| alloc::vec![rx])
-                    .collect();
-
-                let fixed = [
-                    RxIndex::BridgePreamble,
-                    RxIndex::ChildBridge(ChildBridgeKind::SPrime, side),
-                    RxIndex::ChildBridge(ChildBridgeKind::InnerError, side),
-                    RxIndex::ChildBridge(ChildBridgeKind::OuterError, side),
-                    RxIndex::ChildBridge(ChildBridgeKind::AB, side),
-                    RxIndex::ChildBridge(ChildBridgeKind::Query, side),
-                    RxIndex::ChildBridge(ChildBridgeKind::Eval, side),
-                ];
-                let claim_slots =
-                    (0..polys).map(|slot| RxIndex::ChildBridgeClaim(slot as u32, side));
-                for component in fixed.into_iter().chain(claim_slots) {
-                    for (group, rx) in groups.iter_mut().zip(source.rx(component)) {
-                        group.push(rx);
-                    }
-                }
-
-                processor
-                    .grouped_bonding_claim(id, groups.into_iter().map(|group| group.into_iter()))?;
+                    .zip(source.rx(RxIndex::BridgePreamble))
+                    .zip(source.rx(RxIndex::ChildBridge(ChildBridgeKind::SPrime, side)))
+                    .zip(source.rx(RxIndex::ChildBridge(ChildBridgeKind::InnerError, side)))
+                    .zip(source.rx(RxIndex::ChildBridge(ChildBridgeKind::OuterError, side)))
+                    .zip(source.rx(RxIndex::ChildBridge(ChildBridgeKind::AB, side)))
+                    .zip(source.rx(RxIndex::ChildBridge(ChildBridgeKind::Query, side)))
+                    .zip(source.rx(RxIndex::ChildBridge(ChildBridgeKind::Eval, side)))
+                    .map(|(((((((pts, pre), sp), ie), oe), ab), q), ev)| {
+                        [pts, pre, sp, ie, oe, ab, q, ev].into_iter()
+                    });
+                processor.grouped_bonding_claim(id, copying_rxs)?;
             }
         }
     }

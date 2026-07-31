@@ -77,7 +77,6 @@ impl<
         // vector on the query capacity would be a latent bug.
         let capacity = self.capacity();
         if pcd.proof().application_claims().len() != capacity.poly_query.claims
-            || pcd.proof().application_polys().len() != capacity.poly_query.polys
             || pcd.proof().application_poly_coords().len() != capacity.poly_query.polys * 2
             || pcd.proof().claim_polys.len() != capacity.poly_query.polys
             || pcd.proof().claim_host_commitments().len() != capacity.poly_query.polys
@@ -181,26 +180,13 @@ impl<
         // PCS accumulator), so the root proof's own claims have not been
         // folded yet; the verifier checks them natively with the carried
         // claim polynomials: the claimed evaluation, the host commitment
-        // binding, and the bridge to the instance-bound nested commitment.
+        // binding, and the instance-bound embedded coordinates.
         // First each polynomial: its carried coefficients must commit to the
-        // host commitment the proof records, and that must bridge to the
-        // instance-bound nested commitment.
+        // host commitment the proof records.
         let poly_commitments = (0..capacity.poly_query.polys).all(|slot| {
-            let bridge_com = pcd.proof().application_polys()[slot];
             let poly = &pcd.proof().claim_polys[slot];
             let host = pcd.proof().claim_host_commitment(slot);
-            let alpha =
-                crate::internal::challenge::claim_bridge_alpha::<C>(pcd.proof().bridge_alpha, slot);
-
             poly.commit_to_affine::<C::HostCurve>(C::host_generators(self.params)) == host
-                && crate::internal::challenge::claim_bridge_commitment::<C, R>(
-                    self.params,
-                    slot,
-                    alpha,
-                    host,
-                    capacity.poly_query.polys,
-                )
-                .is_ok_and(|rebuilt| rebuilt == bridge_com)
         });
 
         // And the coordinate instance region: every slot's two wires must be
@@ -208,9 +194,8 @@ impl<
         // this enforced in-circuit — `compute_v` re-derives the
         // claim-coordinate polynomial's q(u) from these wires — but a root
         // proof's own coordinates have not been folded yet, so the verifier
-        // recomputes them natively, exactly as it recomputes the bridge
-        // commitments above. Without this a root-only proof could hash forged
-        // limbs into its step.
+        // recomputes them natively. Without this a root-only proof could name
+        // (and hash into its step) a commitment other than the recorded one.
         let poly_coords = poly_commitments
             && (0..capacity.poly_query.polys).all(|slot| {
                 let host = pcd.proof().claim_host_commitment(slot);
@@ -219,19 +204,17 @@ impl<
                 })
             });
 
-        // Then each query, against the polynomial its bridge commitment
-        // identifies. A commitment matching no polynomial slot fails the check
-        // rather than panicking: it is instance data, so a malformed proof can
-        // carry anything there.
+        // Then each query, against the polynomial its embedded coordinates
+        // identify. A name matching no polynomial slot fails the check rather
+        // than panicking: it is instance data, so a malformed proof can carry
+        // anything there.
         let poly_query_claims = poly_commitments
             && (0..capacity.poly_query.claims).all(|slot| {
-                let crate::proof::ClaimOpening { bridge_com, x, y } =
+                let crate::proof::ClaimOpening { coords, x, y } =
                     pcd.proof().application_claims()[slot];
 
-                pcd.proof()
-                    .application_polys()
-                    .iter()
-                    .position(|slot_com| *slot_com == bridge_com)
+                (0..capacity.poly_query.polys)
+                    .position(|i| pcd.proof().application_poly_coords()[2 * i..2 * i + 2] == coords)
                     .is_some_and(|i| pcd.proof().claim_polys[i].eval(x) == y)
             });
 

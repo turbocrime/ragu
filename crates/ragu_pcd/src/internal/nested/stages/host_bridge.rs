@@ -6,9 +6,8 @@
 //! value that has to cross the curve boundary does so this way (see
 //! [`super::f`], whose rx's wires *are* `native_f`).
 //!
-//! [`claim_bridge`](super::claim_bridge) is a run of this stage. [`Stage`]
-//! takes its parent as a type parameter so a family can attach wherever it
-//! needs to without the stage being duplicated per family.
+//! [`Stage`] takes its parent as a type parameter so a family can attach
+//! wherever it needs to without the stage being duplicated per family.
 //!
 //! ## Why a family of these can be a run
 //!

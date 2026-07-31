@@ -94,14 +94,6 @@ pub(crate) struct ChildStageRx<F: ragu_arithmetic::ff::PrimeField, R: Rank> {
     pub bridge_ab: sparse::Polynomial<F, R>,
     pub bridge_query: sparse::Polynomial<F, R>,
     pub bridge_eval: sparse::Polynomial<F, R>,
-    /// The child's per-claim bridge stages, in slot order.
-    ///
-    /// A `Vec` rather than a named field per stage, because the family's length
-    /// is the application's poly capacity. Carried for the same reason as every
-    /// other entry here: a fuse must establish that the child's `bridge_com`
-    /// bridges the host commitment the parent folds, and the parent cannot
-    /// check a stage it does not hold.
-    pub bridge_claims: alloc::vec::Vec<sparse::Polynomial<F, R>>,
 }
 
 impl<F: ragu_arithmetic::ff::PrimeField, R: Rank> ChildStageRx<F, R> {
@@ -134,32 +126,26 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             bridge_ab: self.bridge_ab_rx.0.clone(),
             bridge_query: self.bridge_query_rx.0.clone(),
             bridge_eval: self.bridge_eval_rx.0.clone(),
-            bridge_claims: self.claim_bridge_rxs.clone(),
         }
     }
 }
 
 /// A polynomial-opening claim carried on a [`Proof`]: the polynomial's
-/// nested-curve **bridge** commitment `bridge_com`, the opening point `x`, and
-/// the claimed evaluation `y` (the opened polynomial satisfies $p(x) = y$).
+/// embedded commitment coordinates, the opening point `x`, and the claimed
+/// evaluation `y` (the opened polynomial satisfies $p(x) = y$).
 ///
-/// The claim names its polynomial by commitment: `bridge_com` is the same
-/// value the proof's [`application_polys`](Proof::application_polys) carries
-/// for that polynomial — in the step's own circuit the same *wire*, allocated
+/// The claim names its polynomial by commitment: `coords` are the same values
+/// the proof's
+/// [`application_poly_coords`](Proof::application_poly_coords) carries for
+/// that polynomial — in the step's own circuit the same *wires*, allocated
 /// once by `witness_polynomial` and written into both the polynomial region
-/// and every claim that opens it.
-///
-/// `bridge_com` commits to this claim's bridge stage — whose wires are the
-/// coordinates of the polynomial's host commitment, blinded by
-/// `bridge_alpha^(5+slot)` at that slot's offset in the bridge run. It is a
-/// function of `(host, slot, bridge_alpha, capacity)`: it identifies exactly
-/// one slot of one proof, which is the property a claim needs. The
-/// polynomial's own canonical commitment is
-/// [`PolyCommitment`](crate::PolyCommitment)'s host commitment.
+/// and every claim that opens it. The pair is the host commitment's affine
+/// coordinates, canonically embedded in the circuit field: canonical for the
+/// polynomial, the same in every proof that commits it.
 #[derive(Clone, Copy, Debug)]
-pub struct ClaimOpening<Curve, F> {
-    /// The opened polynomial's bridge commitment.
-    pub bridge_com: Curve,
+pub struct ClaimOpening<F> {
+    /// The opened polynomial's embedded commitment coordinates.
+    pub coords: [F; 2],
     /// The opening point.
     pub x: F,
     /// The claimed evaluation $p(x) = y$.
@@ -293,15 +279,13 @@ pub struct Proof<C: Cycle, R: Rank> {
     /// enforced when this proof is fused as a child: the parent folds each
     /// claim into $f(X)$ and the PCS accumulator, and its `compute_v` circuit
     /// re-derives the matching terms.
-    pub(crate) application_claims: alloc::vec::Vec<ClaimOpening<C::NestedCurve, C::CircuitField>>,
-    /// The nested-curve commitment per polynomial slot, in slot order — one
-    /// per polynomial. A claim carries the same commitment for the polynomial
-    /// it opens, so this list is what a claim's `bridge_com` is matched against.
-    pub(crate) application_polys: alloc::vec::Vec<C::NestedCurve>,
+    pub(crate) application_claims: alloc::vec::Vec<ClaimOpening<C::CircuitField>>,
     /// The coordinate instance region's values: two per polynomial slot, in
     /// slot order — the slot's host commitment affine coordinates, canonically
     /// embedded in the circuit field. Bound to the application circuit's
-    /// $k(Y)$ like the other instance regions.
+    /// $k(Y)$ like the other instance regions. A claim carries the same pair
+    /// for the polynomial it opens, so this list is what a claim's `coords`
+    /// are matched against.
     pub(crate) application_poly_coords: alloc::vec::Vec<C::CircuitField>,
     /// The derived challenges the step's circuit exposes, one per
     /// challenge slot the application's capacity provides, in slot order.
@@ -313,16 +297,9 @@ pub struct Proof<C: Cycle, R: Rank> {
     /// claims natively.
     pub(crate) claim_polys: alloc::vec::Vec<sparse::Polynomial<C::CircuitField, R>>,
 
-    /// Per-claim bridge stage rx polynomials, in slot order. Each one's wires
-    /// are the corresponding claim's host commitment, and its commitment is
-    /// the claim's instance-bound `bridge_com`. Carrying them is what makes `bridge_com` the
-    /// commitment of a polynomial the proof actually holds — at parity with
-    /// every other cross-curve commitment (e.g. `bridge_f_rx`).
-    pub(crate) claim_bridge_rxs: alloc::vec::Vec<sparse::Polynomial<C::ScalarField, R>>,
-
     /// The claims' host-curve commitments, in slot order — these are the
-    /// points the parent's endoscaling accumulation consumes; each bridges to
-    /// the corresponding `application_claims` nested point. [`Cached`]: each is
+    /// points the parent's endoscaling accumulation consumes; each embeds to
+    /// the corresponding `application_poly_coords` pair. [`Cached`]: each is
     /// the commitment of the matching [`claim_polys`](Self::claim_polys) entry.
     claim_host_commitments: alloc::vec::Vec<Cached<C::HostCurve>>,
 }
@@ -376,10 +353,8 @@ impl<C: Cycle, R: Rank> core::ops::Index<nested::RxIndex> for Proof<C, R> {
             BridgeQuery => &self.bridge_query_rx.0,
             BridgeF => &self.bridge_f_rx,
             BridgeEval => &self.bridge_eval_rx.0,
-            BridgeClaim(slot) => &self.claim_bridge_rxs[slot as usize],
             ChildPointsStage(side) => &self.child_stage_rx(side).points_stage,
             ChildBridge(kind, side) => self.child_stage_rx(side).bridge_at(kind),
-            ChildBridgeClaim(slot, side) => &self.child_stage_rx(side).bridge_claims[slot as usize],
         }
     }
 }
@@ -433,20 +408,14 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     /// of these itself. The one legitimate outside read — a test establishing
     /// what a proof claims so a rejection can be attributed — goes through
     /// `Proof::claim_opening_for_testing`, behind `unstable-fuzzing`.
-    pub(crate) fn application_claims(&self) -> &[ClaimOpening<C::NestedCurve, C::CircuitField>] {
+    pub(crate) fn application_claims(&self) -> &[ClaimOpening<C::CircuitField>] {
         &self.application_claims
     }
 
-    /// The nested-curve commitments to the polynomials this proof's circuit
-    /// witnessed, in slot order — always the application's poly capacity,
-    /// with unused slots holding the canonical padding polynomial. A claim
-    /// names one of these by carrying it.
-    pub(crate) fn application_polys(&self) -> &[C::NestedCurve] {
-        &self.application_polys
-    }
-
     /// The coordinate instance region's values: two per polynomial slot, in
-    /// slot order.
+    /// slot order — always the application's poly capacity, with unused slots
+    /// holding the canonical padding polynomial's. A claim names a polynomial
+    /// by carrying its pair.
     pub(crate) fn application_poly_coords(&self) -> &[C::CircuitField] {
         &self.application_poly_coords
     }
@@ -725,39 +694,27 @@ impl<
 
         // Poly-query claim slots: a trivial proof raises no claims, so every
         // slot holds the canonical padding claim (mirroring the adapter).
+        // Every query opens polynomial slot 0, matching the adapter's padding —
+        // so it carries slot 0's embedded coordinates, the same values
+        // `application_poly_coords` records for that slot. Absent when the
+        // application declares no polynomial slots, which is only reachable
+        // when it declares no claim slots either: a claim has to name a
+        // polynomial.
         let (padding_host, padding_x, padding_y) =
             crate::internal::challenge::padding_claim::<C>(self.params);
-        let padding_bridge_coms: alloc::vec::Vec<C::NestedCurve> =
-            (0..self.capacity().poly_query.polys)
-                .map(|slot| {
-                    crate::internal::challenge::claim_bridge_commitment::<C, R>(
-                        self.params,
-                        slot,
-                        crate::internal::challenge::claim_bridge_alpha::<C>(
-                            builder.bridge_alpha(),
-                            slot,
-                        ),
-                        padding_host,
-                        self.capacity().poly_query.polys,
-                    )
-                    .expect("trivial padding bridge commitment")
-                })
-                .collect();
-        // Every query opens polynomial slot 0, matching the adapter's padding —
-        // so it carries slot 0's commitment, the same value `application_polys`
-        // records for that slot. Absent when the application declares no
-        // polynomial slots, which is only reachable when it declares no claim
-        // slots either: a claim has to name a polynomial.
-        let padding_bridge_com = padding_bridge_coms.first().copied();
-        let padding_coords: alloc::vec::Vec<C::CircuitField> = {
-            let coords = crate::internal::challenge::host_coords::<C>(padding_host)
-                .expect("the padding host has canonical coordinates");
-            (0..self.capacity().poly_query.polys)
-                .flat_map(|_| coords)
-                .collect()
+        let padding_coord_pair = if self.capacity().poly_query.polys == 0 {
+            None
+        } else {
+            Some(
+                crate::internal::challenge::host_coords::<C>(padding_host)
+                    .expect("the padding host has canonical coordinates"),
+            )
         };
+        let padding_coords: alloc::vec::Vec<C::CircuitField> =
+            (0..self.capacity().poly_query.polys)
+                .flat_map(|_| padding_coord_pair.expect("a nonzero capacity has a padding pair"))
+                .collect();
         builder.set_application_polys(
-            padding_bridge_coms,
             padding_coords,
             vec![
                 crate::internal::challenge::padding_poly::<C, R>();
@@ -768,7 +725,7 @@ impl<
         builder.set_application_claims(
             (0..self.capacity().poly_query.claims)
                 .map(|_| crate::framework_hooks::PolyQueryClaim {
-                    bridge_com: padding_bridge_com
+                    coords: padding_coord_pair
                         .expect("a claim slot requires a polynomial slot to name"),
                     x: padding_x,
                     y: padding_y,
@@ -1009,15 +966,6 @@ impl<
                 .bridge_eval_rx()
                 .expect("trivial bridge_eval_rx")
                 .clone(),
-            // Same identity: a trivial proof is its own child, so its claim
-            // bridges are the ones it carries.
-            bridge_claims: (0..self.capacity().poly_query.polys)
-                .map(|slot| {
-                    builder
-                        .claim_bridge_rx(slot)
-                        .expect("trivial claim bridge rx")
-                })
-                .collect(),
         };
         builder.set_child_left_stage_rx(trivial_child.clone());
         builder.set_child_right_stage_rx(trivial_child);

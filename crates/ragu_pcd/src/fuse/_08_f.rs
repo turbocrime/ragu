@@ -177,19 +177,18 @@ impl<
         // enforces the claims the children raised via `enforce_poly_query`.
         // Must remain the trailing block, matching `poly_queries`.
         //
-        // A claim carries the commitment of the polynomial it opens, so the
-        // quotient is taken against the polynomial that commitment identifies —
-        // not the one at the claim's own position. `compute_v` reaches the same
-        // polynomial through a one-hot keyed on the same commitment, so the two
-        // resolutions agree by construction: they match on one value that a
-        // prover cannot forge, rather than on two mechanisms kept in step by
-        // hand.
+        // A claim carries the embedded commitment coordinates of the
+        // polynomial it opens, so the quotient is taken against the polynomial
+        // that name identifies — not the one at the claim's own position.
+        // `compute_v` reaches the same polynomial through a one-hot keyed on
+        // the same pair, so the two resolutions agree by construction: they
+        // match on one value that a prover cannot forge, rather than on two
+        // mechanisms kept in step by hand.
         for proof in [left, right] {
             for claim in &proof.application_claims {
-                let slot = proof
-                    .application_polys()
-                    .iter()
-                    .position(|bridge_com| *bridge_com == claim.bridge_com)
+                let coords = proof.application_poly_coords();
+                let slot = (0..proof.claim_polys.len())
+                    .position(|i| coords[2 * i..2 * i + 2] == claim.coords)
                     .ok_or_else(|| {
                         ragu_core::Error::InvalidWitness(
                             "poly-query claim names a commitment that is not in the instance"

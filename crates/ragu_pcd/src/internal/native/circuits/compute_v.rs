@@ -46,7 +46,7 @@
 use alloc::{vec, vec::Vec};
 use core::marker::PhantomData;
 
-use ragu_arithmetic::{CurveAffine, Cycle, ff::Field};
+use ragu_arithmetic::{Cycle, ff::Field};
 use ragu_circuits::{
     WithAux,
     horner::Horner,
@@ -59,7 +59,11 @@ use ragu_core::{
     gadgets::Bound,
     maybe::Maybe,
 };
-use ragu_primitives::{Element, Endoscalar, GadgetExt, Point, allocator::Standard};
+use ragu_primitives::{
+    Element, Endoscalar, GadgetExt,
+    allocator::Standard,
+    vec::{ConstLen, FixedVec},
+};
 
 use super::super::{
     InternalCircuitIndex, InternalCircuitValues, RxComponent, RxIndex,
@@ -256,10 +260,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const POLYS: usize, const CLAI
                     for (child_eval, child_preamble) in
                         [(&eval.left, &preamble.left), (&eval.right, &preamble.right)]
                     {
-                        let commitments: Vec<_> = child_preamble
+                        let names: Vec<_> = child_preamble
                             .polys
                             .iter()
-                            .map(|poly| poly.bridge_com.clone())
+                            .map(|poly| poly.coords.clone())
                             .collect();
                         let mut slots = Vec::with_capacity(child_preamble.claims.len());
                         for claim in child_preamble.claims.iter() {
@@ -267,8 +271,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const POLYS: usize, const CLAI
                                 dr,
                                 allocator,
                                 &child_eval.claims,
-                                &commitments,
-                                &claim.bridge_com,
+                                &names,
+                                &claim.coords,
                             )?);
                         }
                         per_child.push(slots);
@@ -739,76 +743,51 @@ fn poly_queries<
 }
 
 /// Selects the evaluation of the polynomial a claim opens, through a one-hot
-/// witnessed in this circuit and keyed on the claim's **commitment**.
+/// witnessed in this circuit and keyed on the claim's **name** — the opened
+/// polynomial's embedded commitment coordinates.
 ///
-/// A claim carries the commitment of the polynomial it opens, and the parent
-/// has to turn that into the matching entry of `evaluations` without indexing —
-/// circuit structure cannot depend on a witnessed value. The one-hot is the
-/// standard way, and it is bound by four constraints, none of which may be
-/// dropped:
+/// A claim carries its polynomial's name, and the parent has to turn that
+/// into the matching entry of `evaluations` without indexing — circuit
+/// structure cannot depend on a witnessed value. The one-hot is the standard
+/// way, and it is bound by four constraints, none of which may be dropped:
 ///
 /// * each entry is boolean (`b(b - 1) = 0`),
 /// * the entries sum to one, and
-/// * `Σ b_j · bridge_com_j` equals the claim's `bridge_com`, in **both**
-///   coordinates.
+/// * `Σ b_j · coords_j` equals the claim's `coords`, in **both** positions.
 ///
 /// The first two together force exactly one entry to be set; the last forces
 /// *which*. Without booleanity the first two are underdetermined for more than
 /// two slots — a prover could spread weight across several entries and blend
 /// their evaluations freely — so all four are load-bearing.
 ///
-/// The key is the commitment, not an index: an index is a name that has to be
-/// resolved, and a resolution that goes wrong denotes a different polynomial
-/// silently, where a commitment mismatch selects nothing and no proof exists.
-/// `_08_f` matches the same commitment natively, so the two resolutions agree
-/// by construction.
-fn select_claim<
-    'dr,
-    D: Driver<'dr>,
-    C: CurveAffine<Base = D::F>,
-    A: ragu_primitives::allocator::Allocator<'dr, D>,
->(
+/// The key is the name, not an index: an index has to be resolved, and a
+/// resolution that goes wrong denotes a different polynomial silently, where
+/// a name mismatch selects nothing and no proof exists. `_08_f` matches the
+/// same name natively, so the two resolutions agree by construction.
+fn select_claim<'dr, D: Driver<'dr>, A: ragu_primitives::allocator::Allocator<'dr, D>>(
     dr: &mut D,
     allocator: &mut A,
     evaluations: &[Element<'dr, D>],
-    commitments: &[Point<'dr, D, C>],
-    bridge_com: &Point<'dr, D, C>,
+    names: &[FixedVec<Element<'dr, D>, ConstLen<2>>],
+    coords: &FixedVec<Element<'dr, D>, ConstLen<2>>,
 ) -> Result<Element<'dr, D>> {
     use ragu_arithmetic::ff::Field;
 
     debug_assert_eq!(
         evaluations.len(),
-        commitments.len(),
+        names.len(),
         "one evaluation per polynomial slot"
     );
 
-    // A point's coordinates are reached through its `Write` impl — the same
-    // door the adapter used to put them into the instance, so the pair read
-    // here is the pair that was bound to $k(Y)$ there.
-    let coordinates = |dr: &mut D, point: &Point<'dr, D, C>| -> Result<[Element<'dr, D>; 2]> {
-        let mut out = Vec::with_capacity(2);
-        point.write(dr, &mut out)?;
-        let [x, y] = <[Element<'dr, D>; 2]>::try_from(out)
-            .map_err(|_| ragu_core::Error::MalformedEncoding("a point is two wires".into()))?;
-        Ok([x, y])
-    };
-
-    let [target_x, target_y] = coordinates(dr, bridge_com)?;
-    let mut slots = Vec::with_capacity(commitments.len());
-    for commitment in commitments {
-        slots.push(coordinates(dr, commitment)?);
-    }
-
-    // The prover-side match: which slot holds this claim's commitment. The
-    // search itself carries no weight — only the constraints below bind the
+    // The prover-side match: which slot holds this claim's name. The search
+    // itself carries no weight — only the constraints below bind the
     // resulting bits.
-    let target = bridge_com.value();
-    let mut bits = Vec::with_capacity(commitments.len());
-    for commitment in commitments {
-        let slot = commitment.value();
-        let target = Maybe::clone(&target);
+    let mut bits = Vec::with_capacity(names.len());
+    for name in names {
+        let [target_0, target_1] = [coords[0].value(), coords[1].value()];
+        let [slot_0, slot_1] = [name[0].value(), name[1].value()];
         let value = D::just(move || {
-            if target.take() == slot.take() {
+            if *target_0.take() == *slot_0.take() && *target_1.take() == *slot_1.take() {
                 D::F::ONE
             } else {
                 D::F::ZERO
@@ -828,9 +807,9 @@ fn select_claim<
 
         sum = sum.add(dr, bit);
 
-        let x_term = bit.mul(dr, &slots[j][0])?;
+        let x_term = bit.mul(dr, &names[j][0])?;
         selected_x = selected_x.add(dr, &x_term);
-        let y_term = bit.mul(dr, &slots[j][1])?;
+        let y_term = bit.mul(dr, &names[j][1])?;
         selected_y = selected_y.add(dr, &y_term);
 
         let term = bit.mul(dr, &evaluations[j])?;
@@ -838,8 +817,8 @@ fn select_claim<
     }
 
     sum.sub(dr, &one).enforce_zero(dr)?;
-    selected_x.sub(dr, &target_x).enforce_zero(dr)?;
-    selected_y.sub(dr, &target_y).enforce_zero(dr)?;
+    selected_x.sub(dr, &coords[0]).enforce_zero(dr)?;
+    selected_y.sub(dr, &coords[1]).enforce_zero(dr)?;
 
     Ok(selected)
 }

@@ -150,27 +150,17 @@ fn forged_challenge_is_rejected_directly_and_recursively() -> Result<()> {
     Ok(())
 }
 
-/// **S2 — the claim-bridge tie must not be vacuous.**
+/// **S2 — a claim naming a commitment outside the instance is rejected.**
 ///
-/// `loading` configures the eval stage and the claim-bridge run and enforces
-/// `claim_bridges[slot].host == eval.claims[slot]`. A bonding claim asserts
-/// `a.revdot(s_y) == 0` over the **sum of the rxs supplied**, so that
-/// constraint only binds if the `Loading` group in
-/// `internal/nested/claims.rs` supplies `BridgeEval` and every
-/// `BridgeClaim(slot)` alongside the stages `main` supplies — a configured
-/// stage left out contributes zero wires and its constraints hold vacuously.
-/// This is the regression test for that group.
-///
-/// **The adversary.** Rebuild the carried claim-bridge stage in slot 0 so it
-/// witnesses a host commitment the proof does not record, and change nothing
-/// else. The instance-bound `bridge_com` and the recorded host both stay put, so
-/// the child's $k(Y)$ is intact and the native root check — which *recomputes*
-/// the bridge commitment from the recorded host rather than reading the carried
-/// rx — has no reason to fire. The substituted rx is a well-formed stage for the
-/// same slot with the same blind, so that slot's own `BridgeClaim` bonding claim
-/// still holds. Exactly one check in the system is supposed to reject this.
+/// A claim names the polynomial it opens by the polynomial's embedded host
+/// coordinates. Perturb one coordinate of a claim's name and nothing else:
+/// the poly region, the recorded hosts, and the claim polynomials all stay
+/// put, so the name now matches no slot. At root, `verify`'s claim walk finds
+/// no slot and rejects; fused as a child, `_08_f` finds no polynomial for the
+/// quotient and the fuse fails (or, past it, `compute_v`'s one-hot cannot
+/// select a slot and no proof exists).
 #[test]
-fn claim_bridge_stage_must_be_tied_to_the_recorded_host() -> Result<()> {
+fn a_claim_naming_no_slot_is_rejected() -> Result<()> {
     let pasta = Pasta::baked();
     let app = open_app::<Pasta, R>(pasta)?;
     let mut rng = StdRng::seed_from_u64(4242);
@@ -181,36 +171,16 @@ fn claim_bridge_stage_must_be_tied_to_the_recorded_host() -> Result<()> {
         "the honest leaf must verify"
     );
 
-    // A host commitment this proof records nowhere.
-    let other = poly::<Fp, R>(&[7, 7, 7]);
-    let other_host =
-        other.commit_to_affine::<<Pasta as Cycle>::HostCurve>(Pasta::host_generators(pasta));
-
     let mut tampered = honest;
-    tampered.corrupt_claim_bridge_host(0, other_host)?;
+    tampered.corrupt(Corruption::ClaimName(0, Fp::from(0xbad)));
 
-    // `loading` relates the claim-bridge run to the eval stage's claim block,
-    // and they now disagree in slot 0.
     assert!(
         !app.verify(&tampered, &mut rng)?,
-        "the loading circuit must reject a claim-bridge stage that witnesses a \
-         host commitment the proof does not record for that slot — if this \
-         fails, the `Loading` bonding group is missing BridgeEval or \
-         BridgeClaim(slot), making the tie vacuous"
+        "root verify must reject a claim whose name matches no polynomial slot"
     );
 
-    // And recursively. A fuse must be immediately sound: it need not carry a
-    // child's history, but it must establish everything about its immediate
-    // children that it relies on. It relies on `bridge_com` — that is how a
-    // claim names the polynomial it opens, and what the child's step derived
-    // its Fiat-Shamir challenges from.
-    //
-    // The parent binds the child's *host* commitments (stashed into its
-    // preamble stage, walked into its points accumulation by `loading`,
-    // cross-checked against the child's carried eval stage by `copying`) and
-    // must also establish that the child's `bridge_com` bridges that same
-    // host commitment — the child's claim-bridge run, carried on the proof
-    // and tied by `copying`'s `enforce_names`.
+    // And recursively: the parent resolves each child claim's name against
+    // the child's poly region before folding the quotient.
     let leaf2 = seed_leaf(&app, pasta, &mut rng, &[2, 7, 1, 8])?;
     let p3 = poly(&[5, 5, 5]);
     let com3 = app.commit_polynomial(&p3)?;
@@ -230,14 +200,11 @@ fn claim_bridge_stage_must_be_tied_to_the_recorded_host() -> Result<()> {
     );
 
     match fused {
-        Err(e) => std::eprintln!("interior fuse rejected the untied claim bridge: {e:?}"),
+        Err(e) => std::eprintln!("interior fuse rejected the unresolvable claim name: {e:?}"),
         Ok((parent, ())) => {
             assert!(
                 !app.verify(&parent, &mut rng)?,
-                "a parent of a child whose claim bridge is untied must not verify: \
-                 the fuse relies on `bridge_com` to name the polynomial each claim \
-                 opens, so it must establish that the child's bridge stage carries \
-                 the host commitment the parent folds"
+                "a parent of a child whose claim names no slot must not verify"
             );
         }
     }
@@ -248,22 +215,21 @@ fn claim_bridge_stage_must_be_tied_to_the_recorded_host() -> Result<()> {
 /// **S1 — a claim's commitment desynced from the folded polynomial is
 /// rejected.**
 ///
-/// A claim's instance-bound `bridge_com` is what the *step* sees: its Fiat-Shamir
-/// challenge and header hash are derived from it. The polynomial the *parent*
-/// folds into `f(X)` and the PCS accumulator is carried separately, under its
-/// own host-curve commitment.
+/// A claim's instance-bound coordinate pair is what the *step* sees: its
+/// Fiat-Shamir challenge and header hash are derived from it. The polynomial
+/// the *parent* folds into `f(X)` and the PCS accumulator is carried
+/// separately, under its own host-curve commitment.
 ///
 /// The adversary is a prover who declines to run the fuse-time pre-check
 /// (which carries no soundness weight) and hands in a child that is
-/// internally consistent everywhere, desynced only between `bridge_com`
-/// (which commits to `P`) and the carried polynomial `P'`. The step's
-/// challenge `z` is bound to `P`, yet the statement the parent enforces is
-/// about `P'`.
+/// internally consistent everywhere, desynced only between the instance name
+/// (the coordinates of `P`'s commitment) and the carried polynomial `P'`.
+/// The step's challenge `z` is bound to `P`, yet the statement the parent
+/// enforces is about `P'`.
 ///
-/// Root verification catches it directly (`verify.rs` re-derives
-/// `bridge(host)` and compares it to `bridge_com`); an interior fuse catches
-/// it through the coordinate chain — see the assertion below for the
-/// attribution and the named residual.
+/// Root verification catches it directly (`verify` recomputes the coordinate
+/// region from the recorded host); an interior fuse catches it through the
+/// coordinate chain — see the assertion below for the attribution.
 #[test]
 fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
     use ragu_pcd::PolyCommitment;
@@ -275,14 +241,15 @@ fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
         .finalize(pasta)?;
     let mut rng = StdRng::seed_from_u64(2024);
 
-    // `bridge_com` commits to P, but the claim carries P'. Both are honest-looking:
-    // the step derives z from bridge_com (so z is bound to P) and claims y = P'(z).
+    // The instance names P, but the claim carries P'. Both are honest-looking:
+    // the step derives z from P's embedded coordinates (so z is bound to P)
+    // and claims y = P'(z).
     let p = poly::<Fp, R>(&[3, 1, 4, 1, 5]);
     let p_prime = poly(&[9, 2, 6]);
     assert_ne!(p.eval(Fp::from(7u64)), p_prime.eval(Fp::from(7u64)));
     // The handle's host commitment is P's, but its polynomial is P'. The
-    // framework derives `bridge_com` from the host, so the step's challenge is bound
-    // to P while the parent folds P'.
+    // framework embeds the host's coordinates as the in-circuit name, so the
+    // step's challenge is bound to P while the parent folds P'.
     let host_of_p =
         p.commit_to_affine::<<Pasta as Cycle>::HostCurve>(Pasta::host_generators(pasta));
     let desynced = PolyCommitment::<Pasta, R>::desync_for_testing(p_prime.clone(), host_of_p);
@@ -296,11 +263,12 @@ fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
         },
     )?;
 
-    // The claim really is desynced: bridge_com bridges P's host commitment, the
-    // carried poly is P'. Establishing that here is what lets the rejection
-    // below be attributed to the desync rather than to any of the other ways a
-    // malformed proof fails, and it is the only reason a test reaches a claim
-    // slot at all — hence the `_for_testing` accessor rather than a public one.
+    // The claim really is desynced: the instance names P's host commitment,
+    // the carried poly is P'. Establishing that here is what lets the
+    // rejection below be attributed to the desync rather than to any of the
+    // other ways a malformed proof fails, and it is the only reason a test
+    // reaches a claim slot at all — hence the `_for_testing` accessor rather
+    // than a public one.
     let (claim_x, claim_y) = cheat.proof().claim_opening_for_testing(0);
     assert_eq!(
         claim_y,
@@ -309,10 +277,11 @@ fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
     );
     assert_ne!(claim_y, p.eval(claim_x), "P and P' disagree at z");
 
-    // The root verifier checks the bridge, so it rejects.
+    // The root verifier recomputes the coordinate region from the recorded
+    // host — the commitment of the carried polynomial — so it rejects.
     assert!(
         !app.verify(&cheat, &mut rng)?,
-        "root verify must reject a claim whose bridge_com does not bridge its host"
+        "root verify must reject a claim whose name is not the folded polynomial's commitment"
     );
 
     // Fused as a child, the desync is caught by the coordinate chain.
@@ -340,8 +309,8 @@ fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
             let verified = app.verify(&parent, &mut rng)?;
             // Caught by the coordinate chain. The child's coordinate instance
             // wires were computed from the handle's host (P's commitment --
-            // the one its `bridge_com` and challenges were derived from) and
-            // are bound to the child's committed application rx through k(Y).
+            // the one its name and challenges were derived from) and are
+            // bound to the child's committed application rx through k(Y).
             // The framework polynomial `q` is built from the *recomputed*
             // host of the polynomial actually folded (P''s), and the parent's
             // `compute_v` enforces that the child's instance coordinates
@@ -349,12 +318,6 @@ fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
             // different hosts can never satisfy it: the parent's own
             // compute_v trace is unsatisfiable and root verify rejects the
             // parent.
-            //
-            // Still deferred, per the framework-wide status quo: a prover who
-            // *also* forges the child's coordinate instance wires (its own
-            // proof, its own k(Y)) escapes this check and is caught only once
-            // `bridge_com == commit(carried claim rx)` is enforced per-fuse --
-            // the deferred PCS link no commitment in the system has yet.
             assert!(
                 !verified,
                 "a parent of a desynced-claim child must be rejected: the \

@@ -74,7 +74,7 @@ impl<
             CHALLENGES,
             CHALLENGE_WIDTH,
         >::new(step, Some(self.params)))
-        .trace((builder.bridge_alpha(), left_data, right_data, witness))?
+        .trace((left_data, right_data, witness))?
         .into_parts();
         let rx = self.native_registry.assemble(
             &trace,
@@ -108,7 +108,7 @@ impl<
         let precheck = self.claim_precheck_enabled();
         let mut claim_polys = alloc::vec::Vec::with_capacity(polys.len());
         let mut claim_host_commitments = alloc::vec::Vec::with_capacity(polys.len());
-        for (slot, witnessed) in polys.iter().enumerate() {
+        for witnessed in polys.iter() {
             // Reject an over-capacity coefficient vector gracefully; otherwise
             // `sparse::Polynomial::from_coeffs` would panic on it.
             if witnessed.coefficients.len() > R::num_coeffs() {
@@ -122,14 +122,8 @@ impl<
                 witnessed.coefficients.clone(),
             );
             let host = challenge::host_commitment::<C, R>(self.params, &poly)?;
-            let expected = challenge::claim_bridge_commitment::<C, R>(
-                self.params,
-                slot,
-                challenge::claim_bridge_alpha::<C>(builder.bridge_alpha(), slot),
-                host,
-                self.capacity().poly_query.polys,
-            )?;
-            if precheck && expected != witnessed.bridge_com {
+            let expected = challenge::host_coords::<C>(host)?;
+            if precheck && expected != witnessed.coords {
                 return Err(Error::InvalidWitness(
                     "poly-query claim rejected: the claimed commitment does not bind the claimed \
                      polynomial"
@@ -140,14 +134,14 @@ impl<
             claim_host_commitments.push(host);
         }
 
-        // Then each query, against the polynomial its bridge commitment
-        // identifies. A claim's `bridge_com` is copied from the slot it opens, so
-        // a commitment with no matching slot here means the hooks and the
+        // Then each query, against the polynomial its embedded commitment
+        // coordinates identify. A claim's `coords` are copied from the slot it
+        // opens, so a name with no matching slot here means the hooks and the
         // instance layout have diverged, not that a witness is bad.
         for claim in claims.iter() {
             let slot = polys
                 .iter()
-                .position(|witnessed| witnessed.bridge_com == claim.bridge_com)
+                .position(|witnessed| witnessed.coords == claim.coords)
                 .ok_or_else(|| {
                     Error::InvalidWitness(
                         "poly-query claim names a commitment outside the instance".into(),
@@ -168,7 +162,6 @@ impl<
 
         builder.set_native_application_rx(rx);
         builder.set_application_polys(
-            polys.iter().map(|p| p.bridge_com).collect(),
             polys.iter().flat_map(|p| p.coords).collect(),
             claim_polys,
             claim_host_commitments,

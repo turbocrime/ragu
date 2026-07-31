@@ -13,8 +13,9 @@
 //!   cannot mismatch them.
 //! * [`PolyHandle`] is the in-circuit form, created by
 //!   [`StepCtx::witness_polynomial`](crate::step::StepCtx::witness_polynomial):
-//!   it witnesses the commitment as a [`Point`] (usable for challenges,
-//!   hashing, etc.) while retaining the polynomial, and is consumed by
+//!   it witnesses the commitment as its two embedded coordinate wires (usable
+//!   for challenges, hashing, etc.) while retaining the polynomial, and is
+//!   consumed by
 //!   [`enforce_poly_query`](crate::step::StepCtx::enforce_poly_query).
 
 use alloc::vec::Vec;
@@ -25,7 +26,7 @@ use ragu_core::{
     drivers::{Driver, DriverValue},
     maybe::Maybe,
 };
-use ragu_primitives::{Element, Point};
+use ragu_primitives::Element;
 
 /// A polynomial together with its framework poly-query commitment.
 ///
@@ -59,10 +60,9 @@ impl<C: Cycle, R: Rank> PolyCommitment<C, R> {
     }
 
     /// The polynomial's host-curve commitment — `commit(polynomial)`, canonical
-    /// for that polynomial. The nested-curve `bridge_com` a claim carries is
-    /// derived from this by the framework, in
-    /// [`StepCtx::witness_polynomial`](crate::step::StepCtx::witness_polynomial),
-    /// once the claim's slot is known.
+    /// for that polynomial. Its embedded coordinates become the in-circuit
+    /// identity in
+    /// [`StepCtx::witness_polynomial`](crate::step::StepCtx::witness_polynomial).
     pub(crate) fn host(&self) -> C::HostCurve {
         self.host
     }
@@ -90,29 +90,25 @@ impl<C: Cycle, R: Rank> PolyCommitment<C, R> {
     }
 }
 
-/// The in-circuit form of a [`PolyCommitment`]: the polynomial's **bridge**
-/// commitment allocated as a [`Point`], plus the retained polynomial for the
-/// claim.
+/// The in-circuit form of a [`PolyCommitment`]: the polynomial's host
+/// commitment as its two embedded coordinate wires, plus the retained
+/// polynomial for the claim.
 ///
 /// Created by
 /// [`StepCtx::witness_polynomial`](crate::step::StepCtx::witness_polynomial).
-/// Use [`bridge_commitment`](Self::bridge_commitment) wherever the point is
-/// needed (deriving a challenge, hashing into a header), and pass the handle to
-/// [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query) to
-/// raise the claim.
+/// Use [`coords`](Self::coords) wherever the commitment is needed (deriving a
+/// challenge, hashing into a header, comparing across proofs), and pass the
+/// handle to
+/// [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query)
+/// to raise the claim.
 ///
-/// # Two commitments
-///
-/// [`PolyCommitment`]'s host commitment is `commit(polynomial)`, canonical
-/// for that polynomial — and unrepresentable as a [`Point`] in a step, since
-/// `Point` requires the curve's base field to be the circuit's field and
-/// `HostCurve::Base` is the *scalar* field. What a step sees is `bridge_com`:
-/// the commitment of this claim's bridge stage, whose wires *are* `host`'s
-/// coordinates, blinded by `bridge_alpha^(5 + slot)`. As a function of
-/// `(host, slot, bridge_alpha, capacity)` it identifies a polynomial *within
-/// one proof*, which is what a claim needs.
+/// A host-curve point is unrepresentable as a
+/// [`Point`](ragu_primitives::Point) in a step — `Point` requires the curve's
+/// base field to be the circuit's field, and `HostCurve::Base` is the *scalar*
+/// field — but its affine coordinates, canonically bounded below $2^{254}$,
+/// each fit one circuit-field element. The embedding is injective, so the
+/// pair *is* the commitment, in the only form a step can hold.
 pub struct PolyHandle<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> {
-    bridge_com: Point<'dr, D, C::NestedCurve>,
     polynomial: DriverValue<D, sparse::Polynomial<D::F, R>>,
     /// The polynomial's host commitment (prover-only, never wires) — retained
     /// so [`StepCtx::poly_limbs`](crate::step::StepCtx::poly_limbs) can fill
@@ -126,16 +122,14 @@ pub struct PolyHandle<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Ran
 }
 
 impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> PolyHandle<'dr, D, C, R> {
-    /// Bundles an allocated bridge commitment with its retained polynomial.
+    /// Bundles a witnessed commitment with its retained polynomial.
     pub(crate) fn new(
-        bridge_com: Point<'dr, D, C::NestedCurve>,
         polynomial: DriverValue<D, sparse::Polynomial<D::F, R>>,
         host: DriverValue<D, C::HostCurve>,
         coords: [Element<'dr, D>; 2],
         slot: usize,
     ) -> Self {
         Self {
-            bridge_com,
             polynomial,
             host,
             coords,
@@ -151,11 +145,6 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> PolyHandle<'dr
     /// The claim slot this handle occupies.
     pub(crate) fn slot(&self) -> usize {
         self.slot
-    }
-
-    /// The in-circuit bridge commitment.
-    pub fn bridge_commitment(&self) -> &Point<'dr, D, C::NestedCurve> {
-        &self.bridge_com
     }
 
     /// The polynomial's **canonical** in-circuit identity: its host

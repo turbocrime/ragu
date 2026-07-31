@@ -139,8 +139,7 @@ impl ChainStage {
 /// capacity.
 ///
 /// The chain is linear, in [`ChainStage`] order: endoscalar → points →
-/// preamble → s_prime → inner_error → outer_error → ab → query → f → eval,
-/// followed by the claim-bridge run (whose layout lives with its `Run` type).
+/// preamble → s_prime → inner_error → outer_error → ab → query → f → eval.
 /// The points and preamble stages carry the *children's*
 /// blocks, the eval stage the current step's own slots — but every step in an
 /// application exposes the same shape, so one capacity sizes all three. The
@@ -201,27 +200,6 @@ where
     )
 }
 
-/// The claim-bridge run's layout: one slot of host-coordinate wires per
-/// witnessed polynomial (the slot's width is its stage's `values()`),
-/// anchored right after the chain `chain` describes.
-///
-/// Takes the chain rather than rebuilding it — the two are always wanted
-/// together, and building the chain is a ten-element allocation.
-pub fn claim_run_layout<HC: ragu_arithmetic::CurveAffine, R: Rank>(
-    chain: &ragu_circuits::staging::InducedStages,
-    polys: usize,
-) -> ragu_circuits::staging::InducedStages {
-    use ragu_circuits::staging::Stage as _;
-
-    ragu_circuits::staging::InducedStages::anchored(
-        chain.final_skip_gates(),
-        alloc::vec![
-            stages::claim_bridge::Slot::<HC, R>::values();
-            polys
-        ],
-    )
-}
-
 /// Every layout needed to walk a nested trace, built together.
 ///
 /// [`loading`](circuits::loading) and [`copying`](circuits::copying) traverse
@@ -241,8 +219,6 @@ pub struct NestedLayouts {
     pub preamble: ragu_circuits::staging::InducedStages,
     /// [`ChainStage::Eval`], subdivided into one-point slots.
     pub eval: ragu_circuits::staging::InducedStages,
-    /// The claim-bridge run, anchored where the chain ends.
-    pub claims: ragu_circuits::staging::InducedStages,
 }
 
 impl NestedLayouts {
@@ -266,7 +242,6 @@ impl NestedLayouts {
                 ChainStage::Eval,
                 stages::eval::num_slots(polys),
             ),
-            claims: claim_run_layout::<HC, R>(&chain, polys),
             chain,
         }
     }
@@ -298,14 +273,13 @@ const BLOCK_FIXED: [InternalCircuitIndex; 11] = [
 ///
 /// Layout (circuits before bondings, matching `RegistryBuilder::finalize()`):
 /// the endoscaling step circuits, then one bonding block — the eleven fixed
-/// entries of [`BLOCK_FIXED`], the claim bridge slot masks at the capacity's
-/// poly count, the loading circuit, and the two copying circuits.
+/// entries of [`BLOCK_FIXED`], the loading circuit, and the two copying
+/// circuits.
 ///
 /// Every one of these is built at the capacity, children included, which is
-/// why there is a single run and a single block rather than a family keyed by
-/// shape.
+/// why there is a single block rather than a family keyed by shape.
 pub(crate) fn num_internal(polys: usize) -> usize {
-    num_endoscaling_steps(polys) + BLOCK_FIXED.len() + polys + 3
+    num_endoscaling_steps(polys) + BLOCK_FIXED.len() + 3
 }
 
 /// Index of internal nested circuits registered into the registry.
@@ -337,8 +311,6 @@ pub enum InternalCircuitIndex {
     BridgeF,
     /// Bridge `eval` stage mask.
     BridgeEval,
-    /// Per-claim bridge stage mask, indexed by poly-query claim slot.
-    BridgeClaim(u32),
     /// Loading circuit over all nested stages.
     Loading,
     /// Copying circuit relating current preamble to a child proof's stages.
@@ -374,7 +346,6 @@ impl InternalCircuitIndex {
             Self::BridgeF,
             Self::BridgeEval,
         ]);
-        all.extend((0..polys).map(|i| Self::BridgeClaim(i as u32)));
         all.extend([
             Self::Loading,
             Self::Copying(Side::Left),
@@ -459,20 +430,11 @@ pub enum RxIndex {
     BridgeF,
     /// Bridge `eval` rx polynomial.
     BridgeEval,
-    /// Per-claim bridge rx polynomial, indexed by poly-query claim slot.
-    BridgeClaim(u32),
     /// Child proof's `PointsStage` rx polynomial (per-side, for copying).
     ChildPointsStage(Side),
     /// Child proof's bridge rx polynomial (per-side, for copying),
     /// keyed by which bridge stage it comes from.
     ChildBridge(ChildBridgeKind, Side),
-    /// Child proof's per-claim bridge rx polynomial (per-side, per slot).
-    ///
-    /// Its own variant rather than a [`ChildBridgeKind`] arm because that enum
-    /// is a fixed list and this family's length is the application's poly
-    /// capacity — the same reason [`BridgeClaim`](Self::BridgeClaim) is
-    /// slot-indexed rather than one variant per slot.
-    ChildBridgeClaim(u32, Side),
 }
 
 impl RxIndex {
@@ -501,7 +463,6 @@ impl RxIndex {
             Self::BridgeF,
             Self::BridgeEval,
         ]);
-        all.extend((0..polys).map(|i| Self::BridgeClaim(i as u32)));
         all.extend([
             Self::ChildPointsStage(Side::Left),
             Self::ChildPointsStage(Side::Right),
@@ -512,12 +473,6 @@ impl RxIndex {
                 Self::ChildBridge(kind, Side::Right),
             ]);
         }
-        for slot in 0..polys {
-            all.extend([
-                Self::ChildBridgeClaim(slot as u32, Side::Left),
-                Self::ChildBridgeClaim(slot as u32, Side::Right),
-            ]);
-        }
         all
     }
 }
@@ -526,7 +481,6 @@ pub mod claims;
 
 pub mod stages {
     pub mod ab;
-    pub mod claim_bridge;
     pub mod eval;
     pub mod f;
     pub mod host_bridge;
@@ -561,7 +515,6 @@ pub fn register_all<'params, C: Cycle, R: Rank, L: ragu_primitives::vec::Len>(
 
     {
         let chain = chain_layout::<C::HostCurve, R>(polys);
-        let claim_layout = claim_run_layout::<C::HostCurve, R>(&chain, polys);
 
         // The fixed block, in BLOCK_FIXED order: endoscalar, points, points
         // final, then the eight bridge masks in chain order.
@@ -574,10 +527,6 @@ pub fn register_all<'params, C: Cycle, R: Rank, L: ragu_primitives::vec::Len>(
         );
         for stage in &ChainStage::ALL[ChainStage::Preamble.index()..] {
             registry = registry.register_bonding(chain.mask::<C::ScalarField, R>(stage.index())?);
-        }
-
-        for slot in 0..polys {
-            registry = registry.register_bonding(claim_layout.mask::<C::ScalarField, R>(slot)?);
         }
 
         let circuit = circuits::loading::Circuit::<C::HostCurve, R, L>::new();

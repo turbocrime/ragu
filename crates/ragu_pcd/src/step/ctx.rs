@@ -16,7 +16,7 @@ use ragu_core::{
     drivers::{Driver, DriverValue},
     maybe::Maybe,
 };
-use ragu_primitives::{Element, Point};
+use ragu_primitives::Element;
 
 use crate::{
     framework_hooks::FrameworkHooks,
@@ -51,16 +51,15 @@ where
     /// [`PolyHandle`] per [`PolyCommitment`].
     ///
     /// The polynomial is handled **abstractly, by its commitment**: what is
-    /// allocated is the commitment [`Point`] and the two coordinate instance
-    /// wires, and the coefficients ride along as a [`DriverValue`] —
-    /// prover-side data, absent on a verifying driver — so witnessing costs a
-    /// handful of allocations regardless of the polynomial's size. Anything
-    /// added here must preserve that: allocate the commitment, retain the
-    /// coefficients as a value.
+    /// allocated is the two coordinate instance wires — the host commitment's
+    /// affine coordinates, canonically embedded — and the coefficients ride
+    /// along as a [`DriverValue`] — prover-side data, absent on a verifying
+    /// driver — so witnessing costs two allocations regardless of the
+    /// polynomial's size. Anything added here must preserve that: allocate
+    /// the commitment's coordinates, retain the coefficients as a value.
     ///
-    /// The bridge commitment point is reachable via
-    /// [`PolyHandle::bridge_commitment`] for challenges, hashing and the like;
-    /// the retained polynomial is what a later
+    /// The commitment is reachable via [`PolyHandle::coords`] for challenges,
+    /// hashing and the like; the retained polynomial is what a later
     /// [`enforce_poly_query`](Self::enforce_poly_query) opens. A
     /// [`PolyCommitment`] can only come from
     /// [`Application::commit_polynomial`](crate::Application::commit_polynomial),
@@ -102,7 +101,6 @@ where
         commitment: DriverValue<D, PolyCommitment<C, R>>,
     ) -> Result<PolyHandle<'dr, D, C, R>> {
         let slot = self.hooks.next_poly_slot()?;
-        let host = commitment.as_ref().map(|c| c.host());
         let host_retained = commitment.as_ref().map(|c| c.host());
         // The slot's two coordinate instance wires: the host commitment's
         // affine coordinates, canonically embedded. Allocated here so they
@@ -116,31 +114,10 @@ where
             Element::alloc(self.dr, &mut (), coord_values.as_ref().map(|c| c[0]))?,
             Element::alloc(self.dr, &mut (), coord_values.as_ref().map(|c| c[1]))?,
         ];
-        let proof_values = self.hooks.proof_values();
-        let capacity = self.hooks.capacity();
-        let bridge_com_value = D::try_just(move || {
-            let proof_values = proof_values.take();
-            let alpha = crate::internal::challenge::claim_bridge_alpha::<C>(
-                proof_values.bridge_alpha,
-                slot,
-            );
-            crate::internal::challenge::claim_bridge_commitment::<C, R>(
-                proof_values.params,
-                slot,
-                alpha,
-                host.take(),
-                capacity.poly_query.polys,
-            )
-        })?;
-        let bridge_com = Point::alloc(self.dr, bridge_com_value)?;
         let polynomial = commitment.map(PolyCommitment::into_polynomial);
-        let handle = PolyHandle::new(bridge_com, polynomial, host_retained, coords.clone(), slot);
-        self.hooks.record_polynomial(
-            slot,
-            handle.bridge_commitment().clone(),
-            handle.coefficients(),
-            coords,
-        );
+        let handle = PolyHandle::new(polynomial, host_retained, coords.clone(), slot);
+        self.hooks
+            .record_polynomial(slot, handle.coefficients(), coords);
         Ok(handle)
     }
 
@@ -200,21 +177,19 @@ where
     /// that pre-check runs on the prover and carries no soundness weight.
     ///
     /// Claims may be raised in any order, and the **same handle may be used
-    /// more than once**: a claim carries the commitment of the polynomial it
-    /// opens, so a repeat opening costs one claim slot and no polynomial
-    /// slot. The commitment it carries is the very [`Point`] the handle
-    /// holds.
+    /// more than once**: a claim names the polynomial it opens by the
+    /// polynomial's embedded host coordinates — the very wires the handle
+    /// holds — so a repeat opening costs one claim slot and no polynomial
+    /// slot.
     ///
     /// # Soundness status
     ///
-    /// A claim's `bridge_com` is the commitment of that claim's **bridge
-    /// stage** — a polynomial the proof carries, whose wires are the claim's
-    /// host commitment, tied by the `loading` circuit to the host point the
-    /// parent folds and endoscales. That is the framework's own idiom for
-    /// crossing the curve boundary (compare `bridge_f_commitment` and
-    /// `bridge_f_rx`), so a claim inherits exactly its guarantees, including
-    /// the framework-wide deferred PCS opening; a **root** proof's own claims
-    /// are checked natively by
+    /// A claim's name is bound through the accumulator: the coordinate wires
+    /// are folded into the circuit's $k(Y)$, the parent's `compute_v`
+    /// re-derives the claim-coordinate polynomial's $q(u)$ from them, and
+    /// `(q, C_q)` rides the PCS accumulator — so a claim inherits exactly the
+    /// framework's own guarantees, including the framework-wide deferred PCS
+    /// opening; a **root** proof's own claims are checked natively by
     /// [`Application::verify`](crate::Application::verify). See
     /// [`framework_hooks`](crate::framework_hooks) for the chain.
     pub fn enforce_poly_query<R: Rank>(
@@ -224,7 +199,7 @@ where
         y: Element<'dr, D>,
     ) -> Result<()> {
         self.hooks
-            .enforce_polynomial_query(commitment.bridge_commitment().clone(), x, y)
+            .enforce_polynomial_query(commitment.coords(), x, y)
     }
 
     /// Derives a sound Fiat–Shamir challenge from `inputs`.
@@ -249,8 +224,8 @@ where
     /// pair (the polynomial's commitment, so the standard poly-query
     /// Fiat–Shamir shape), header-carried data, or a wire otherwise
     /// constrained — since a freely witnessed input lets the prover grind the
-    /// challenge by varying it. A pinned [`Point`] is absorbable as its two
-    /// coordinate wires.
+    /// challenge by varying it. A pinned [`Point`](ragu_primitives::Point) is
+    /// absorbable as its two coordinate wires.
     ///
     /// On a value-carrying driver the returned `Element` holds the real
     /// challenge immediately, so the step body can evaluate polynomials at it

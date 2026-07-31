@@ -36,6 +36,13 @@ pub enum Corruption<F> {
     /// recursively (the instance-bound claim no longer matches the
     /// application circuit's k(Y), and `compute_v`'s claim quotient breaks).
     ClaimY(usize, F),
+    /// Perturb the first coordinate of the given claim slot's **name** — the
+    /// opened polynomial's embedded host coordinates — leaving the poly
+    /// region and everything else untouched, so the name matches no slot.
+    /// The root verifier's claim walk resolves it to nothing; a parent's
+    /// `_08_f` finds no polynomial for the quotient and `compute_v`'s one-hot
+    /// cannot select.
+    ClaimName(usize, F),
     /// Perturb the derived challenge in the given slot, leaving the point it
     /// was derived from intact. This is the challenge-grinding shape: a prover
     /// who wants a challenge other than the one its committed inputs hash to.
@@ -76,6 +83,9 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             Corruption::ClaimY(slot, v) => {
                 self.application_claims[slot].y += v;
             }
+            Corruption::ClaimName(slot, v) => {
+                self.application_claims[slot].coords[0] += v;
+            }
             Corruption::ChallengeValue(slot, v) => {
                 self.application_challenges[slot].challenge += v;
             }
@@ -84,31 +94,6 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 }
 
 impl<C: Cycle, R: Rank> Proof<C, R> {
-    /// Rebuild the carried claim-bridge stage rx in `slot` so that it witnesses
-    /// `host` instead of the host commitment this proof records for that slot.
-    ///
-    /// Nothing else moves: the recorded host, the instance-bound `bridge_com`,
-    /// the child's $k(Y)$, and the slot's own `BridgeClaim` bonding claim all
-    /// stay intact, so exactly one check in the system is supposed to reject
-    /// this — the `loading` circuit's
-    /// `claim_bridges[slot].host == eval.claims[slot]`. That makes this the
-    /// isolating adversary for that constraint. A distinct entry point rather
-    /// than a [`Corruption`] variant because it takes a `HostCurve` point,
-    /// not a field element.
-    pub fn corrupt_claim_bridge_host(
-        &mut self,
-        slot: usize,
-        host: C::HostCurve,
-    ) -> ragu_core::Result<()> {
-        // One carried bridge rx per poly slot, so this list *is* the capacity
-        // the layout must be built at.
-        let polys = self.claim_bridge_rxs.len();
-        let alpha = crate::internal::challenge::claim_bridge_alpha::<C>(self.bridge_alpha, slot);
-        self.claim_bridge_rxs[slot] =
-            crate::internal::challenge::claim_bridge_rx::<C, R>(slot, alpha, host, polys)?;
-        Ok(())
-    }
-
     /// Replaces one coordinate instance wire's recorded value, leaving
     /// everything else — the recorded hosts, the claim polynomials, the
     /// bridge commitments — untouched.
@@ -146,15 +131,6 @@ impl<C: Cycle, R: Rank, H: crate::Header<C::CircuitField>> crate::Pcd<C, R, H> {
     /// Apply [`Proof::corrupt_application_coord`] to the underlying proof.
     pub fn corrupt_application_coord(&mut self, index: usize, value: C::CircuitField) {
         self.proof_mut().corrupt_application_coord(index, value);
-    }
-
-    /// Apply [`Proof::corrupt_claim_bridge_host`] to the underlying proof.
-    pub fn corrupt_claim_bridge_host(
-        &mut self,
-        slot: usize,
-        host: C::HostCurve,
-    ) -> ragu_core::Result<()> {
-        self.proof_mut().corrupt_claim_bridge_host(slot, host)
     }
 }
 

@@ -97,7 +97,7 @@ impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> Default for Circuit<
 impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> MultiStageCircuit<C::Base, R>
     for Circuit<C, R, L>
 {
-    type Last = stages::claim_bridge::Run<C, R>;
+    type Last = stages::f::Stage<C, R>;
     type Instance<'source> = ();
     type Witness<'source> = ();
     type Output = ();
@@ -155,14 +155,6 @@ impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> MultiStageCircuit<C:
             stages::f::Stage::<C, R>::default(),
             layouts.width(ChainStage::F),
         )?;
-        let (eval_guards, dr) = dr.configure_induced_sized::<stages::eval::Stage<C, R>, _>(
-            stages::eval::Slot::<C, R>::default(),
-            &layouts.eval,
-        )?;
-        let (claim_guards, dr) = dr.configure_induced_sized::<stages::claim_bridge::Run<C, R>, _>(
-            stages::claim_bridge::Slot::<C, R>::default(),
-            &layouts.claims,
-        )?;
         let dr = dr.finish();
 
         // Load stage gadgets. Witness values are never accessed — the circuit
@@ -189,18 +181,6 @@ impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> MultiStageCircuit<C:
         let ab = ab_guard.unenforced(dr, w!())?;
         let query = query_guard.unenforced(dr, w!())?;
         let f_stage = f_guard.unenforced(dr, w!())?;
-        // Loading reads only this stage's claim block: the `native_eval` point is
-        // checked by `copying`, against the child's stashed copy.
-        let eval = stages::eval::Output::<D, C, L>::from_slots(
-            eval_guards
-                .into_iter()
-                .map(|guard| Ok(guard.unenforced(dr, w!())?.host))
-                .collect::<Result<alloc::vec::Vec<_>>>()?,
-        )?;
-        let claim_bridges = claim_guards
-            .into_iter()
-            .map(|guard| guard.unenforced(dr, w!()))
-            .collect::<Result<alloc::vec::Vec<_>>>()?;
 
         // Walk through PointsStage inputs, mirroring the accumulation order
         // in `compute_p` (_10_p.rs).
@@ -240,21 +220,6 @@ impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> MultiStageCircuit<C:
 
         // The initial point (f.commitment) must match BridgeF.native_f.
         points.initial.enforce_equal(dr, &f_stage.native_f)?;
-
-        // Each poly-query claim's bridge stage must witness exactly the host
-        // commitment this proof records for that slot. The stage's wires are
-        // therefore the host point, so committing the stage (which yields the
-        // claim's instance-bound `bridge_com`) binds `bridge_com` to that host
-        // commitment — mirroring how `BridgeF.native_f` ties
-        // `bridge_f_commitment` above.
-        assert_eq!(
-            claim_bridges.len(),
-            eval.claims.len(),
-            "the claim-bridge run did not yield one slot per claim"
-        );
-        for (slot, bridge) in claim_bridges.iter().enumerate() {
-            stages::claim_bridge::enforce_names(dr, bridge, &eval.claims[slot])?;
-        }
 
         Ok(WithAux::new((), D::unit()))
     }

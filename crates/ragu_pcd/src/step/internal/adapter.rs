@@ -25,23 +25,19 @@ use crate::{
 };
 
 /// Length of an application circuit's public instance: the three headers, then
-/// the polynomial slots (commitment point coordinates — two elements per slot),
-/// then the query slots (the opened polynomial's commitment and the $(x, y)$
-/// opening — four elements per slot), then the challenge slots (the coordinates
-/// of every input point, then the challenge), then the coordinate region (the
-/// host commitment's embedded affine coordinates — two elements per polynomial
-/// slot).
+/// the polynomial slots (the host commitment's embedded affine coordinates —
+/// two elements per slot), then the query slots (the opened polynomial's name
+/// and the $(x, y)$ opening — four elements per slot), then the challenge
+/// slots (every input element, then the challenge).
 ///
-/// A query carries the commitment of the polynomial it opens — the same
-/// allocated [`Point`](ragu_primitives::Point), written at two instance
-/// positions, so no constraint is spent making them agree. A repeat opening
-/// costs a query slot and no polynomial slot.
+/// A query carries the name of the polynomial it opens — the same allocated
+/// wires, written at two instance positions, so no constraint is spent making
+/// them agree. A repeat opening costs a query slot and no polynomial slot.
 pub fn instance_len(header_size: usize, capacity: HookLayout) -> usize {
     header_size * 3
         + capacity.poly_query.polys * 2
         + capacity.poly_query.claims * 4
         + capacity.challenge.calls * (capacity.challenge.width + 1)
-        + capacity.poly_query.polys * 2
 }
 
 /// [`instance_len`] as a [`Len`](ragu_primitives::vec::Len), so the application
@@ -173,11 +169,6 @@ impl<
         <S::Output as Header<C::CircuitField>>::Data,
     );
     type Witness<'source> = (
-        // The proof's bridge blind source. Absent during registration, because
-        // it does not exist until a *proof* is being built — which is why it
-        // rides a `DriverValue` while the cycle parameters, absent for a
-        // different reason, are an `Option` field on the adapter instead.
-        C::ScalarField,
         <S::Left as Header<C::CircuitField>>::Data,
         <S::Right as Header<C::CircuitField>>::Data,
         S::Witness<'source>,
@@ -209,7 +200,7 @@ impl<
     {
         let dr = builder.finish();
 
-        let (bridge_alpha, left, right, witness) = witness.cast();
+        let (left, right, witness) = witness.cast();
         // `Self: 'dr` gives `'params: 'dr`, so the parameters coerce. The
         // closure runs only on a value-carrying driver, and every such driver
         // is building a proof — which only `Application` can do, and only with
@@ -220,10 +211,10 @@ impl<
         let proof_values = D::try_just(move || {
             let params = params.ok_or_else(|| {
                 ragu_core::Error::InvalidWitness(
-                    "step witnessed with proof blinds but no cycle parameters".into(),
+                    "step witnessed with proof values but no cycle parameters".into(),
                 )
             })?;
-            Ok(ProofValues::new(params, bridge_alpha.take()))
+            Ok(ProofValues::new(params))
         })?;
 
         let mut hooks = FrameworkHooks::new(Self::CAPACITY, Maybe::clone(&proof_values));
@@ -244,21 +235,26 @@ impl<
         left.write(dr, &mut elements)?;
         right.write(dr, &mut elements)?;
         output.write(dr, &mut elements)?;
-        // The polynomial slots follow the headers: per slot, the commitment
-        // point's two coordinates. Then the query slots: per slot, the opened
-        // polynomial's commitment, the opening point, and the claimed
-        // evaluation. This layout must match `ProofInputs::application_ky`.
+        // The polynomial slots follow the headers: per slot, the host
+        // commitment's two embedded affine coordinates — the polynomial's
+        // name. Then the query slots: per slot, the opened polynomial's name,
+        // the opening point, and the claimed evaluation. This layout must
+        // match `ProofInputs::application_ky`.
         //
-        // A query's `bridge_com` is the very `Point` its polynomial's slot wrote —
-        // `enforce_polynomial_query` reads it out of `witnessed_polys` rather
-        // than taking it from the caller — so this writes one wire at two
-        // positions and the parent inherits their equality through the revdot
-        // identity, with nothing to enforce.
+        // A query's `coords` are the very wires its polynomial's slot wrote —
+        // `enforce_polynomial_query` reads them out of `witnessed_polys`
+        // rather than taking them from the caller — so this writes one pair
+        // at two positions and the parent inherits their equality through the
+        // revdot identity, with nothing to enforce.
         for poly in &outputs.witnessed_polys {
-            poly.bridge_com.write(dr, &mut elements)?;
+            for coord in &poly.coords {
+                coord.write(dr, &mut elements)?;
+            }
         }
         for query in &outputs.poly_queries {
-            query.bridge_com.write(dr, &mut elements)?;
+            for coord in &query.coords {
+                coord.write(dr, &mut elements)?;
+            }
             query.x.write(dr, &mut elements)?;
             query.y.write(dr, &mut elements)?;
         }
@@ -270,15 +266,6 @@ impl<
                 input.write(dr, &mut elements)?;
             }
             pair.challenge.write(dr, &mut elements)?;
-        }
-        // Last, the coordinate region: per polynomial slot, the two wires
-        // holding the host commitment's embedded affine coordinates. Appended
-        // after the existing regions so their offsets (and the value reads
-        // below) are unmoved.
-        for poly in &outputs.witnessed_polys {
-            for coord in &poly.coords {
-                coord.write(dr, &mut elements)?;
-            }
         }
 
         // Read every hook's wires back out as values for the fuse.
@@ -313,7 +300,6 @@ impl<
 
 #[cfg(test)]
 mod tests {
-    use ragu_arithmetic::ff::Field;
     use ragu_circuits::{Circuit, staging::MultiStage};
     use ragu_core::{
         drivers::emulator::{Emulator, Wireless},
@@ -395,11 +381,6 @@ mod tests {
         }
     }
 
-    /// An arbitrary bridge blind for tests that only care about circuit shape.
-    fn test_bridge_alpha() -> <Pasta as Cycle>::ScalarField {
-        <Pasta as Cycle>::ScalarField::ONE
-    }
-
     /// Like [`TestStep`], but derives a challenge and folds it into the output.
     ///
     /// The challenge takes no input points: a step's cost does not depend on
@@ -466,17 +447,17 @@ mod tests {
                 claims: 8,
             },
         };
-        // Two elements per polynomial (its commitment), four per claim (the
-        // opened polynomial's commitment, then the `(x, y)` opening), one per
-        // challenge input plus its challenge, and two more per polynomial in
-        // the trailing coordinate region.
-        let slots = 8 * 2 + 8 * 4 + 2 * (capacity.challenge.width + 1) + 8 * 2;
+        // Two elements per polynomial (its name — the embedded commitment
+        // coordinates), four per claim (the opened polynomial's name, then
+        // the `(x, y)` opening), and one per challenge input plus its
+        // challenge.
+        let slots = 8 * 2 + 8 * 4 + 2 * (capacity.challenge.width + 1);
         assert_eq!(instance_len(1, capacity), 3 + slots);
         assert_eq!(instance_len(4, capacity), 12 + slots);
         assert_eq!(instance_len(10, capacity), 30 + slots);
 
-        // Half the polynomial slots, half their contribution — two commitment
-        // wires and two coordinate wires each.
+        // Half the polynomial slots, half their contribution — two name wires
+        // each.
         let smaller = HookLayout {
             poly_query: PolyQueryLayout {
                 polys: 4,
@@ -484,7 +465,7 @@ mod tests {
             },
             ..capacity
         };
-        assert_eq!(instance_len(4, smaller), instance_len(4, capacity) - 16);
+        assert_eq!(instance_len(4, smaller), instance_len(4, capacity) - 8);
     }
 
     #[test]
@@ -494,8 +475,7 @@ mod tests {
 
         type Subject = Adapter<'static, Pasta, TestStep, TestR, HEADER_SIZE, 0, 0, 0, 2>;
         let adapter = Subject::new(TestStep, Some(Pasta::baked()));
-        let witness =
-            Always::maybe_just(|| (test_bridge_alpha(), Fp::from(10u64), Fp::from(20u64), ()));
+        let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
 
         let output = MultiStage::new(adapter)
             .witness(dr, witness)
@@ -515,8 +495,7 @@ mod tests {
             TestStep,
             Some(Pasta::baked()),
         );
-        let witness =
-            Always::maybe_just(|| (test_bridge_alpha(), Fp::from(10u64), Fp::from(20u64), ()));
+        let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
 
         let aux = MultiStage::new(adapter)
             .witness(dr, witness)
