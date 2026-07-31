@@ -4,7 +4,7 @@
 //! computed with [`ragu_arithmetic::poly_mul`], the library's FFT multiply.
 //!
 //! Two steps, registered into the shared
-//! [`collections_app`](super::collections::collections_app):
+//! [`collections_app`](super::collections_app):
 //!
 //! * [`SeedSet`] — a leaf establishing an **initial** set from an arbitrary
 //!   committed polynomial. Its output header carries the set's *name* — the
@@ -47,7 +47,7 @@ use ragu_primitives::{
     vec::{CollectFixed, ConstLen, FixedVec, Len},
 };
 
-use super::collections::CollectionsApp;
+use super::CollectionsApp;
 
 /// The monic set polynomial `∏ (X − m)` over `members`, multiplicity
 /// included, via the library's [`poly_with_roots`] (a product tree over the

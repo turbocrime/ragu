@@ -18,28 +18,24 @@
 //! Run the ignored `print_merge_characterization` (ideally with `--release`)
 //! for wall-clock numbers across sizes.
 //!
-//! [`SeedSet`]: ragu_testing::pcd::multiset::SeedSet
-//! [`MergeSets`]: ragu_testing::pcd::multiset::MergeSets
+//! [`SeedSet`]: ragu_testing::pcd::collections::multiset::SeedSet
+//! [`MergeSets`]: ragu_testing::pcd::collections::multiset::MergeSets
 
 use ragu_arithmetic::{
     ff::Field,
     rand::{SeedableRng, rngs::StdRng},
 };
-use ragu_circuits::polynomials::{ProductionRank, Rank};
+use ragu_circuits::polynomials::Rank;
 use ragu_core::Result;
 use ragu_pasta::{Fp, Pasta};
-use ragu_testing::pcd::{
-    collections::collections_app,
+use ragu_testing::pcd::collections::{
+    collections_app,
     multiset::{
         MergeSets, MergeSetsWitness, fuse_merge, merged_polynomial, seed_set, set_polynomial,
     },
 };
 
-type R = ProductionRank;
-
-fn members(values: &[u64]) -> Vec<Fp> {
-    values.iter().map(|v| Fp::from(*v)).collect()
-}
+use crate::{R, members};
 
 /// Two seeded sets fuse into their merge, the parent verifies, and the
 /// merged polynomial's roots are exactly the members of both sets,

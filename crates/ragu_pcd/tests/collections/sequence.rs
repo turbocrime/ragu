@@ -25,26 +25,22 @@
 //! Run the ignored `print_concat_characterization` (ideally with
 //! `--release`) for wall-clock numbers across sizes.
 //!
-//! [`SeedSequence`]: ragu_testing::pcd::sequence::SeedSequence
-//! [`ConcatSequences`]: ragu_testing::pcd::sequence::ConcatSequences
+//! [`SeedSequence`]: ragu_testing::pcd::collections::sequence::SeedSequence
+//! [`ConcatSequences`]: ragu_testing::pcd::collections::sequence::ConcatSequences
 
 use ragu_arithmetic::rand::{SeedableRng, rngs::StdRng};
-use ragu_circuits::polynomials::{ProductionRank, Rank};
+use ragu_circuits::polynomials::Rank;
 use ragu_core::Result;
 use ragu_pasta::{Fp, Pasta};
-use ragu_testing::pcd::{
-    collections::collections_app,
+use ragu_testing::pcd::collections::{
+    collections_app,
     sequence::{
         ConcatSequences, ConcatSequencesWitness, fuse_concat, length_token, seed_sequence,
         sequence_polynomial,
     },
 };
 
-type R = ProductionRank;
-
-fn members(values: &[u64]) -> Vec<Fp> {
-    values.iter().map(|v| Fp::from(*v)).collect()
-}
+use crate::{R, members};
 
 /// Two seeded sequences fuse into their concatenation, the parent verifies,
 /// and the output's members are `A`'s followed by `B`'s — order and

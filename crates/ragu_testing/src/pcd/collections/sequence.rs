@@ -21,7 +21,7 @@
 //! that the committed polynomial is exactly `Xⁿ`.
 //!
 //! Two steps, registered into the shared
-//! [`collections_app`](super::collections::collections_app):
+//! [`collections_app`](super::collections_app):
 //!
 //! * [`SeedSequence`] — a leaf establishing an **initial** sequence: it
 //!   witnesses the sequence polynomial and its length token and outputs
@@ -59,7 +59,7 @@ use ragu_primitives::{
     vec::{CollectFixed, ConstLen, FixedVec, Len},
 };
 
-use super::collections::CollectionsApp;
+use super::CollectionsApp;
 
 /// The coefficient polynomial of a sequence: member `i` is the coefficient
 /// of `Xⁱ`. A sequence of `L` members is a polynomial of degree `< L`.

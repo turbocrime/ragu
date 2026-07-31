@@ -10,16 +10,16 @@
 //! slots are padded by the framework. That cost asymmetry is itself part of
 //! the characterization: registering steps together prices every step at
 //! the heaviest step's shape.
-//!
-//! [`multiset::MergeSets`]: super::multiset::MergeSets
-//! [`sequence::ConcatSequences`]: super::sequence::ConcatSequences
+
+pub mod multiset;
+pub mod sequence;
 
 use ragu_arithmetic::Cycle;
 use ragu_circuits::polynomials::Rank;
 use ragu_core::Result;
 use ragu_pcd::{Application, ApplicationBuilder};
 
-use super::{
+use self::{
     multiset::{MergeSets, SeedSet},
     sequence::{ConcatSequences, SeedSequence},
 };
