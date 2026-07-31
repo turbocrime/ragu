@@ -1,28 +1,29 @@
-//! Test fixture for multiset merging over set polynomials: a multiset is
+//! Test fixtures for multiset operations over set polynomials: a multiset is
 //! represented by the monic polynomial whose roots are its members (with
 //! multiplicity), so merging two multisets is polynomial multiplication —
-//! computed with [`ragu_arithmetic::util::poly_mul`], the library's FFT
-//! multiply.
+//! computed with [`ragu_arithmetic::poly_mul`], the library's FFT multiply.
 //!
-//! [`MergeSets`] handles exactly three sets: the two contributing sets `A`
-//! and `B`, and the merged set `C`. **Downstream consumers see only the
-//! merged set**: the output header binds `C`'s identity alone, and `A` and
-//! `B` never leave the proof. `C` occupies a polynomial slot because its
-//! commitment is the single identity carried forward — Pedersen commitments
-//! are not multiplicative, so `commit(A·B)` cannot be derived from
-//! `commit(A)` and `commit(B)` — but what the slot holds is only the name
-//! (two instance wires); that `C` **is** `A·B` is *proven*, not witnessed:
-//! the challenge `z` is derived from all three names, `A` and `B` are opened
-//! at `z`, and `C`'s claim uses the in-circuit product `a(z)·b(z)` as its
-//! claimed evaluation, so a `C` that is not the product makes the claim
+//! Two steps, registered into the shared
+//! [`collections_app`](super::collections::collections_app):
+//!
+//! * [`SeedSet`] — a leaf establishing an **initial** set from an arbitrary
+//!   committed polynomial. Its output header carries the set's *name* — the
+//!   commitment's two canonical coordinates — as raw header elements, so a
+//!   parent can compare against it in-circuit.
+//! * [`MergeSets`] — a **fuse**: the two contributing sets arrive as the
+//!   children's header-carried names, the parent re-witnesses their
+//!   polynomials and enforces its handles' names equal the header wires —
+//!   the cross-proof identity check the canonical representation exists
+//!   for — then proves the product. Downstream consumers see only the
+//!   merged set: the output header carries `C`'s name alone.
+//!
+//! `C` occupies a polynomial slot because Pedersen commitments are not
+//! multiplicative — `commit(A·B)` cannot be derived from `commit(A)` and
+//! `commit(B)` — but the slot holds only the name; that `C` **is** the
+//! product is *proven*: the challenge `z` is derived from all three names,
+//! `A` and `B` are opened at `z`, and `C`'s claim carries the in-circuit
+//! `a(z)·b(z)` as its claimed evaluation, so a wrong `C` makes the claim
 //! false by Schwartz–Zippel over `z`.
-//!
-//! The size ceiling is the polynomial rank: a set of `N` members is a
-//! degree-`N` polynomial with `N + 1` coefficients, so at a rank providing
-//! `num_coeffs` coefficients the **merged** set holds at most
-//! `num_coeffs − 1` members (8,191 at `ProductionRank`). The step circuit is
-//! `O(1)` in `N` — size costs only native work: the product FFT, the
-//! commitment MSMs, and the fold.
 
 use core::marker::PhantomData;
 
@@ -36,15 +37,17 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_pcd::{
-    Application, ApplicationBuilder, Pcd, PolyCommitment,
+    Pcd, PolyCommitment,
     header::{Header, Suffix},
     step::{Encoded, Index, Step, StepCtx},
 };
 use ragu_primitives::{
     Element, GadgetExt,
     allocator::{Allocator, Standard},
-    poseidon::Sponge,
+    vec::{CollectFixed, ConstLen, FixedVec, Len},
 };
+
+use super::collections::CollectionsApp;
 
 /// The monic set polynomial `∏ (X − m)` over `members`, multiplicity
 /// included, via the library's [`poly_with_roots`] (a product tree over the
@@ -57,80 +60,98 @@ pub fn set_polynomial<F: PrimeField, R: Rank>(members: &[F]) -> sparse::Polynomi
     sparse::Polynomial::from_coeffs(poly_with_roots(members))
 }
 
-/// Data carried by a [`MergedSet`] header: the digest binding the merged
-/// set's identity, and the merged polynomial as unstructured PCD data (the
-/// circuit never sees it).
-pub struct MergedSetData<F: Field, R: Rank> {
-    pub hash: F,
-    pub product: sparse::Polynomial<F, R>,
+/// A polynomial's coefficients with the zero tail dropped, for feeding
+/// [`poly_mul`] without ballooning to the rank's dense width.
+pub fn trimmed_coeffs<F: PrimeField, R: Rank>(poly: &sparse::Polynomial<F, R>) -> Vec<F> {
+    let mut coeffs: Vec<F> = poly.iter_coeffs().collect();
+    while coeffs.last() == Some(&F::ZERO) {
+        coeffs.pop();
+    }
+    coeffs
 }
 
-impl<F: Field, R: Rank> Clone for MergedSetData<F, R> {
+/// The merged polynomial `A·B`, computed with the library's FFT multiply.
+pub fn merged_polynomial<F: PrimeField, R: Rank>(
+    a: &sparse::Polynomial<F, R>,
+    b: &sparse::Polynomial<F, R>,
+) -> sparse::Polynomial<F, R> {
+    let mut out = Vec::new();
+    poly_mul(&trimmed_coeffs(a), &trimmed_coeffs(b), &mut out);
+    sparse::Polynomial::from_coeffs(out)
+}
+
+/// Data carried by a [`SetHeader`]: the set's name (its commitment's
+/// canonical coordinates) and the set polynomial as unstructured PCD data
+/// (the circuit never sees the polynomial; the name is what headers bind).
+pub struct SetData<F: Field, R: Rank> {
+    pub coords: [F; 2],
+    pub polynomial: sparse::Polynomial<F, R>,
+}
+
+impl<F: Field, R: Rank> Clone for SetData<F, R> {
     fn clone(&self) -> Self {
         Self {
-            hash: self.hash,
-            product: self.product.clone(),
+            coords: self.coords,
+            polynomial: self.polynomial.clone(),
         }
     }
 }
 
-/// Header binding the merged set's identity — and nothing else: downstream
-/// consumers learn `C`'s representation digest, not which sets contributed.
-/// The digest is a Poseidon hash of the same two values
-/// [`PolyCommitment::coords`] yields natively (the anchor pattern).
-pub struct MergedSet<R>(PhantomData<R>);
+/// Header carrying a set's **name** as two raw elements, so a parent step
+/// can `enforce_equal` its own handle's coordinates against the child's
+/// header wires — polynomial identity threading across proofs as plain
+/// field elements.
+pub struct SetHeader<R>(PhantomData<R>);
 
-impl<F: Field, R: Rank> Header<F> for MergedSet<R> {
+impl<F: Field, R: Rank> Header<F> for SetHeader<R> {
     const SUFFIX: Suffix = Suffix::new(0);
-    type Data = MergedSetData<F, R>;
-    type Output = Kind![F; Element<'_, _>];
+    type Data = SetData<F, R>;
+    type Output = Kind![F; FixedVec<Element<'_, _>, ConstLen<2>>];
 
     fn encode<'dr, D: Driver<'dr, F = F>, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, Self::Data>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
-        let hash = witness.map(|d| d.hash);
-        Element::alloc(dr, allocator, hash)
+        ConstLen::<2>::range()
+            .map(|i| Element::alloc(dr, allocator, witness.as_ref().map(|d| d.coords[i])))
+            .try_collect_fixed()
     }
 }
 
-/// Witness for [`MergeSets`]: the two contributing sets and the claimed
-/// merged set, each as a committed polynomial.
-pub struct MergeSetsWitness<C: Cycle, R: Rank> {
-    pub a: PolyCommitment<C, R>,
-    pub b: PolyCommitment<C, R>,
-    pub product: PolyCommitment<C, R>,
+/// Witness for [`SeedSet`]: the initial set as a committed polynomial.
+pub struct SeedSetWitness<C: Cycle, R: Rank> {
+    pub set: PolyCommitment<C, R>,
 }
 
-/// The compressing merge: proves `product = a · b` and outputs the merged
-/// set's identity alone.
-///
-/// The step derives `z` from all three names, opens `a` and `b` at `z`, and
-/// raises `product`'s claim with the in-circuit product `a(z)·b(z)` as the
-/// claimed evaluation — the claim *is* the enforcement, no further
-/// constraint needed.
-pub struct MergeSets<'params, C: Cycle, R> {
-    pub poseidon_params: &'params C::CircuitPoseidon,
-    _marker: PhantomData<R>,
+/// A leaf establishing an initial set from an arbitrary committed
+/// polynomial: witnesses it (binding its name to this proof's instance) and
+/// outputs the name in the header.
+pub struct SeedSet<C, R> {
+    _marker: PhantomData<(C, R)>,
 }
 
-impl<'params, C: Cycle, R> MergeSets<'params, C, R> {
-    pub fn new(poseidon_params: &'params C::CircuitPoseidon) -> Self {
+impl<C, R> SeedSet<C, R> {
+    pub fn new() -> Self {
         Self {
-            poseidon_params,
             _marker: PhantomData,
         }
     }
 }
 
-impl<C: Cycle, R: Rank> Step<C> for MergeSets<'_, C, R> {
+impl<C, R> Default for SeedSet<C, R> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<C: Cycle, R: Rank> Step<C> for SeedSet<C, R> {
     const INDEX: Index = Index::new(0);
-    type Witness<'source> = MergeSetsWitness<C, R>;
+    type Witness<'source> = SeedSetWitness<C, R>;
     type Aux<'source> = ();
     type Left = ();
     type Right = ();
-    type Output = MergedSet<R>;
+    type Output = SetHeader<R>;
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
@@ -150,12 +171,113 @@ impl<C: Cycle, R: Rank> Step<C> for MergeSets<'_, C, R> {
     where
         Self: 'dr,
     {
+        let set = witness.map(|w| w.set.clone());
+        let [handle] = ctx.witness_polynomial::<R, 1>([set])?;
+
+        // The output header is the handle's own name wires — no fresh
+        // allocation, so the header and the poly slot are literally the same
+        // wires at two instance positions.
+        let coords = handle.coords();
+        let output_data = handle.polynomial().as_ref().and_then(|polynomial| {
+            let c0 = coords[0].value().map(|v| *v);
+            let c1 = coords[1].value().map(|v| *v);
+            c0.and_then(|c0| {
+                c1.map(|c1| SetData {
+                    coords: [c0, c1],
+                    polynomial: polynomial.clone(),
+                })
+            })
+        });
+        let header: FixedVec<Element<'dr, D>, ConstLen<2>> =
+            coords.into_iter().collect::<Vec<_>>().try_into()?;
+
+        Ok((
+            (
+                Encoded::from_gadget(()),
+                Encoded::from_gadget(()),
+                Encoded::from_gadget(header),
+            ),
+            output_data,
+            D::unit(),
+        ))
+    }
+}
+
+/// Witness for the [`MergeSets`] fuse: the two contributing sets (which must
+/// match the children's header-carried names) and the claimed merged set.
+pub struct MergeSetsWitness<C: Cycle, R: Rank> {
+    pub a: PolyCommitment<C, R>,
+    pub b: PolyCommitment<C, R>,
+    pub product: PolyCommitment<C, R>,
+}
+
+/// The merging fuse: takes two [`SetHeader`] children, binds its witnessed
+/// contributing sets to the children's names in-circuit, proves the product,
+/// and outputs the merged set's name alone.
+pub struct MergeSets<C, R> {
+    _marker: PhantomData<(C, R)>,
+}
+
+impl<C, R> MergeSets<C, R> {
+    pub fn new() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<C, R> Default for MergeSets<C, R> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<C: Cycle, R: Rank> Step<C> for MergeSets<C, R> {
+    const INDEX: Index = Index::new(2);
+    type Witness<'source> = MergeSetsWitness<C, R>;
+    type Aux<'source> = ();
+    type Left = SetHeader<R>;
+    type Right = SetHeader<R>;
+    type Output = SetHeader<R>;
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
+        &self,
+        ctx: &mut StepCtx<'_, 'dr, D, C>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        left: DriverValue<D, SetData<C::CircuitField, R>>,
+        right: DriverValue<D, SetData<C::CircuitField, R>>,
+    ) -> Result<(
+        (
+            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+        ),
+        DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr,
+    {
         let allocator = &mut Standard::new();
+
+        let left_encoded = Encoded::new(ctx.dr, allocator, left)?;
+        let right_encoded = Encoded::new(ctx.dr, allocator, right)?;
 
         let a_com = witness.as_ref().map(|w| w.a.clone());
         let b_com = witness.as_ref().map(|w| w.b.clone());
         let c_com = witness.map(|w| w.product.clone());
         let [a, b, c] = ctx.witness_polynomial::<R, 3>([a_com, b_com, c_com])?;
+
+        // The cross-proof identity check: the contributing sets this step
+        // witnessed are exactly the sets the children's headers name. Same
+        // canonical representation on both sides, so the check is plain
+        // field equality on wires.
+        for (handle, child) in [(&a, &left_encoded), (&b, &right_encoded)] {
+            let name = handle.coords();
+            let header: &FixedVec<Element<'dr, D>, ConstLen<2>> = child.as_gadget();
+            name[0].enforce_equal(ctx.dr, &header[0])?;
+            name[1].enforce_equal(ctx.dr, &header[1])?;
+        }
 
         // z binds all three names: the merged set's commitment is fixed
         // before the evaluation point is known.
@@ -178,98 +300,65 @@ impl<C: Cycle, R: Rank> Step<C> for MergeSets<'_, C, R> {
         ctx.enforce_poly_query(&a, z.clone(), y_a.clone())?;
         ctx.enforce_poly_query(&b, z.clone(), y_b.clone())?;
 
-        // The merged set's claim: its evaluation at z *is* a(z)·b(z), as an
-        // in-circuit product of the two opened values. A `product` that is
-        // not a·b makes this claim false.
+        // The merged set's claim: its evaluation at z *is* a(z)·b(z). A
+        // `product` that is not a·b makes this claim false.
         let y_c = y_a.mul(ctx.dr, &y_b)?;
         ctx.enforce_poly_query(&c, z, y_c)?;
 
-        // The output header binds the merged set's identity — the digest of
-        // its representation, reproducible natively from
-        // `PolyCommitment::coords()`. The contributing sets do not appear.
-        let mut sponge = Sponge::new(ctx.dr, self.poseidon_params);
-        for coord in c.coords() {
-            coord.write(ctx.dr, &mut sponge)?;
-        }
-        let output = sponge.squeeze(ctx.dr)?;
-        let output_hash = output.value().map(|v| *v);
-        let output_encoded = Encoded::from_gadget(output);
-
-        let output_data = output_hash.and_then(|hash| {
-            c.polynomial()
-                .clone()
-                .map(|product| MergedSetData { hash, product })
+        // The output header is the merged set's name — the contributing
+        // sets do not appear.
+        let coords = c.coords();
+        let output_data = c.polynomial().as_ref().and_then(|polynomial| {
+            let c0 = coords[0].value().map(|v| *v);
+            let c1 = coords[1].value().map(|v| *v);
+            c0.and_then(|c0| {
+                c1.map(|c1| SetData {
+                    coords: [c0, c1],
+                    polynomial: polynomial.clone(),
+                })
+            })
         });
+        let header: FixedVec<Element<'dr, D>, ConstLen<2>> =
+            coords.into_iter().collect::<Vec<_>>().try_into()?;
 
         Ok((
-            (
-                Encoded::from_gadget(()),
-                Encoded::from_gadget(()),
-                output_encoded,
-            ),
+            (left_encoded, right_encoded, Encoded::from_gadget(header)),
             output_data,
             D::unit(),
         ))
     }
 }
 
-/// The fixture's declared capacity: three polynomial slots (the two
-/// contributing sets and the merged set), three claims, and one challenge
-/// wide enough to absorb all three names (two elements each).
-pub const HEADER_SIZE: usize = 4;
-pub const POLYS: usize = 3;
-pub const CLAIMS: usize = 3;
-pub const CHALLENGES: usize = 1;
-pub const CHALLENGE_WIDTH: usize = 6;
-
-/// An [`Application`] at the fixture's declared capacity.
-pub type MergeApp<'params, C, R> =
-    Application<'params, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>;
-
-/// An [`ApplicationBuilder`] at the fixture's declared capacity.
-pub type MergeAppBuilder<'params, C, R> =
-    ApplicationBuilder<'params, C, R, HEADER_SIZE, POLYS, CLAIMS, CHALLENGES, CHALLENGE_WIDTH>;
-
-/// The fixture registered and finalized: the application every multiset test
-/// proves through.
-pub fn merge_app<C: Cycle, R: Rank>(params: &C::Params) -> Result<MergeApp<'_, C, R>> {
-    MergeAppBuilder::<C, R>::new()
-        .register(MergeSets::<C, R>::new(C::circuit_poseidon(params)))?
-        .finalize(params)
-}
-
-/// The merged polynomial `A·B`, computed with the library's FFT multiply
-/// ([`poly_mul`]) from the two member lists.
-pub fn merged_polynomial<F: PrimeField, R: Rank>(
-    a_members: &[F],
-    b_members: &[F],
-) -> sparse::Polynomial<F, R> {
-    let mut out = Vec::new();
-    poly_mul(
-        &poly_with_roots(a_members),
-        &poly_with_roots(b_members),
-        &mut out,
-    );
-    sparse::Polynomial::from_coeffs(out)
-}
-
-/// Seed a [`MergeSets`] leaf merging the two member lists, computing the
-/// product honestly via [`merged_polynomial`].
-pub fn seed_merge<C: Cycle, R: Rank, RNG: CryptoRngCore>(
-    app: &MergeApp<'_, C, R>,
-    params: &C::Params,
+/// Seed an initial set from its member list.
+pub fn seed_set<C: Cycle, R: Rank, RNG: CryptoRngCore>(
+    app: &CollectionsApp<'_, C, R>,
     rng: &mut RNG,
-    a_members: &[C::CircuitField],
-    b_members: &[C::CircuitField],
-) -> Result<Pcd<C, R, MergedSet<R>>> {
+    members: &[C::CircuitField],
+) -> Result<Pcd<C, R, SetHeader<R>>> {
     let (leaf, ()) = app.seed(
         rng,
-        MergeSets::new(C::circuit_poseidon(params)),
-        MergeSetsWitness {
-            a: app.commit_polynomial(&set_polynomial(a_members))?,
-            b: app.commit_polynomial(&set_polynomial(b_members))?,
-            product: app.commit_polynomial(&merged_polynomial(a_members, b_members))?,
+        SeedSet::new(),
+        SeedSetWitness {
+            set: app.commit_polynomial(&set_polynomial(members))?,
         },
     )?;
     Ok(leaf)
+}
+
+/// Fuse two set children into their merge, computing the product honestly
+/// from the polynomials the children carry.
+pub fn fuse_merge<C: Cycle, R: Rank, RNG: CryptoRngCore>(
+    app: &CollectionsApp<'_, C, R>,
+    rng: &mut RNG,
+    left: Pcd<C, R, SetHeader<R>>,
+    right: Pcd<C, R, SetHeader<R>>,
+) -> Result<Pcd<C, R, SetHeader<R>>> {
+    let product = merged_polynomial(&left.data().polynomial, &right.data().polynomial);
+    let witness = MergeSetsWitness {
+        a: app.commit_polynomial(&left.data().polynomial)?,
+        b: app.commit_polynomial(&right.data().polynomial)?,
+        product: app.commit_polynomial(&product)?,
+    };
+    let (merged, ()) = app.fuse(rng, MergeSets::new(), witness, left, right)?;
+    Ok(merged)
 }
