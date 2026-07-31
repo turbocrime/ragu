@@ -1,18 +1,25 @@
 //! The real limbs of a real polynomial commitment, held by a step.
 //!
-//! A step cannot hold a host-curve point — its coordinates live in the other
-//! field — but it can hold the coordinates' 128-bit *limbs*, because a 128-bit
-//! integer is the same number in both fields. This module holds the step-side
-//! piece: allocating the limbs as real booleans (booleanity is constrained
-//! *here*, where it costs ~1 gate per bit), packing them into the four field
-//! elements a consumer hashes, and lifting them into the instance-bound form
-//! the accumulator consumes.
+//! A step cannot hold a host-curve point natively — its coordinates live in
+//! the other field — but a coordinate bounded below $2^{254}$ is the same
+//! integer in both fields, and both Pasta moduli exceed $2^{254}$. This module
+//! holds the step-side piece: allocating each coordinate's 254 bits as real
+//! booleans (booleanity is constrained *here*, where it costs ~1 gate per
+//! bit), packing them into the four 128-bit limb elements a consumer hashes,
+//! and packing the same bits whole into the two embedded-coordinate elements
+//! the instance carries.
 //!
-//! What makes the witnessed limbs the commitment's is enforced elsewhere:
-//! the lifts are instance wires folded into the application circuit's $k(Y)$;
-//! at every fuse the parent's `compute_v` re-derives the claim-lift
-//! polynomial's $q(u)$ from them and enforces it against the folded value;
-//! at root, `verify` recomputes them from the recorded host commitment.
+//! The high half of each coordinate is 126 bits, not 128: at 254 total bits
+//! the maximum recomposable value is $2^{254} - 1$, below the field modulus,
+//! so the packed coordinate cannot wrap and the instance tie pins the bits
+//! exactly — the same bound the native split enforces.
+//!
+//! What makes the witnessed bits the commitment's is enforced elsewhere: the
+//! embedded coordinates are instance wires folded into the application
+//! circuit's $k(Y)$; at every fuse the parent's `compute_v` re-derives the
+//! claim-coordinate polynomial's $q(u)$ from them and enforces it against the
+//! folded value; at root, `verify` recomputes them from the recorded host
+//! commitment.
 
 use ragu_core::{
     Result,
@@ -20,7 +27,12 @@ use ragu_core::{
     gadgets::Gadget,
     maybe::Maybe,
 };
-use ragu_primitives::{Element, Endoscalar, io::Write, multipack};
+use ragu_primitives::{Boolean, Element, io::Write, multipack};
+
+/// Bits in a coordinate's low limb.
+const LO_BITS: usize = 128;
+/// Bits in a coordinate's high limb; see the module docs for why not 128.
+const HI_BITS: usize = 126;
 
 /// A host commitment's four 128-bit limbs, as circuit-field elements.
 ///
@@ -46,43 +58,57 @@ pub struct HostLimbs<'dr, D: Driver<'dr>> {
     pub y_hi: Element<'dr, D>,
 }
 
-/// Witnesses four limbs as constrained booleans, returning the packed limb
-/// elements alongside their lifts.
+/// Witnesses the four limbs as constrained booleans, returning the packed limb
+/// elements alongside the two packed whole coordinates.
 ///
-/// The bits are allocated through [`Endoscalar::alloc`], so every bit carries
-/// a real booleanity constraint; [`multipack`] (free) recomposes each limb's
-/// bits into its integer as a field element, and [`Endoscalar::lift`] produces
-/// the instance-bound form. One `u128` means one number in both fields, which
-/// is what lets the same bits serve the anchor (this field) and the
-/// accumulator's `q` coefficients (whose commitment lives on the host curve).
+/// Every bit is allocated through [`Boolean::alloc`], so it carries a real
+/// booleanity constraint; [`multipack`] (free) recomposes each limb's bits
+/// into its integer, and each coordinate's full 254 bits into the embedded
+/// coordinate — one multipack chunk, since 254 is the circuit field's
+/// capacity. The limbs and the embedded coordinate are linear functions of
+/// the same bits, which is what lets one witnessing serve the anchor (the
+/// limbs) and the instance (the coordinates).
 pub(crate) fn witness_host_limbs<'dr, D: Driver<'dr>>(
     dr: &mut D,
     limbs: DriverValue<D, [u128; 4]>,
-) -> Result<(HostLimbs<'dr, D>, [Element<'dr, D>; 4])>
+) -> Result<(HostLimbs<'dr, D>, [Element<'dr, D>; 2])>
 where
-    D::F: ragu_arithmetic::ff::WithSmallOrderMulGroup<3>,
+    D::F: ragu_arithmetic::ff::PrimeField,
 {
     let mut packed = alloc::vec::Vec::with_capacity(4);
-    let mut lifts = alloc::vec::Vec::with_capacity(4);
+    let mut coords = alloc::vec::Vec::with_capacity(2);
 
-    for k in 0..4 {
-        let endo = Endoscalar::alloc(dr, limbs.as_ref().map(|limbs| limbs[k]))?;
+    for coordinate in 0..2 {
+        let mut bits = alloc::vec::Vec::with_capacity(LO_BITS + HI_BITS);
+        for (limb, width) in [(2 * coordinate, LO_BITS), (2 * coordinate + 1, HI_BITS)] {
+            for i in 0..width {
+                bits.push(Boolean::alloc(
+                    dr,
+                    &mut (),
+                    limbs.as_ref().map(|limbs| (limbs[limb] >> i) & 1 == 1),
+                )?);
+            }
+        }
 
-        let bits = endo.bits().collect::<alloc::vec::Vec<_>>();
+        for range in [0..LO_BITS, LO_BITS..LO_BITS + HI_BITS] {
+            let mut elements = multipack(dr, &bits[range])?;
+            // 128 bits fit any supported circuit field's capacity in one chunk.
+            assert_eq!(elements.len(), 1, "a limb is one multipack chunk");
+            packed.push(elements.pop().expect("one element"));
+        }
+
         let mut elements = multipack(dr, &bits)?;
-        // 128 bits fit any supported circuit field's capacity in one chunk.
-        assert_eq!(elements.len(), 1, "a limb is one multipack chunk");
-        packed.push(elements.pop().expect("one element"));
-
-        lifts.push(endo.lift(dr)?);
+        // 254 bits are exactly the supported circuit fields' capacity.
+        assert_eq!(elements.len(), 1, "a coordinate is one multipack chunk");
+        coords.push(elements.pop().expect("one element"));
     }
 
     let [x_lo, x_hi, y_lo, y_hi] = <[Element<'dr, D>; 4]>::try_from(packed)
         .map_err(|_| ())
         .expect("four limbs");
-    let lifts = <[Element<'dr, D>; 4]>::try_from(lifts)
+    let coords = <[Element<'dr, D>; 2]>::try_from(coords)
         .map_err(|_| ())
-        .expect("four lifts");
+        .expect("two coordinates");
 
     Ok((
         HostLimbs {
@@ -91,6 +117,6 @@ where
             y_lo,
             y_hi,
         },
-        lifts,
+        coords,
     ))
 }

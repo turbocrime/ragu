@@ -93,8 +93,8 @@ pub struct ChildWitness<C: CurveAffine> {
     /// child's own eval bridge stage record. Must contain exactly the stage's
     /// poly-slot count; the stage body indexes it up to that count.
     pub stashed_claims: Vec<C>,
-    /// Stashed commitment to the child's claim-lift polynomial `q` — one
-    /// entry when the shape has polynomial slots, none otherwise.
+    /// Stashed commitment to the child's claim-coordinate polynomial `q` —
+    /// one entry when the shape has polynomial slots, none otherwise.
     /// Deterministic from the child's recorded hosts, so computed here rather
     /// than read off the proof.
     pub stashed_q: Vec<C>,
@@ -131,7 +131,7 @@ impl<C: CurveAffine> ChildWitness<C> {
             stashed_q: if proof.claim_host_commitments().len() == 0 {
                 Vec::new()
             } else {
-                alloc::vec![crate::internal::challenge::claim_lift_commitment::<CC, R>(
+                alloc::vec![crate::internal::challenge::claim_coord_commitment::<CC, R>(
                     params,
                     proof.claim_host_commitments(),
                 )?]
@@ -227,7 +227,7 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len>
     /// claims, which is the order `_10_p` accumulates.
     #[ragu(gadget)]
     pub stashed_claims: FixedVec<Point<'dr, D, C>, L>,
-    /// Stashed commitment to the child's claim-lift polynomial `q` — one point
+    /// Stashed commitment to the child's claim-coordinate polynomial `q` — one point
     /// when the shape has polynomial slots, none otherwise, at its `_10_p`
     /// fold position after the claims. Loading enforces it against the
     /// [`PointsStage`] inputs; `C_q` ↔ `q` is the deferred PCS opening, like

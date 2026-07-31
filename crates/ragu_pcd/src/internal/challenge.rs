@@ -150,42 +150,53 @@ fn split_coordinate(bytes: &[u8]) -> Result<(u128, u128)> {
     Ok((lo, hi))
 }
 
+/// A host commitment's affine coordinates, canonically embedded in the circuit
+/// field — one element per coordinate, `lo + 2^128·hi` over the limbs
+/// [`host_limbs`] splits (and bounds: a coordinate is below `2^254`, so the
+/// embedding is injective and every embedded value fits the circuit field).
+pub(crate) fn host_coords<C: Cycle>(host: C::HostCurve) -> Result<[C::CircuitField; 2]> {
+    let [x_lo, x_hi, y_lo, y_hi] = host_limbs(host)?;
+    Ok([
+        embed_coordinate::<C::CircuitField>(x_lo, x_hi),
+        embed_coordinate::<C::CircuitField>(y_lo, y_hi),
+    ])
+}
+
+/// `lo + 2^128·hi` in `F`. With `hi < 2^126` (the [`host_limbs`] bound) the
+/// result is below `2^254 < |F|`, so no reduction occurs.
+fn embed_coordinate<F: PrimeField>(lo: u128, hi: u128) -> F {
+    let shift = F::from_u128(1 << 64).square();
+    F::from_u128(lo) + shift * F::from_u128(hi)
+}
+
 /// The framework polynomial `q` for a proof's recorded claim hosts: per slot,
-/// four coefficients `lift(l_k)` of the host commitment's canonical limbs
-/// `[x_lo, x_hi, y_lo, y_hi]`, slot-major.
+/// the two [`host_coords`] of the host commitment, slot-major.
 ///
 /// Fully deterministic from the recorded hosts — any party can rebuild it, so
-/// it is rebuilt rather than carried. Empty when there are no slots: the limb
+/// it is rebuilt rather than carried. Empty when there are no slots: the
 /// feature vanishes at `POLYS = 0`.
 ///
-/// `q` is what binds a step's instance-bound lifts to the real commitments:
-/// `_10_p` folds `(q, commit(q))` into the accumulator, `compute_v` re-derives
-/// `q(u)` from the child's lift instance wires, and the deferred PCS opening
-/// forces the two to agree.
-pub(crate) fn claim_lift_poly<C: Cycle, R: Rank>(
+/// `q` is what binds a step's instance-bound coordinate wires to the real
+/// commitments: `_10_p` folds `(q, commit(q))` into the accumulator,
+/// `compute_v` re-derives `q(u)` from the child's coordinate instance wires,
+/// and the deferred PCS opening forces the two to agree.
+pub(crate) fn claim_coord_poly<C: Cycle, R: Rank>(
     hosts: impl IntoIterator<Item = C::HostCurve>,
 ) -> Result<sparse::Polynomial<C::CircuitField, R>> {
     let mut coeffs = alloc::vec::Vec::new();
     for host in hosts {
-        let limbs = host_limbs(host)?;
-        coeffs.extend(
-            limbs
-                .into_iter()
-                .map(ragu_primitives::lift_endoscalar::<C::CircuitField>),
-        );
+        coeffs.extend(host_coords::<C>(host)?);
     }
     Ok(sparse::Polynomial::from_coeffs(coeffs))
 }
 
-/// The host-curve commitment to [`claim_lift_poly`].
-pub(crate) fn claim_lift_commitment<C: Cycle, R: Rank>(
+/// The host-curve commitment to [`claim_coord_poly`].
+pub(crate) fn claim_coord_commitment<C: Cycle, R: Rank>(
     params: &C::Params,
     hosts: impl IntoIterator<Item = C::HostCurve>,
 ) -> Result<C::HostCurve> {
-    Ok(
-        claim_lift_poly::<C, R>(hosts)?
-            .commit_to_affine::<C::HostCurve>(C::host_generators(params)),
-    )
+    Ok(claim_coord_poly::<C, R>(hosts)?
+        .commit_to_affine::<C::HostCurve>(C::host_generators(params)))
 }
 
 /// The stage blind for poly-query claim `slot`, derived from the proof's

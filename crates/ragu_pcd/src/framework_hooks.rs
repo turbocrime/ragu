@@ -6,10 +6,12 @@
 //!
 //! * [`StepCtx::witness_polynomial`](crate::step::StepCtx::witness_polynomial) —
 //!   the polynomial slots.
-//!   Witnessing a polynomial allocates its bridge commitment as a [`Point`] and
-//!   retains the coefficients as a value; the polynomial itself never enters the
-//!   circuit. This is the expensive axis — one bridge stage, one commitment, one
-//!   MSM and one endoscaling point per slot — and it is what a claim then names.
+//!   Witnessing a polynomial allocates its bridge commitment as a [`Point`]
+//!   plus the two coordinate instance wires (the host commitment's embedded
+//!   affine coordinates), and retains the coefficients as a value; the
+//!   polynomial itself never enters the circuit. This is the expensive axis —
+//!   one bridge stage, one commitment, one MSM and one endoscaling point per
+//!   slot — and it is what a claim then names.
 //!
 //! * [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query) —
 //!   a polynomial-query claim sink: steps that need to verify a
@@ -98,7 +100,7 @@ use ragu_core::{
     drivers::{Driver, DriverValue},
     maybe::Maybe,
 };
-use ragu_primitives::{Element, Point};
+use ragu_primitives::{Element, GadgetExt, Point};
 
 /// A single witnessed polynomial: its bridge commitment and its coefficients.
 ///
@@ -116,9 +118,10 @@ pub struct WitnessedPoly<F: Field, C: CurveAffine<Base = F>> {
     /// Coefficients of the polynomial $p(X)$, little-endian
     /// (`coefficients[i]` is the coefficient of $X^i$).
     pub coefficients: Vec<F>,
-    /// The values of the slot's four lift instance wires:
-    /// `lift(l_k)` for the host commitment's limbs `[x_lo, x_hi, y_lo, y_hi]`.
-    pub lifts: [F; 4],
+    /// The values of the slot's two coordinate instance wires: the host
+    /// commitment's affine coordinates, canonically embedded in the circuit
+    /// field.
+    pub coords: [F; 2],
 }
 
 /// A single opening claim: the polynomial whose bridge commitment is
@@ -162,17 +165,15 @@ pub struct PolyWires<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     pub bridge_com: Point<'dr, D, C>,
     /// The polynomial's coefficient values (witness-only; never wires).
     pub coefficients: DriverValue<D, Vec<D::F>>,
-    /// The host commitment's canonical limbs (witness-only; never wires) —
-    /// what fills this slot's lift instance wires when the step does not.
-    pub limbs: DriverValue<D, [u128; 4]>,
-    /// The slot's four lift instance wires, `lift(l_k)` per limb.
-    ///
-    /// `Some` once [`poly_limbs`](crate::step::StepCtx::poly_limbs) derived
-    /// them from the step's own constrained bits; otherwise the adapter
-    /// allocates them as plain value-filled wires before writing the instance
-    /// — free wires, and still fail-closed: the accumulator forces them to be
-    /// lift images of the recorded host's bits, or no proof exists.
-    pub lifts: Option<[Element<'dr, D>; 4]>,
+    /// The slot's two coordinate instance wires: the host commitment's affine
+    /// coordinates, canonically embedded, allocated at witnessing as plain
+    /// value-filled wires — free wires, and still fail-closed: the
+    /// accumulator forces them to be the recorded host's embedded
+    /// coordinates, or no proof exists.
+    pub coords: [Element<'dr, D>; 2],
+    /// Whether [`poly_limbs`](crate::step::StepCtx::poly_limbs) has tied its
+    /// bit-derived coordinates to the wires; a second tie is refused.
+    pub tied: bool,
 }
 
 /// The in-circuit wires of a single **query**: which polynomial is opened,
@@ -387,27 +388,15 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHookOutputs<'d
         for PolyWires {
             bridge_com,
             coefficients,
-            limbs: _,
-            lifts,
+            coords,
+            tied: _,
         } in self.witnessed_polys
         {
-            let lifts = lifts.ok_or_else(|| {
-                Error::InvalidWitness(
-                    "a slot's lift wires were never allocated; the adapter fills them before \
-                     draining"
-                        .into(),
-                )
-            })?;
             polys.push(D::try_just(|| {
                 Ok(WitnessedPoly {
                     bridge_com: bridge_com.value().take(),
                     coefficients: coefficients.take(),
-                    lifts: [
-                        *lifts[0].value().take(),
-                        *lifts[1].value().take(),
-                        *lifts[2].value().take(),
-                        *lifts[3].value().take(),
-                    ],
+                    coords: [*coords[0].value().take(), *coords[1].value().take()],
                 })
             })?);
         }
@@ -511,7 +500,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
         slot: usize,
         bridge_com: Point<'dr, D, C::NestedCurve>,
         coefficients: DriverValue<D, Vec<D::F>>,
-        limbs: DriverValue<D, [u128; 4]>,
+        coords: [Element<'dr, D>; 2],
     ) {
         debug_assert_eq!(
             slot,
@@ -521,59 +510,36 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
         self.witnessed_polys.push(PolyWires {
             bridge_com,
             coefficients,
-            limbs,
-            lifts: None,
+            coords,
+            tied: false,
         });
     }
 
-    /// Records the lift wires [`poly_limbs`](crate::step::StepCtx::poly_limbs)
-    /// derived from the step's own constrained bits, for `slot`.
+    /// Ties the coordinates [`poly_limbs`](crate::step::StepCtx::poly_limbs)
+    /// derived from the step's own constrained bits to `slot`'s coordinate
+    /// instance wires.
     ///
     /// # Errors
     ///
-    /// Rejects a second call for the same slot: the first call's wires are
-    /// already the slot's instance wires.
-    pub(crate) fn record_lifts(&mut self, slot: usize, lifts: [Element<'dr, D>; 4]) -> Result<()> {
+    /// Rejects a second call for the same slot: the first call's bits are
+    /// already tied.
+    pub(crate) fn tie_coords(
+        &mut self,
+        dr: &mut D,
+        slot: usize,
+        derived: [Element<'dr, D>; 2],
+    ) -> Result<()> {
         let wires = self.witnessed_polys.get_mut(slot).ok_or_else(|| {
             Error::InvalidWitness("poly_limbs called for a slot that was never witnessed".into())
         })?;
-        if wires.lifts.is_some() {
+        if wires.tied {
             return Err(Error::InvalidWitness(
                 "poly_limbs may only be called once per handle".into(),
             ));
         }
-        wires.lifts = Some(lifts);
-        Ok(())
-    }
-
-    /// Allocates plain value-filled lift wires for every slot the step did not
-    /// open, so the instance's lift region is always fully populated. The
-    /// accumulator constrains an unopened slot's wires exactly as an opened
-    /// slot's; only where booleanity of the underlying bits is paid differs.
-    pub(crate) fn fill_missing_lifts(&mut self, dr: &mut D) -> Result<()>
-    where
-        D::F: ragu_arithmetic::ff::WithSmallOrderMulGroup<3>,
-    {
-        for wires in &mut self.witnessed_polys {
-            if wires.lifts.is_some() {
-                continue;
-            }
-            let mut lifts = Vec::with_capacity(4);
-            for k in 0..4 {
-                lifts.push(Element::alloc(
-                    dr,
-                    &mut (),
-                    wires
-                        .limbs
-                        .as_ref()
-                        .map(|limbs| ragu_primitives::lift_endoscalar(limbs[k])),
-                )?);
-            }
-            wires.lifts = Some(
-                <[Element<'dr, D>; 4]>::try_from(lifts)
-                    .map_err(|_| ())
-                    .expect("four lifts"),
-            );
+        wires.tied = true;
+        for (derived, wire) in derived.into_iter().zip(wires.coords.clone()) {
+            derived.enforce_equal(dr, &wire)?;
         }
         Ok(())
     }

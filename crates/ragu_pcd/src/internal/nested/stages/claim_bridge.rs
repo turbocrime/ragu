@@ -13,10 +13,10 @@
 //! a claim needs a per-polynomial handle; contrast [`super::eval`], which
 //! deliberately commits all its slots at once as a single stashed copy.
 //!
-//! A step's own view of the host commitment — its four 128-bit limbs — does
-//! not come from this stage. It comes from the claim-lift polynomial `q`
-//! riding the accumulator: see
-//! [`claim_lift_poly`](crate::internal::challenge::claim_lift_poly) and
+//! A step's own view of the host commitment — its embedded affine
+//! coordinates — does not come from this stage. It comes from the
+//! claim-coordinate polynomial `q` riding the accumulator: see
+//! [`claim_coord_poly`](crate::internal::challenge::claim_coord_poly) and
 //! [`StepCtx::poly_limbs`](crate::step::StepCtx::poly_limbs).
 //!
 //! ## Why this family is a run

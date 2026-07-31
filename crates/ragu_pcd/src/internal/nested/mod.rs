@@ -37,7 +37,7 @@ use crate::internal::{Side, endoscalar};
 /// The single statement of the per-child block's decomposition: the 13 native rx
 /// commitments, four extras (`ab_a`, `ab_b`, `registry_xy`, `p`), one stashed
 /// claim per polynomial slot, and — whenever there are any slots — the child's
-/// `C_q`, the commitment to its claim-lift polynomial `q`. Shared between
+/// `C_q`, the commitment to its claim-coordinate polynomial `q`. Shared between
 /// [`num_endoscaling_points`], the nested preamble's `num_points`, and the
 /// native eval stage's width — all three walk the same block, which is what
 /// keeps the accumulation order, the stash order, and the `v` fold order from

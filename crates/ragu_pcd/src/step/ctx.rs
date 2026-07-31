@@ -50,12 +50,13 @@ where
     /// Witnesses this step's polynomials in-circuit, producing one
     /// [`PolyHandle`] per [`PolyCommitment`].
     ///
-    /// The polynomial is handled **abstractly, by its commitment**: the only
-    /// thing allocated is the commitment [`Point`], and the coefficients ride
-    /// along as a [`DriverValue`] — prover-side data, absent on a verifying
-    /// driver — so witnessing costs one point allocation regardless of the
-    /// polynomial's size. Anything added here must preserve that: allocate
-    /// the commitment, retain the coefficients as a value.
+    /// The polynomial is handled **abstractly, by its commitment**: what is
+    /// allocated is the commitment [`Point`] and the two coordinate instance
+    /// wires, and the coefficients ride along as a [`DriverValue`] —
+    /// prover-side data, absent on a verifying driver — so witnessing costs a
+    /// handful of allocations regardless of the polynomial's size. Anything
+    /// added here must preserve that: allocate the commitment, retain the
+    /// coefficients as a value.
     ///
     /// The bridge commitment point is reachable via
     /// [`PolyHandle::bridge_commitment`] for challenges, hashing and the like;
@@ -103,9 +104,18 @@ where
         let slot = self.hooks.next_poly_slot()?;
         let host = commitment.as_ref().map(|c| c.host());
         let host_retained = commitment.as_ref().map(|c| c.host());
-        let limbs = D::try_just(|| {
-            crate::internal::challenge::host_limbs(commitment.as_ref().take().host())
+        // The slot's two coordinate instance wires: the host commitment's
+        // affine coordinates, canonically embedded. Allocated here so they
+        // exist for the whole step body; `poly_limbs` ties its constrained
+        // bits to them, and slots never opened stay bound through the
+        // accumulator and the root recompute.
+        let coord_values = D::try_just(|| {
+            crate::internal::challenge::host_coords::<C>(commitment.as_ref().take().host())
         })?;
+        let coords = [
+            Element::alloc(self.dr, &mut (), coord_values.as_ref().map(|c| c[0]))?,
+            Element::alloc(self.dr, &mut (), coord_values.as_ref().map(|c| c[1]))?,
+        ];
         let proof_values = self.hooks.proof_values();
         let capacity = self.hooks.capacity();
         let bridge_com_value = D::try_just(move || {
@@ -129,7 +139,7 @@ where
             slot,
             handle.bridge_commitment().clone(),
             handle.coefficients(),
-            limbs,
+            coords,
         );
         Ok(handle)
     }
@@ -139,10 +149,10 @@ where
     /// curve — as circuit-field elements, provably.
     ///
     /// The limbs are witnessed here as constrained booleans and packed; what
-    /// binds them to the commitment is the accumulator: their lifts become
-    /// instance wires bound to this circuit's $k(Y)$, and the framework
-    /// polynomial $q$ — with the recorded hosts' limb lifts as coefficients —
-    /// is folded against them.
+    /// binds them to the commitment is the accumulator: the same bits pack
+    /// into the slot's coordinate instance wires, bound to this circuit's
+    /// $k(Y)$, and the framework polynomial $q$ — with the recorded hosts'
+    /// embedded coordinates as coefficients — is folded against them.
     ///
     /// The values are bit-identical to splitting each coordinate's canonical
     /// little-endian bytes into 16-byte halves, so hashing them reproduces
@@ -158,12 +168,12 @@ where
         handle: &PolyHandle<'dr, D, C, R>,
     ) -> Result<crate::step::HostLimbs<'dr, D>>
     where
-        D::F: ragu_arithmetic::ff::WithSmallOrderMulGroup<3>,
+        D::F: ragu_arithmetic::ff::PrimeField,
     {
         let host = handle.host_value();
         let limbs = D::try_just(|| crate::internal::challenge::host_limbs(host.take()))?;
-        let (limbs, lifts) = crate::step::limbs::witness_host_limbs(self.dr, limbs)?;
-        self.hooks.record_lifts(handle.slot(), lifts)?;
+        let (limbs, coords) = crate::step::limbs::witness_host_limbs(self.dr, limbs)?;
+        self.hooks.tie_coords(self.dr, handle.slot(), coords)?;
         Ok(limbs)
     }
 

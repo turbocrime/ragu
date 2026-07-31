@@ -78,7 +78,7 @@ impl<
         let capacity = self.capacity();
         if pcd.proof().application_claims().len() != capacity.poly_query.claims
             || pcd.proof().application_polys().len() != capacity.poly_query.polys
-            || pcd.proof().application_lifts().len() != capacity.poly_query.polys * 4
+            || pcd.proof().application_poly_coords().len() != capacity.poly_query.polys * 2
             || pcd.proof().claim_polys.len() != capacity.poly_query.polys
             || pcd.proof().claim_host_commitments().len() != capacity.poly_query.polys
             || pcd.proof().application_challenges().len() != capacity.challenge.calls
@@ -203,21 +203,19 @@ impl<
                 .is_ok_and(|rebuilt| rebuilt == bridge_com)
         });
 
-        // And the lift instance region: every slot's four lift wires must be
-        // the lifts of the recorded host's canonical limbs. A fused child has
-        // this enforced in-circuit — `compute_v` re-derives the claim-lift
-        // polynomial's q(u) from these wires — but a root proof's own lifts
-        // have not been folded yet, so the verifier recomputes them natively,
-        // exactly as it recomputes the bridge commitments above. Without this
-        // a root-only proof could hash forged limbs into its step.
-        let poly_lifts = poly_commitments
+        // And the coordinate instance region: every slot's two wires must be
+        // the recorded host's embedded affine coordinates. A fused child has
+        // this enforced in-circuit — `compute_v` re-derives the
+        // claim-coordinate polynomial's q(u) from these wires — but a root
+        // proof's own coordinates have not been folded yet, so the verifier
+        // recomputes them natively, exactly as it recomputes the bridge
+        // commitments above. Without this a root-only proof could hash forged
+        // limbs into its step.
+        let poly_coords = poly_commitments
             && (0..capacity.poly_query.polys).all(|slot| {
                 let host = pcd.proof().claim_host_commitment(slot);
-                crate::internal::challenge::host_limbs(host).is_ok_and(|limbs| {
-                    (0..4).all(|k| {
-                        pcd.proof().application_lifts()[4 * slot + k]
-                            == ragu_primitives::lift_endoscalar::<C::CircuitField>(limbs[k])
-                    })
+                crate::internal::challenge::host_coords::<C>(host).is_ok_and(|coords| {
+                    (0..2).all(|k| pcd.proof().application_poly_coords()[2 * slot + k] == coords[k])
                 })
             });
 
@@ -256,7 +254,7 @@ impl<
             && nested_revdot_claims
             && registry_xy_claim
             && poly_query_claims
-            && poly_lifts
+            && poly_coords
             && derived_challenges)
     }
 }

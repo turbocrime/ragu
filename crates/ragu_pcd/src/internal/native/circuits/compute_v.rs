@@ -218,14 +218,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const POLYS: usize, const CLAI
                 let alpha = unified_output.alpha.read(dr, allocator)?;
                 let u = unified_output.u.read(dr, allocator)?;
 
-                // Each child's q(u), re-derived from its lift instance wires:
-                // the lifts are q's coefficients slot-major, so a Horner walk
-                // over u is q(u) itself. Enforcing it against the eval stage's
-                // q_eval — the value the v fold below consumes — is what makes
-                // a step's instance-bound lifts binding: a q that disagrees
-                // with them breaks v against P at the deferred opening. The
-                // same shape as `challenge_binding`'s re-derivation, paid out
-                // of the framework's own gate budget.
+                // Each child's q(u), re-derived from its coordinate instance
+                // wires: the embedded coordinates are q's coefficients
+                // slot-major, so a Horner walk over u is q(u) itself.
+                // Enforcing it against the eval stage's q_eval — the value the
+                // v fold below consumes — is what makes a step's
+                // instance-bound coordinates binding: a q that disagrees with
+                // them breaks v against P at the deferred opening. The same
+                // shape as `challenge_binding`'s re-derivation, paid out of
+                // the framework's own gate budget.
                 for (child_eval, child_preamble) in
                     [(&eval.left, &preamble.left), (&eval.right, &preamble.right)]
                 {
@@ -235,8 +236,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const POLYS: usize, const CLAI
                         // first, its constant term last.
                         let mut horner = Horner::new(&u);
                         for poly in child_preamble.polys.iter().rev() {
-                            for lift in poly.lifts.iter().rev() {
-                                lift.write(dr, &mut horner)?;
+                            for coord in poly.coords.iter().rev() {
+                                coord.write(dr, &mut horner)?;
                             }
                         }
                         horner.finish(dr).enforce_equal(dr, q_eval)?;

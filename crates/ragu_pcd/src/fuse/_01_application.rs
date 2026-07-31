@@ -169,7 +169,7 @@ impl<
         builder.set_native_application_rx(rx);
         builder.set_application_polys(
             polys.iter().map(|p| p.bridge_com).collect(),
-            polys.iter().flat_map(|p| p.lifts).collect(),
+            polys.iter().flat_map(|p| p.coords).collect(),
             claim_polys,
             claim_host_commitments,
         );

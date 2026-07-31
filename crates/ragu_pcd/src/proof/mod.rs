@@ -297,10 +297,11 @@ pub struct Proof<C: Cycle, R: Rank> {
     /// per polynomial. A claim carries the same commitment for the polynomial
     /// it opens, so this list is what a claim's `bridge_com` is matched against.
     pub(crate) application_polys: alloc::vec::Vec<C::NestedCurve>,
-    /// The lift instance region's values: four per polynomial slot, in slot
-    /// order — `lift(l_k)` for the slot's host commitment limbs. Bound to the
-    /// application circuit's $k(Y)$ like the other instance regions.
-    pub(crate) application_lifts: alloc::vec::Vec<C::CircuitField>,
+    /// The coordinate instance region's values: two per polynomial slot, in
+    /// slot order — the slot's host commitment affine coordinates, canonically
+    /// embedded in the circuit field. Bound to the application circuit's
+    /// $k(Y)$ like the other instance regions.
+    pub(crate) application_poly_coords: alloc::vec::Vec<C::CircuitField>,
     /// The derived challenges the step's circuit exposes, one per
     /// challenge slot the application's capacity provides, in slot order.
     pub(crate) application_challenges:
@@ -444,10 +445,10 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         &self.application_polys
     }
 
-    /// The lift instance region's values: four per polynomial slot, in slot
-    /// order.
-    pub(crate) fn application_lifts(&self) -> &[C::CircuitField] {
-        &self.application_lifts
+    /// The coordinate instance region's values: two per polynomial slot, in
+    /// slot order.
+    pub(crate) fn application_poly_coords(&self) -> &[C::CircuitField] {
+        &self.application_poly_coords
     }
 
     /// The derived challenges this proof's circuit exposes, in slot order.
@@ -750,17 +751,16 @@ impl<
         // polynomial slots, which is only reachable when it declares no claim
         // slots either: a claim has to name a polynomial.
         let padding_bridge_com = padding_bridge_coms.first().copied();
-        let padding_lifts: alloc::vec::Vec<C::CircuitField> = {
-            let limbs = crate::internal::challenge::host_limbs(padding_host)
-                .expect("the padding host has canonical limbs");
+        let padding_coords: alloc::vec::Vec<C::CircuitField> = {
+            let coords = crate::internal::challenge::host_coords::<C>(padding_host)
+                .expect("the padding host has canonical coordinates");
             (0..self.capacity().poly_query.polys)
-                .flat_map(|_| limbs)
-                .map(ragu_primitives::lift_endoscalar)
+                .flat_map(|_| coords)
                 .collect()
         };
         builder.set_application_polys(
             padding_bridge_coms,
-            padding_lifts,
+            padding_coords,
             vec![
                 crate::internal::challenge::padding_poly::<C, R>();
                 self.capacity().poly_query.polys
@@ -877,18 +877,18 @@ impl<
         // and delegate to `compute_endoscaling` so this trivial setup
         // cannot silently drift from the real prover path.
         let beta_endo = extract_endoscalar(C::CircuitField::ONE);
-        // The claim-lift q for a trivial proof's padding hosts — the same
-        // value a parent recomputes when it folds this proof, since q is
+        // The claim-coordinate q for a trivial proof's padding hosts — the
+        // same value a parent recomputes when it folds this proof, since q is
         // deterministic from the recorded hosts. Empty at zero capacity.
         let padding_q: alloc::vec::Vec<C::HostCurve> = if self.capacity().poly_query.polys == 0 {
             alloc::vec::Vec::new()
         } else {
             alloc::vec![
-                crate::internal::challenge::claim_lift_commitment::<C, R>(
+                crate::internal::challenge::claim_coord_commitment::<C, R>(
                     self.params,
                     core::iter::repeat_n(padding_host, self.capacity().poly_query.polys),
                 )
-                .expect("the padding host has canonical limbs")
+                .expect("the padding host has canonical coordinates")
             ]
         };
         let p_commitment = {
@@ -915,7 +915,7 @@ impl<
                 for _ in 0..self.capacity().poly_query.polys {
                     points.push(padding_host); // claim slots
                 }
-                points.extend_from_slice(&padding_q); // claim-lift q, when polys > 0
+                points.extend_from_slice(&padding_q); // claim-coordinate q, when polys > 0
             }
 
             // Current-step bridge inputs.

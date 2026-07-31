@@ -56,13 +56,13 @@ pub struct ClaimInstance<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
 pub struct PolyInstance<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     #[ragu(gadget)]
     pub bridge_com: Point<'dr, D, C::NestedCurve>,
-    /// The slot's four lift instance wires: `lift(l_k)` for the host
-    /// commitment's limbs `[x_lo, x_hi, y_lo, y_hi]`. They live in the
-    /// instance's trailing lift region (after the challenge slots), so the
-    /// k(y) fold reads them in a separate pass after everything else — this
-    /// struct groups them with their slot, the *layout* does not.
+    /// The slot's two coordinate instance wires: the host commitment's affine
+    /// coordinates, canonically embedded in the circuit field. They live in
+    /// the instance's trailing coordinate region (after the challenge slots),
+    /// so the k(y) fold reads them in a separate pass after everything else —
+    /// this struct groups them with their slot, the *layout* does not.
     #[ragu(gadget)]
-    pub lifts: FixedVec<Element<'dr, D>, ConstLen<4>>,
+    pub coords: FixedVec<Element<'dr, D>, ConstLen<2>>,
 }
 
 /// A single derived challenge witnessed from a child proof: the points it was
@@ -246,11 +246,11 @@ impl<
             }
             pair.challenge.write(dr, &mut ky)?;
         }
-        // The lift region trails the instance (see the adapter's write order),
-        // so it folds last even though each slot's wires are grouped with the
-        // slot's `PolyInstance`.
+        // The coordinate region trails the instance (see the adapter's write
+        // order), so it folds last even though each slot's wires are grouped
+        // with the slot's `PolyInstance`.
         for poly in self.polys.iter() {
-            poly.lifts.write(dr, &mut ky)?;
+            poly.coords.write(dr, &mut ky)?;
         }
         ky.finish_ky(dr)
     }
@@ -328,9 +328,10 @@ impl<
                     Ok(())
                 })?;
                 D::try_just(|| {
-                    if proof.as_ref().take().application_lifts().len() != num_polys * 4 {
+                    if proof.as_ref().take().application_poly_coords().len() != num_polys * 2 {
                         return Err(Error::MalformedEncoding(
-                            "proof does not carry exactly four lift values per polynomial slot"
+                            "proof does not carry exactly two coordinate values per polynomial \
+                             slot"
                                 .into(),
                         ));
                     }
@@ -343,12 +344,14 @@ impl<
                                 dr,
                                 proof.as_ref().map(|p| p.application_polys()[i]),
                             )?,
-                            lifts: (0..4)
+                            coords: (0..2)
                                 .map(|k| {
                                     Element::alloc(
                                         dr,
                                         allocator,
-                                        proof.as_ref().map(|p| p.application_lifts()[4 * i + k]),
+                                        proof
+                                            .as_ref()
+                                            .map(|p| p.application_poly_coords()[2 * i + k]),
                                     )
                                 })
                                 .try_collect_fixed()?,
@@ -492,10 +495,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const POLYS: usize, const CLAI
     fn values() -> usize {
         // Four wires per claim: the opened polynomial's commitment, then the
         // $(x, y)$ opening. Two more per polynomial slot for its commitment,
-        // plus four for its lift region wires. The challenge slots are their
-        // own stage — see [`slots`](super::slots) for why the chain's root
-        // does not hold them.
-        2 * (3 * HEADER_SIZE + 2 * POLYS + 4 * CLAIMS + 4 * POLYS + 1 + unified::NUM_WIRES)
+        // plus two for its coordinate region wires. The challenge slots are
+        // their own stage — see [`slots`](super::slots) for why the chain's
+        // root does not hold them.
+        2 * (3 * HEADER_SIZE + 2 * POLYS + 4 * CLAIMS + 2 * POLYS + 1 + unified::NUM_WIRES)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

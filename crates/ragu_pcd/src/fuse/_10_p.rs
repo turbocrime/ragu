@@ -119,14 +119,15 @@ impl<
                 for (poly, host) in proof.claim_polys.iter().zip(proof.claim_host_commitments()) {
                     acc.acc(poly, host);
                 }
-                // The child's claim-lift polynomial q — deterministic from the
-                // recorded hosts, so rebuilt rather than carried — folded with
-                // its commitment C_q. This is what makes a step's instance
-                // lifts bind: `compute_v` re-derives q(u) from the child's
-                // lift instance wires, so a q that disagrees with them breaks
-                // v against P at the deferred opening. Absent at POLYS = 0.
+                // The child's claim-coordinate polynomial q — deterministic
+                // from the recorded hosts, so rebuilt rather than carried —
+                // folded with its commitment C_q. This is what makes a step's
+                // instance-bound coordinates bind: `compute_v` re-derives q(u)
+                // from the child's coordinate instance wires, so a q that
+                // disagrees with them breaks v against P at the deferred
+                // opening. Absent at POLYS = 0.
                 if proof.claim_host_commitments().len() > 0 {
-                    let q = crate::internal::challenge::claim_lift_poly::<C, R>(
+                    let q = crate::internal::challenge::claim_coord_poly::<C, R>(
                         proof.claim_host_commitments(),
                     )?;
                     let c_q = q.commit_to_affine::<C::HostCurve>(C::host_generators(self.params));

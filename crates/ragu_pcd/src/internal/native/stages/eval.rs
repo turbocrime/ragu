@@ -71,12 +71,12 @@ pub struct ChildEvaluationsWitness<F> {
     /// that count.
     pub claims: Vec<F>,
 
-    /// The child proof's claim-lift polynomial $q$ evaluated at $u$ — one
-    /// value when the shape has polynomial slots, none otherwise. `q` is
+    /// The child proof's claim-coordinate polynomial $q$ evaluated at $u$ —
+    /// one value when the shape has polynomial slots, none otherwise. `q` is
     /// deterministic from the child's recorded hosts
-    /// ([`claim_lift_poly`](crate::internal::challenge::claim_lift_poly)), so
-    /// this is computed, not carried; `compute_v` re-derives the same value
-    /// from the child's lift instance wires and enforces agreement.
+    /// ([`claim_coord_poly`](crate::internal::challenge::claim_coord_poly)),
+    /// so this is computed, not carried; `compute_v` re-derives the same value
+    /// from the child's coordinate instance wires and enforces agreement.
     pub q_poly: Vec<F>,
 }
 
@@ -94,7 +94,7 @@ impl<F: PrimeField> ChildEvaluationsWitness<F> {
                 Vec::new()
             } else {
                 alloc::vec![
-                    crate::internal::challenge::claim_lift_poly::<C, R>(
+                    crate::internal::challenge::claim_coord_poly::<C, R>(
                         proof.claim_host_commitments(),
                     )
                     .expect("recorded hosts were decomposed once already, at witnessing",)
@@ -186,7 +186,7 @@ pub struct ChildEvaluations<'dr, D: Driver<'dr>, const POLYS: usize> {
     /// `_10_p` accumulation order.
     #[ragu(gadget)]
     pub claims: FixedVec<Element<'dr, D>, ConstLen<POLYS>>,
-    /// The child's claim-lift polynomial $q$ evaluated at $u$ — last, matching
+    /// The child's claim-coordinate polynomial $q$ evaluated at $u$ — last, matching
     /// its `_10_p` fold position after the claim polynomials. Empty at
     /// `POLYS = 0`, where no `q` exists.
     #[ragu(gadget)]

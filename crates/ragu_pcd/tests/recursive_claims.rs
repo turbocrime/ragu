@@ -262,8 +262,8 @@ fn claim_bridge_stage_must_be_tied_to_the_recorded_host() -> Result<()> {
 ///
 /// Root verification catches it directly (`verify.rs` re-derives
 /// `bridge(host)` and compares it to `bridge_com`); an interior fuse catches
-/// it through the lift chain — see the assertion below for the attribution
-/// and the named residual.
+/// it through the coordinate chain — see the assertion below for the
+/// attribution and the named residual.
 #[test]
 fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
     use ragu_pcd::PolyCommitment;
@@ -315,7 +315,7 @@ fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
         "root verify must reject a claim whose bridge_com does not bridge its host"
     );
 
-    // Fused as a child, the desync is caught by the lift chain.
+    // Fused as a child, the desync is caught by the coordinate chain.
     let leaf2 = seed_leaf(&app, pasta, &mut rng, &[2, 7, 1, 8])?;
 
     let p3 = poly(&[5, 5, 5]);
@@ -338,30 +338,31 @@ fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
         Err(e) => std::eprintln!("interior fuse rejected the desync: {e:?}"),
         Ok((parent, ())) => {
             let verified = app.verify(&parent, &mut rng)?;
-            // Caught by the claim-lift chain. The child's lift instance wires
-            // were computed from the handle's host (P's commitment -- the one
-            // its `bridge_com` and challenges were derived from) and are bound
-            // to the child's committed application rx through k(Y). The
-            // framework polynomial `q` is built from the *recomputed* host of
-            // the polynomial actually folded (P''s), and the parent's
-            // `compute_v` enforces that the child's instance lifts Horner to
-            // q(u). Limb decomposition is injective, so two different hosts
-            // can never satisfy it: the parent's own compute_v trace is
-            // unsatisfiable and root verify rejects the parent.
+            // Caught by the coordinate chain. The child's coordinate instance
+            // wires were computed from the handle's host (P's commitment --
+            // the one its `bridge_com` and challenges were derived from) and
+            // are bound to the child's committed application rx through k(Y).
+            // The framework polynomial `q` is built from the *recomputed*
+            // host of the polynomial actually folded (P''s), and the parent's
+            // `compute_v` enforces that the child's instance coordinates
+            // Horner to q(u). The coordinate embedding is injective, so two
+            // different hosts can never satisfy it: the parent's own
+            // compute_v trace is unsatisfiable and root verify rejects the
+            // parent.
             //
             // Still deferred, per the framework-wide status quo: a prover who
-            // *also* forges the child's lift instance wires (its own proof,
-            // its own k(Y)) escapes this check and is caught only once
+            // *also* forges the child's coordinate instance wires (its own
+            // proof, its own k(Y)) escapes this check and is caught only once
             // `bridge_com == commit(carried claim rx)` is enforced per-fuse --
             // the deferred PCS link no commitment in the system has yet.
             assert!(
                 !verified,
                 "a parent of a desynced-claim child must be rejected: the \
-                 child's instance-bound lifts disagree with the limbs of the \
-                 folded polynomial's commitment"
+                 child's instance-bound coordinates disagree with the folded \
+                 polynomial's commitment"
             );
             std::eprintln!(
-                "the lift chain rejected the desync: instance lifts (P) vs folded host (P')"
+                "the coordinate chain rejected the desync: instance coords (P) vs folded host (P')"
             );
         }
     }
@@ -369,23 +370,24 @@ fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
     Ok(())
 }
 
-/// **The lift region is bound: a forged lift wire is rejected at root and
-/// through a fuse.**
+/// **The coordinate region is bound: a forged coordinate wire is rejected at
+/// root and through a fuse.**
 ///
-/// A step's view of its commitment — the four limbs `poly_limbs` hands it —
-/// is provable because each limb's lift is an instance wire, and that wire is
-/// checked twice: natively at root, where `verify` recomputes every slot's
-/// lifts from the recorded host commitment, and in-circuit at every fuse,
-/// where the parent's `compute_v` re-derives the claim-lift polynomial's
-/// $q(u)$ from the child's lift wires and enforces it against the eval
-/// stage's carried value (which the accumulator folds).
+/// A step's view of its commitment — the limbs `poly_limbs` hands it and the
+/// embedded coordinates the same bits pack into — is provable because each
+/// coordinate is an instance wire, and that wire is checked twice: natively
+/// at root, where `verify` recomputes every slot's coordinates from the
+/// recorded host commitment, and in-circuit at every fuse, where the parent's
+/// `compute_v` re-derives the claim-coordinate polynomial's $q(u)$ from the
+/// child's coordinate wires and enforces it against the eval stage's carried
+/// value (which the accumulator folds).
 ///
-/// **The adversary.** Flip one lift wire's recorded value and nothing else:
-/// the hosts, claim polynomials and bridge commitments all stay put, so every
-/// other check keeps passing and a rejection is attributable to the lift
-/// binding alone.
+/// **The adversary.** Flip one coordinate wire's recorded value and nothing
+/// else: the hosts, claim polynomials and bridge commitments all stay put, so
+/// every other check keeps passing and a rejection is attributable to the
+/// coordinate binding alone.
 #[test]
-fn forged_lift_wires_are_rejected_directly_and_recursively() -> Result<()> {
+fn forged_coordinate_wires_are_rejected_directly_and_recursively() -> Result<()> {
     let pasta = Pasta::baked();
     let app = open_app::<Pasta, R>(pasta)?;
     let mut rng = StdRng::seed_from_u64(2027);
@@ -394,16 +396,17 @@ fn forged_lift_wires_are_rejected_directly_and_recursively() -> Result<()> {
     assert!(app.verify(&honest, &mut rng)?, "the honest leaf verifies");
 
     let mut tampered = seed_leaf(&app, pasta, &mut rng, &[3, 1, 4, 1, 5])?;
-    tampered.corrupt_application_lift(0, Fp::from(0xbad));
+    tampered.corrupt_application_coord(0, Fp::from(0xbad));
 
     assert!(
         !app.verify(&tampered, &mut rng)?,
-        "root verify must recompute the lift region from the recorded hosts \
-         and reject a forged wire"
+        "root verify must recompute the coordinate region from the recorded \
+         hosts and reject a forged wire"
     );
 
-    // And recursively: the parent's `compute_v` Horner-walks the child's lift
-    // wires to q(u); a forged wire makes its own trace unsatisfiable.
+    // And recursively: the parent's `compute_v` Horner-walks the child's
+    // coordinate wires to q(u); a forged wire makes its own trace
+    // unsatisfiable.
     let leaf2 = seed_leaf(&app, pasta, &mut rng, &[2, 7, 1, 8])?;
     let p3 = poly(&[5, 5, 5]);
     let com3 = app.commit_polynomial(&p3)?;
@@ -423,12 +426,12 @@ fn forged_lift_wires_are_rejected_directly_and_recursively() -> Result<()> {
     );
 
     match fused {
-        Err(e) => std::eprintln!("interior fuse rejected the forged lift: {e:?}"),
+        Err(e) => std::eprintln!("interior fuse rejected the forged coordinate: {e:?}"),
         Ok((parent, ())) => {
             assert!(
                 !app.verify(&parent, &mut rng)?,
-                "a parent of a child with a forged lift wire must not verify: \
-                 compute_v re-derives q(u) from exactly these wires"
+                "a parent of a child with a forged coordinate wire must not \
+                 verify: compute_v re-derives q(u) from exactly these wires"
             );
         }
     }

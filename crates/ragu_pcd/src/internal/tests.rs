@@ -171,20 +171,20 @@ fn test_slotted_internal_circuit_constraint_counts() {
 
     let app = dummy_app::<SLOTTED_HEADER_SIZE, 2, 3, 1>(pasta, NUM_SLOTTED_APP_STEPS);
 
-    // All six span the preamble stage, so all six include the lift region's
-    // wires (four per polynomial slot per child); `OuterCollapse`'s
+    // All six span the preamble stage, so all six include the coordinate
+    // region's wires (two per polynomial slot per child); `OuterCollapse`'s
     // `application_ky` Horner additionally folds them.
-    check_constraints!(app, Hashes1Circuit,          mul = 1156, lin = 1834);
-    check_constraints!(app, Hashes2Circuit,          mul = 1720, lin = 2951);
-    check_constraints!(app, InnerCollapseCircuit,    mul = 1597, lin = 1918);
-    check_constraints!(app, OuterCollapseCircuit,    mul =  817, lin = 1138);
+    check_constraints!(app, Hashes1Circuit,          mul = 1152, lin = 1834);
+    check_constraints!(app, Hashes2Circuit,          mul = 1716, lin = 2951);
+    check_constraints!(app, InnerCollapseCircuit,    mul = 1593, lin = 1918);
+    check_constraints!(app, OuterCollapseCircuit,    mul =  805, lin = 1122);
     // The two that read the slot regions, and the reason this shape is pinned
     // at all. `ComputeV` carries the per-claim one-hot resolution and the
-    // per-child q(u) re-derivation from the lift instance wires, so it moves
-    // whenever those do. `ChallengeBinding` is 865 here against 518 with no
-    // slots: an application that derives a challenge has one to bind.
-    check_constraints!(app, ComputeVCircuit,         mul = 1124, lin = 2093);
-    check_constraints!(app, ChallengeBindingCircuit, mul =  865, lin = 1225);
+    // per-child q(u) re-derivation from the coordinate instance wires, so it
+    // moves whenever those do. `ChallengeBinding` is 861 here against 518
+    // with no slots: an application that derives a challenge has one to bind.
+    check_constraints!(app, ComputeVCircuit,         mul = 1112, lin = 2077);
+    check_constraints!(app, ChallengeBindingCircuit, mul =  861, lin = 1225);
 }
 
 /// Prints the counts `test_internal_circuit_constraint_counts` pins, so a
@@ -263,15 +263,15 @@ fn test_internal_stage_parameters() {
         }};
     }
 
-    check_stage!(pinned_chain::Preamble,   "Preamble",   skip =   1, num = 352);
-    check_stage!(pinned_chain::OuterError, "OuterError", skip = 353, num = 186);
-    check_stage!(pinned_chain::InnerError, "InnerError", skip = 539, num = 399);
-    check_stage!(pinned_chain::Query,      "Query",      skip = 353, num =  27);
-    check_stage!(pinned_chain::Eval,       "Eval",       skip = 380, num =  29);
+    check_stage!(pinned_chain::Preamble,   "Preamble",   skip =   1, num = 336);
+    check_stage!(pinned_chain::OuterError, "OuterError", skip = 337, num = 186);
+    check_stage!(pinned_chain::InnerError, "InnerError", skip = 523, num = 399);
+    check_stage!(pinned_chain::Query,      "Query",      skip = 337, num =  27);
+    check_stage!(pinned_chain::Eval,       "Eval",       skip = 364, num =  29);
     // A sibling of InnerError, not a successor: both start where OuterError
     // ends, so a circuit reaching the challenge slots is not charged for
     // InnerError's gates.
-    check_stage!(pinned_chain::Challenges, "Challenges", skip = 539, num =   5);
+    check_stage!(pinned_chain::Challenges, "Challenges", skip = 523, num =   5);
 }
 
 /// Helper test to print current stage parameters in copy-pasteable format.
@@ -346,18 +346,19 @@ fn test_slotted_registry_digests() {
     let app = dummy_app::<SLOTTED_HEADER_SIZE, 2, 3, 1>(pasta, NUM_SLOTTED_APP_STEPS);
 
     // Covers the limb machinery: the eval stage carries one q(u) per child
-    // and `compute_v` re-derives it from the lift instance wires. The
+    // and `compute_v` re-derives it from the coordinate instance wires. The
     // `POLYS = 0` digests holding alongside is the isolation check:
     // `q_slots(0) = 0`, so the feature vanishes at that shape.
     assert_eq!(
         app.native_registry.digest(),
-        fp!(0x190861265b03c475295efdccae505bedc909d54c418b4742cf14cf099c8eab66),
+        fp!(0x06286f4bb9b9f9dd4d2f36c8bd877eefc6bc66d67bed3cc82e84348d604595e8),
         "Native registry digest changed unexpectedly at a slotted shape!"
     );
     // Covers the nested side of the claim machinery: one coordinate-pair
     // slot per claim bridge, the stashed `C_q`, and the endoscaling growth.
-    // The limb machinery itself (`q`, the lift instance region, `compute_v`'s
-    // re-derivation) is all native and must move only the digest above.
+    // The limb machinery itself (`q`, the coordinate instance region,
+    // `compute_v`'s re-derivation) is all native and must move only the
+    // digest above.
     assert_eq!(
         app.nested_registry.digest(),
         fq!(0x3158d084e78957d7df2a0123baddfd948e4e7f3d920327f78c5b851eb3444d67),
@@ -473,7 +474,7 @@ fn nested_chain_layout_tiles_at_every_capacity() {
 ///
 /// The expected side is spelled out longhand rather than read from
 /// `num_endoscaling_points`: `1` for `f.commitment`, two per-child blocks of
-/// `RxIndex::NUM + 4 + polys` plus the child's claim-lift `C_q` (one whenever
+/// `RxIndex::NUM + 4 + polys` plus the child's claim-coordinate `C_q` (one whenever
 /// there are slots, none otherwise), and the current step's six components.
 /// Calling the function under test on both sides would assert `x == x`.
 #[test]

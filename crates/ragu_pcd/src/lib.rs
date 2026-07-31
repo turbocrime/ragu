@@ -113,10 +113,11 @@ pub(crate) const RAGU_TAG: &[u8] = b"FIXME";
 /// circuit's instance width (`InstanceLen::len` is the single statement):
 ///
 /// ```text
-/// 3·HEADER_SIZE + 2·POLYS + 4·CLAIMS + CHALLENGES·(2·CHALLENGE_WIDTH + 1) + 4·POLYS
+/// 3·HEADER_SIZE + 2·POLYS + 4·CLAIMS + CHALLENGES·(2·CHALLENGE_WIDTH + 1) + 2·POLYS
 /// ```
 ///
-/// (the trailing `4·POLYS` is the lift instance region).
+/// (the trailing `2·POLYS` is the coordinate instance region: each slot's
+/// host commitment affine coordinates, canonically embedded).
 ///
 /// Every term is declared, so a step's circuit shape is final the moment it
 /// registers — see the crate docs.

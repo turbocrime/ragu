@@ -28,7 +28,9 @@ use crate::{
 /// the polynomial slots (commitment point coordinates — two elements per slot),
 /// then the query slots (the opened polynomial's commitment and the $(x, y)$
 /// opening — four elements per slot), then the challenge slots (the coordinates
-/// of every input point, then the challenge).
+/// of every input point, then the challenge), then the coordinate region (the
+/// host commitment's embedded affine coordinates — two elements per polynomial
+/// slot).
 ///
 /// A query carries the commitment of the polynomial it opens — the same
 /// allocated [`Point`](ragu_primitives::Point), written at two instance
@@ -39,7 +41,7 @@ pub fn instance_len(header_size: usize, capacity: HookLayout) -> usize {
         + capacity.poly_query.polys * 2
         + capacity.poly_query.claims * 4
         + capacity.challenge.calls * (capacity.challenge.width * 2 + 1)
-        + capacity.poly_query.polys * 4
+        + capacity.poly_query.polys * 2
 }
 
 /// [`instance_len`] as a [`Len`](ragu_primitives::vec::Len), so the application
@@ -236,10 +238,6 @@ impl<
             ctx.finish_slots::<R>()?;
             body
         };
-        // Every slot's lift instance wires must exist; slots the body opened
-        // through `poly_limbs` already have theirs (derived from constrained
-        // bits), the rest get plain value-filled wires here.
-        hooks.fill_missing_lifts(dr)?;
         let outputs = hooks.into_outputs();
 
         let mut elements = Vec::with_capacity(instance_len(HEADER_SIZE, Self::CAPACITY));
@@ -273,16 +271,13 @@ impl<
             }
             pair.challenge.write(dr, &mut elements)?;
         }
-        // Last, the lift region: per polynomial slot, the four `lift(l_k)`
-        // wires for the host commitment's limbs. Appended after the existing
-        // regions so their offsets (and the value reads below) are unmoved.
+        // Last, the coordinate region: per polynomial slot, the two wires
+        // holding the host commitment's embedded affine coordinates. Appended
+        // after the existing regions so their offsets (and the value reads
+        // below) are unmoved.
         for poly in &outputs.witnessed_polys {
-            for lift in poly.lifts.as_ref().ok_or_else(|| {
-                ragu_core::Error::InvalidWitness(
-                    "fill_missing_lifts runs before the instance is written".into(),
-                )
-            })? {
-                lift.write(dr, &mut elements)?;
+            for coord in &poly.coords {
+                coord.write(dr, &mut elements)?;
             }
         }
 
@@ -472,15 +467,15 @@ mod tests {
             },
         };
         // Two elements per polynomial (its commitment), four per claim (the
-        // opened polynomial's commitment, then the `(x, y)` opening), and four
-        // more per polynomial in the trailing lift region.
-        let slots = 8 * 2 + 8 * 4 + 2 * (capacity.challenge.width * 2 + 1) + 8 * 4;
+        // opened polynomial's commitment, then the `(x, y)` opening), and two
+        // more per polynomial in the trailing coordinate region.
+        let slots = 8 * 2 + 8 * 4 + 2 * (capacity.challenge.width * 2 + 1) + 8 * 2;
         assert_eq!(instance_len(1, capacity), 3 + slots);
         assert_eq!(instance_len(4, capacity), 12 + slots);
         assert_eq!(instance_len(10, capacity), 30 + slots);
 
         // Half the polynomial slots, half their contribution — two commitment
-        // wires and four lift wires each.
+        // wires and two coordinate wires each.
         let smaller = HookLayout {
             poly_query: PolyQueryLayout {
                 polys: 4,
@@ -488,7 +483,7 @@ mod tests {
             },
             ..capacity
         };
-        assert_eq!(instance_len(4, smaller), instance_len(4, capacity) - 24);
+        assert_eq!(instance_len(4, smaller), instance_len(4, capacity) - 16);
     }
 
     #[test]
