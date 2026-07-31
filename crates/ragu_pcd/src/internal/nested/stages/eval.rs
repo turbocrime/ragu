@@ -120,7 +120,7 @@ mod tests {
 
     /// The run's total width is exactly its slots' — the span this stage
     /// occupies in the chain has to be what the subdivision tiles, or the
-    /// claim-bridge run after it starts at the wrong gate.
+    /// walk misplaces every wire in it.
     #[test]
     fn num_values_matches_slots() {
         for polys in [0, 1, 4, 8] {

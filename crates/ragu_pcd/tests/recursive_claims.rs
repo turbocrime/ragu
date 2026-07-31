@@ -346,7 +346,7 @@ fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
 /// value (which the accumulator folds).
 ///
 /// **The adversary.** Flip one coordinate wire's recorded value and nothing
-/// else: the hosts, claim polynomials and bridge commitments all stay put, so
+/// else: the hosts and claim polynomials all stay put, so
 /// every other check keeps passing and a rejection is attributable to the
 /// coordinate binding alone.
 #[test]

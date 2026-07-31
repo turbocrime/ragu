@@ -95,8 +95,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 
 impl<C: Cycle, R: Rank> Proof<C, R> {
     /// Replaces one coordinate instance wire's recorded value, leaving
-    /// everything else — the recorded hosts, the claim polynomials, the
-    /// bridge commitments — untouched.
+    /// everything else — the recorded hosts and the claim polynomials —
+    /// untouched.
     ///
     /// Models a prover whose step hashed limbs that are not the recorded
     /// host's. Exactly two checks are supposed to reject it: at root, `verify`

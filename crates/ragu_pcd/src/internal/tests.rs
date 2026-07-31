@@ -378,11 +378,10 @@ fn test_nested_registry_digest() {
     let app = dummy_app::<HEADER_SIZE, 0, 0, 0>(pasta, NUM_APP_STEPS);
 
     // Per application, like the native digest above: at
-    // `POLYS = 0, CLAIMS = 0, CHALLENGES = 0` the claim-bridge run is empty,
-    // the eval and preamble bridges carry no stashed claims, and the
-    // endoscaling point list carries no per-slot points — so a change
-    // confined to any of those cannot move this number.
-    // [`test_slotted_registry_digests`] covers that shape.
+    // `POLYS = 0, CLAIMS = 0, CHALLENGES = 0` the eval and preamble bridges
+    // carry no stashed claims and the endoscaling point list carries no
+    // per-slot points — so a change confined to any of those cannot move
+    // this number. [`test_slotted_registry_digests`] covers that shape.
     let expected = fq!(0x06bb3145242fd72534249a81cf321e7e4608d2610f745aa4eafa42887528f9d9);
 
     assert_eq!(
