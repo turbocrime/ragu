@@ -716,7 +716,7 @@ mod capacity_is_per_application {
         assert_eq!(
             light.hook_layout(),
             HookLayout {
-                challenge: ChallengeLayout { calls: 0, width: 2 },
+                challenge: ChallengeLayout { calls: 0, width: 0 },
                 poly_query: PolyQueryLayout {
                     polys: 0,
                     claims: 0

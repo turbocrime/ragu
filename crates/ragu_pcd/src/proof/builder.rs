@@ -17,7 +17,10 @@ use ragu_circuits::{
 use ragu_core::Result;
 
 use super::{Cached, Proof};
-use crate::internal::nested;
+use crate::{
+    framework_hooks::{HookLayout, PolyQueryClaim},
+    internal::nested,
+};
 
 /// Produces `pub(crate) fn $name(&mut self, v: $ty)` that sets an `Option`
 /// field, panicking on double-set.
@@ -331,7 +334,7 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     /// pre-checked natively by fuse. The claim *instances* (coords, x, y),
     /// the claim polynomials, and the host commitments are persisted in the
     /// [`Proof`] so the parent fuse can enforce the claims recursively.
-    application_claims: Vec<crate::framework_hooks::PolyQueryClaim<C::CircuitField>>,
+    application_claims: Vec<PolyQueryClaim<C::CircuitField>>,
     /// The coordinate instance wires' values, two per polynomial slot: the
     /// host commitment's embedded affine coordinates — one name per
     /// polynomial, not one per query.
@@ -342,7 +345,7 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     /// The claims' host-curve commitments, in slot order.
     claim_host_commitments: Option<Vec<C::HostCurve>>,
     /// The application's slot capacity — what every list here is sized to.
-    capacity: crate::framework_hooks::HookLayout,
+    hook_layout: HookLayout,
 }
 
 impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
@@ -351,12 +354,12 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     pub(crate) fn new(
         params: &'params C::Params,
         bridge_alpha: C::ScalarField,
-        capacity: crate::framework_hooks::HookLayout,
+        hook_layout: HookLayout,
     ) -> Self {
         Self {
             params,
             bridge_alpha,
-            capacity,
+            hook_layout,
             circuit_id: None,
             left_header: None,
             right_header: None,
@@ -630,8 +633,9 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     /// The nested bridge chain's value-level geometry at this proof's
     /// capacity. Every bridge rx is placed through it.
     fn nested_chain(&self) -> &ragu_circuits::staging::InducedStages {
-        self.nested_chain
-            .get_or_init(|| nested::chain_layout::<C::HostCurve, R>(self.capacity.poly_query.polys))
+        self.nested_chain.get_or_init(|| {
+            nested::chain_layout::<C::HostCurve, R>(self.hook_layout.poly_query.polys)
+        })
     }
 
     /// The eval bridge, written out rather than through [`cached_bridge!`]:
@@ -743,7 +747,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             self.application_challenges.is_empty(),
             "double-set: application_challenges"
         );
-        assert_eq!(challenges.len(), self.capacity.challenge.calls);
+        assert_eq!(challenges.len(), self.hook_layout.challenge.calls);
         self.application_challenges = challenges;
     }
 
@@ -761,9 +765,12 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             self.application_poly_coords.is_empty(),
             "double-set: application_polys"
         );
-        assert_eq!(coords.len(), self.capacity.poly_query.polys * 2);
-        assert_eq!(claim_polys.len(), self.capacity.poly_query.polys);
-        assert_eq!(claim_host_commitments.len(), self.capacity.poly_query.polys);
+        assert_eq!(coords.len(), self.hook_layout.poly_query.polys * 2);
+        assert_eq!(claim_polys.len(), self.hook_layout.poly_query.polys);
+        assert_eq!(
+            claim_host_commitments.len(),
+            self.hook_layout.poly_query.polys
+        );
         self.application_poly_coords = coords;
         self.claim_polys = claim_polys;
         self.claim_host_commitments = Some(claim_host_commitments);
@@ -772,15 +779,12 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     /// Sets the per-step **queries** for this fuse step, in call order. Each
     /// names one of the polynomials [`set_application_polys`](Self::set_application_polys)
     /// recorded. May only be called once.
-    pub(crate) fn set_application_claims(
-        &mut self,
-        claims: Vec<crate::framework_hooks::PolyQueryClaim<C::CircuitField>>,
-    ) {
+    pub(crate) fn set_application_claims(&mut self, claims: Vec<PolyQueryClaim<C::CircuitField>>) {
         assert!(
             self.application_claims.is_empty(),
             "double-set: application_claims"
         );
-        assert_eq!(claims.len(), self.capacity.poly_query.claims);
+        assert_eq!(claims.len(), self.hook_layout.poly_query.claims);
         self.application_claims = claims;
     }
 

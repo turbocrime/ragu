@@ -293,26 +293,16 @@ pub trait HookConfig: Send + Sync + 'static {
 
     /// The declared capacities as the value every circuit is built from —
     /// the [`framework_hooks`](crate::framework_hooks) form of this layout.
-    fn hook_layout() -> HookLayout {
+    fn layout() -> HookLayout {
         HookLayout {
-            challenge: Self::challenge_layout(),
-            poly_query: Self::poly_query_layout(),
-        }
-    }
-
-    /// The challenge layout for this application.
-    fn challenge_layout() -> ChallengeLayout {
-        ChallengeLayout {
-            calls: Self::ChallengeDerivations::len(),
-            width: Self::ChallengeWidth::len(),
-        }
-    }
-
-    /// The poly-query layout for this application.
-    fn poly_query_layout() -> PolyQueryLayout {
-        PolyQueryLayout {
-            polys: Self::PolyWitnesses::len(),
-            claims: Self::PolyQueries::len(),
+            challenge: ChallengeLayout {
+                calls: Self::ChallengeDerivations::len(),
+                width: Self::ChallengeWidth::len(),
+            },
+            poly_query: PolyQueryLayout {
+                polys: Self::PolyWitnesses::len(),
+                claims: Self::PolyQueries::len(),
+            },
         }
     }
 }
@@ -334,19 +324,6 @@ pub struct HookLayout {
     pub poly_query: PolyQueryLayout,
 }
 
-impl HookLayout {
-    /// The capacity an application's declared parameters state — the one place
-    /// the four consts on [`ApplicationBuilder`](crate::ApplicationBuilder)
-    /// turn into the value every circuit is built from. `const` so its callers
-    /// can be associated constants.
-    pub const fn declared(polys: usize, claims: usize, calls: usize, width: usize) -> Self {
-        Self {
-            challenge: ChallengeLayout { calls, width },
-            poly_query: PolyQueryLayout { polys, claims },
-        }
-    }
-}
-
 /// What the challenge-derivation hook requires of a step's circuit.
 ///
 /// Kept apart from [`PolyQueryLayout`]: the two hooks are independent
@@ -365,11 +342,10 @@ pub struct ChallengeLayout {
 }
 
 impl ChallengeLayout {
-    /// The absorb permutations one call of this width costs, at `rate`:
-    /// `⌈w / rate⌉`. Paid by `challenge_binding` once per `(child, slot)`,
-    /// out of the framework's gate budget.
-    pub const fn permutations(width: usize, rate: usize) -> usize {
-        width.div_ceil(rate)
+    /// Instance elements the challenge slots occupy, per proof: each call's
+    /// input elements, then the challenge itself.
+    pub const fn instance_len(&self) -> usize {
+        self.calls * (self.width + 1)
     }
 }
 
@@ -385,6 +361,15 @@ pub struct PolyQueryLayout {
     /// term in `compute_v`. A separate flat pool, so several claims can open
     /// one polynomial at the claim rate.
     pub claims: usize,
+}
+
+impl PolyQueryLayout {
+    /// Instance elements the poly and claim slots occupy, per proof: the
+    /// name pair per polynomial slot, and the name pair plus the $(x, y)$
+    /// opening per claim slot.
+    pub const fn instance_len(&self) -> usize {
+        self.polys * 2 + self.claims * 4
+    }
 }
 
 /// Aggregate of every hook's accumulated output, drained from a
@@ -710,38 +695,5 @@ mod tests {
             alloc::format!("{error}").contains("challenge slots"),
             "unexpected error: {error}"
         );
-    }
-
-    /// A challenge record's instance region is the same width for every slot:
-    /// one wire per input element, plus the challenge. Nothing about it
-    /// depends on how many elements a call actually passed, which is what
-    /// lets the count be witness data rather than circuit structure.
-    ///
-    /// Measured against the stage that holds the region — the challenge slots
-    /// are their own stage, not part of the preamble.
-    #[test]
-    fn a_challenge_slot_has_one_fixed_instance_width() {
-        use crate::internal::native::stages::slots::num_values;
-
-        let width = 2;
-        // `num_values` covers both children, so one call's worth is half the
-        // step from zero calls to one.
-        assert_eq!((num_values(1, width) - num_values(0, width)) / 2, width + 1,);
-        // And it stays that width however many calls there are.
-        assert_eq!((num_values(4, width) - num_values(3, width)) / 2, width + 1,);
-    }
-
-    /// The declared width's cost: a permutation absorbs `RATE` elements, so
-    /// `w` elements cost `⌈w / RATE⌉` permutations. A partly-filled
-    /// permutation still costs a whole one.
-    #[test]
-    fn permutations_follow_the_width() {
-        assert_eq!(ChallengeLayout::permutations(0, 4), 0);
-        assert_eq!(ChallengeLayout::permutations(2, 4), 1);
-        assert_eq!(ChallengeLayout::permutations(4, 4), 1);
-        assert_eq!(ChallengeLayout::permutations(5, 4), 2);
-        assert_eq!(ChallengeLayout::permutations(8, 4), 2);
-        // An odd rate still rounds up.
-        assert_eq!(ChallengeLayout::permutations(4, 3), 2);
     }
 }

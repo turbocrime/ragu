@@ -127,16 +127,19 @@ impl<const PW: usize, const PQ: usize, const CD: usize, const CW: usize> HookCon
 /// ApplicationBuilder<'params, Pasta, ProductionRank, 4, AppHooks<3, 3, 1, 6>>
 /// ```
 ///
-/// See [`AppHooksLayout`] for what each hook number prices; together with
-/// `HEADER_SIZE` they are the whole of an application circuit's instance
-/// width (`InstanceLen::len` is the single statement):
+/// See [`HookConfig`](framework_hooks::HookConfig) for what each hook number
+/// prices; together with `HEADER_SIZE` they are the whole of an application
+/// circuit's instance width
+/// ([`HookLayout::instance_len`](framework_hooks::HookLayout::instance_len)
+/// is the single statement):
 ///
 /// ```text
-/// 3·HEADER_SIZE + 2·POLYS + 4·CLAIMS + CHALLENGES·(CHALLENGE_WIDTH + 1) + 2·POLYS
+/// 3·HEADER_SIZE + 2·POLYS + 4·QUERIES + CHALLENGES·(CHALLENGE_WIDTH + 1)
 /// ```
 ///
-/// (the trailing `2·POLYS` is the coordinate instance region: each slot's
-/// host commitment affine coordinates, canonically embedded).
+/// (the `2·POLYS` is each slot's name — the host commitment's affine
+/// coordinates, canonically embedded; the `4·QUERIES` is the opened
+/// polynomial's name and the $(x, y)$ opening).
 ///
 /// Claim slots trade against `HEADER_SIZE`, both being terms in the same
 /// $k(Y)$ Horner loop; an application that asks for more than its circuits
@@ -364,7 +367,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
     /// the same value every circuit was registered at and there is no second
     /// representation to keep in step.
     pub(crate) fn hook_layout(&self) -> framework_hooks::HookLayout {
-        J::hook_layout()
+        J::layout()
     }
 
     /// The nested bridge chain's value-level geometry at this application's

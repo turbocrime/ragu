@@ -15,7 +15,7 @@ use ragu_core::{
 };
 use ragu_primitives::{
     Element, GadgetExt,
-    vec::{CollectFixed, ConstLen, FixedVec},
+    vec::{CollectFixed, ConstLen, FixedVec, Len},
 };
 
 use super::super::{Step, StepCtx};
@@ -24,37 +24,14 @@ use crate::{
     framework_hooks::{FrameworkAux, FrameworkHooks, HookConfig},
 };
 
-/// Length of an application circuit's public instance: the three headers, then
-/// the polynomial slots (the host commitment's embedded affine coordinates —
-/// two elements per slot), then the query slots (the opened polynomial's name
-/// and the $(x, y)$ opening — four elements per slot), then the challenge
-/// slots (every input element, then the challenge).
-///
-/// A query carries the name of the polynomial it opens — the same allocated
-/// wires, written at two instance positions, so no constraint is spent making
-/// them agree. A repeat opening costs a query slot and no polynomial slot.
-pub fn instance_len(header_size: usize, capacity: crate::framework_hooks::HookLayout) -> usize {
-    header_size * 3
-        + capacity.poly_query.polys * 2
-        + capacity.poly_query.claims * 4
-        + capacity.challenge.calls * (capacity.challenge.width + 1)
-}
+/// Represents a triple header length plus the configurable stage lengths.
+pub struct AdapterLen<const HEADER_SIZE: usize, J: HookConfig>(PhantomData<J>);
 
-/// [`instance_len`] as a [`Len`](ragu_primitives::vec::Len), so the application
-/// circuit's instance can be a `FixedVec`.
-///
-/// It is a computed length, not a declared const, so it cannot ride as a
-/// const-generic argument on stable — hence a type that computes it. The
-/// arithmetic is not restated here: this calls [`instance_len`] on the
-/// capacity its own parameters declare, so the `FixedVec`'s length and the
-/// number of elements the adapter writes are one statement.
-pub struct InstanceLen<const HEADER_SIZE: usize, J: HookConfig>(PhantomData<J>);
-
-impl<const HEADER_SIZE: usize, J: HookConfig> ragu_primitives::vec::Len
-    for InstanceLen<HEADER_SIZE, J>
-{
+impl<const HEADER_SIZE: usize, J: HookConfig> Len for AdapterLen<HEADER_SIZE, J> {
     fn len() -> usize {
-        instance_len(HEADER_SIZE, J::hook_layout())
+        HEADER_SIZE * 3
+            + J::layout().poly_query.instance_len()
+            + J::layout().challenge.instance_len()
     }
 }
 
@@ -125,9 +102,9 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize, J: H
     );
     type Output = Kind![
         C::CircuitField;
-        ragu_primitives::vec::FixedVec<
+        FixedVec<
             Element<'_, _>,
-            InstanceLen<HEADER_SIZE, J>,
+            AdapterLen<HEADER_SIZE, J>,
         >
     ];
     type Aux<'source> = AdapterAux<'source, C, S, HEADER_SIZE>;
@@ -166,7 +143,7 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize, J: H
             })
         })?;
 
-        let mut hooks = FrameworkHooks::new(J::hook_layout(), Maybe::clone(&params));
+        let mut hooks = FrameworkHooks::new(J::layout(), Maybe::clone(&params));
         let ((left, right, output), output_data, step_aux) = {
             let mut ctx = StepCtx::<'_, '_, _, C>::new(dr, &mut hooks);
             let body = self
@@ -180,7 +157,11 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize, J: H
         };
         let outputs = hooks.into_outputs();
 
-        let mut elements = Vec::with_capacity(instance_len(HEADER_SIZE, J::hook_layout()));
+        let mut elements = Vec::with_capacity(
+            HEADER_SIZE * 3
+                + J::layout().poly_query.instance_len()
+                + J::layout().challenge.instance_len(),
+        );
         left.write(dr, &mut elements)?;
         right.write(dr, &mut elements)?;
         output.write(dr, &mut elements)?;
@@ -240,10 +221,7 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize, J: H
             })
         })?;
 
-        Ok(WithAux::new(
-            ragu_primitives::vec::FixedVec::try_from(elements)?,
-            adapter_aux,
-        ))
+        Ok(WithAux::new(FixedVec::try_from(elements)?, adapter_aux))
     }
 }
 
@@ -261,7 +239,6 @@ mod tests {
     use super::*;
     use crate::{
         AppHooks, NoHooks,
-        framework_hooks::{ChallengeLayout, HookLayout, PolyQueryLayout},
         header::{Header, Suffix},
         step::{Encoded, Index, Step},
     };
@@ -386,38 +363,6 @@ mod tests {
         }
     }
 
-    /// The instance is three headers plus the application's slots, and every
-    /// term scales with the capacity it is drawn from.
-    #[test]
-    fn instance_len_covers_headers_polys_claims_and_challenges() {
-        let capacity = HookLayout {
-            challenge: ChallengeLayout { calls: 2, width: 2 },
-            poly_query: PolyQueryLayout {
-                polys: 8,
-                claims: 8,
-            },
-        };
-        // Two elements per polynomial (its name — the embedded commitment
-        // coordinates), four per claim (the opened polynomial's name, then
-        // the `(x, y)` opening), and one per challenge input plus its
-        // challenge.
-        let slots = 8 * 2 + 8 * 4 + 2 * (capacity.challenge.width + 1);
-        assert_eq!(instance_len(1, capacity), 3 + slots);
-        assert_eq!(instance_len(4, capacity), 12 + slots);
-        assert_eq!(instance_len(10, capacity), 30 + slots);
-
-        // Half the polynomial slots, half their contribution — two name wires
-        // each.
-        let smaller = HookLayout {
-            poly_query: PolyQueryLayout {
-                polys: 4,
-                ..capacity.poly_query
-            },
-            ..capacity
-        };
-        assert_eq!(instance_len(4, smaller), instance_len(4, capacity) - 8);
-    }
-
     #[test]
     fn adapter_witness_produces_correct_output_size() {
         let mut dr = Emulator::execute();
@@ -435,7 +380,9 @@ mod tests {
         // Output should have 3 * HEADER_SIZE elements (left + right + output headers)
         assert_eq!(
             output.len(),
-            instance_len(HEADER_SIZE, AppHooks::<0, 0, 0, 2>::hook_layout())
+            3 * HEADER_SIZE
+                + NoHooks::layout().poly_query.instance_len()
+                + NoHooks::layout().challenge.instance_len()
         );
     }
 
@@ -562,7 +509,9 @@ mod tests {
 
         assert_eq!(
             output.len(),
-            instance_len(HEADER_SIZE, AppHooks::<0, 0, 1, 2>::hook_layout())
+            3 * HEADER_SIZE
+                + AppHooks::<0, 0, 1, 2>::layout().poly_query.instance_len()
+                + AppHooks::<0, 0, 1, 2>::layout().challenge.instance_len()
         );
     }
 }

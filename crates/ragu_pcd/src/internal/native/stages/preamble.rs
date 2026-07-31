@@ -66,7 +66,7 @@ pub struct ClaimInstance<'dr, D: Driver<'dr>> {
 /// instance.
 ///
 /// One per polynomial, not one per query — see
-/// [`instance_len`](crate::step::internal::adapter::instance_len).
+/// [`HookLayout::instance_len`](crate::framework_hooks::HookLayout::instance_len).
 #[derive(Gadget, Consistent)]
 pub struct PolyInstance<'dr, D: Driver<'dr>> {
     #[ragu(gadget)]
@@ -208,7 +208,8 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
     /// output_header, polys, claims, challenges)` — the polynomial slots follow
     /// the headers, the query slots follow those, and the challenge slots
     /// follow those, matching the instance layout the adapter writes
-    /// (`step::internal::adapter::instance_len`). This is what binds the
+    /// ([`HookLayout::instance_len`](crate::framework_hooks::HookLayout::instance_len)).
+    /// This is what binds the
     /// witnessed polynomials, claim instances and derived challenges to the
     /// child's committed application rx.
     ///
@@ -456,16 +457,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig> staging::Stage<
     ];
 
     fn values() -> usize {
-        // Four wires per claim: the opened polynomial's name, then the
-        // $(x, y)$ opening. Two per polynomial slot for its name — the host
-        // commitment's embedded affine coordinates. The challenge slots are
-        // their own stage — see [`slots`](super::slots) for why the chain's
-        // root does not hold them.
-        2 * (3 * HEADER_SIZE
-            + 2 * J::PolyWitnesses::len()
-            + 4 * J::PolyQueries::len()
-            + 1
-            + unified::NUM_WIRES)
+        // Per child: the three headers, the poly and claim slot regions
+        // (priced once, by the layout), the circuit id, and the unified
+        // wires. The challenge slots are their own stage — see
+        // [`slots`](super::slots) for why the chain's root does not hold
+        // them.
+        2 * (3 * HEADER_SIZE + J::layout().poly_query.instance_len() + 1 + unified::NUM_WIRES)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

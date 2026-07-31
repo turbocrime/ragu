@@ -113,12 +113,6 @@ impl<C: Cycle, R, const HEADER_SIZE: usize, J: HookConfig, FP> Default
     }
 }
 
-/// This stage's wire width: per child, per slot, the input elements and then
-/// the challenge.
-pub const fn num_values(challenges: usize, challenge_width: usize) -> usize {
-    2 * (challenge_width + 1) * challenges
-}
-
 impl<
     C: Cycle,
     R: Rank,
@@ -132,7 +126,9 @@ impl<
     type OutputKind = Kind![C::CircuitField; ChallengesOutput<'_, _, J>];
 
     fn values() -> usize {
-        num_values(J::ChallengeDerivations::len(), J::ChallengeWidth::len())
+        // The challenge instance region, priced by the layout, once per
+        // child.
+        2 * J::layout().challenge.instance_len()
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -214,7 +210,5 @@ mod tests {
             AppHooks<1, 1, 2, 2>,
             crate::internal::native::RevdotParameters,
         >::default());
-        assert_eq!(num_values(2, 2), 2 * 3 * 2);
-        assert_eq!(num_values(0, 4), 0);
     }
 }

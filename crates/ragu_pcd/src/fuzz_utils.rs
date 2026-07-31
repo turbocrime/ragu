@@ -6,7 +6,7 @@ use ragu_circuits::{
     registry::CircuitIndex,
 };
 
-use crate::{AppHooksLayout, Application, Proof};
+use crate::{Application, Proof, framework_hooks::HookConfig};
 
 /// Targeted corruption of a single proof field.
 ///
@@ -134,7 +134,7 @@ impl<C: Cycle, R: Rank, H: crate::Header<C::CircuitField>> crate::Pcd<C, R, H> {
     }
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: AppHooksLayout>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
     Application<'_, C, R, HEADER_SIZE, J>
 {
     /// Create a trivial (all-zero) proof for testing.
