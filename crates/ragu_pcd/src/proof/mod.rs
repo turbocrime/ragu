@@ -314,6 +314,10 @@ pub struct Proof<C: Cycle, R: Rank> {
     /// per polynomial. A claim carries the same commitment for the polynomial
     /// it opens, so this list is what a claim's `bridge_com` is matched against.
     pub(crate) application_polys: alloc::vec::Vec<C::NestedCurve>,
+    /// The lift instance region's values: four per polynomial slot, in slot
+    /// order — `lift(l_k)` for the slot's host commitment limbs. Bound to the
+    /// application circuit's $k(Y)$ like the other instance regions.
+    pub(crate) application_lifts: alloc::vec::Vec<C::CircuitField>,
     /// The derived challenges the step's circuit exposes, one per
     /// challenge slot the application's capacity provides, in slot order.
     pub(crate) application_challenges:
@@ -461,6 +465,12 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     /// claim.
     pub(crate) fn application_polys(&self) -> &[C::NestedCurve] {
         &self.application_polys
+    }
+
+    /// The lift instance region's values: four per polynomial slot, in slot
+    /// order.
+    pub(crate) fn application_lifts(&self) -> &[C::CircuitField] {
+        &self.application_lifts
     }
 
     /// The derived challenges this proof's circuit exposes, in slot order.
@@ -770,8 +780,17 @@ impl<
         // polynomial slots, which is only reachable when it declares no claim
         // slots either: a claim has to name a polynomial.
         let padding_bridge_com = padding_bridge_coms.first().copied();
+        let padding_lifts: alloc::vec::Vec<C::CircuitField> = {
+            let limbs = crate::internal::nested::stages::claim_bridge::host_limbs(padding_host)
+                .expect("the padding host has canonical limbs");
+            (0..self.capacity().poly_query.polys)
+                .flat_map(|_| limbs)
+                .map(ragu_primitives::lift_endoscalar)
+                .collect()
+        };
         builder.set_application_polys(
             padding_bridge_coms,
+            padding_lifts,
             vec![
                 crate::internal::challenge::padding_poly::<C, R>();
                 self.capacity().poly_query.polys

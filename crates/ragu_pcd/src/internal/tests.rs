@@ -189,18 +189,23 @@ fn test_slotted_internal_circuit_constraint_counts() {
 
     let app = dummy_app::<SLOTTED_HEADER_SIZE, 2, 3, 1>(pasta, NUM_SLOTTED_APP_STEPS);
 
-    check_constraints!(app, Hashes1Circuit,          mul = 1148, lin = 1834);
-    check_constraints!(app, Hashes2Circuit,          mul = 1712, lin = 2951);
-    check_constraints!(app, InnerCollapseCircuit,    mul = 1589, lin = 1918);
-    check_constraints!(app, OuterCollapseCircuit,    mul =  793, lin = 1106);
+    // All six moved +8 gates when the preamble stage gained the lift region's
+    // wires (four per polynomial slot per child — a stage span cost, no
+    // constraints). `OuterCollapse` moved a further +16/+32 because its
+    // `application_ky` Horner folds the sixteen new lift wires — the fold
+    // doing exactly its job.
+    check_constraints!(app, Hashes1Circuit,          mul = 1156, lin = 1834);
+    check_constraints!(app, Hashes2Circuit,          mul = 1720, lin = 2951);
+    check_constraints!(app, InnerCollapseCircuit,    mul = 1597, lin = 1918);
+    check_constraints!(app, OuterCollapseCircuit,    mul =  817, lin = 1138);
     // The two that read the slot regions, and the reason this shape is pinned
     // at all. `ComputeV` carries the per-claim resolution — a one-hot over the
     // polynomial slots, keyed on the claim's commitment — so it moves whenever
-    // that keying or the claim count does. `ChallengeBinding` is 857 here
+    // that keying or the claim count does. `ChallengeBinding` is 865 here
     // against 518 with no slots, because an application that derives a
     // challenge has one to bind.
-    check_constraints!(app, ComputeVCircuit,         mul = 1099, lin = 2059);
-    check_constraints!(app, ChallengeBindingCircuit, mul =  857, lin = 1225);
+    check_constraints!(app, ComputeVCircuit,         mul = 1107, lin = 2059);
+    check_constraints!(app, ChallengeBindingCircuit, mul =  865, lin = 1225);
 }
 
 /// Prints the counts `test_internal_circuit_constraint_counts` pins, so a
@@ -282,20 +287,20 @@ fn test_internal_stage_parameters() {
         }};
     }
 
-    // Moved when a claim started naming its polynomial by commitment instead of
-    // by index: a claim slot is four instance wires (bridge_com.x, bridge_com.y,
-    // x, y) where
-    // it was three, so at the one claim slot pinned here the preamble gains two
-    // values — one gate — and every stage below it shifts by that gate.
-    check_stage!(pinned_chain::Preamble,   "Preamble",   skip =   1, num = 320);
-    check_stage!(pinned_chain::OuterError, "OuterError", skip = 321, num = 186);
-    check_stage!(pinned_chain::InnerError, "InnerError", skip = 507, num = 399);
-    check_stage!(pinned_chain::Query,      "Query",      skip = 321, num =  27);
-    check_stage!(pinned_chain::Eval,       "Eval",       skip = 348, num =  28);
+    // Last moved when the lift instance region was added: four more wires per
+    // polynomial slot per child in the preamble (the region trails the
+    // instance), so at this shape the preamble gains 32 gates and every stage
+    // below it shifts by those gates. (Previously moved when a claim started
+    // naming its polynomial by commitment instead of by index.)
+    check_stage!(pinned_chain::Preamble,   "Preamble",   skip =   1, num = 352);
+    check_stage!(pinned_chain::OuterError, "OuterError", skip = 353, num = 186);
+    check_stage!(pinned_chain::InnerError, "InnerError", skip = 539, num = 399);
+    check_stage!(pinned_chain::Query,      "Query",      skip = 353, num =  27);
+    check_stage!(pinned_chain::Eval,       "Eval",       skip = 380, num =  28);
     // A sibling of InnerError, not a successor: both start where OuterError
     // ends, so a circuit reaching the challenge slots is not charged for
     // InnerError's gates.
-    check_stage!(pinned_chain::Challenges, "Challenges", skip = 507, num =   5);
+    check_stage!(pinned_chain::Challenges, "Challenges", skip = 539, num =   5);
 }
 
 /// Helper test to print current stage parameters in copy-pasteable format.
@@ -416,9 +421,14 @@ fn test_slotted_registry_digests() {
 
     let app = dummy_app::<SLOTTED_HEADER_SIZE, 2, 3, 1>(pasta, NUM_SLOTTED_APP_STEPS);
 
+    // Changed when the application instance gained its trailing lift region:
+    // four wires per polynomial slot, so the preamble stage widens and every
+    // circuit whose trace spans it moves. The nested digest below holding at
+    // the same time is the check that the region reached exactly the native
+    // side — the nested layout carries commitments, not instance wires.
     assert_eq!(
         app.native_registry.digest(),
-        fp!(0x256a9ff7fe0fad62d02a4bee7f9db347a3b24c8a098f0a0dba16eed53c469003),
+        fp!(0x11f0fdc162600b3b95d1db9ed5e47ff6ccf97539a5b0d9b688ffa20561e33507),
         "Native registry digest changed unexpectedly at a slotted shape!"
     );
     // Changed when the claim-bridge stages went from carrying a host point's

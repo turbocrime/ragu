@@ -119,6 +119,12 @@ impl<C: Cycle, R: Rank> PolyCommitment<C, R> {
 pub struct PolyHandle<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> {
     bridge_com: Point<'dr, D, C::NestedCurve>,
     polynomial: DriverValue<D, sparse::Polynomial<D::F, R>>,
+    /// The polynomial's host commitment (prover-only, never wires) — retained
+    /// so [`StepCtx::poly_limbs`](crate::step::StepCtx::poly_limbs) can fill
+    /// the limb witnesses without recomputing the commitment.
+    host: DriverValue<D, C::HostCurve>,
+    /// The claim slot this handle occupies; fixed at witnessing.
+    slot: usize,
 }
 
 impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> PolyHandle<'dr, D, C, R> {
@@ -126,11 +132,25 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> PolyHandle<'dr
     pub(crate) fn new(
         bridge_com: Point<'dr, D, C::NestedCurve>,
         polynomial: DriverValue<D, sparse::Polynomial<D::F, R>>,
+        host: DriverValue<D, C::HostCurve>,
+        slot: usize,
     ) -> Self {
         Self {
             bridge_com,
             polynomial,
+            host,
+            slot,
         }
+    }
+
+    /// The host commitment, as a prover-side value.
+    pub(crate) fn host_value(&self) -> DriverValue<D, C::HostCurve> {
+        self.host.as_ref().map(|host| *host)
+    }
+
+    /// The claim slot this handle occupies.
+    pub(crate) fn slot(&self) -> usize {
+        self.slot
     }
 
     /// The in-circuit bridge commitment, for use in challenges, hashing, etc.

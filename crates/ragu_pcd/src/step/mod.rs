@@ -3,9 +3,11 @@
 mod ctx;
 mod encoder;
 pub(crate) mod internal;
+mod limbs;
 
 pub use ctx::StepCtx;
 pub use encoder::Encoded;
+pub use limbs::HostLimbs;
 use ragu_arithmetic::Cycle;
 use ragu_circuits::registry::CircuitIndex;
 use ragu_core::{

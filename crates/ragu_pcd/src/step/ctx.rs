@@ -118,6 +118,12 @@ where
     ) -> Result<PolyHandle<'dr, D, C, R>> {
         let slot = self.hooks.next_poly_slot()?;
         let host = commitment.as_ref().map(|c| c.host());
+        let host_retained = commitment.as_ref().map(|c| c.host());
+        let limbs = D::try_just(|| {
+            crate::internal::nested::stages::claim_bridge::host_limbs(
+                commitment.as_ref().take().host(),
+            )
+        })?;
         let proof_values = self.hooks.proof_values();
         let capacity = self.hooks.capacity();
         let bridge_com_value = D::try_just(move || {
@@ -136,13 +142,50 @@ where
         })?;
         let bridge_com = Point::alloc(self.dr, bridge_com_value)?;
         let polynomial = commitment.map(PolyCommitment::into_polynomial);
-        let handle = PolyHandle::new(bridge_com, polynomial);
+        let handle = PolyHandle::new(bridge_com, polynomial, host_retained, slot);
         self.hooks.record_polynomial(
             slot,
             handle.bridge_commitment().clone(),
             handle.coefficients(),
+            limbs,
         );
         Ok(handle)
+    }
+
+    /// Hands the step the four 128-bit limbs of `handle`'s **host**
+    /// commitment — the real, canonical `commit(polynomial)` on the host
+    /// curve — as circuit-field elements, provably.
+    ///
+    /// The limbs are witnessed here as constrained booleans and packed; what
+    /// makes them *the commitment's* limbs is the accumulator: their lifts
+    /// become instance wires bound to this circuit's $k(Y)$, the framework
+    /// polynomial $q$ is folded with those lifts as coefficients, and the
+    /// deferred PCS opening plus a nested tie ties $q$'s commitment to the
+    /// recorded host. Lying about a limb makes the proof unsatisfiable; it
+    /// never yields a different digest.
+    ///
+    /// The values are bit-identical to splitting each coordinate's canonical
+    /// little-endian bytes into 16-byte halves, so hashing them reproduces
+    /// exactly the digest a consumer computes natively from the same
+    /// commitment.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidWitness`](ragu_core::Error::InvalidWitness) if
+    /// called twice for the same handle.
+    pub fn poly_limbs<R: Rank>(
+        &mut self,
+        handle: &PolyHandle<'dr, D, C, R>,
+    ) -> Result<crate::step::HostLimbs<'dr, D>>
+    where
+        D::F: ragu_arithmetic::ff::WithSmallOrderMulGroup<3>,
+    {
+        let host = handle.host_value();
+        let limbs =
+            D::try_just(|| crate::internal::nested::stages::claim_bridge::host_limbs(host.take()))?;
+        let (limbs, lifts) = crate::step::limbs::witness_host_limbs(self.dr, limbs)?;
+        self.hooks.record_lifts(handle.slot(), lifts)?;
+        Ok(limbs)
     }
 
     /// Records a poly-query claim: the polynomial behind `commitment` evaluates

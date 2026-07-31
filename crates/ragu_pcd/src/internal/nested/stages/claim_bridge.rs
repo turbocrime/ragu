@@ -219,7 +219,10 @@ where
 
 /// The bits of the four limbs in wire order: little-endian within each limb,
 /// low limbs full-width, high limbs [`HIGH_BITS`] wide.
-fn limb_bits(limbs: [u128; 4]) -> impl Iterator<Item = bool> {
+///
+/// One definition of the wire order, shared with the step-side opening —
+/// the two sides must agree bit for bit or the opening cannot close.
+pub(crate) fn limb_bits(limbs: [u128; 4]) -> impl Iterator<Item = bool> {
     [
         (limbs[0], LOW_BITS),
         (limbs[1], HIGH_BITS),
@@ -235,7 +238,7 @@ fn limb_bits(limbs: [u128; 4]) -> impl Iterator<Item = bool> {
 ///
 /// Errors rather than truncating when a coordinate does not fit: see the
 /// module docs on canonicity, which is what the width bound buys.
-fn host_limbs<C: CurveAffine>(host: C) -> Result<[u128; 4]> {
+pub(crate) fn host_limbs<C: CurveAffine>(host: C) -> Result<[u128; 4]> {
     let coordinates = host.coordinates().into_option().ok_or_else(|| {
         Error::InvalidWitness(
             "the identity has no coordinates and cannot be witnessed in-circuit".into(),

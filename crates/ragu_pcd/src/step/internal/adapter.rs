@@ -42,6 +42,7 @@ pub fn instance_len(header_size: usize, capacity: HookLayout) -> usize {
         + capacity.poly_query.polys * 2
         + capacity.poly_query.claims * 4
         + capacity.challenge.calls * (capacity.challenge.width * 2 + 1)
+        + capacity.poly_query.polys * 4
 }
 
 /// [`instance_len`] as a [`Len`](ragu_primitives::vec::Len), so the application
@@ -249,6 +250,10 @@ impl<
             ctx.finish_slots::<R>()?;
             body
         };
+        // Every slot's lift instance wires must exist; slots the body opened
+        // through `poly_limbs` already have theirs (derived from constrained
+        // bits), the rest get plain value-filled wires here.
+        hooks.fill_missing_lifts(dr)?;
         let outputs = hooks.into_outputs();
 
         let mut elements = Vec::with_capacity(instance_len(HEADER_SIZE, Self::CAPACITY));
@@ -281,6 +286,18 @@ impl<
                 point.write(dr, &mut elements)?;
             }
             pair.challenge.write(dr, &mut elements)?;
+        }
+        // Last, the lift region: per polynomial slot, the four `lift(l_k)`
+        // wires for the host commitment's limbs. Appended after the existing
+        // regions so their offsets (and the value reads below) are unmoved.
+        for poly in &outputs.witnessed_polys {
+            for lift in poly.lifts.as_ref().ok_or_else(|| {
+                ragu_core::Error::InvalidWitness(
+                    "fill_missing_lifts runs before the instance is written".into(),
+                )
+            })? {
+                lift.write(dr, &mut elements)?;
+            }
         }
 
         // Read every hook's wires back out as values for the fuse.
@@ -469,13 +486,15 @@ mod tests {
             },
         };
         // Two elements per polynomial (its commitment), four per claim (the
-        // opened polynomial's commitment, then the `(x, y)` opening).
-        let slots = 8 * 2 + 8 * 4 + 2 * (capacity.challenge.width * 2 + 1);
+        // opened polynomial's commitment, then the `(x, y)` opening), and four
+        // more per polynomial in the trailing lift region.
+        let slots = 8 * 2 + 8 * 4 + 2 * (capacity.challenge.width * 2 + 1) + 8 * 4;
         assert_eq!(instance_len(1, capacity), 3 + slots);
         assert_eq!(instance_len(4, capacity), 12 + slots);
         assert_eq!(instance_len(10, capacity), 30 + slots);
 
-        // Half the polynomial slots, half their contribution.
+        // Half the polynomial slots, half their contribution — two commitment
+        // wires and four lift wires each.
         let smaller = HookLayout {
             poly_query: PolyQueryLayout {
                 polys: 4,
@@ -483,7 +502,7 @@ mod tests {
             },
             ..capacity
         };
-        assert_eq!(instance_len(4, smaller), instance_len(4, capacity) - 8);
+        assert_eq!(instance_len(4, smaller), instance_len(4, capacity) - 24);
     }
 
     #[test]

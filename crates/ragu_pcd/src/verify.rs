@@ -78,6 +78,7 @@ impl<
         let capacity = self.capacity();
         if pcd.proof().application_claims().len() != capacity.poly_query.claims
             || pcd.proof().application_polys().len() != capacity.poly_query.polys
+            || pcd.proof().application_lifts().len() != capacity.poly_query.polys * 4
             || pcd.proof().claim_polys.len() != capacity.poly_query.polys
             || pcd.proof().claim_host_commitments().len() != capacity.poly_query.polys
             || pcd.proof().application_challenges().len() != capacity.challenge.calls

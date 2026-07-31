@@ -336,6 +336,7 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     /// The nested-curve commitment the instance exposes per polynomial slot,
     /// in slot order — one per polynomial, not one per query.
     application_polys: Vec<C::NestedCurve>,
+    application_lifts: Vec<C::CircuitField>,
     /// The claim polynomials, in slot order (paired with
     /// `application_polys`).
     claim_polys: Vec<sparse::Polynomial<C::CircuitField, R>>,
@@ -432,6 +433,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             child_right_stage_rx: None,
             application_claims: Vec::new(),
             application_polys: Vec::new(),
+            application_lifts: Vec::new(),
             application_challenges: Vec::new(),
             claim_polys: Vec::new(),
             claim_host_commitments: None,
@@ -786,6 +788,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     pub(crate) fn set_application_polys(
         &mut self,
         coms: Vec<C::NestedCurve>,
+        lifts: Vec<C::CircuitField>,
         claim_polys: Vec<sparse::Polynomial<C::CircuitField, R>>,
         claim_host_commitments: Vec<C::HostCurve>,
     ) {
@@ -794,9 +797,11 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             "double-set: application_polys"
         );
         assert_eq!(coms.len(), self.capacity.poly_query.polys);
+        assert_eq!(lifts.len(), self.capacity.poly_query.polys * 4);
         assert_eq!(claim_polys.len(), self.capacity.poly_query.polys);
         assert_eq!(claim_host_commitments.len(), self.capacity.poly_query.polys);
         self.application_polys = coms;
+        self.application_lifts = lifts;
         self.claim_polys = claim_polys;
         self.claim_host_commitments = Some(claim_host_commitments);
     }
@@ -992,6 +997,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
                 })
                 .collect(),
             application_polys: self.application_polys,
+            application_lifts: self.application_lifts,
             claim_polys: self.claim_polys,
             claim_host_commitments: self
                 .claim_host_commitments
