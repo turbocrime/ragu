@@ -217,6 +217,9 @@ impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> MultiStageCircuit<C:
             for stashed_claim in child.stashed_claims.iter() {
                 walker.enforce_equal(dr, stashed_claim)?;
             }
+            for stashed_q in child.stashed_q.iter() {
+                walker.enforce_equal(dr, stashed_q)?;
+            }
         }
 
         walker.enforce_equal(dr, &s_prime.registry_wx0)?;

@@ -348,23 +348,30 @@ fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
         Err(e) => std::eprintln!("interior fuse rejected the desync: {e:?}"),
         Ok((parent, ())) => {
             let verified = app.verify(&parent, &mut rng)?;
-            // `bridge_com` is now the commitment of the claim's bridge stage, which
-            // the proof carries and whose wires `loading` ties to the folded
-            // host commitment -- parity with `bridge_f`. What is still missing
-            // is the link from any commitment to the polynomial it commits to,
-            // i.e. the framework-wide deferred PCS opening, which no
-            // commitment in the system has yet. So a prover can still carry a
-            // bridge rx that disagrees with `bridge_com`. Invert this assertion when
-            // the nested-side PCS lands.
+            // Caught by the claim-lift chain. The child's lift instance wires
+            // were computed from the handle's host (P's commitment -- the one
+            // its `bridge_com` and challenges were derived from) and are bound
+            // to the child's committed application rx through k(Y). The
+            // framework polynomial `q` is built from the *recomputed* host of
+            // the polynomial actually folded (P's prime's), and the parent's
+            // `compute_v` enforces that the child's instance lifts Horner to
+            // q(u). Limb decomposition is injective, so two different hosts
+            // can never satisfy it: the parent's own compute_v trace is
+            // unsatisfiable and root verify rejects the parent.
+            //
+            // Still deferred, per the framework-wide status quo: a prover who
+            // *also* forges the child's lift instance wires (its own proof,
+            // its own k(Y)) escapes this check and is caught only once
+            // `bridge_com == commit(carried claim rx)` is enforced per-fuse --
+            // the deferred PCS link no commitment in the system has yet.
             assert!(
-                verified,
-                "expected the unsound status quo: a parent of a desynced-claim \
-                 child still verifies. If this now fails, the binding has landed \
-                 -- invert this assertion."
+                !verified,
+                "a parent of a desynced-claim child must be rejected: the \
+                 child's instance-bound lifts disagree with the limbs of the \
+                 folded polynomial's commitment"
             );
             std::eprintln!(
-                "S1 CONFIRMED: parent verified a claim whose bridge_com does not commit \
-                 to the polynomial that was folded."
+                "the lift chain rejected the desync: instance lifts (P) vs folded host (P')"
             );
         }
     }

@@ -70,6 +70,14 @@ pub struct ChildEvaluationsWitness<F> {
     /// exactly the stage's poly-slot count; the stage body indexes it up to
     /// that count.
     pub claims: Vec<F>,
+
+    /// The child proof's claim-lift polynomial $q$ evaluated at $u$ — one
+    /// value when the shape has polynomial slots, none otherwise. `q` is
+    /// deterministic from the child's recorded hosts
+    /// ([`claim_lift_poly`](crate::internal::challenge::claim_lift_poly)), so
+    /// this is computed, not carried; `compute_v` re-derives the same value
+    /// from the child's lift instance wires and enforces agreement.
+    pub q_poly: Vec<F>,
 }
 
 impl<F: PrimeField> ChildEvaluationsWitness<F> {
@@ -82,6 +90,17 @@ impl<F: PrimeField> ChildEvaluationsWitness<F> {
             registry_xy_poly: proof.native_registry_xy_poly().eval(u),
             p_poly: proof.native_p_poly().eval(u),
             claims: proof.claim_polys.iter().map(|p| p.eval(u)).collect(),
+            q_poly: if proof.claim_host_commitments().len() == 0 {
+                Vec::new()
+            } else {
+                alloc::vec![
+                    crate::internal::challenge::claim_lift_poly::<C, R>(
+                        proof.claim_host_commitments(),
+                    )
+                    .expect("recorded hosts were decomposed once already, at witnessing",)
+                    .eval(u)
+                ]
+            },
         }
     }
 }
@@ -162,11 +181,26 @@ pub struct ChildEvaluations<'dr, D: Driver<'dr>, const POLYS: usize> {
     pub registry_xy_poly: Element<'dr, D>,
     #[ragu(gadget)]
     pub p_poly: Element<'dr, D>,
-    /// The child's claim polynomial evaluations at $u$, in slot order. Kept
-    /// last so the [`Write`] order (and hence the $v$ Horner weighting)
-    /// matches the `_10_p` accumulation order.
+    /// The child's claim polynomial evaluations at $u$, in slot order. Ordered
+    /// so the [`Write`] order (and hence the $v$ Horner weighting) matches the
+    /// `_10_p` accumulation order.
     #[ragu(gadget)]
     pub claims: FixedVec<Element<'dr, D>, ConstLen<POLYS>>,
+    /// The child's claim-lift polynomial $q$ evaluated at $u$ — last, matching
+    /// its `_10_p` fold position after the claim polynomials. Empty at
+    /// `POLYS = 0`, where no `q` exists.
+    #[ragu(gadget)]
+    pub q_eval: FixedVec<Element<'dr, D>, QEvalLen<POLYS>>,
+}
+
+/// One `q` evaluation when the shape has polynomial slots, none otherwise —
+/// [`q_slots`](crate::internal::nested::q_slots) at the type level.
+pub struct QEvalLen<const POLYS: usize>;
+
+impl<const POLYS: usize> Len for QEvalLen<POLYS> {
+    fn len() -> usize {
+        crate::internal::nested::q_slots(POLYS)
+    }
 }
 
 impl<'dr, D: Driver<'dr>, const POLYS: usize> ChildEvaluations<'dr, D, POLYS> {
@@ -192,6 +226,9 @@ impl<'dr, D: Driver<'dr>, const POLYS: usize> ChildEvaluations<'dr, D, POLYS> {
             p_poly: Element::alloc(dr, allocator, witness.as_ref().map(|w| w.p_poly))?,
             claims: ConstLen::<POLYS>::range()
                 .map(|i| Element::alloc(dr, allocator, witness.as_ref().map(|w| w.claims[i])))
+                .try_collect_fixed()?,
+            q_eval: QEvalLen::<POLYS>::range()
+                .map(|i| Element::alloc(dr, allocator, witness.as_ref().map(|w| w.q_poly[i])))
                 .try_collect_fixed()?,
         })
     }

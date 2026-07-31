@@ -204,7 +204,11 @@ fn test_slotted_internal_circuit_constraint_counts() {
     // that keying or the claim count does. `ChallengeBinding` is 865 here
     // against 518 with no slots, because an application that derives a
     // challenge has one to bind.
-    check_constraints!(app, ComputeVCircuit,         mul = 1107, lin = 2059);
+    // ComputeV gained +17 gates / +34 constraints when it started re-deriving
+    // each child's q(u) from the lift instance wires (two 8-term Horner walks
+    // and their equality against the eval stage's carried q(u)) — the
+    // constraint that makes a step's instance lifts binding.
+    check_constraints!(app, ComputeVCircuit,         mul = 1124, lin = 2093);
     check_constraints!(app, ChallengeBindingCircuit, mul =  865, lin = 1225);
 }
 
@@ -287,16 +291,15 @@ fn test_internal_stage_parameters() {
         }};
     }
 
-    // Last moved when the lift instance region was added: four more wires per
-    // polynomial slot per child in the preamble (the region trails the
-    // instance), so at this shape the preamble gains 32 gates and every stage
-    // below it shifts by those gates. (Previously moved when a claim started
-    // naming its polynomial by commitment instead of by index.)
+    // Last moved when the accumulator gained the claim-lift polynomial `q`:
+    // the eval stage carries one q(u) per child (two more values, one gate).
+    // Before that, the lift instance region widened the preamble by four
+    // wires per polynomial slot per child and shifted every stage below it.
     check_stage!(pinned_chain::Preamble,   "Preamble",   skip =   1, num = 352);
     check_stage!(pinned_chain::OuterError, "OuterError", skip = 353, num = 186);
     check_stage!(pinned_chain::InnerError, "InnerError", skip = 539, num = 399);
     check_stage!(pinned_chain::Query,      "Query",      skip = 353, num =  27);
-    check_stage!(pinned_chain::Eval,       "Eval",       skip = 380, num =  28);
+    check_stage!(pinned_chain::Eval,       "Eval",       skip = 380, num =  29);
     // A sibling of InnerError, not a successor: both start where OuterError
     // ends, so a circuit reaching the challenge slots is not charged for
     // InnerError's gates.
@@ -421,31 +424,25 @@ fn test_slotted_registry_digests() {
 
     let app = dummy_app::<SLOTTED_HEADER_SIZE, 2, 3, 1>(pasta, NUM_SLOTTED_APP_STEPS);
 
-    // Changed when the application instance gained its trailing lift region:
-    // four wires per polynomial slot, so the preamble stage widens and every
-    // circuit whose trace spans it moves. The nested digest below holding at
-    // the same time is the check that the region reached exactly the native
-    // side — the nested layout carries commitments, not instance wires.
+    // Both changed when the accumulator gained the claim-lift polynomial `q`:
+    // natively, the eval stage carries one q(u) per child and `compute_v`
+    // re-derives it from the lift instance wires; nested, each child's block
+    // grows by its stashed `C_q` (preamble and points stages widen, and one
+    // more point can mean one more endoscaling step). Before that: the lift
+    // instance region (native), and the claim-bridge stages carrying bits
+    // instead of coordinates (nested).
+    //
+    // Both `POLYS = 0` digests holding is the check: `q_slots(0) = 0`, so the
+    // limb feature vanishes entirely at that shape and its digests must not
+    // move.
     assert_eq!(
         app.native_registry.digest(),
-        fp!(0x11f0fdc162600b3b95d1db9ed5e47ff6ccf97539a5b0d9b688ffa20561e33507),
+        fp!(0x190861265b03c475295efdccae505bedc909d54c418b4742cf14cf099c8eab66),
         "Native registry digest changed unexpectedly at a slotted shape!"
     );
-    // Changed when the claim-bridge stages went from carrying a host point's
-    // two coordinate wires to carrying its 508 coordinate *bits*, so that a
-    // step can open `bridge_com` against limbs it witnesses itself: each slot
-    // widened from one gate to 254, and `loading`/`copying`'s tie became a
-    // linear recomposition instead of a point equality. (Previously changed
-    // when `copying` gained the child's claim-bridge run.)
-    //
-    // That this moved while both `POLYS = 0` digests held is the check, not an
-    // inconvenience: an empty run configures no gates, so a change confined to
-    // the claim slots must move this digest and only this digest. A native
-    // digest moving too would have meant the change reached further than
-    // intended.
     assert_eq!(
         app.nested_registry.digest(),
-        fq!(0x00fe0e46165ea8a4c9e43ab967f4fab98fdd9cfbee350a75d17feff231f9fecb),
+        fq!(0x291b1d2c8495c6ef7dc568f3994ca3fa5a06b37b4aebdc77bb085a1a3f4f6cab),
         "Nested registry digest changed unexpectedly at a slotted shape!"
     );
 }
@@ -591,8 +588,9 @@ fn nested_chain_layout_tiles_at_every_capacity() {
 ///
 /// The expected side is spelled out longhand rather than read from
 /// `num_endoscaling_points`: `1` for `f.commitment`, two per-child blocks of
-/// `RxIndex::NUM + 4 + polys`, and the current step's six components. Calling the
-/// function under test on both sides would assert `x == x`.
+/// `RxIndex::NUM + 4 + polys` plus the child's claim-lift `C_q` (one whenever
+/// there are slots, none otherwise), and the current step's six components.
+/// Calling the function under test on both sides would assert `x == x`.
 #[test]
 fn endoscaling_points_len_matches_the_value_formula() {
     use ragu_primitives::vec::{ConstLen, Len};
@@ -603,7 +601,8 @@ fn endoscaling_points_len_matches_the_value_formula() {
     };
 
     fn check<const POLYS: usize>() {
-        let longhand = 1 + 2 * (RxIndex::NUM + 4 + POLYS) + CURRENT_STEP_COMPONENTS;
+        let q = if POLYS == 0 { 0 } else { 1 };
+        let longhand = 1 + 2 * (RxIndex::NUM + 4 + POLYS + q) + CURRENT_STEP_COMPONENTS;
 
         assert_eq!(
             num_endoscaling_points(POLYS),

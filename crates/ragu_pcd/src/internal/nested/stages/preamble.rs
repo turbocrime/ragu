@@ -93,13 +93,21 @@ pub struct ChildWitness<C: CurveAffine> {
     /// child's own eval bridge stage record. Must contain exactly the stage's
     /// poly-slot count; the stage body indexes it up to that count.
     pub stashed_claims: Vec<C>,
+    /// Stashed commitment to the child's claim-lift polynomial `q` — one
+    /// entry when the shape has polynomial slots, none otherwise.
+    /// Deterministic from the child's recorded hosts, so computed here rather
+    /// than read off the proof.
+    pub stashed_q: Vec<C>,
 }
 
 impl<C: CurveAffine> ChildWitness<C> {
     /// Construct from a child proof's commitments.
-    pub fn from_proof<CC: Cycle<HostCurve = C>, R: Rank>(proof: &Proof<CC, R>) -> Self {
+    pub fn from_proof<CC: Cycle<HostCurve = C>, R: Rank>(
+        params: &CC::Params,
+        proof: &Proof<CC, R>,
+    ) -> Result<Self> {
         use crate::internal::native::RxComponent;
-        Self {
+        Ok(Self {
             application: proof.native_rx_commitment(RxIndex::Application),
             hashes_1: proof.native_rx_commitment(RxIndex::Hashes1),
             hashes_2: proof.native_rx_commitment(RxIndex::Hashes2),
@@ -120,7 +128,15 @@ impl<C: CurveAffine> ChildWitness<C> {
             stashed_claims: (0..proof.application_polys().len())
                 .map(|i| proof.claim_host_commitment(i))
                 .collect(),
-        }
+            stashed_q: if proof.claim_host_commitments().len() == 0 {
+                Vec::new()
+            } else {
+                alloc::vec![crate::internal::challenge::claim_lift_commitment::<CC, R>(
+                    params,
+                    proof.claim_host_commitments(),
+                )?]
+            },
+        })
     }
 }
 
@@ -207,10 +223,27 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len>
     /// [`PointsStage`] inputs (they enter the `_10_p` accumulation); copying
     /// verifies them against the child's own eval bridge stage record.
     ///
-    /// Last, so the per-child block is the seventeen named points then the claims,
-    /// which is the order `_10_p` accumulates.
+    /// Ordered so the per-child block is the seventeen named points then the
+    /// claims, which is the order `_10_p` accumulates.
     #[ragu(gadget)]
     pub stashed_claims: FixedVec<Point<'dr, D, C>, L>,
+    /// Stashed commitment to the child's claim-lift polynomial `q` — one point
+    /// when the shape has polynomial slots, none otherwise, at its `_10_p`
+    /// fold position after the claims. Loading enforces it against the
+    /// [`PointsStage`] inputs; the tie from `C_q` to the claim-bridge bits is
+    /// the limb tie family's, and lands with it.
+    #[ragu(gadget)]
+    pub stashed_q: FixedVec<Point<'dr, D, C>, QStashLen<L>>,
+}
+
+/// One stashed `C_q` when the shape has polynomial slots, none otherwise —
+/// [`q_slots`](crate::internal::nested::q_slots) at the type level.
+pub struct QStashLen<L: Len>(core::marker::PhantomData<L>);
+
+impl<L: Len> Len for QStashLen<L> {
+    fn len() -> usize {
+        crate::internal::nested::q_slots(L::len())
+    }
 }
 
 impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> core::ops::Index<RxIndex>
@@ -262,6 +295,7 @@ impl<C: CurveAffine> ChildWitness<C> {
             self.stashed_p,
         ];
         points.extend_from_slice(&self.stashed_claims);
+        points.extend_from_slice(&self.stashed_q);
         points
     }
 }
@@ -306,6 +340,9 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> ChildOutput<'dr, 
         let stashed_claims = (0..L::len())
             .map(|_| next_slot(slots))
             .collect::<Result<Vec<_>>>()?;
+        let stashed_q = (0..QStashLen::<L>::len())
+            .map(|_| next_slot(slots))
+            .collect::<Result<Vec<_>>>()?;
 
         Ok(ChildOutput {
             application,
@@ -326,6 +363,7 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> ChildOutput<'dr, 
             stashed_registry_xy,
             stashed_p,
             stashed_claims: stashed_claims.try_into()?,
+            stashed_q: stashed_q.try_into()?,
         })
     }
 }
@@ -449,6 +487,10 @@ mod tests {
                 stashed_registry_xy: EqAffine::default(),
                 stashed_p: EqAffine::default(),
                 stashed_claims: alloc::vec![EqAffine::default(); polys],
+                stashed_q: alloc::vec![
+                    EqAffine::default();
+                    crate::internal::nested::q_slots(polys)
+                ],
             };
             let witness = Witness {
                 native_preamble: EqAffine::default(),

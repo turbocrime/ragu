@@ -217,6 +217,32 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const POLYS: usize, const CLAI
             let fu = {
                 let alpha = unified_output.alpha.read(dr, allocator)?;
                 let u = unified_output.u.read(dr, allocator)?;
+
+                // Each child's q(u), re-derived from its lift instance wires:
+                // the lifts are q's coefficients slot-major, so a Horner walk
+                // over u is q(u) itself. Enforcing it against the eval stage's
+                // q_eval — the value the v fold below consumes — is what makes
+                // a step's instance-bound lifts binding: a q that disagrees
+                // with them breaks v against P at the deferred opening. The
+                // same shape as `challenge_binding`'s re-derivation, paid out
+                // of the framework's own gate budget.
+                for (child_eval, child_preamble) in
+                    [(&eval.left, &preamble.left), (&eval.right, &preamble.right)]
+                {
+                    for q_eval in child_eval.q_eval.iter() {
+                        // Horner gives the first write the highest power, so
+                        // the coefficients go in reverse: q's top coefficient
+                        // first, its constant term last.
+                        let mut horner = Horner::new(&u);
+                        for poly in child_preamble.polys.iter().rev() {
+                            for lift in poly.lifts.iter().rev() {
+                                lift.write(dr, &mut horner)?;
+                            }
+                        }
+                        horner.finish(dr).enforce_equal(dr, q_eval)?;
+                    }
+                }
+
                 let denominators =
                     Denominators::new(dr, &u, &w, x.element(), &y, z.element(), &preamble)?;
                 // Resolve each query's polynomial before the accumulation: a

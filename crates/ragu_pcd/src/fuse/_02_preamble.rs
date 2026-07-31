@@ -85,8 +85,8 @@ impl<
         // commitment, so this is the same rx the fixed-vector gadget produced.
         let witness = nested::stages::preamble::Witness {
             native_preamble: builder.native_preamble_commitment(),
-            left: nested::stages::preamble::ChildWitness::from_proof(left),
-            right: nested::stages::preamble::ChildWitness::from_proof(right),
+            left: nested::stages::preamble::ChildWitness::from_proof(self.params, left)?,
+            right: nested::stages::preamble::ChildWitness::from_proof(self.params, right)?,
         };
         let bridge_rx = self.nested_chain_layout().rx(
             nested::ChainStage::Preamble.index(),

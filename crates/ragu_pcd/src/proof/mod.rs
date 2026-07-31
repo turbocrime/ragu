@@ -907,6 +907,20 @@ impl<
         // and delegate to `compute_endoscaling` so this trivial setup
         // cannot silently drift from the real prover path.
         let beta_endo = extract_endoscalar(C::CircuitField::ONE);
+        // The claim-lift q for a trivial proof's padding hosts — the same
+        // value a parent recomputes when it folds this proof, since q is
+        // deterministic from the recorded hosts. Empty at zero capacity.
+        let padding_q: alloc::vec::Vec<C::HostCurve> = if self.capacity().poly_query.polys == 0 {
+            alloc::vec::Vec::new()
+        } else {
+            alloc::vec![
+                crate::internal::challenge::claim_lift_commitment::<C, R>(
+                    self.params,
+                    core::iter::repeat_n(padding_host, self.capacity().poly_query.polys),
+                )
+                .expect("the padding host has canonical limbs")
+            ]
+        };
         let p_commitment = {
             let mut points = Vec::with_capacity(crate::internal::nested::num_endoscaling_points(
                 self.capacity().poly_query.polys,
@@ -931,6 +945,7 @@ impl<
                 for _ in 0..self.capacity().poly_query.polys {
                     points.push(padding_host); // claim slots
                 }
+                points.extend_from_slice(&padding_q); // claim-lift q, when polys > 0
             }
 
             // Current-step bridge inputs.
@@ -979,6 +994,7 @@ impl<
                 stashed_registry_xy: registry_xy_commitment,
                 stashed_p: p_commitment,
                 stashed_claims: alloc::vec![padding_host; self.capacity().poly_query.polys],
+                stashed_q: padding_q.clone(),
             };
             // Placed through the value-level chain: the preamble sits after
             // the points stage, whose width follows the capacity, so no type

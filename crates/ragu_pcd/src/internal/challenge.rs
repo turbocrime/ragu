@@ -91,6 +91,45 @@ pub(crate) fn host_commitment<C: Cycle, R: Rank>(
     Ok(host)
 }
 
+/// The framework polynomial `q` for a proof's recorded claim hosts: per slot,
+/// four coefficients `lift(l_k)` of the host commitment's canonical limbs
+/// `[x_lo, x_hi, y_lo, y_hi]`, slot-major.
+///
+/// Fully deterministic from the recorded hosts — any party can rebuild it, so
+/// it is never carried, and its commitment is recomputable wherever it must be
+/// checked. Empty when there are no slots: the limb feature vanishes at
+/// `POLYS = 0`.
+///
+/// `q` is what binds a step's instance-bound lifts to the real commitments:
+/// `_10_p` folds `(q, commit(q))` into the accumulator, `compute_v` re-derives
+/// `q(u)` from the child's lift instance wires, and the deferred PCS opening
+/// forces the two to agree.
+pub(crate) fn claim_lift_poly<C: Cycle, R: Rank>(
+    hosts: impl IntoIterator<Item = C::HostCurve>,
+) -> Result<sparse::Polynomial<C::CircuitField, R>> {
+    let mut coeffs = alloc::vec::Vec::new();
+    for host in hosts {
+        let limbs = crate::internal::nested::stages::claim_bridge::host_limbs(host)?;
+        coeffs.extend(
+            limbs
+                .into_iter()
+                .map(ragu_primitives::lift_endoscalar::<C::CircuitField>),
+        );
+    }
+    Ok(sparse::Polynomial::from_coeffs(coeffs))
+}
+
+/// The host-curve commitment to [`claim_lift_poly`].
+pub(crate) fn claim_lift_commitment<C: Cycle, R: Rank>(
+    params: &C::Params,
+    hosts: impl IntoIterator<Item = C::HostCurve>,
+) -> Result<C::HostCurve> {
+    Ok(
+        claim_lift_poly::<C, R>(hosts)?
+            .commit_to_affine::<C::HostCurve>(C::host_generators(params)),
+    )
+}
+
 /// The stage blind for poly-query claim `slot`, derived from the proof's
 /// shared `bridge_alpha` source. Must agree everywhere the claim bridge is
 /// built (the prover-side `StepCtx` and the `ProofBuilder`), or the claim's

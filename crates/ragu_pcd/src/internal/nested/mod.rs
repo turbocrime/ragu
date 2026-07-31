@@ -35,11 +35,22 @@ use crate::internal::{Side, endoscalar};
 /// poly-query claim commitments.
 ///
 /// The single statement of the per-child block's decomposition: the 13 native rx
-/// commitments, four extras (`ab_a`, `ab_b`, `registry_xy`, `p`), and one stashed
-/// claim per polynomial slot. Shared between [`num_endoscaling_points`] and the
-/// nested preamble's `num_points` — both walk the same block.
+/// commitments, four extras (`ab_a`, `ab_b`, `registry_xy`, `p`), one stashed
+/// claim per polynomial slot, and — whenever there are any slots — the child's
+/// `C_q`, the commitment to its claim-lift polynomial `q`. Shared between
+/// [`num_endoscaling_points`], the nested preamble's `num_points`, and the
+/// native eval stage's width — all three walk the same block, which is what
+/// keeps the accumulation order, the stash order, and the `v` fold order from
+/// drifting apart.
 pub const fn child_endoscaling_points(polys: usize) -> usize {
-    crate::internal::native::RxIndex::NUM + 4 + polys
+    crate::internal::native::RxIndex::NUM + 4 + polys + q_slots(polys)
+}
+
+/// One `q` per child when the shape has any polynomial slots, none when it has
+/// none: the limb feature vanishes entirely at `POLYS = 0`, which is what
+/// keeps that shape's digests unmoved.
+pub const fn q_slots(polys: usize) -> usize {
+    if polys == 0 { 0 } else { 1 }
 }
 
 /// Number of curve points accumulated during `compute_p` for nested-field
