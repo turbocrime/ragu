@@ -177,14 +177,14 @@ fn test_slotted_internal_circuit_constraint_counts() {
     check_constraints!(app, Hashes1Circuit,          mul = 1152, lin = 1834);
     check_constraints!(app, Hashes2Circuit,          mul = 1716, lin = 2951);
     check_constraints!(app, InnerCollapseCircuit,    mul = 1593, lin = 1918);
-    check_constraints!(app, OuterCollapseCircuit,    mul =  805, lin = 1122);
+    check_constraints!(app, OuterCollapseCircuit,    mul =  799, lin = 1114);
     // The two that read the slot regions, and the reason this shape is pinned
     // at all. `ComputeV` carries the per-claim one-hot resolution and the
     // per-child q(u) re-derivation from the coordinate instance wires, so it
-    // moves whenever those do. `ChallengeBinding` is 861 here against 518
+    // moves whenever those do. `ChallengeBinding` is 859 here against 518
     // with no slots: an application that derives a challenge has one to bind.
     check_constraints!(app, ComputeVCircuit,         mul = 1112, lin = 2077);
-    check_constraints!(app, ChallengeBindingCircuit, mul =  861, lin = 1225);
+    check_constraints!(app, ChallengeBindingCircuit, mul =  859, lin = 1225);
 }
 
 /// Prints the counts `test_internal_circuit_constraint_counts` pins, so a
@@ -271,7 +271,7 @@ fn test_internal_stage_parameters() {
     // A sibling of InnerError, not a successor: both start where OuterError
     // ends, so a circuit reaching the challenge slots is not charged for
     // InnerError's gates.
-    check_stage!(pinned_chain::Challenges, "Challenges", skip = 523, num =   5);
+    check_stage!(pinned_chain::Challenges, "Challenges", skip = 523, num =   3);
 }
 
 /// Helper test to print current stage parameters in copy-pasteable format.
@@ -351,7 +351,7 @@ fn test_slotted_registry_digests() {
     // `q_slots(0) = 0`, so the feature vanishes at that shape.
     assert_eq!(
         app.native_registry.digest(),
-        fp!(0x06286f4bb9b9f9dd4d2f36c8bd877eefc6bc66d67bed3cc82e84348d604595e8),
+        fp!(0x0f26abf6695ce526ea7f6dcd9262172e9cd068e05f0ba65ec5b40d966b496a9a),
         "Native registry digest changed unexpectedly at a slotted shape!"
     );
     // Covers the nested side of the claim machinery: one coordinate-pair
@@ -680,7 +680,7 @@ mod capacity_is_per_application {
         ctx.enforce_poly_query(&handle, zero.clone(), zero.clone())?;
         ctx.enforce_poly_query(&handle, zero.clone(), zero.clone())?;
         ctx.enforce_poly_query(&other, zero.clone(), zero)?;
-        ctx.derive_challenge(&[handle.bridge_commitment().clone()])?;
+        ctx.derive_challenge(&handle.coords())?;
     });
 
     fn gates<const POLYS: usize, const CLAIMS: usize, const CHALLENGES: usize>(

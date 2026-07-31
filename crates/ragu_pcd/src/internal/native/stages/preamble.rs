@@ -65,19 +65,14 @@ pub struct PolyInstance<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     pub coords: FixedVec<Element<'dr, D>, ConstLen<2>>,
 }
 
-/// A single derived challenge witnessed from a child proof: the points it was
-/// hashed from, and the challenge itself. The wire layout (every point's
-/// coordinates, then the challenge) matches the challenge-slot region of the
-/// application circuit's instance.
+/// A single derived challenge witnessed from a child proof: the field
+/// elements it was hashed from, and the challenge itself. The wire layout
+/// (every input element, then the challenge) matches the challenge-slot
+/// region of the application circuit's instance.
 #[derive(Gadget, Consistent)]
-pub struct ChallengeInstance<
-    'dr,
-    D: Driver<'dr>,
-    C: Cycle<CircuitField = D::F>,
-    const CHALLENGE_WIDTH: usize,
-> {
+pub struct ChallengeInstance<'dr, D: Driver<'dr>, const CHALLENGE_WIDTH: usize> {
     #[ragu(gadget)]
-    pub points: FixedVec<Point<'dr, D, C::NestedCurve>, ConstLen<CHALLENGE_WIDTH>>,
+    pub inputs: FixedVec<Element<'dr, D>, ConstLen<CHALLENGE_WIDTH>>,
     #[ragu(gadget)]
     pub challenge: Element<'dr, D>,
 }
@@ -226,7 +221,7 @@ impl<
         &self,
         dr: &mut D,
         y: &Element<'dr, D>,
-        challenges: &FixedVec<ChallengeInstance<'dr, D, C, CHALLENGE_WIDTH>, ConstLen<CHALLENGES>>,
+        challenges: &FixedVec<ChallengeInstance<'dr, D, CHALLENGE_WIDTH>, ConstLen<CHALLENGES>>,
     ) -> Result<Element<'dr, D>> {
         let mut ky = Horner::new(y);
         self.children.left.write(dr, &mut ky)?;
@@ -241,8 +236,8 @@ impl<
             claim.y.write(dr, &mut ky)?;
         }
         for pair in challenges.iter() {
-            for point in pair.points.iter() {
-                point.write(dr, &mut ky)?;
+            for input in pair.inputs.iter() {
+                input.write(dr, &mut ky)?;
             }
             pair.challenge.write(dr, &mut ky)?;
         }

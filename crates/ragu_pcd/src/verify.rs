@@ -86,7 +86,7 @@ impl<
                 .proof()
                 .application_challenges()
                 .iter()
-                .any(|c| c.points.len() != capacity.challenge.width)
+                .any(|c| c.inputs.len() != capacity.challenge.width)
         {
             return Ok(false);
         }
@@ -242,7 +242,7 @@ impl<
         // still unbound and the verifier re-derives each one natively.
         let derived_challenges = (0..capacity.challenge.calls).all(|slot| {
             let opening = &pcd.proof().application_challenges()[slot];
-            crate::internal::challenge::challenge_from_points::<C>(self.params, &opening.points)
+            crate::internal::challenge::challenge_from_elements::<C>(self.params, &opening.inputs)
                 .is_ok_and(|derived| derived == opening.challenge)
         });
 

@@ -40,7 +40,7 @@ pub fn instance_len(header_size: usize, capacity: HookLayout) -> usize {
     header_size * 3
         + capacity.poly_query.polys * 2
         + capacity.poly_query.claims * 4
-        + capacity.challenge.calls * (capacity.challenge.width * 2 + 1)
+        + capacity.challenge.calls * (capacity.challenge.width + 1)
         + capacity.poly_query.polys * 2
 }
 
@@ -262,12 +262,12 @@ impl<
             query.x.write(dr, &mut elements)?;
             query.y.write(dr, &mut elements)?;
         }
-        // Then the challenge slots: per slot, every input point's coordinates
-        // followed by the challenge. The parent's binding circuit re-derives
-        // the challenge from those points.
+        // Then the challenge slots: per slot, every input element followed by
+        // the challenge. The parent's binding circuit re-derives the
+        // challenge from those inputs.
         for pair in &outputs.challenge_pairs {
-            for point in &pair.points {
-                point.write(dr, &mut elements)?;
+            for input in &pair.inputs {
+                input.write(dr, &mut elements)?;
             }
             pair.challenge.write(dr, &mut elements)?;
         }
@@ -467,9 +467,10 @@ mod tests {
             },
         };
         // Two elements per polynomial (its commitment), four per claim (the
-        // opened polynomial's commitment, then the `(x, y)` opening), and two
-        // more per polynomial in the trailing coordinate region.
-        let slots = 8 * 2 + 8 * 4 + 2 * (capacity.challenge.width * 2 + 1) + 8 * 2;
+        // opened polynomial's commitment, then the `(x, y)` opening), one per
+        // challenge input plus its challenge, and two more per polynomial in
+        // the trailing coordinate region.
+        let slots = 8 * 2 + 8 * 4 + 2 * (capacity.challenge.width + 1) + 8 * 2;
         assert_eq!(instance_len(1, capacity), 3 + slots);
         assert_eq!(instance_len(4, capacity), 12 + slots);
         assert_eq!(instance_len(10, capacity), 30 + slots);

@@ -269,21 +269,25 @@ pub(crate) fn padding_poly<C: Cycle, R: Rank>() -> sparse::Polynomial<C::Circuit
     sparse::Polynomial::from_coeffs(vec![C::CircuitField::ONE])
 }
 
-/// The fixed non-identity point filling an unfilled challenge-input position:
-/// the zeroth nested generator.
+/// The fixed field element filling an unfilled challenge-input position: the
+/// zeroth nested generator's `x` coordinate — a params-derived constant, like
+/// the point it comes from.
 ///
 /// A challenge slot's sponge absorbs a full complement of
 /// [`ChallengeLayout::width`](crate::framework_hooks::ChallengeLayout::width)
 /// whether or not the caller supplied them all, so the prover, the root
 /// verifier, and the `challenge_binding` circuit agree on the sponge's shape
 /// by construction.
-pub(crate) fn sentinel_point<C: Cycle>(params: &C::Params) -> C::NestedCurve {
+pub(crate) fn sentinel_element<C: Cycle>(params: &C::Params) -> C::CircuitField {
     use ragu_arithmetic::FixedGenerators;
 
-    C::nested_generators(params).g()[0]
+    *C::nested_generators(params).g()[0]
+        .coordinates()
+        .expect("a fixed generator is not the identity")
+        .x()
 }
 
-/// Hashes a challenge slot's input points into the challenge they derive.
+/// Hashes a challenge slot's input elements into the challenge they derive.
 ///
 /// The native counterpart of what the `challenge_binding` circuit enforces
 /// in-circuit for every child slot; the two must agree exactly. Kept as one
@@ -291,34 +295,34 @@ pub(crate) fn sentinel_point<C: Cycle>(params: &C::Params) -> C::NestedCurve {
 /// the root verifier, and the circuit.
 ///
 /// [`challenge_binding`]: crate::internal::native::circuits::challenge_binding
-pub(crate) fn challenge_from_points<C: Cycle>(
+pub(crate) fn challenge_from_elements<C: Cycle>(
     params: &C::Params,
-    points: &[C::NestedCurve],
+    inputs: &[C::CircuitField],
 ) -> Result<C::CircuitField> {
     use ragu_core::{drivers::emulator::Emulator, maybe::Maybe};
-    use ragu_primitives::{GadgetExt, Point, poseidon::Sponge};
+    use ragu_primitives::{Element, GadgetExt, poseidon::Sponge};
 
     let mut dr = Emulator::execute();
     let mut sponge = Sponge::new(&mut dr, C::circuit_poseidon(params));
-    for &point in points {
-        let point = Point::constant(&mut dr, point)?;
-        point.write(&mut dr, &mut sponge)?;
+    for &input in inputs {
+        let element = Element::constant(&mut dr, input);
+        element.write(&mut dr, &mut sponge)?;
     }
     let challenge = sponge.squeeze(&mut dr)?;
     Ok(*challenge.value().take())
 }
 
-/// Pads a `derive_challenge` call's points to the slot's full complement with
+/// Pads a `derive_challenge` call's inputs to the slot's full complement with
 /// the sentinel and hashes them: the whole prover-side derivation.
-pub(crate) fn points_challenge<C: Cycle>(
+pub(crate) fn elements_challenge<C: Cycle>(
     params: &C::Params,
-    points: &[C::NestedCurve],
+    inputs: &[C::CircuitField],
     width: usize,
-) -> Result<(alloc::vec::Vec<C::NestedCurve>, C::CircuitField)> {
-    debug_assert!(points.len() <= width);
-    let mut padded = points.to_vec();
-    padded.resize(width, sentinel_point::<C>(params));
-    let challenge = challenge_from_points::<C>(params, &padded)?;
+) -> Result<(alloc::vec::Vec<C::CircuitField>, C::CircuitField)> {
+    debug_assert!(inputs.len() <= width);
+    let mut padded = inputs.to_vec();
+    padded.resize(width, sentinel_element::<C>(params));
+    let challenge = challenge_from_elements::<C>(params, &padded)?;
     Ok((padded, challenge))
 }
 

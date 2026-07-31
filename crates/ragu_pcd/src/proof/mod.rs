@@ -167,14 +167,15 @@ pub struct ClaimOpening<Curve, F> {
 }
 
 /// A derived Fiat–Shamir challenge, as the application circuit's instance
-/// exposes it: the points it was hashed from, and the challenge itself.
+/// exposes it: the field elements it was hashed from, and the challenge
+/// itself.
 #[derive(Clone, Debug)]
-pub struct ChallengeOpening<Curve, F> {
-    /// The slot's input points, exactly
+pub struct ChallengeOpening<F> {
+    /// The slot's input elements, exactly
     /// [`ChallengeLayout::width`](crate::framework_hooks::ChallengeLayout::width)
     /// of them — the step's, then the sentinel in each position it left empty.
-    pub points: alloc::vec::Vec<Curve>,
-    /// The challenge, hashed from [`points`](Self::points).
+    pub inputs: alloc::vec::Vec<F>,
+    /// The challenge, hashed from [`inputs`](Self::inputs).
     pub challenge: F,
 }
 
@@ -304,8 +305,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) application_poly_coords: alloc::vec::Vec<C::CircuitField>,
     /// The derived challenges the step's circuit exposes, one per
     /// challenge slot the application's capacity provides, in slot order.
-    pub(crate) application_challenges:
-        alloc::vec::Vec<ChallengeOpening<C::NestedCurve, C::CircuitField>>,
+    pub(crate) application_challenges: alloc::vec::Vec<ChallengeOpening<C::CircuitField>>,
 
     /// The claim polynomials, in slot order — carried for exactly one fuse
     /// level so the parent can fold them into $f(X)$ and $p(X)$, and so the
@@ -452,9 +452,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     }
 
     /// The derived challenges this proof's circuit exposes, in slot order.
-    pub(crate) fn application_challenges(
-        &self,
-    ) -> &[ChallengeOpening<C::NestedCurve, C::CircuitField>] {
+    pub(crate) fn application_challenges(&self) -> &[ChallengeOpening<C::CircuitField>] {
         &self.application_challenges
     }
 
@@ -778,19 +776,19 @@ impl<
                 .collect(),
         );
         // Challenge slots: a trivial proof derives no challenges, so every slot
-        // holds the all-sentinel points and their honest challenge — mirroring
+        // holds the all-sentinel inputs and their honest challenge — mirroring
         // the adapter's padding, so the binding circuit can re-derive every
         // slot uniformly.
         builder.set_application_challenges(
             (0..self.capacity().challenge.calls)
                 .map(|_| {
-                    let (points, challenge) = crate::internal::challenge::points_challenge::<C>(
+                    let (inputs, challenge) = crate::internal::challenge::elements_challenge::<C>(
                         self.params,
                         &[],
                         self.capacity().challenge.width,
                     )
                     .expect("trivial padding challenge");
-                    ChallengeOpening { points, challenge }
+                    ChallengeOpening { inputs, challenge }
                 })
                 .collect(),
         );

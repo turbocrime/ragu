@@ -105,7 +105,8 @@ pub(crate) const RAGU_TAG: &[u8] = b"FIXME";
 /// `CHALLENGES` is how many
 /// [`derive_challenge`](step::StepCtx::derive_challenge) calls any one step
 /// may make, and `CHALLENGE_WIDTH` the widest input one call may pass, in
-/// curve points; the width's cost is
+/// field elements — a [`PolyHandle::coords`](PolyHandle::coords) pair is two;
+/// the width's cost is
 /// [`ChallengeLayout::permutations`](framework_hooks::ChallengeLayout::permutations),
 /// paid by the internal `challenge_binding` circuit per `(child, slot)`.
 ///
@@ -113,7 +114,7 @@ pub(crate) const RAGU_TAG: &[u8] = b"FIXME";
 /// circuit's instance width (`InstanceLen::len` is the single statement):
 ///
 /// ```text
-/// 3·HEADER_SIZE + 2·POLYS + 4·CLAIMS + CHALLENGES·(2·CHALLENGE_WIDTH + 1) + 2·POLYS
+/// 3·HEADER_SIZE + 2·POLYS + 4·CLAIMS + CHALLENGES·(CHALLENGE_WIDTH + 1) + 2·POLYS
 /// ```
 ///
 /// (the trailing `2·POLYS` is the coordinate instance region: each slot's

@@ -34,10 +34,10 @@
 //!
 //! * challenge slots — the bookkeeping behind
 //!   [`StepCtx::derive_challenge`](crate::step::StepCtx::derive_challenge):
-//!   the slot cap, the determinism guard, and the `(points, challenge)` records
+//!   the slot cap, the determinism guard, and the `(inputs, challenge)` records
 //!   the adapter writes into the application circuit's public instance. Every
 //!   application circuit gets the application's challenge capacity in slots, each
-//!   absorbing exactly [`ChallengeLayout::width`] of them.
+//!   absorbing exactly [`ChallengeLayout::width`] elements.
 //!
 //! ## Slot counts are declared
 //!
@@ -48,8 +48,8 @@
 //! see the crate docs for why capacity is declared rather than folded from
 //! the registered steps.
 //!
-//! A call's point count is witness data, not structure: every slot's instance
-//! region holds [`ChallengeLayout::width`] points, with the positions a call
+//! A call's input count is witness data, not structure: every slot's instance
+//! region holds [`ChallengeLayout::width`] elements, with the positions a call
 //! leaves empty filled by a fixed sentinel.
 //!
 //! ## Challenge soundness
@@ -139,14 +139,15 @@ pub struct PolyQueryClaim<C: CurveAffine, F: Field> {
     pub y: F,
 }
 
-/// The in-circuit wires of a derived challenge: the points it was hashed from,
-/// and the challenge itself. All of them go into the application circuit's
-/// public instance so the parent can re-derive the challenge from the points.
-pub struct ChallengeWires<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
-    /// The slot's input points, exactly [`ChallengeLayout::width`] of them:
+/// The in-circuit wires of a derived challenge: the field elements it was
+/// hashed from, and the challenge itself. All of them go into the application
+/// circuit's public instance so the parent can re-derive the challenge from
+/// the inputs.
+pub struct ChallengeWires<'dr, D: Driver<'dr>> {
+    /// The slot's input elements, exactly [`ChallengeLayout::width`] of them:
     /// the caller's, then the sentinel in each position left empty.
-    pub points: Vec<Point<'dr, D, C>>,
-    /// The challenge, hashed from [`points`](Self::points).
+    pub inputs: Vec<Element<'dr, D>>,
+    /// The challenge, hashed from [`inputs`](Self::inputs).
     pub challenge: Element<'dr, D>,
 }
 
@@ -218,7 +219,7 @@ pub struct FrameworkHooks<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     /// The `(points, challenge)` record each
     /// [`derive_challenge`](crate::step::StepCtx::derive_challenge) call
     /// produced, in slot order. Its length *is* the call count.
-    challenge_pairs: Vec<ChallengeWires<'dr, D, C::NestedCurve>>,
+    challenge_pairs: Vec<ChallengeWires<'dr, D>>,
     /// The proof-level values the hooks commit to. See [`ProofValues`].
     proof_values: DriverValue<D, ProofValues<'dr, C>>,
     /// The application's declared slot capacities: what every circuit's
@@ -247,7 +248,7 @@ pub struct FrameworkAux<C: Cycle> {
     pub claims: Vec<PolyQueryClaim<C::NestedCurve, C::CircuitField>>,
     /// The derived-challenge records the circuit exposes, padded to the
     /// application's challenge capacity, in slot order.
-    pub challenges: Vec<crate::proof::ChallengeOpening<C::NestedCurve, C::CircuitField>>,
+    pub challenges: Vec<crate::proof::ChallengeOpening<C::CircuitField>>,
 }
 
 /// Transposes a list of per-item driver values into one driver value holding
@@ -300,20 +301,21 @@ impl HookLayout {
 pub struct ChallengeLayout {
     /// [`derive_challenge`](crate::step::StepCtx::derive_challenge) calls.
     pub calls: usize,
-    /// The challenge width: how many input points one call absorbs. Every
-    /// call's instance region holds exactly this many, with the positions a
-    /// caller leaves empty taking a fixed sentinel. Its cost is
+    /// The challenge width: how many input field elements one call absorbs.
+    /// Every call's instance region holds exactly this many, with the
+    /// positions a caller leaves empty taking a fixed sentinel. A
+    /// [`PolyHandle::coords`](crate::poly_commitment::PolyHandle::coords)
+    /// pair is two; a pinned point's coordinates are two. Its cost is
     /// [`permutations`](ChallengeLayout::permutations).
     pub width: usize,
 }
 
 impl ChallengeLayout {
     /// The absorb permutations one call of this width costs, at `rate`:
-    /// `⌈2w / rate⌉` (a point is two coordinates). Paid by
-    /// `challenge_binding` once per `(child, slot)`, out of the framework's
-    /// gate budget.
+    /// `⌈w / rate⌉`. Paid by `challenge_binding` once per `(child, slot)`,
+    /// out of the framework's gate budget.
     pub const fn permutations(width: usize, rate: usize) -> usize {
-        (2 * width).div_ceil(rate)
+        width.div_ceil(rate)
     }
 }
 
@@ -378,7 +380,7 @@ pub struct FrameworkHookOutputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::
     /// order. Padded to the application's declared challenge capacity by
     /// [`StepCtx::finish_slots`](crate::step::StepCtx), so its length is that
     /// capacity rather than what the body used.
-    pub challenge_pairs: Vec<ChallengeWires<'dr, D, C::NestedCurve>>,
+    pub challenge_pairs: Vec<ChallengeWires<'dr, D>>,
 }
 
 impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHookOutputs<'dr, D, C> {
@@ -417,12 +419,12 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHookOutputs<'d
         let mut challenges = Vec::with_capacity(self.challenge_pairs.len());
         for pair in self.challenge_pairs {
             challenges.push(D::try_just(|| {
-                let mut points = Vec::with_capacity(pair.points.len());
-                for point in &pair.points {
-                    points.push(point.value().take());
+                let mut inputs = Vec::with_capacity(pair.inputs.len());
+                for input in &pair.inputs {
+                    inputs.push(*input.value().take());
                 }
                 Ok(crate::proof::ChallengeOpening {
-                    points,
+                    inputs,
                     challenge: *pair.challenge.value().take(),
                 })
             })?);
@@ -556,18 +558,18 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
         Ok(())
     }
 
-    /// Records a derived challenge's `(points, challenge)` record. The adapter
+    /// Records a derived challenge's `(inputs, challenge)` record. The adapter
     /// writes these into the application circuit's public instance, binding
     /// them to its $k(Y)$ so the parent's binding circuit can re-derive the
-    /// challenge from the points.
+    /// challenge from the inputs.
     pub(crate) fn record_challenge(
         &mut self,
-        points: Vec<Point<'dr, D, C::NestedCurve>>,
+        inputs: Vec<Element<'dr, D>>,
         challenge: Element<'dr, D>,
     ) {
-        debug_assert_eq!(points.len(), self.capacity.challenge.width);
+        debug_assert_eq!(inputs.len(), self.capacity.challenge.width);
         self.challenge_pairs
-            .push(ChallengeWires { points, challenge });
+            .push(ChallengeWires { inputs, challenge });
     }
 
     /// Records a claim that the polynomial with the given `coefficients`
@@ -728,9 +730,9 @@ mod tests {
     }
 
     /// A challenge record's instance region is the same width for every slot:
-    /// two wires per input point, plus the challenge. Nothing about it depends
-    /// on how many points a call actually passed, which is what lets the
-    /// count be witness data rather than circuit structure.
+    /// one wire per input element, plus the challenge. Nothing about it
+    /// depends on how many elements a call actually passed, which is what
+    /// lets the count be witness data rather than circuit structure.
     ///
     /// Measured against the stage that holds the region — the challenge slots
     /// are their own stage, not part of the preamble.
@@ -741,28 +743,22 @@ mod tests {
         let width = 2;
         // `num_values` covers both children, so one call's worth is half the
         // step from zero calls to one.
-        assert_eq!(
-            (num_values(1, width) - num_values(0, width)) / 2,
-            2 * width + 1,
-        );
+        assert_eq!((num_values(1, width) - num_values(0, width)) / 2, width + 1,);
         // And it stays that width however many calls there are.
-        assert_eq!(
-            (num_values(4, width) - num_values(3, width)) / 2,
-            2 * width + 1,
-        );
+        assert_eq!((num_values(4, width) - num_values(3, width)) / 2, width + 1,);
     }
 
-    /// The declared width's cost: a point is two coordinates and a permutation
-    /// absorbs `RATE` of them, so `w` points cost `⌈2w / RATE⌉` permutations.
-    /// A partly-filled permutation still costs a whole one.
+    /// The declared width's cost: a permutation absorbs `RATE` elements, so
+    /// `w` elements cost `⌈w / RATE⌉` permutations. A partly-filled
+    /// permutation still costs a whole one.
     #[test]
     fn permutations_follow_the_width() {
         assert_eq!(ChallengeLayout::permutations(0, 4), 0);
-        assert_eq!(ChallengeLayout::permutations(1, 4), 1);
         assert_eq!(ChallengeLayout::permutations(2, 4), 1);
-        assert_eq!(ChallengeLayout::permutations(3, 4), 2);
-        assert_eq!(ChallengeLayout::permutations(4, 4), 2);
+        assert_eq!(ChallengeLayout::permutations(4, 4), 1);
+        assert_eq!(ChallengeLayout::permutations(5, 4), 2);
+        assert_eq!(ChallengeLayout::permutations(8, 4), 2);
         // An odd rate still rounds up.
-        assert_eq!(ChallengeLayout::permutations(2, 3), 2);
+        assert_eq!(ChallengeLayout::permutations(4, 3), 2);
     }
 }

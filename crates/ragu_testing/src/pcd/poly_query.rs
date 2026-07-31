@@ -152,8 +152,9 @@ impl<C: Cycle, R: Rank> Step<C> for CommitAndOpen<'_, C, R> {
         let commitment = witness.map(|w| w.commitment);
         let [handle] = ctx.witness_polynomial::<R, 1>([commitment])?;
 
-        // (2) Derive a challenge bound to the commitment.
-        let z = ctx.derive_challenge(&[handle.bridge_commitment().clone()])?;
+        // (2) Derive a challenge bound to the commitment, via its canonical
+        // embedded coordinates.
+        let z = ctx.derive_challenge(&handle.coords())?;
 
         // (3) Evaluate the polynomial at the challenge (natively; the
         // polynomial is not in-circuit). A dishonest override, if provided,
@@ -182,9 +183,12 @@ impl<C: Cycle, R: Rank> Step<C> for CommitAndOpen<'_, C, R> {
         let at_zero = Element::alloc(ctx.dr, allocator, at_zero_value)?;
         ctx.enforce_poly_query(&handle, zero, at_zero)?;
 
-        // Output digest binds the commitment.
+        // Output digest binds the commitment, via its canonical embedded
+        // coordinates — the same identity the challenge absorbed.
         let mut sponge = Sponge::new(ctx.dr, self.poseidon_params);
-        handle.bridge_commitment().write(ctx.dr, &mut sponge)?;
+        for coord in handle.coords() {
+            coord.write(ctx.dr, &mut sponge)?;
+        }
         let output = sponge.squeeze(ctx.dr)?;
         let output_hash = output.value().map(|v| *v);
         let output_encoded = Encoded::from_gadget(output);
@@ -274,7 +278,9 @@ impl<C: Cycle, R: Rank> Step<C> for OpenAndHash<'_, C, R> {
         let mut sponge = Sponge::new(ctx.dr, self.poseidon_params);
         sponge.absorb(ctx.dr, left_encoded.as_gadget())?;
         sponge.absorb(ctx.dr, right_encoded.as_gadget())?;
-        handle.bridge_commitment().write(ctx.dr, &mut sponge)?;
+        for coord in handle.coords() {
+            coord.write(ctx.dr, &mut sponge)?;
+        }
         let output = sponge.squeeze(ctx.dr)?;
         let output_hash = output.value().map(|v| *v);
         let output_encoded = Encoded::from_gadget(output);

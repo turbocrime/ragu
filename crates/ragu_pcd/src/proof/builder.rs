@@ -322,7 +322,7 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     /// The derived-challenge pairs the application circuit exposed, in slot
     /// order, padded by the adapter to exactly
     /// the application's challenge capacity.
-    application_challenges: Vec<crate::proof::ChallengeOpening<C::NestedCurve, C::CircuitField>>,
+    application_challenges: Vec<crate::proof::ChallengeOpening<C::CircuitField>>,
     /// Per-step polynomial-query claims raised by the user's
     /// [`Step::witness`](crate::step::Step::witness) via
     /// [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query),
@@ -766,7 +766,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     /// Records the derived-challenge pairs the application circuit exposed.
     pub(crate) fn set_application_challenges(
         &mut self,
-        challenges: Vec<crate::proof::ChallengeOpening<C::NestedCurve, C::CircuitField>>,
+        challenges: Vec<crate::proof::ChallengeOpening<C::CircuitField>>,
     ) {
         assert!(
             self.application_challenges.is_empty(),

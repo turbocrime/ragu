@@ -25,7 +25,7 @@ use ragu_core::{
     drivers::{Driver, DriverValue},
     maybe::Maybe,
 };
-use ragu_primitives::Point;
+use ragu_primitives::{Element, Point};
 
 /// A polynomial together with its framework poly-query commitment.
 ///
@@ -118,6 +118,9 @@ pub struct PolyHandle<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Ran
     /// so [`StepCtx::poly_limbs`](crate::step::StepCtx::poly_limbs) can fill
     /// the limb witnesses without recomputing the commitment.
     host: DriverValue<D, C::HostCurve>,
+    /// The slot's two coordinate instance wires: the host commitment's affine
+    /// coordinates, canonically embedded in the circuit field.
+    coords: [Element<'dr, D>; 2],
     /// The claim slot this handle occupies; fixed at witnessing.
     slot: usize,
 }
@@ -128,12 +131,14 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> PolyHandle<'dr
         bridge_com: Point<'dr, D, C::NestedCurve>,
         polynomial: DriverValue<D, sparse::Polynomial<D::F, R>>,
         host: DriverValue<D, C::HostCurve>,
+        coords: [Element<'dr, D>; 2],
         slot: usize,
     ) -> Self {
         Self {
             bridge_com,
             polynomial,
             host,
+            coords,
             slot,
         }
     }
@@ -148,9 +153,19 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> PolyHandle<'dr
         self.slot
     }
 
-    /// The in-circuit bridge commitment, for use in challenges, hashing, etc.
+    /// The in-circuit bridge commitment.
     pub fn bridge_commitment(&self) -> &Point<'dr, D, C::NestedCurve> {
         &self.bridge_com
+    }
+
+    /// The polynomial's **canonical** in-circuit identity: its host
+    /// commitment's affine coordinates, embedded in the circuit field — the
+    /// slot's coordinate instance wires. The same for every proof that
+    /// commits this polynomial, so this is what a
+    /// [`derive_challenge`](crate::step::StepCtx::derive_challenge) call
+    /// absorbs, and what cross-proof comparisons compare.
+    pub fn coords(&self) -> [Element<'dr, D>; 2] {
+        self.coords.clone()
     }
 
     /// The retained polynomial (prover-only), e.g. to compute the evaluation

@@ -48,7 +48,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Element, Point,
+    Element,
     consistent::Consistent,
     vec::{CollectFixed, ConstLen, FixedVec, Len},
 };
@@ -56,7 +56,7 @@ use ragu_primitives::{
 use super::preamble::{ChallengeInstance, Witness};
 use crate::Proof;
 
-/// The challenges both children derived, in slot order: the points each was
+/// The challenges both children derived, in slot order: the elements each was
 /// hashed from, and the challenge itself.
 ///
 /// Both children present the application's shape, so one set of counts sizes
@@ -65,16 +65,15 @@ use crate::Proof;
 pub struct ChallengesOutput<
     'dr,
     D: Driver<'dr>,
-    C: Cycle<CircuitField = D::F>,
     const CHALLENGES: usize,
     const CHALLENGE_WIDTH: usize,
 > {
     /// The left child's challenge slots.
     #[ragu(gadget)]
-    pub left: FixedVec<ChallengeInstance<'dr, D, C, CHALLENGE_WIDTH>, ConstLen<CHALLENGES>>,
+    pub left: FixedVec<ChallengeInstance<'dr, D, CHALLENGE_WIDTH>, ConstLen<CHALLENGES>>,
     /// The right child's challenge slots.
     #[ragu(gadget)]
-    pub right: FixedVec<ChallengeInstance<'dr, D, C, CHALLENGE_WIDTH>, ConstLen<CHALLENGES>>,
+    pub right: FixedVec<ChallengeInstance<'dr, D, CHALLENGE_WIDTH>, ConstLen<CHALLENGES>>,
 }
 
 /// The challenge slots of both children.
@@ -136,10 +135,10 @@ impl<
     }
 }
 
-/// This stage's wire width: per child, per slot, the input points' coordinates
-/// and then the challenge.
+/// This stage's wire width: per child, per slot, the input elements and then
+/// the challenge.
 pub const fn num_values(challenges: usize, challenge_width: usize) -> usize {
-    2 * (2 * challenge_width + 1) * challenges
+    2 * (challenge_width + 1) * challenges
 }
 
 impl<
@@ -156,8 +155,7 @@ impl<
 {
     type Parent = super::outer_error::Stage<C, R, HEADER_SIZE, POLYS, CLAIMS, FP>;
     type Witness<'source> = &'source Witness<'source, C, R, HEADER_SIZE>;
-    type OutputKind =
-        Kind![C::CircuitField; ChallengesOutput<'_, _, C, CHALLENGES, CHALLENGE_WIDTH>];
+    type OutputKind = Kind![C::CircuitField; ChallengesOutput<'_, _, CHALLENGES, CHALLENGE_WIDTH>];
 
     fn values() -> usize {
         num_values(CHALLENGES, CHALLENGE_WIDTH)
@@ -200,18 +198,19 @@ pub(crate) fn alloc_challenges<
 >(
     dr: &mut D,
     proof: DriverValue<D, &Proof<C, R>>,
-) -> Result<FixedVec<ChallengeInstance<'dr, D, C, CHALLENGE_WIDTH>, ConstLen<CHALLENGES>>> {
+) -> Result<FixedVec<ChallengeInstance<'dr, D, CHALLENGE_WIDTH>, ConstLen<CHALLENGES>>> {
     let allocator = &mut ();
     ConstLen::<CHALLENGES>::range()
         .map(|i| {
             Ok(ChallengeInstance {
-                points: ConstLen::<CHALLENGE_WIDTH>::range()
+                inputs: ConstLen::<CHALLENGE_WIDTH>::range()
                     .map(|j| {
-                        Point::alloc(
+                        Element::alloc(
                             dr,
+                            allocator,
                             proof
                                 .as_ref()
-                                .map(|p| p.application_challenges()[i].points[j]),
+                                .map(|p| p.application_challenges()[i].inputs[j]),
                         )
                     })
                     .try_collect_fixed()?,
@@ -248,7 +247,7 @@ mod tests {
             2,
             crate::internal::native::RevdotParameters,
         >::default());
-        assert_eq!(num_values(2, 2), 2 * 5 * 2);
+        assert_eq!(num_values(2, 2), 2 * 3 * 2);
         assert_eq!(num_values(0, 4), 0);
     }
 }

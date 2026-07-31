@@ -1,24 +1,24 @@
-//! Circuit binding each child's derived challenges to the points they were
+//! Circuit binding each child's derived challenges to the elements they were
 //! derived from.
 //!
 //! ## Operations
 //!
 //! An application circuit obtains a challenge through
-//! [`StepCtx::derive_challenge`], which exposes that slot's input points and the
-//! challenge on the circuit's instance. The derivation itself does **not**
+//! [`StepCtx::derive_challenge`], which exposes that slot's input elements and
+//! the challenge on the circuit's instance. The derivation itself does **not**
 //! happen in the application circuit — a step spends no permutation and commits
 //! no stage for it. This circuit is where the permutations are actually paid
 //! for, once per $(\text{child},\, \text{slot})$ pair, out of the framework's own
 //! gate budget:
 //!
 //! - Witness each child's challenge records from the [`preamble`] stage.
-//! - For each, absorb every input point into a fresh sponge and squeeze.
+//! - For each, absorb every input element into a fresh sponge and squeeze.
 //! - Enforce that the squeezed value equals the recorded challenge.
 //!
 //! With the application's challenge slots, two children, and
 //! [`ChallengeLayout::width`](crate::framework_hooks::ChallengeLayout::width)
 //! per slot, that is
-//! $2 \cdot \text{slots} \cdot \lceil 2 \cdot \text{points} / \text{RATE} \rceil$
+//! $2 \cdot \text{slots} \cdot \lceil \text{width} / \text{RATE} \rceil$
 //! permutations.
 //!
 //! ## Why this closes the derivation
@@ -27,18 +27,18 @@
 //! whichever value makes its argument go through, and grinds. Two links make the
 //! record rigid:
 //!
-//! 1. A slot's points and its challenge are all written into the child's
+//! 1. A slot's inputs and its challenge are all written into the child's
 //!    application $k(Y)$
 //!    ([`application_ky`](super::super::stages::preamble::ProofInputs::application_ky)),
 //!    binding them to the child's committed application rx.
-//! 2. **This circuit**: $\text{challenge} = \text{Hash}(\text{points})$.
+//! 2. **This circuit**: $\text{challenge} = \text{Hash}(\text{inputs})$.
 //!
-//! Together they say the challenge is the hash of exactly the points the
+//! Together they say the challenge is the hash of exactly the elements the
 //! application passed, so a prover cannot choose it independently of them.
-//! **What those points bind is the step author's responsibility** — see
+//! **What those elements bind is the step author's responsibility** — see
 //! [`StepCtx::derive_challenge`] for the contract.
 //! The prover-side counterpart is
-//! [`challenge_from_points`](crate::internal::challenge::challenge_from_points),
+//! [`challenge_from_elements`](crate::internal::challenge::challenge_from_elements),
 //! which runs the identical sponge natively; the two must agree exactly.
 //!
 //! ## Staging
@@ -197,16 +197,16 @@ impl<
         let challenges = challenges.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;
 
         // Re-derive each child's challenges. A fresh sponge per slot, matching
-        // `challenge_from_points` exactly: absorb every input point in slot
-        // order, squeeze once. A fresh sponge per slot rather than one chained
-        // sponge, so slot i's challenge cannot depend on slot i-1's inputs —
-        // and it is no more expensive, since each squeeze costs a permutation
-        // regardless.
+        // `challenge_from_elements` exactly: absorb every input element in
+        // slot order, squeeze once. A fresh sponge per slot rather than one
+        // chained sponge, so slot i's challenge cannot depend on slot i-1's
+        // inputs — and it is no more expensive, since each squeeze costs a
+        // permutation regardless.
         for child in [&challenges.left, &challenges.right] {
             for pair in child.iter() {
                 let mut sponge = Sponge::new(dr, C::circuit_poseidon(self.params));
-                for point in pair.points.iter() {
-                    point.write(dr, &mut sponge)?;
+                for input in pair.inputs.iter() {
+                    input.write(dr, &mut sponge)?;
                 }
                 let derived = sponge.squeeze(dr)?;
                 derived.enforce_equal(dr, &pair.challenge)?;

@@ -134,7 +134,7 @@ where
         })?;
         let bridge_com = Point::alloc(self.dr, bridge_com_value)?;
         let polynomial = commitment.map(PolyCommitment::into_polynomial);
-        let handle = PolyHandle::new(bridge_com, polynomial, host_retained, slot);
+        let handle = PolyHandle::new(bridge_com, polynomial, host_retained, coords.clone(), slot);
         self.hooks.record_polynomial(
             slot,
             handle.bridge_commitment().clone(),
@@ -227,84 +227,82 @@ where
             .enforce_polynomial_query(commitment.bridge_commitment().clone(), x, y)
     }
 
-    /// Derives a sound Fiat–Shamir challenge from `points`.
+    /// Derives a sound Fiat–Shamir challenge from `inputs`.
     ///
-    /// The challenge is `Hash(points)`, hashed natively and witnessed here;
-    /// the points and the challenge go into the circuit's instance, and the
+    /// The challenge is `Hash(inputs)`, hashed natively and witnessed here;
+    /// the inputs and the challenge go into the circuit's instance, and the
     /// parent's `challenge_binding` circuit re-derives the challenge from the
-    /// points. **The step spends no Poseidon permutation and no committed
+    /// inputs. **The step spends no Poseidon permutation and no committed
     /// stage** — the derivation is paid out of the framework's own budget,
     /// once per `(child, slot)`.
     ///
     /// At most
     /// [`ChallengeLayout::width`](crate::framework_hooks::ChallengeLayout::width)
-    /// points; the remaining positions are filled with a fixed non-identity
-    /// sentinel so the sponge's shape is the same for every slot.
+    /// elements; the remaining positions are filled with a fixed sentinel so
+    /// the sponge's shape is the same for every slot.
     ///
     /// # The caller's obligation
     ///
     /// The framework guarantees only that the challenge is the hash of *these
-    /// points*. Every point must be one this step has pinned — a
-    /// [`PolyHandle::bridge_commitment`](crate::poly_commitment::PolyHandle::bridge_commitment),
-    /// a header-carried point, or a point otherwise constrained — since a
-    /// freely witnessed point lets the prover grind the challenge by varying
-    /// it.
+    /// elements*. Every input must be one this step has pinned — a
+    /// [`PolyHandle::coords`](crate::poly_commitment::PolyHandle::coords)
+    /// pair (the polynomial's commitment, so the standard poly-query
+    /// Fiat–Shamir shape), header-carried data, or a wire otherwise
+    /// constrained — since a freely witnessed input lets the prover grind the
+    /// challenge by varying it. A pinned [`Point`] is absorbable as its two
+    /// coordinate wires.
     ///
     /// On a value-carrying driver the returned `Element` holds the real
     /// challenge immediately, so the step body can evaluate polynomials at it
     /// right away.
-    pub fn derive_challenge(
-        &mut self,
-        points: &[Point<'dr, D, C::NestedCurve>],
-    ) -> Result<Element<'dr, D>> {
+    pub fn derive_challenge(&mut self, inputs: &[Element<'dr, D>]) -> Result<Element<'dr, D>> {
         let width = self.hooks.capacity().challenge.width;
-        if points.len() > width {
+        if inputs.len() > width {
             return Err(ragu_core::Error::InvalidWitness(
-                "derive_challenge received more points than a challenge slot absorbs".into(),
+                "derive_challenge received more elements than a challenge slot absorbs".into(),
             ));
         }
         self.hooks.reserve_challenge_slot()?;
 
         let proof_values = self.hooks.proof_values();
         let supplied = D::try_just(|| {
-            let mut values = alloc::vec::Vec::with_capacity(points.len());
-            for point in points {
-                values.push(point.value().take());
+            let mut values = alloc::vec::Vec::with_capacity(inputs.len());
+            for input in inputs {
+                values.push(*input.value().take());
             }
             Ok(values)
         })?;
 
         // Pad to the slot's full complement with the sentinel and hash. The
-        // padded points are witnessed like the supplied ones: the parent
+        // padded inputs are witnessed like the supplied ones: the parent
         // absorbs a fixed number per slot, so it must see them all.
         let derived = D::try_just(|| {
             let proof_values = proof_values.take();
-            crate::internal::challenge::points_challenge::<C>(
+            crate::internal::challenge::elements_challenge::<C>(
                 proof_values.params,
                 &supplied.take(),
                 width,
             )
         })?;
 
+        let allocator = &mut ragu_primitives::allocator::Standard::new();
         let mut witnessed = alloc::vec::Vec::with_capacity(width);
         for index in 0..width {
-            match points.get(index) {
-                // A supplied point is already a wire in this circuit; reuse it
-                // rather than re-witnessing, so the instance names the very
-                // point the caller pinned.
-                Some(point) => witnessed.push(point.clone()),
-                None => witnessed.push(Point::alloc(
+            match inputs.get(index) {
+                // A supplied element is already a wire in this circuit; reuse
+                // it rather than re-witnessing, so the instance names the very
+                // wire the caller pinned.
+                Some(input) => witnessed.push(input.clone()),
+                None => witnessed.push(Element::alloc(
                     self.dr,
+                    allocator,
                     derived.as_ref().map(|(padded, _)| padded[index]),
                 )?),
             }
         }
 
-        let challenge = Element::alloc(
-            self.dr,
-            &mut ragu_primitives::allocator::Standard::new(),
-            derived.map(|(_, challenge)| challenge),
-        )?;
+        let challenge =
+            Element::alloc(self.dr, allocator, derived.map(|(_, challenge)| challenge))?;
         self.hooks.record_challenge(witnessed, challenge.clone());
         Ok(challenge)
     }
