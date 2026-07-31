@@ -120,9 +120,7 @@ where
         let host = commitment.as_ref().map(|c| c.host());
         let host_retained = commitment.as_ref().map(|c| c.host());
         let limbs = D::try_just(|| {
-            crate::internal::nested::stages::claim_bridge::host_limbs(
-                commitment.as_ref().take().host(),
-            )
+            crate::internal::challenge::host_limbs(commitment.as_ref().take().host())
         })?;
         let proof_values = self.hooks.proof_values();
         let capacity = self.hooks.capacity();
@@ -181,8 +179,7 @@ where
         D::F: ragu_arithmetic::ff::WithSmallOrderMulGroup<3>,
     {
         let host = handle.host_value();
-        let limbs =
-            D::try_just(|| crate::internal::nested::stages::claim_bridge::host_limbs(host.take()))?;
+        let limbs = D::try_just(|| crate::internal::challenge::host_limbs(host.take()))?;
         let (limbs, lifts) = crate::step::limbs::witness_host_limbs(self.dr, limbs)?;
         self.hooks.record_lifts(handle.slot(), lifts)?;
         Ok(limbs)

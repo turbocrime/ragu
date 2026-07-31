@@ -781,7 +781,7 @@ impl<
         // slots either: a claim has to name a polynomial.
         let padding_bridge_com = padding_bridge_coms.first().copied();
         let padding_lifts: alloc::vec::Vec<C::CircuitField> = {
-            let limbs = crate::internal::nested::stages::claim_bridge::host_limbs(padding_host)
+            let limbs = crate::internal::challenge::host_limbs(padding_host)
                 .expect("the padding host has canonical limbs");
             (0..self.capacity().poly_query.polys)
                 .flat_map(|_| limbs)

@@ -241,18 +241,12 @@ impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> MultiStageCircuit<C:
         // The initial point (f.commitment) must match BridgeF.native_f.
         points.initial.enforce_equal(dr, &f_stage.native_f)?;
 
-        // Each poly-query claim's bridge stage must name exactly the host
+        // Each poly-query claim's bridge stage must witness exactly the host
         // commitment this proof records for that slot. The stage's wires are
-        // that point's coordinates in bits, so recomposing them and equating
-        // the result determines the point — and committing the stage (which
-        // yields the claim's instance-bound `bridge_com`) therefore binds
-        // `bridge_com` to that host commitment, mirroring how `BridgeF.native_f`
-        // ties `bridge_f_commitment` above.
-        //
-        // Recomposition is linear, which is what lets this check live here: a
-        // bonding circuit may only add. Nothing constrains the wires to be
-        // bits; see `claim_bridge`'s module docs for why that is enough here,
-        // and where booleanity does come from.
+        // therefore the host point, so committing the stage (which yields the
+        // claim's instance-bound `bridge_com`) binds `bridge_com` to that host
+        // commitment — mirroring how `BridgeF.native_f` ties
+        // `bridge_f_commitment` above.
         assert_eq!(
             claim_bridges.len(),
             eval.claims.len(),

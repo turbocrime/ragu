@@ -424,13 +424,9 @@ fn test_slotted_registry_digests() {
 
     let app = dummy_app::<SLOTTED_HEADER_SIZE, 2, 3, 1>(pasta, NUM_SLOTTED_APP_STEPS);
 
-    // Both changed when the accumulator gained the claim-lift polynomial `q`:
-    // natively, the eval stage carries one q(u) per child and `compute_v`
-    // re-derives it from the lift instance wires; nested, each child's block
-    // grows by its stashed `C_q` (preamble and points stages widen, and one
-    // more point can mean one more endoscaling step). Before that: the lift
-    // instance region (native), and the claim-bridge stages carrying bits
-    // instead of coordinates (nested).
+    // Last moved when the accumulator gained the claim-lift polynomial `q`:
+    // the eval stage carries one q(u) per child and `compute_v` re-derives it
+    // from the lift instance wires.
     //
     // Both `POLYS = 0` digests holding is the check: `q_slots(0) = 0`, so the
     // limb feature vanishes entirely at that shape and its digests must not
@@ -440,9 +436,16 @@ fn test_slotted_registry_digests() {
         fp!(0x190861265b03c475295efdccae505bedc909d54c418b4742cf14cf099c8eab66),
         "Native registry digest changed unexpectedly at a slotted shape!"
     );
+    // Last moved when the claim-bridge stages returned to carrying the host
+    // point's two coordinate wires: the 508-bit encoding existed for an
+    // in-step opening the 2048-gate cap ruled out, so no consumer of the bits
+    // could ever exist and each slot went back from 254 gates to one. The
+    // native digest holding at the same time is the check that the revert
+    // reached exactly the nested encoding — the limb machinery (`q`, the lift
+    // instance region, `compute_v`'s re-derivation) is all native and stayed.
     assert_eq!(
         app.nested_registry.digest(),
-        fq!(0x291b1d2c8495c6ef7dc568f3994ca3fa5a06b37b4aebdc77bb085a1a3f4f6cab),
+        fq!(0x3158d084e78957d7df2a0123baddfd948e4e7f3d920327f78c5b851eb3444d67),
         "Nested registry digest changed unexpectedly at a slotted shape!"
     );
 }
