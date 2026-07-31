@@ -101,57 +101,21 @@ where
         commitment: DriverValue<D, PolyCommitment<C, R>>,
     ) -> Result<PolyHandle<'dr, D, C, R>> {
         let slot = self.hooks.next_poly_slot()?;
-        let host_retained = commitment.as_ref().map(|c| c.host());
-        // The slot's two coordinate instance wires: the host commitment's
-        // affine coordinates, canonically embedded. Allocated here so they
-        // exist for the whole step body; `poly_limbs` ties its constrained
-        // bits to them, and slots never opened stay bound through the
-        // accumulator and the root recompute.
-        let coord_values = D::try_just(|| {
-            crate::internal::challenge::host_coords::<C>(commitment.as_ref().take().host())
-        })?;
+        // The slot's two coordinate instance wires: the commitment's
+        // representation, and the value a consumer hashes or compares. Plain
+        // value-filled wires, fail-closed: the accumulator and the root
+        // recompute force them to be the recorded host's, or no proof
+        // exists.
+        let coord_values = commitment.as_ref().map(|c| c.coords());
         let coords = [
             Element::alloc(self.dr, &mut (), coord_values.as_ref().map(|c| c[0]))?,
             Element::alloc(self.dr, &mut (), coord_values.as_ref().map(|c| c[1]))?,
         ];
         let polynomial = commitment.map(PolyCommitment::into_polynomial);
-        let handle = PolyHandle::new(polynomial, host_retained, coords.clone(), slot);
+        let handle = PolyHandle::new(polynomial, coords.clone());
         self.hooks
             .record_polynomial(slot, handle.coefficients(), coords);
         Ok(handle)
-    }
-
-    /// Hands the step the four 128-bit limbs of `handle`'s **host**
-    /// commitment — the real, canonical `commit(polynomial)` on the host
-    /// curve — as circuit-field elements, provably.
-    ///
-    /// The limbs are witnessed here as constrained booleans and packed; what
-    /// binds them to the commitment is the accumulator: the same bits pack
-    /// into the slot's coordinate instance wires, bound to this circuit's
-    /// $k(Y)$, and the framework polynomial $q$ — with the recorded hosts'
-    /// embedded coordinates as coefficients — is folded against them.
-    ///
-    /// The values are bit-identical to splitting each coordinate's canonical
-    /// little-endian bytes into 16-byte halves, so hashing them reproduces
-    /// exactly the digest a consumer computes natively from the same
-    /// commitment.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::InvalidWitness`](ragu_core::Error::InvalidWitness) if
-    /// called twice for the same handle.
-    pub fn poly_limbs<R: Rank>(
-        &mut self,
-        handle: &PolyHandle<'dr, D, C, R>,
-    ) -> Result<crate::step::HostLimbs<'dr, D>>
-    where
-        D::F: ragu_arithmetic::ff::PrimeField,
-    {
-        let host = handle.host_value();
-        let limbs = D::try_just(|| crate::internal::challenge::host_limbs(host.take()))?;
-        let (limbs, coords) = crate::step::limbs::witness_host_limbs(self.dr, limbs)?;
-        self.hooks.tie_coords(self.dr, handle.slot(), coords)?;
-        Ok(limbs)
     }
 
     /// Records a poly-query claim: the polynomial behind `commitment` evaluates
@@ -239,7 +203,7 @@ where
         }
         self.hooks.reserve_challenge_slot()?;
 
-        let proof_values = self.hooks.proof_values();
+        let params = self.hooks.params();
         let supplied = D::try_just(|| {
             let mut values = alloc::vec::Vec::with_capacity(inputs.len());
             for input in inputs {
@@ -252,9 +216,8 @@ where
         // padded inputs are witnessed like the supplied ones: the parent
         // absorbs a fixed number per slot, so it must see them all.
         let derived = D::try_just(|| {
-            let proof_values = proof_values.take();
             crate::internal::challenge::elements_challenge::<C>(
-                proof_values.params,
+                params.take(),
                 &supplied.take(),
                 width,
             )
@@ -302,14 +265,10 @@ where
 
         // Polynomials first, so every query slot has something to name.
         while self.hooks.polys_filled() < capacity.poly_query.polys {
-            let proof_values = self.hooks.proof_values();
+            let params = self.hooks.params();
             let padding = D::try_just(move || {
-                let (host, ..) =
-                    crate::internal::challenge::padding_claim::<C>(proof_values.take().params);
-                Ok(PolyCommitment::new(
-                    crate::internal::challenge::padding_poly::<C, R>(),
-                    host,
-                ))
+                let (host, ..) = crate::internal::challenge::padding_claim::<C>(params.take());
+                PolyCommitment::new(crate::internal::challenge::padding_poly::<C, R>(), host)
             })?;
 
             // The per-slot path: padding runs after the body, past the

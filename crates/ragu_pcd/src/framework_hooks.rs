@@ -99,7 +99,7 @@ use ragu_core::{
     drivers::{Driver, DriverValue},
     maybe::Maybe,
 };
-use ragu_primitives::{Element, GadgetExt};
+use ragu_primitives::Element;
 
 /// A single witnessed polynomial: its embedded commitment coordinates and its
 /// coefficients.
@@ -157,15 +157,11 @@ pub struct ChallengeWires<'dr, D: Driver<'dr>> {
 pub struct PolyWires<'dr, D: Driver<'dr>> {
     /// The polynomial's coefficient values (witness-only; never wires).
     pub coefficients: DriverValue<D, Vec<D::F>>,
-    /// The slot's two coordinate instance wires: the host commitment's affine
-    /// coordinates, canonically embedded, allocated at witnessing as plain
-    /// value-filled wires — free wires, and still fail-closed: the
-    /// accumulator forces them to be the recorded host's embedded
-    /// coordinates, or no proof exists.
+    /// The slot's two coordinate instance wires: the commitment's
+    /// representation, allocated at witnessing as plain value-filled wires —
+    /// free wires, and still fail-closed: the accumulator and the root
+    /// recompute force them to be the recorded host's, or no proof exists.
     pub coords: [Element<'dr, D>; 2],
-    /// Whether [`poly_limbs`](crate::step::StepCtx::poly_limbs) has tied its
-    /// bit-derived coordinates to the wires; a second tie is refused.
-    pub tied: bool,
 }
 
 /// The in-circuit wires of a single **query**: which polynomial is opened,
@@ -205,12 +201,15 @@ pub struct FrameworkHooks<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     /// [`witness_polynomial`](crate::step::StepCtx::witness_polynomial) call,
     /// in call order. A polynomial's position here is its slot.
     witnessed_polys: Vec<PolyWires<'dr, D>>,
-    /// The `(points, challenge)` record each
+    /// The `(inputs, challenge)` record each
     /// [`derive_challenge`](crate::step::StepCtx::derive_challenge) call
     /// produced, in slot order. Its length *is* the call count.
     challenge_pairs: Vec<ChallengeWires<'dr, D>>,
-    /// The proof-level values the hooks commit to. See [`ProofValues`].
-    proof_values: DriverValue<D, ProofValues<'dr, C>>,
+    /// The cycle parameters, for the hook bodies that compute witness values.
+    /// A [`DriverValue`] because their absence is exactly the driver's
+    /// absence of values: every use sits inside a `try_just` that a
+    /// structure-only driver discards.
+    params: DriverValue<D, &'dr C::Params>,
     /// The application's declared slot capacities: what every circuit's
     /// instance exposes, what padding fills to, and what each hook checks
     /// calls against.
@@ -322,35 +321,6 @@ pub struct PolyQueryLayout {
     pub claims: usize,
 }
 
-/// The proof-level values a hook needs to compute a witness: the cycle
-/// parameters.
-///
-/// A [`DriverValue`] because its absence is exactly the driver's absence of
-/// values: every use sits inside a `try_just` that a structure-only driver
-/// discards. The adapter assembles this once, in its `witness`.
-pub struct ProofValues<'dr, C: Cycle> {
-    pub(crate) params: &'dr C::Params,
-    _cycle: core::marker::PhantomData<C>,
-}
-
-impl<'dr, C: Cycle> ProofValues<'dr, C> {
-    pub(crate) fn new(params: &'dr C::Params) -> Self {
-        Self {
-            params,
-            _cycle: core::marker::PhantomData,
-        }
-    }
-}
-
-// Hand-written to avoid `derive`'s `C: Clone`/`C: Copy` bounds; the fields are
-// a shared reference and a field element, both `Copy` for every `Cycle`.
-impl<C: Cycle> Clone for ProofValues<'_, C> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-impl<C: Cycle> Copy for ProofValues<'_, C> {}
-
 /// Aggregate of every hook's accumulated output, drained from a
 /// [`FrameworkHooks`] once the step body has run. Adding a new hook means adding
 /// a field here, which forces every drain site to acknowledge it.
@@ -382,7 +352,6 @@ impl<'dr, D: Driver<'dr>> FrameworkHookOutputs<'dr, D> {
         for PolyWires {
             coefficients,
             coords,
-            tied: _,
         } in self.witnessed_polys
         {
             polys.push(D::try_just(|| {
@@ -440,15 +409,12 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     /// declared, so nothing has to be learned from the step body first — each
     /// hook simply refuses a call past the capacity, at the call that exceeds
     /// it.
-    pub(crate) fn new(
-        capacity: HookLayout,
-        proof_values: DriverValue<D, ProofValues<'dr, C>>,
-    ) -> Self {
+    pub(crate) fn new(capacity: HookLayout, params: DriverValue<D, &'dr C::Params>) -> Self {
         Self {
             poly_queries: Vec::new(),
             witnessed_polys: Vec::new(),
             challenge_pairs: Vec::new(),
-            proof_values,
+            params,
             capacity,
         }
     }
@@ -459,10 +425,9 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
         self.capacity
     }
 
-    /// The proof-level values the hooks commit to, for the hook bodies that
-    /// need them.
-    pub(crate) fn proof_values(&self) -> DriverValue<D, ProofValues<'dr, C>> {
-        Maybe::clone(&self.proof_values)
+    /// The cycle parameters, for the hook bodies that compute witness values.
+    pub(crate) fn params(&self) -> DriverValue<D, &'dr C::Params> {
+        Maybe::clone(&self.params)
     }
 
     /// The slot the next witnessed polynomial will occupy, in
@@ -496,37 +461,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
         self.witnessed_polys.push(PolyWires {
             coefficients,
             coords,
-            tied: false,
         });
-    }
-
-    /// Ties the coordinates [`poly_limbs`](crate::step::StepCtx::poly_limbs)
-    /// derived from the step's own constrained bits to `slot`'s coordinate
-    /// instance wires.
-    ///
-    /// # Errors
-    ///
-    /// Rejects a second call for the same slot: the first call's bits are
-    /// already tied.
-    pub(crate) fn tie_coords(
-        &mut self,
-        dr: &mut D,
-        slot: usize,
-        derived: [Element<'dr, D>; 2],
-    ) -> Result<()> {
-        let wires = self.witnessed_polys.get_mut(slot).ok_or_else(|| {
-            Error::InvalidWitness("poly_limbs called for a slot that was never witnessed".into())
-        })?;
-        if wires.tied {
-            return Err(Error::InvalidWitness(
-                "poly_limbs may only be called once per handle".into(),
-            ));
-        }
-        wires.tied = true;
-        for (derived, wire) in derived.into_iter().zip(wires.coords.clone()) {
-            derived.enforce_equal(dr, &wire)?;
-        }
-        Ok(())
     }
 
     /// Checks that another challenge slot is available, before the caller does
@@ -694,7 +629,7 @@ mod tests {
                     challenge: ChallengeLayout { calls, width: 2 },
                     poly_query: PolyQueryLayout::default(),
                 },
-                <Empty as MaybeKind>::empty::<ProofValues<'_, Pasta>>(),
+                <Empty as MaybeKind>::empty::<&<Pasta as Cycle>::Params>(),
             )
         };
 

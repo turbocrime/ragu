@@ -98,12 +98,12 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     /// everything else — the recorded hosts and the claim polynomials —
     /// untouched.
     ///
-    /// Models a prover whose step hashed limbs that are not the recorded
-    /// host's. Exactly two checks are supposed to reject it: at root, `verify`
-    /// recomputes every slot's coordinates from the recorded host; fused as a
-    /// child, the parent's `compute_v` re-derives the claim-coordinate
-    /// polynomial's $q(u)$ from these wires and enforces it against the eval
-    /// stage's carried value.
+    /// Models a prover whose step used a representation that is not the
+    /// recorded host's. Exactly two checks are supposed to reject it: at
+    /// root, `verify` recomputes every slot's coordinates from the recorded
+    /// host; fused as a child, the parent's `compute_v` re-derives the
+    /// claim-coordinate polynomial's $q(u)$ from these wires and enforces it
+    /// against the eval stage's carried value.
     pub fn corrupt_application_coord(&mut self, index: usize, value: C::CircuitField) {
         self.application_poly_coords[index] = value;
     }

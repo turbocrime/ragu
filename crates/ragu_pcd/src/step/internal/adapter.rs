@@ -21,7 +21,7 @@ use ragu_primitives::{
 use super::super::{Step, StepCtx};
 use crate::{
     Header,
-    framework_hooks::{FrameworkAux, FrameworkHooks, HookLayout, ProofValues},
+    framework_hooks::{FrameworkAux, FrameworkHooks, HookLayout},
 };
 
 /// Length of an application circuit's public instance: the three headers, then
@@ -208,16 +208,15 @@ impl<
         // built with `None`, is structure-only, so `Empty::try_just` discards
         // this without calling it.
         let params = self.params;
-        let proof_values = D::try_just(move || {
-            let params = params.ok_or_else(|| {
+        let params = D::try_just(move || {
+            params.ok_or_else(|| {
                 ragu_core::Error::InvalidWitness(
                     "step witnessed with proof values but no cycle parameters".into(),
                 )
-            })?;
-            Ok(ProofValues::new(params))
+            })
         })?;
 
-        let mut hooks = FrameworkHooks::new(Self::CAPACITY, Maybe::clone(&proof_values));
+        let mut hooks = FrameworkHooks::new(Self::CAPACITY, Maybe::clone(&params));
         let ((left, right, output), output_data, step_aux) = {
             let mut ctx = StepCtx::<'_, '_, _, C>::new(dr, &mut hooks);
             let body = self

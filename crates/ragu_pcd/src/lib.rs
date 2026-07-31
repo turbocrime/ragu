@@ -501,28 +501,30 @@ impl<
 
     /// Commits to a `CircuitField` polynomial in the framework's poly-query
     /// commitment scheme, returning a [`PolyCommitment`] that bundles the
-    /// polynomial with the nested-curve commitment derived from it.
+    /// polynomial with its commitment's representation.
     ///
     /// The commitment is an (unblinded) Pedersen commitment to the
-    /// coefficients on the host curve, carried onto the nested curve via the
-    /// framework's standard bridge encoding. Thread the returned
-    /// [`PolyCommitment`] into a step's witness and turn it into an in-circuit
-    /// [`PolyHandle`] with
-    /// [`StepCtx::witness_polynomial`](step::StepCtx::witness_polynomial);
+    /// coefficients on the host curve; its representation is the affine
+    /// coordinates canonically embedded in the circuit field
+    /// ([`PolyCommitment::coords`]). Thread the returned [`PolyCommitment`]
+    /// into a step's witness and turn it into an in-circuit [`PolyHandle`]
+    /// with [`StepCtx::witness_polynomial`](step::StepCtx::witness_polynomial);
     /// [`StepCtx::enforce_poly_query`](step::StepCtx::enforce_poly_query) then
-    /// raises the opening claim. Because the commitment is derived from the
-    /// polynomial here, the two cannot be mismatched by an honest caller.
+    /// raises the opening claim. Because the representation is derived from
+    /// the polynomial here, the two cannot be mismatched by an honest caller.
     ///
     /// # Errors
     ///
     /// Returns [`Error::InvalidWitness`] if the polynomial's commitment is
-    /// the identity (e.g. the zero polynomial), which cannot be witnessed
-    /// in-circuit.
+    /// the identity (e.g. the zero polynomial) or has a coordinate at or
+    /// above $2^{254}$ (a `~2^-129` fraction of the field) — neither has a
+    /// canonical representation. Both are answered by re-blinding the
+    /// polynomial.
     pub fn commit_polynomial(
         &self,
         polynomial: &ragu_circuits::polynomials::sparse::Polynomial<C::CircuitField, R>,
     ) -> Result<PolyCommitment<C, R>> {
         let host = internal::challenge::host_commitment::<C, R>(self.params, polynomial)?;
-        Ok(PolyCommitment::new(polynomial.clone(), host))
+        PolyCommitment::new(polynomial.clone(), host)
     }
 }

@@ -56,12 +56,12 @@ pub(crate) fn host_commitment<C: Cycle, R: Rank>(
 const HIGH_BITS: usize = 126;
 
 /// The four 128-bit limbs `[x_lo, x_hi, y_lo, y_hi]` of a host commitment's
-/// coordinates — the consumer's own split of `to_repr()` into 16-byte halves,
-/// so hashing these values reproduces exactly the digest computed natively
-/// from the same commitment.
+/// coordinates — the split of `to_repr()` into 16-byte halves that
+/// [`host_coords`] recomposes into the commitment's representation.
 ///
 /// Errors rather than truncating when a coordinate does not fit: see
-/// [`HIGH_BITS`], whose width bound is what makes the split canonical.
+/// [`HIGH_BITS`], whose width bound is what makes the split — and therefore
+/// the representation — canonical.
 pub(crate) fn host_limbs<C: CurveAffine>(host: C) -> Result<[u128; 4]> {
     let coordinates = host.coordinates().into_option().ok_or_else(|| {
         Error::InvalidWitness(

@@ -252,7 +252,7 @@ fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
     // step's challenge is bound to P while the parent folds P'.
     let host_of_p =
         p.commit_to_affine::<<Pasta as Cycle>::HostCurve>(Pasta::host_generators(pasta));
-    let desynced = PolyCommitment::<Pasta, R>::desync_for_testing(p_prime.clone(), host_of_p);
+    let desynced = PolyCommitment::<Pasta, R>::desync_for_testing(p_prime.clone(), host_of_p)?;
 
     let (cheat, ()) = app.seed(
         &mut rng,
@@ -336,14 +336,14 @@ fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
 /// **The coordinate region is bound: a forged coordinate wire is rejected at
 /// root and through a fuse.**
 ///
-/// A step's view of its commitment — the limbs `poly_limbs` hands it and the
-/// embedded coordinates the same bits pack into — is provable because each
-/// coordinate is an instance wire, and that wire is checked twice: natively
-/// at root, where `verify` recomputes every slot's coordinates from the
-/// recorded host commitment, and in-circuit at every fuse, where the parent's
-/// `compute_v` re-derives the claim-coordinate polynomial's $q(u)$ from the
-/// child's coordinate wires and enforces it against the eval stage's carried
-/// value (which the accumulator folds).
+/// A step's view of its commitment — the representation `coords()` hands
+/// it — is provable because each coordinate is an instance wire, and that
+/// wire is checked twice: natively at root, where `verify` recomputes every
+/// slot's coordinates from the recorded host commitment, and in-circuit at
+/// every fuse, where the parent's `compute_v` re-derives the
+/// claim-coordinate polynomial's $q(u)$ from the child's coordinate wires
+/// and enforces it against the eval stage's carried value (which the
+/// accumulator folds).
 ///
 /// **The adversary.** Flip one coordinate wire's recorded value and nothing
 /// else: the hosts and claim polynomials all stay put, so
