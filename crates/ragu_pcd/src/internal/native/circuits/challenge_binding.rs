@@ -38,7 +38,7 @@
 //! **What those elements bind is the step author's responsibility** — see
 //! [`StepCtx::derive_challenge`] for the contract.
 //! The prover-side counterpart is
-//! [`challenge_from_elements`](crate::internal::challenge::challenge_from_elements),
+//! [`padded_challenge`](crate::internal::challenge::padded_challenge),
 //! which runs the identical sponge natively; the two must agree exactly.
 //!
 //! ## Staging
@@ -158,7 +158,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         let challenges = challenges.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;
 
         // Re-derive each child's challenges. A fresh sponge per slot, matching
-        // `challenge_from_elements` exactly: absorb every input element in
+        // `padded_challenge` exactly: absorb every input element in
         // slot order, squeeze once. A fresh sponge per slot rather than one
         // chained sponge, so slot i's challenge cannot depend on slot i-1's
         // inputs — and it is no more expensive, since each squeeze costs a

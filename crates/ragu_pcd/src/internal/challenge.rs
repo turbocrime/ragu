@@ -12,24 +12,6 @@ use ragu_arithmetic::{
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{Error, Result};
 
-use crate::internal::nested::RxIndex;
-
-/// The exponent of `bridge_alpha` for a blinded bridge stage: its position in
-/// the ordering `outer_error`, `ab`, `query`, `eval`, offset past the
-/// unusable zeroth power. Deriving every exponent from a single ordering
-/// keeps all blinds distinct by construction. `preamble`, `s_prime`,
-/// `inner_error` and `f` are absent: the fuse stages blind them with an
-/// in-circuit challenge, and this panics on them.
-pub(crate) fn bridge_alpha_exponent(idx: RxIndex) -> u64 {
-    match idx {
-        RxIndex::BridgeOuterError => 1,
-        RxIndex::BridgeAB => 2,
-        RxIndex::BridgeQuery => 3,
-        RxIndex::BridgeEval => 4,
-        _ => panic!("not blinded from bridge_alpha: {idx:?}"),
-    }
-}
-
 /// The host-curve commitment to a poly-query polynomial, rejecting the
 /// identity (which has no affine coordinates, so it could not be witnessed as
 /// a `Point` nor bridged).
@@ -173,43 +155,38 @@ fn sentinel_element<C: Cycle>(params: &C::Params) -> C::CircuitField {
         .x()
 }
 
-/// Hashes a challenge slot's input elements into the challenge they derive.
+/// Pads a challenge slot's inputs to its full complement with the sentinel
+/// and hashes them into the challenge they derive: the whole native-side
+/// derivation.
 ///
 /// The native counterpart of what the `challenge_binding` circuit enforces
 /// in-circuit for every child slot; the two must agree exactly. Kept as one
 /// function so a change to the sponge shape cannot silently desync the prover,
-/// the root verifier, and the circuit.
+/// the root verifier, and the circuit — the verifier re-derives a recorded
+/// slot (already full) by passing `width = inputs.len()`, making the padding
+/// a no-op.
 ///
 /// [`challenge_binding`]: crate::internal::native::circuits::challenge_binding
-pub(crate) fn challenge_from_elements<C: Cycle>(
-    params: &C::Params,
-    inputs: &[C::CircuitField],
-) -> Result<C::CircuitField> {
-    use ragu_core::{drivers::emulator::Emulator, maybe::Maybe};
-    use ragu_primitives::{Element, GadgetExt, poseidon::Sponge};
-
-    let mut dr = Emulator::execute();
-    let mut sponge = Sponge::new(&mut dr, C::circuit_poseidon(params));
-    for &input in inputs {
-        let element = Element::constant(&mut dr, input);
-        element.write(&mut dr, &mut sponge)?;
-    }
-    let challenge = sponge.squeeze(&mut dr)?;
-    Ok(*challenge.value().take())
-}
-
-/// Pads a `derive_challenge` call's inputs to the slot's full complement with
-/// the sentinel and hashes them: the whole prover-side derivation.
 pub(crate) fn padded_challenge<C: Cycle>(
     params: &C::Params,
     inputs: &[C::CircuitField],
     width: usize,
 ) -> Result<(alloc::vec::Vec<C::CircuitField>, C::CircuitField)> {
+    use ragu_core::{drivers::emulator::Emulator, maybe::Maybe};
+    use ragu_primitives::{Element, GadgetExt, poseidon::Sponge};
+
     debug_assert!(inputs.len() <= width);
     let mut padded = inputs.to_vec();
     padded.resize(width, sentinel_element::<C>(params));
-    let challenge = challenge_from_elements::<C>(params, &padded)?;
-    Ok((padded, challenge))
+
+    let mut dr = Emulator::execute();
+    let mut sponge = Sponge::new(&mut dr, C::circuit_poseidon(params));
+    for &input in &padded {
+        let element = Element::constant(&mut dr, input);
+        element.write(&mut dr, &mut sponge)?;
+    }
+    let challenge = sponge.squeeze(&mut dr)?;
+    Ok((padded, *challenge.value().take()))
 }
 
 /// The values that pad a step's unused hook slots, computed once at
@@ -342,26 +319,4 @@ mod tests {
         assert!(host_limbs(ragu_pasta::EqAffine::identity()).is_err());
     }
 
-    /// Pins the `bridge_alpha` exponent series.
-    ///
-    /// These blinds are prover-side — derived at proof time, never part of a
-    /// circuit — so **no registry digest covers them**. Two stages colliding
-    /// on one blind would be silent; this test is the only thing that would
-    /// notice.
-    #[test]
-    fn bridge_alpha_exponents_are_the_expected_series() {
-        // Spelled out so a reordering has to be deliberate.
-        assert_eq!(bridge_alpha_exponent(RxIndex::BridgeOuterError), 1);
-        assert_eq!(bridge_alpha_exponent(RxIndex::BridgeAB), 2);
-        assert_eq!(bridge_alpha_exponent(RxIndex::BridgeQuery), 3);
-        assert_eq!(bridge_alpha_exponent(RxIndex::BridgeEval), 4);
-    }
-
-    /// The bridges the fuse stages blind with an in-circuit challenge are not
-    /// on this series at all.
-    #[test]
-    #[should_panic(expected = "not blinded from bridge_alpha")]
-    fn unblinded_bridges_are_rejected() {
-        bridge_alpha_exponent(RxIndex::BridgeF);
-    }
 }

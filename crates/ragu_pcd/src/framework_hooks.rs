@@ -94,12 +94,18 @@
 use alloc::vec::Vec;
 
 use ragu_arithmetic::{Cycle, ff::Field};
+use ragu_circuits::polynomials::Rank;
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverValue},
     maybe::Maybe,
 };
-use ragu_primitives::{Element, vec::Len};
+use ragu_primitives::{Element, allocator::Standard, vec::Len};
+
+use crate::{
+    internal::challenge::Padding,
+    poly_commitment::{PolyCommitment, PolyHandle},
+};
 
 /// A single witnessed polynomial: its embedded commitment coordinates and its
 /// coefficients.
@@ -151,9 +157,10 @@ pub struct ChallengeWires<'dr, D: Driver<'dr>> {
 ///
 /// One of these per [`witness_polynomial`](crate::step::StepCtx::witness_polynomial)
 /// call. `coords` is the polynomial's identity, and a claim that opens it
-/// carries **these same wires** — `enforce_polynomial_query` reads them from
-/// here, so the polynomial region and the claim region hold one pair of wires
-/// at two instance positions and their equality needs no constraint.
+/// carries **these same wires** — a step's [`PolyHandle`] holds them, and
+/// padding reads slot 0's back out — so the polynomial region and the claim
+/// region hold one pair of wires at two instance positions and their equality
+/// needs no constraint.
 pub struct PolyWires<'dr, D: Driver<'dr>> {
     /// The polynomial's coefficient values (witness-only; never wires).
     pub coefficients: DriverValue<D, Vec<D::F>>,
@@ -386,8 +393,8 @@ pub struct FrameworkHookOutputs<'dr, D: Driver<'dr>> {
     pub poly_queries: Vec<QueryWires<'dr, D>>,
     /// The `(points, challenge)` record per `derive_challenge` call, in slot
     /// order. Padded to the application's declared challenge capacity by
-    /// [`StepCtx::finish_slots`](crate::step::StepCtx), so its length is that
-    /// capacity rather than what the body used.
+    /// [`FrameworkHooks::finish_slots`], so its length is that capacity
+    /// rather than what the body used.
     pub challenge_pairs: Vec<ChallengeWires<'dr, D>>,
 }
 
@@ -438,7 +445,7 @@ impl<'dr, D: Driver<'dr>> FrameworkHookOutputs<'dr, D> {
         }
         let challenges = collect_values::<D, _>(challenges)?;
 
-        // `StepCtx::finish_slots` padded each to the application's capacity.
+        // `finish_slots` padded each to the application's capacity.
         D::try_just(move || {
             Ok(FrameworkAux {
                 polys: polys.take(),
@@ -471,100 +478,76 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
         }
     }
 
-    /// The application's slot capacities; what
-    /// [`finish_slots`](crate::step::StepCtx) pads to.
-    pub(crate) fn hook_layout(&self) -> HookLayout {
-        self.hook_layout
+    /// Witnesses the step's polynomials — the work behind
+    /// [`StepCtx::witness_polynomial`](crate::step::StepCtx::witness_polynomial),
+    /// which documents the step-facing contract.
+    pub(crate) fn witness_polynomials<R: Rank, const N: usize>(
+        &mut self,
+        dr: &mut D,
+        commitments: [DriverValue<D, PolyCommitment<C, R>>; N],
+    ) -> Result<[PolyHandle<'dr, D, C, R>; N]> {
+        if !self.witnessed_polys.is_empty() {
+            return Err(Error::InvalidWitness(
+                "witness_polynomial may only be called once per step".into(),
+            ));
+        }
+
+        let mut handles = Vec::with_capacity(N);
+        for commitment in commitments {
+            handles.push(self.witness_one_polynomial::<R>(dr, commitment)?);
+        }
+
+        // `N` handles were pushed, one per element of a `[_; N]`.
+        Ok(handles
+            .try_into()
+            .map_err(|_| ())
+            .expect("one handle per commitment"))
     }
 
-    /// The slot the next witnessed polynomial will occupy, in
-    /// `witness_polynomial` call order. The call sequence is circuit structure —
-    /// it must not depend on witness values — so the assignment is
-    /// deterministic.
-    pub(crate) fn next_poly_slot(&self) -> Result<usize> {
-        let slot = self.witnessed_polys.len();
-        if slot >= self.hook_layout.poly_query.polys {
+    /// Witnesses one polynomial into the next free slot — also the per-slot
+    /// door padding uses, past the step-facing array call's once-only rule.
+    ///
+    /// The call sequence is circuit structure — it must not depend on witness
+    /// values — so the slot assignment is deterministic: call order.
+    fn witness_one_polynomial<R: Rank>(
+        &mut self,
+        dr: &mut D,
+        commitment: DriverValue<D, PolyCommitment<C, R>>,
+    ) -> Result<PolyHandle<'dr, D, C, R>> {
+        if self.witnessed_polys.len() >= self.hook_layout.poly_query.polys {
             return Err(Error::InvalidWitness(
                 "step witnessed more polynomials than there are polynomial slots".into(),
             ));
         }
-        Ok(slot)
-    }
-
-    /// Records a witnessed polynomial in `slot`, which
-    /// [`next_poly_slot`](Self::next_poly_slot) returned to the caller. The
-    /// debug assertion pins that the two agree.
-    pub(crate) fn record_polynomial(
-        &mut self,
-        slot: usize,
-        coefficients: DriverValue<D, Vec<D::F>>,
-        coords: [Element<'dr, D>; 2],
-    ) {
-        debug_assert_eq!(
-            slot,
-            self.witnessed_polys.len(),
-            "a polynomial must be recorded in the slot next_poly_slot returned"
-        );
+        // The slot's two coordinate instance wires: the commitment's
+        // representation, and the value a consumer hashes or compares. Plain
+        // value-filled wires, fail-closed: the accumulator and the root
+        // recompute force them to be the recorded host's, or no proof
+        // exists.
+        let coord_values = commitment.as_ref().map(|c| c.coords());
+        let coords = [
+            Element::alloc(dr, &mut (), coord_values.as_ref().map(|c| c[0]))?,
+            Element::alloc(dr, &mut (), coord_values.as_ref().map(|c| c[1]))?,
+        ];
+        let polynomial = commitment.map(PolyCommitment::into_polynomial);
+        let handle = PolyHandle::new(polynomial, coords.clone());
         self.witnessed_polys.push(PolyWires {
-            coefficients,
+            coefficients: handle.coefficients(),
             coords,
         });
-    }
-
-    /// Checks that another challenge slot is available, before the caller does
-    /// the work of filling it — the challenge twin of
-    /// [`next_poly_slot`](Self::next_poly_slot).
-    pub(crate) fn reserve_challenge_slot(&self) -> Result<()> {
-        if self.challenge_pairs.len() >= self.hook_layout.challenge.calls {
-            return Err(Error::InvalidWitness(
-                "step derived more challenges than there are challenge slots".into(),
-            ));
-        }
-        Ok(())
-    }
-
-    /// Records a derived challenge's `(inputs, challenge)` record. The adapter
-    /// writes these into the application circuit's public instance, binding
-    /// them to its $k(Y)$ so the parent's binding circuit can re-derive the
-    /// challenge from the inputs.
-    pub(crate) fn record_challenge(
-        &mut self,
-        inputs: Vec<Element<'dr, D>>,
-        challenge: Element<'dr, D>,
-    ) {
-        debug_assert_eq!(inputs.len(), self.hook_layout.challenge.width);
-        self.challenge_pairs
-            .push(ChallengeWires { inputs, challenge });
+        Ok(handle)
     }
 
     /// Records a claim that the polynomial named by `coords` evaluates to `y`
-    /// at the point `x`.
-    ///
-    /// The claim wires occupy one of the application circuit's
-    /// claim instance slots,
-    /// binding them to the circuit's $k(Y)$; the claim itself is recursively
-    /// enforced at the next fuse via the PCS accumulator. The fuse that raises
-    /// it additionally pre-checks it natively (see
-    /// [`Application::commit_polynomial`](crate::Application::commit_polynomial));
-    /// a dishonest witness aborts with [`Error::InvalidWitness`].
+    /// at the point `x` — the sink behind
+    /// [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query),
+    /// which documents the step-facing contract. Padding reaches it directly,
+    /// naming slot 0.
     ///
     /// The number of calls per step body is part of the circuit structure: it
-    /// must not depend on witness values and must not exceed
-    /// the application's claim capacity (checked here).
-    ///
-    /// `coords` are the wires the caller's
-    /// [`PolyHandle`](crate::PolyHandle) holds — the same wires the
-    /// polynomial region writes — and a `PolyHandle` can only come from
-    /// [`witness_polynomial`](crate::step::StepCtx::witness_polynomial), so a
-    /// claim names a witnessed polynomial by construction. Claims may be
-    /// raised in any order and several may open one polynomial; a repeat
-    /// opening costs a claim slot and no polynomial slot.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::InvalidWitness`] if the step has already filled every
-    /// claim slot the application declared.
-    pub(crate) fn enforce_polynomial_query(
+    /// must not depend on witness values and must not exceed the application's
+    /// claim capacity — checked here, at the call that exceeds it.
+    pub(crate) fn enforce_poly_query(
         &mut self,
         coords: [Element<'dr, D>; 2],
         x: Element<'dr, D>,
@@ -579,70 +562,164 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
         Ok(())
     }
 
-    /// Fills one unused claim slot with the canonical padding query.
+    /// Derives a Fiat–Shamir challenge — the work behind
+    /// [`StepCtx::derive_challenge`](crate::step::StepCtx::derive_challenge),
+    /// which documents the step-facing contract and the caller's obligation.
     ///
-    /// Separate from [`enforce_polynomial_query`](Self::enforce_polynomial_query)
-    /// because padding has no [`PolyHandle`](crate::PolyHandle) to name — it
-    /// runs after the step body, against slot 0, whose `coords` this
-    /// container already holds; the step-facing path stays free of slot
-    /// indices.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::InvalidWitness`] if no claim slot is free, or if no
-    /// polynomial slot was ever filled — a claim has to name a polynomial.
-    pub(crate) fn enforce_padding_query(
+    /// The `(inputs, challenge)` record accumulates here; the adapter writes
+    /// it into the application circuit's public instance, binding it to its
+    /// $k(Y)$ so the parent's binding circuit can re-derive the challenge
+    /// from the inputs.
+    pub(crate) fn derive_challenge(
         &mut self,
-        x: Element<'dr, D>,
-        y: Element<'dr, D>,
+        dr: &mut D,
+        params: &C::Params,
+        inputs: &[Element<'dr, D>],
+    ) -> Result<Element<'dr, D>> {
+        let width = self.hook_layout.challenge.width;
+        if inputs.len() > width {
+            return Err(Error::InvalidWitness(
+                "derive_challenge received more elements than a challenge slot absorbs".into(),
+            ));
+        }
+        if self.challenge_pairs.len() >= self.hook_layout.challenge.calls {
+            return Err(Error::InvalidWitness(
+                "step derived more challenges than there are challenge slots".into(),
+            ));
+        }
+
+        let supplied = D::try_just(|| {
+            let mut values = Vec::with_capacity(inputs.len());
+            for input in inputs {
+                values.push(*input.value().take());
+            }
+            Ok(values)
+        })?;
+
+        // Pad to the slot's full complement with the sentinel and hash. The
+        // padded inputs are witnessed like the supplied ones: the parent
+        // absorbs a fixed number per slot, so it must see them all.
+        let derived = D::try_just(|| {
+            crate::internal::challenge::padded_challenge::<C>(params, &supplied.take(), width)
+        })?;
+
+        let allocator = &mut Standard::new();
+        let mut witnessed = Vec::with_capacity(width);
+        for index in 0..width {
+            match inputs.get(index) {
+                // A supplied element is already a wire in this circuit; reuse
+                // it rather than re-witnessing, so the instance names the very
+                // wire the caller pinned.
+                Some(input) => witnessed.push(input.clone()),
+                None => witnessed.push(Element::alloc(
+                    dr,
+                    allocator,
+                    derived.as_ref().map(|(padded, _)| padded[index]),
+                )?),
+            }
+        }
+
+        let challenge = Element::alloc(dr, allocator, derived.map(|(_, challenge)| challenge))?;
+        self.challenge_pairs.push(ChallengeWires {
+            inputs: witnessed,
+            challenge: challenge.clone(),
+        });
+        Ok(challenge)
+    }
+
+    /// Pads every slot the step body left unused, up to the application's
+    /// declared capacity — the instance shape the internal circuits read as a
+    /// fixed-width record. The adapter calls this after the step body
+    /// returns; it is not step-facing, so it is not on
+    /// [`StepCtx`](crate::step::StepCtx).
+    ///
+    /// Padding goes through the same doors a step body does
+    /// ([`witness_one_polynomial`](Self::witness_one_polynomial),
+    /// [`enforce_poly_query`](Self::enforce_poly_query), the challenge
+    /// record), and the padded values are *real*: a trivially true claim (the
+    /// constant polynomial $1$, opened at $0$ to $1$) and the challenge the
+    /// sentinel points honestly hash to, so the parent's circuits treat every
+    /// slot uniformly. The values themselves are the per-application
+    /// constants of [`Padding`], computed at finalize and supplied as witness
+    /// data — which is why padding, unlike
+    /// [`derive_challenge`](Self::derive_challenge), needs no cycle
+    /// parameters.
+    ///
+    /// `R` is a method parameter so the rank stays out of the container's
+    /// type, and out of every `Step::witness` signature with it.
+    pub(crate) fn finish_slots<R: Rank>(
+        &mut self,
+        dr: &mut D,
+        padding: DriverValue<D, Padding<C, R>>,
     ) -> Result<()> {
-        let coords = self
-            .witnessed_polys
-            .first()
-            .ok_or_else(|| {
+        // Polynomials first, so every query slot has something to name. The
+        // handle is discarded — the slot is recorded, and every padding query
+        // names slot 0.
+        while self.witnessed_polys.len() < self.hook_layout.poly_query.polys {
+            let commitment = padding.as_ref().map(|p| p.poly.clone());
+            self.witness_one_polynomial::<R>(dr, commitment)?;
+        }
+
+        // Then queries. Every padding query is the *same* query — slot 0
+        // opened at $x = 0$, where the value is the constant term, true
+        // whatever the slot holds — so it is witnessed once and its wires are
+        // reused for every unused slot, keeping the step's circuit
+        // independent of the claim capacity.
+        let allocator = &mut Standard::new();
+        let mut padding_query: Option<(Element<'dr, D>, Element<'dr, D>)> = None;
+        while self.poly_queries.len() < self.hook_layout.poly_query.claims {
+            let slot_zero = self.witnessed_polys.first().ok_or_else(|| {
                 Error::InvalidWitness("a padding claim requires a polynomial slot to name".into())
-            })?
-            .coords
-            .clone();
-        self.enforce_polynomial_query(coords, x, y)
-    }
+            })?;
+            let coords = slot_zero.coords.clone();
+            let (x, y) = match &padding_query {
+                Some((x, y)) => (x.clone(), y.clone()),
+                None => {
+                    let x = Element::alloc(dr, allocator, D::just(|| D::F::ZERO))?;
+                    // Slot 0's value at zero is its constant term.
+                    let y_value = slot_zero
+                        .coefficients
+                        .as_ref()
+                        .map(|coefficients| coefficients.first().copied().unwrap_or(D::F::ZERO));
+                    let y = Element::alloc(dr, allocator, y_value)?;
+                    padding_query = Some((x.clone(), y.clone()));
+                    (x, y)
+                }
+            };
+            self.enforce_poly_query(coords, x, y)?;
+        }
 
-    /// The number of poly-query claim slots filled so far, and the number of
-    /// challenge slots. [`StepCtx::finish_slots`](crate::step::StepCtx) reads
-    /// these to know how many remain to pad.
-    pub(crate) fn claims_filled(&self) -> usize {
-        self.poly_queries.len()
-    }
+        // A padding challenge supplies no points at all: every input position
+        // holds the sentinel and the challenge is their hash — both
+        // per-application constants carried by `padding`. The allocation
+        // pattern matches a `derive_challenge` call exactly (a fresh
+        // allocator per slot, the inputs, then the challenge), so the circuit
+        // is the same one the body would have produced.
+        while self.challenge_pairs.len() < self.hook_layout.challenge.calls {
+            let allocator = &mut Standard::new();
+            let mut witnessed = Vec::with_capacity(self.hook_layout.challenge.width);
+            for _ in 0..self.hook_layout.challenge.width {
+                witnessed.push(Element::alloc(
+                    dr,
+                    allocator,
+                    padding.as_ref().map(|p| p.sentinel),
+                )?);
+            }
+            let challenge = Element::alloc(
+                dr,
+                allocator,
+                padding.as_ref().map(|p| {
+                    p.challenge
+                        .expect("a padded challenge slot implies a nonzero challenge width")
+                }),
+            )?;
+            self.challenge_pairs.push(ChallengeWires {
+                inputs: witnessed,
+                challenge,
+            });
+        }
 
-    /// See [`claims_filled`](Self::claims_filled).
-    pub(crate) fn challenges_filled(&self) -> usize {
-        self.challenge_pairs.len()
-    }
-
-    /// The number of polynomial slots filled so far.
-    pub(crate) fn polys_filled(&self) -> usize {
-        self.witnessed_polys.len()
-    }
-
-    /// The value of the first witnessed polynomial at $x = 0$ — its constant
-    /// term. [`StepCtx::finish_slots`](crate::step::StepCtx) pairs this with
-    /// the `coords` [`enforce_padding_query`](Self::enforce_padding_query)
-    /// reads from the same slot, so a padding query is a real, trivially true
-    /// opening.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::InvalidWitness`] if no polynomial was ever witnessed.
-    pub(crate) fn first_poly_at_zero(&self) -> Result<DriverValue<D, D::F>> {
-        Ok(self
-            .witnessed_polys
-            .first()
-            .ok_or_else(|| {
-                Error::InvalidWitness("a padding claim requires a polynomial slot to name".into())
-            })?
-            .coefficients
-            .as_ref()
-            .map(|coefficients| coefficients.first().copied().unwrap_or(D::F::ZERO)))
+        Ok(())
     }
 
     /// Consumes the container and returns every hook's accumulated output.
@@ -676,14 +753,18 @@ mod tests {
                 poly_query: PolyQueryLayout::default(),
             })
         };
+        let params = Pasta::baked();
 
+        let mut dr: Dr<'_> = Emulator::counter();
         with_capacity(1)
-            .reserve_challenge_slot()
+            .derive_challenge(&mut dr, params, &[])
             .expect("a slot is available");
 
+        let mut dr: Dr<'_> = Emulator::counter();
         let error = with_capacity(0)
-            .reserve_challenge_slot()
-            .expect_err("a step with no challenge slots cannot derive one");
+            .derive_challenge(&mut dr, params, &[])
+            .err()
+            .expect("a step with no challenge slots cannot derive one");
         assert!(
             alloc::format!("{error}").contains("challenge slots"),
             "unexpected error: {error}"

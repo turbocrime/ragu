@@ -14,7 +14,6 @@ use ragu_circuits::polynomials::Rank;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
-    maybe::Maybe,
 };
 use ragu_primitives::Element;
 
@@ -77,45 +76,7 @@ where
         &mut self,
         commitments: [DriverValue<D, PolyCommitment<C, R>>; N],
     ) -> Result<[PolyHandle<'dr, D, C, R>; N]> {
-        if self.hooks.polys_filled() > 0 {
-            return Err(ragu_core::Error::InvalidWitness(
-                "witness_polynomial may only be called once per step".into(),
-            ));
-        }
-
-        let mut handles = alloc::vec::Vec::with_capacity(N);
-        for commitment in commitments {
-            handles.push(self.witness_one_polynomial::<R>(commitment)?);
-        }
-
-        // `N` handles were pushed, one per element of a `[_; N]`.
-        Ok(handles
-            .try_into()
-            .map_err(|_| ())
-            .expect("one handle per commitment"))
-    }
-
-    /// Witnesses one polynomial into the next free slot.
-    fn witness_one_polynomial<R: Rank>(
-        &mut self,
-        commitment: DriverValue<D, PolyCommitment<C, R>>,
-    ) -> Result<PolyHandle<'dr, D, C, R>> {
-        let slot = self.hooks.next_poly_slot()?;
-        // The slot's two coordinate instance wires: the commitment's
-        // representation, and the value a consumer hashes or compares. Plain
-        // value-filled wires, fail-closed: the accumulator and the root
-        // recompute force them to be the recorded host's, or no proof
-        // exists.
-        let coord_values = commitment.as_ref().map(|c| c.coords());
-        let coords = [
-            Element::alloc(self.dr, &mut (), coord_values.as_ref().map(|c| c[0]))?,
-            Element::alloc(self.dr, &mut (), coord_values.as_ref().map(|c| c[1]))?,
-        ];
-        let polynomial = commitment.map(PolyCommitment::into_polynomial);
-        let handle = PolyHandle::new(polynomial, coords.clone());
-        self.hooks
-            .record_polynomial(slot, handle.coefficients(), coords);
-        Ok(handle)
+        self.hooks.witness_polynomials(self.dr, commitments)
     }
 
     /// Records a poly-query claim: the polynomial behind `commitment` evaluates
@@ -162,8 +123,7 @@ where
         x: Element<'dr, D>,
         y: Element<'dr, D>,
     ) -> Result<()> {
-        self.hooks
-            .enforce_polynomial_query(commitment.coords(), x, y)
+        self.hooks.enforce_poly_query(commitment.coords(), x, y)
     }
 
     /// Derives a sound Fiat–Shamir challenge from `inputs`.
@@ -204,140 +164,6 @@ where
         params: &C::Params,
         inputs: &[Element<'dr, D>],
     ) -> Result<Element<'dr, D>> {
-        let width = self.hooks.hook_layout().challenge.width;
-        if inputs.len() > width {
-            return Err(ragu_core::Error::InvalidWitness(
-                "derive_challenge received more elements than a challenge slot absorbs".into(),
-            ));
-        }
-        self.hooks.reserve_challenge_slot()?;
-
-        let supplied = D::try_just(|| {
-            let mut values = alloc::vec::Vec::with_capacity(inputs.len());
-            for input in inputs {
-                values.push(*input.value().take());
-            }
-            Ok(values)
-        })?;
-
-        // Pad to the slot's full complement with the sentinel and hash. The
-        // padded inputs are witnessed like the supplied ones: the parent
-        // absorbs a fixed number per slot, so it must see them all.
-        let derived = D::try_just(|| {
-            crate::internal::challenge::padded_challenge::<C>(params, &supplied.take(), width)
-        })?;
-
-        let allocator = &mut ragu_primitives::allocator::Standard::new();
-        let mut witnessed = alloc::vec::Vec::with_capacity(width);
-        for index in 0..width {
-            match inputs.get(index) {
-                // A supplied element is already a wire in this circuit; reuse
-                // it rather than re-witnessing, so the instance names the very
-                // wire the caller pinned.
-                Some(input) => witnessed.push(input.clone()),
-                None => witnessed.push(Element::alloc(
-                    self.dr,
-                    allocator,
-                    derived.as_ref().map(|(padded, _)| padded[index]),
-                )?),
-            }
-        }
-
-        let challenge =
-            Element::alloc(self.dr, allocator, derived.map(|(_, challenge)| challenge))?;
-        self.hooks.record_challenge(witnessed, challenge.clone());
-        Ok(challenge)
-    }
-
-    /// Pads every slot the step body left unused, up to the application's
-    /// declared capacity — the instance shape the internal circuits read as a
-    /// fixed-width record.
-    ///
-    /// Padding goes through the same doors a step body does
-    /// ([`witness_polynomial`](Self::witness_polynomial),
-    /// [`enforce_poly_query`](Self::enforce_poly_query), the challenge
-    /// recorder behind [`derive_challenge`](Self::derive_challenge)), and the
-    /// padded values are *real*: a trivially true claim (the constant
-    /// polynomial $1$, opened at $0$ to $1$) and the challenge the sentinel
-    /// points honestly hash to, so the parent's circuits treat every slot
-    /// uniformly. The values themselves are the per-application constants of
-    /// [`Padding`], computed at finalize and supplied as witness data — which
-    /// is why padding, unlike [`derive_challenge`](Self::derive_challenge),
-    /// needs no cycle parameters here.
-    ///
-    /// `R` is a method parameter so the rank stays out of this context, and
-    /// out of every `Step::witness` signature with it.
-    ///
-    /// [`Padding`]: crate::internal::challenge::Padding
-    pub(crate) fn finish_slots<R: Rank>(
-        &mut self,
-        padding: DriverValue<D, crate::internal::challenge::Padding<C, R>>,
-    ) -> Result<()> {
-        let capacity = self.hooks.hook_layout();
-
-        // Polynomials first, so every query slot has something to name.
-        while self.hooks.polys_filled() < capacity.poly_query.polys {
-            let commitment = padding.as_ref().map(|p| p.poly.clone());
-
-            // The per-slot path: padding runs after the body, past the
-            // step-facing array call's once-only rule. The handle is
-            // discarded — the slot is recorded, and every padding query
-            // names slot 0.
-            self.witness_one_polynomial::<R>(commitment)?;
-        }
-
-        // Then queries. Every padding query is the *same* query — slot 0
-        // opened at $x = 0$, where the value is the constant term, true
-        // whatever the slot holds — so it is witnessed once and its wires are
-        // reused for every unused slot, keeping the step's circuit
-        // independent of the claim capacity.
-        let allocator = &mut ragu_primitives::allocator::Standard::new();
-        let mut padding_query: Option<(Element<'dr, D>, Element<'dr, D>)> = None;
-        while self.hooks.claims_filled() < capacity.poly_query.claims {
-            let (x, y) = match &padding_query {
-                Some((x, y)) => (x.clone(), y.clone()),
-                None => {
-                    let x = Element::alloc(
-                        self.dr,
-                        allocator,
-                        D::just(|| <D::F as ragu_arithmetic::ff::Field>::ZERO),
-                    )?;
-                    let y = Element::alloc(self.dr, allocator, self.hooks.first_poly_at_zero()?)?;
-                    padding_query = Some((x.clone(), y.clone()));
-                    (x, y)
-                }
-            };
-            self.hooks.enforce_padding_query(x, y)?;
-        }
-
-        // A padding challenge supplies no points at all: every input position
-        // holds the sentinel and the challenge is their hash — both
-        // per-application constants carried by `padding`. The allocation
-        // pattern matches a `derive_challenge` call exactly (a fresh
-        // allocator per slot, the inputs, then the challenge), so the circuit
-        // is the same one the body would have produced.
-        while self.hooks.challenges_filled() < capacity.challenge.calls {
-            self.hooks.reserve_challenge_slot()?;
-            let allocator = &mut ragu_primitives::allocator::Standard::new();
-            let mut witnessed = alloc::vec::Vec::with_capacity(capacity.challenge.width);
-            for _ in 0..capacity.challenge.width {
-                witnessed.push(Element::alloc(
-                    self.dr,
-                    allocator,
-                    padding.as_ref().map(|p| p.sentinel),
-                )?);
-            }
-            let challenge = Element::alloc(
-                self.dr,
-                allocator,
-                padding.as_ref().map(|p| {
-                    p.challenge
-                        .expect("a padded challenge slot implies a nonzero challenge width")
-                }),
-            )?;
-            self.hooks.record_challenge(witnessed, challenge);
-        }
-
-        Ok(())
+        self.hooks.derive_challenge(self.dr, params, inputs)
     }
 }

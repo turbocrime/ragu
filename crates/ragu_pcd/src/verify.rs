@@ -215,8 +215,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         // still unbound and the verifier re-derives each one natively.
         let derived_challenges = (0..capacity.challenge.calls).all(|slot| {
             let opening = &pcd.proof().application_challenges()[slot];
-            crate::internal::challenge::challenge_from_elements::<C>(self.params, &opening.inputs)
-                .is_ok_and(|derived| derived == opening.challenge)
+            crate::internal::challenge::padded_challenge::<C>(
+                self.params,
+                &opening.inputs,
+                opening.inputs.len(),
+            )
+            .is_ok_and(|(_, derived)| derived == opening.challenge)
         });
 
         // TODO: Add checks for registry_wx0_poly, registry_wx1_poly, and registry_wy_poly.

@@ -124,15 +124,13 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize, J: H
         let mut hooks = FrameworkHooks::new(J::layout());
         let ((left, right, output), output_data, step_aux) = {
             let mut ctx = StepCtx::<'_, '_, _, C>::new(dr, &mut hooks);
-            let body = self
-                .step
-                .witness::<_, HEADER_SIZE>(&mut ctx, witness, left, right)?;
-            // Fill whatever slots the body left over, through the same hooks it
-            // used. Each hook already rejected a call past the declared
-            // capacity, so there is no total to reconcile here.
-            ctx.finish_slots::<R>(padding)?;
-            body
+            self.step
+                .witness::<_, HEADER_SIZE>(&mut ctx, witness, left, right)?
         };
+        // Fill whatever slots the body left over, through the same hooks it
+        // used. Each hook already rejected a call past the declared capacity,
+        // so there is no total to reconcile here.
+        hooks.finish_slots::<R>(dr, padding)?;
         let outputs = hooks.into_outputs();
 
         let mut elements = Vec::with_capacity(
@@ -150,10 +148,10 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize, J: H
         // match `ProofInputs::application_ky`.
         //
         // A query's `coords` are the very wires its polynomial's slot wrote —
-        // `enforce_polynomial_query` reads them out of `witnessed_polys`
-        // rather than taking them from the caller — so this writes one pair
-        // at two positions and the parent inherits their equality through the
-        // revdot identity, with nothing to enforce.
+        // a step's `PolyHandle` holds them, and padding reads slot 0's back
+        // out of `witnessed_polys` — so this writes one pair at two positions
+        // and the parent inherits their equality through the revdot identity,
+        // with nothing to enforce.
         for poly in &outputs.witnessed_polys {
             for coord in &poly.coords {
                 coord.write(dr, &mut elements)?;
