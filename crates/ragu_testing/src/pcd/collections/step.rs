@@ -48,6 +48,26 @@ impl<F: Field, R: Rank> Clone for SetData<F, R> {
     }
 }
 
+impl<F: Field, R: Rank> SetData<F, R> {
+    /// Assembles the carried value from a handle's name and the polynomial.
+    fn from_handle<'dr, D: Driver<'dr, F = F>, C: Cycle<CircuitField = F>>(
+        handle: &PolyHandle<'dr, D, C>,
+        polynomial: DriverValue<D, sparse::Polynomial<F, R>>,
+    ) -> DriverValue<D, Self> {
+        let [c0, c1] = handle.coords();
+        let c0 = c0.value().map(|v| *v);
+        let c1 = c1.value().map(|v| *v);
+        polynomial.and_then(|polynomial| {
+            c0.and_then(|c0| {
+                c1.map(|c1| SetData {
+                    coords: [c0, c1],
+                    polynomial,
+                })
+            })
+        })
+    }
+}
+
 /// Header carrying a set's name as two raw elements.
 pub struct SetHeader<R>(PhantomData<R>);
 
@@ -123,8 +143,9 @@ impl<C: Cycle, R: Rank> Step<C> for SeedSet<C, R> {
         let set = witness.map(|w| w.set.clone());
         let [handle] = ctx.witness_polynomial([set])?;
 
-        let output_data = set_data(&handle, polynomial);
-        let header = name_header(&handle)?;
+        let output_data = SetData::from_handle(&handle, polynomial);
+        let header: FixedVec<_, ConstLen<2>> =
+            handle.coords().into_iter().collect::<Vec<_>>().try_into()?;
 
         Ok((
             (
@@ -215,8 +236,9 @@ impl<C: Cycle, R: Rank> Step<C> for MergeSets<'_, C, R> {
         let y_c = y_a.mul(ctx.dr, &y_b)?;
         ctx.enforce_poly_query(&c, z, y_c)?;
 
-        let output_data = set_data(&c, product_polynomial);
-        let header = name_header(&c)?;
+        let output_data = SetData::from_handle(&c, product_polynomial);
+        let header: FixedVec<_, ConstLen<2>> =
+            c.coords().into_iter().collect::<Vec<_>>().try_into()?;
 
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(header)),
@@ -239,6 +261,26 @@ impl<F: Field> Clone for SeqData<F> {
             coords: self.coords,
             members: self.members.clone(),
         }
+    }
+}
+
+impl<F: Field> SeqData<F> {
+    /// Assembles the carried value from a handle's name and the member list.
+    fn from_handle<'dr, D: Driver<'dr, F = F>, C: Cycle<CircuitField = F>>(
+        handle: &PolyHandle<'dr, D, C>,
+        members: DriverValue<D, Vec<F>>,
+    ) -> DriverValue<D, Self> {
+        let [c0, c1] = handle.coords();
+        let c0 = c0.value().map(|v| *v);
+        let c1 = c1.value().map(|v| *v);
+        c0.and_then(|c0| {
+            c1.and_then(|c1| {
+                members.map(|members| SeqData {
+                    coords: [c0, c1],
+                    members,
+                })
+            })
+        })
     }
 }
 
@@ -330,7 +372,7 @@ impl<C: Cycle, R: Rank> Step<C> for SeedSequence<C, R> {
         let seq_com = witness.map(|w| w.sequence.clone());
         let [seq] = ctx.witness_polynomial([seq_com])?;
 
-        let output_data = seq_data(&seq, member.map(|m| vec![m]));
+        let output_data = SeqData::from_handle(&seq, member.map(|m| vec![m]));
         let header: FixedVec<Element<'dr, D>, ConstLen<3>> = seq
             .coords()
             .into_iter()
@@ -474,7 +516,7 @@ impl<C: Cycle, R: Rank> Step<C> for ConcatSequences<'_, C, R> {
             lc.enforce_equal(ctx.dr, &sum)?;
         }
 
-        let output_data = seq_data(&c, members);
+        let output_data = SeqData::from_handle(&c, members);
         let header: FixedVec<Element<'dr, D>, ConstLen<3>> = c
             .coords()
             .into_iter()
@@ -519,47 +561,4 @@ fn open_at<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
     let y = Element::alloc(ctx.dr, allocator, y_value)?;
     ctx.enforce_poly_query(handle, z.clone(), y.clone())?;
     Ok(y)
-}
-
-/// Assembles a [`SetData`] value from a handle's name and the polynomial.
-fn set_data<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank>(
-    handle: &PolyHandle<'dr, D, C>,
-    polynomial: DriverValue<D, sparse::Polynomial<D::F, R>>,
-) -> DriverValue<D, SetData<D::F, R>> {
-    let [c0, c1] = handle.coords();
-    let c0 = c0.value().map(|v| *v);
-    let c1 = c1.value().map(|v| *v);
-    polynomial.and_then(|polynomial| {
-        c0.and_then(|c0| {
-            c1.map(|c1| SetData {
-                coords: [c0, c1],
-                polynomial,
-            })
-        })
-    })
-}
-
-/// Assembles a [`SeqData`] value from a handle's name and the member list.
-fn seq_data<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>>(
-    handle: &PolyHandle<'dr, D, C>,
-    members: DriverValue<D, Vec<D::F>>,
-) -> DriverValue<D, SeqData<D::F>> {
-    let [c0, c1] = handle.coords();
-    let c0 = c0.value().map(|v| *v);
-    let c1 = c1.value().map(|v| *v);
-    c0.and_then(|c0| {
-        c1.and_then(|c1| {
-            members.map(|members| SeqData {
-                coords: [c0, c1],
-                members,
-            })
-        })
-    })
-}
-
-/// The set-name header wires: the handle's own coordinate wires.
-fn name_header<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>>(
-    handle: &PolyHandle<'dr, D, C>,
-) -> Result<FixedVec<Element<'dr, D>, ConstLen<2>>> {
-    handle.coords().into_iter().collect::<Vec<_>>().try_into()
 }

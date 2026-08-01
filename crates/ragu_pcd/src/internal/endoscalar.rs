@@ -265,20 +265,6 @@ pub fn points_stage_num_slots(num_points: usize) -> usize {
     num_points + num_steps(num_points)
 }
 
-/// The layout subdividing a [`PointsStage`] span into one slot per point,
-/// anchored where [`EndoscalarStage`] ends; the slot width comes from
-/// [`PointSlotStage`].
-fn points_run_layout<C: CurveAffine, R: Rank>(
-    num_points: usize,
-) -> ragu_circuits::staging::InducedStages {
-    use ragu_circuits::staging::Stage as _;
-
-    ragu_circuits::staging::InducedStages::after::<C::Base, R, EndoscalarStage>(alloc::vec![
-        PointSlotStage::<C, R>::values();
-        points_stage_num_slots(num_points)
-    ])
-}
-
 /// Stage for allocating all point witnesses (inputs and interstitials).
 /// The run's width is a value ([`points_stage_num_values`]); the whole run is
 /// masked and committed as **one** stage.
@@ -404,7 +390,13 @@ impl<C: CurveAffine, R: Rank, L: Len> MultiStageCircuit<C::Base, R> for Endoscal
         witness: DriverValue<D, Self::Witness<'source>>,
     ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>> {
         let (endoscalar_guard, dr) = dr.add_stage::<EndoscalarStage>()?;
-        let layout = points_run_layout::<C, R>(L::len());
+        // One slot per point, anchored where `EndoscalarStage` ends.
+        let layout = {
+            use ragu_circuits::staging::Stage as _;
+            ragu_circuits::staging::InducedStages::after::<C::Base, R, EndoscalarStage>(
+                alloc::vec![PointSlotStage::<C, R>::values(); points_stage_num_slots(L::len())],
+            )
+        };
         let (point_guards, dr) = dr.configure_induced_sized::<PointsStage<C, R>, _>(
             PointSlotStage::<C, R>::default(),
             &layout,

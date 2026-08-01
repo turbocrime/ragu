@@ -47,7 +47,7 @@ pub fn set_polynomial<F: PrimeField, R: Rank>(members: &[F]) -> sparse::Polynomi
 }
 
 /// A polynomial's coefficients with the zero tail dropped.
-pub fn trimmed_coeffs<F: PrimeField, R: Rank>(poly: &sparse::Polynomial<F, R>) -> Vec<F> {
+fn trimmed_coeffs<F: PrimeField, R: Rank>(poly: &sparse::Polynomial<F, R>) -> Vec<F> {
     let mut coeffs: Vec<F> = poly.iter_coeffs().collect();
     while coeffs.last() == Some(&F::ZERO) {
         coeffs.pop();
