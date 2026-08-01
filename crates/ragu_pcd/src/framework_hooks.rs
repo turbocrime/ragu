@@ -123,21 +123,6 @@ pub struct WitnessedPoly<F: Field> {
     pub coords: [F; 2],
 }
 
-/// A single opening claim: the polynomial whose embedded commitment
-/// coordinates are [`coords`](Self::coords) evaluates to `y` at `x`.
-///
-/// Several of these may carry the same `coords` — that is what makes a repeat
-/// opening cheap.
-pub struct PolyQueryClaim<F: Field> {
-    /// The opened polynomial's embedded commitment coordinates — the same
-    /// values the step's [`WitnessedPoly::coords`] records for it.
-    pub coords: [F; 2],
-    /// Point at which the polynomial is opened.
-    pub x: F,
-    /// Claimed evaluation $p(x) = y$.
-    pub y: F,
-}
-
 /// The in-circuit wires of a derived challenge: the field elements it was
 /// hashed from, and the challenge itself. All of them go into the application
 /// circuit's public instance so the parent can re-derive the challenge from
@@ -193,9 +178,9 @@ pub struct QueryWires<'dr, D: Driver<'dr>> {
 ///
 /// Holds the polynomial-commitment opening-claim sink and the record of
 /// [`derive_challenge`](crate::step::StepCtx::derive_challenge) calls. The framework's adapter
-/// constructs this, passes it to the step, then drains it into
-/// [`FrameworkHookOutputs`] and surfaces that through its `Aux` for later
-/// fuse-time processing.
+/// constructs this, passes it to the step, then drains it into a
+/// [`FrameworkAux`] surfaced through its `Aux` for later fuse-time
+/// processing.
 ///
 /// Constructing and draining one is the adapter's business, so both are
 /// crate-internal; a step reaches the hooks through
@@ -221,12 +206,12 @@ pub struct FrameworkHooks<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     _marker: core::marker::PhantomData<C>,
 }
 
-/// Every hook's output as plain values, for the fuse.
+/// Every hook's output as plain values, for the fuse — what
+/// [`FrameworkHooks::into_values`] drains the accumulated wires into.
 ///
-/// The value-level counterpart of [`FrameworkHookOutputs`], which holds
-/// in-circuit wires. A step circuit's `Aux` carries one of these beside the
-/// step's own `Aux`; adding a hook means adding a field here, which the
-/// compiler forces every drain site to acknowledge.
+/// A step circuit's `Aux` carries one of these beside the step's own `Aux`;
+/// adding a hook means adding a field here, which the compiler forces every
+/// drain site to acknowledge.
 pub struct FrameworkAux<C: Cycle> {
     /// The step's witnessed polynomials, padded to the application's poly
     /// capacity, in slot order — matching the instance layout the circuit
@@ -238,7 +223,7 @@ pub struct FrameworkAux<C: Cycle> {
     /// of [`polys`](Self::polys). Fuse pre-checks every claim natively,
     /// persists the claim instances in the proof, and the *next* fuse
     /// enforces them recursively via the PCS accumulator.
-    pub claims: Vec<PolyQueryClaim<C::CircuitField>>,
+    pub claims: Vec<crate::proof::ClaimOpening<C::CircuitField>>,
     /// The derived-challenge records the circuit exposes, padded to the
     /// application's challenge capacity, in slot order.
     pub challenges: Vec<crate::proof::ChallengeOpening<C::CircuitField>>,
@@ -376,33 +361,24 @@ impl PolyQueryLayout {
     }
 }
 
-/// Aggregate of every hook's accumulated output, drained from a
-/// [`FrameworkHooks`] once the step body has run. Adding a new hook means adding
-/// a field here, which forces every drain site to acknowledge it.
-pub struct FrameworkHookOutputs<'dr, D: Driver<'dr>> {
-    /// Polynomials witnessed via
-    /// [`StepCtx::witness_polynomial`](crate::step::StepCtx::witness_polynomial),
-    /// in call order — the in-circuit commitment coordinates plus the
-    /// witness-only coefficient values.
-    pub witnessed_polys: Vec<PolyWires<'dr, D>>,
-    /// Opening claims raised via
-    /// [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query),
-    /// in call order. Each carries the `coords` of one of
-    /// [`witnessed_polys`](Self::witnessed_polys) — the same wires, not
-    /// copies.
-    pub poly_queries: Vec<QueryWires<'dr, D>>,
-    /// The `(points, challenge)` record per `derive_challenge` call, in slot
-    /// order. Padded to the application's declared challenge capacity by
-    /// [`FrameworkHooks::finish_slots`], so its length is that capacity
-    /// rather than what the body used.
-    pub challenge_pairs: Vec<ChallengeWires<'dr, D>>,
-}
+impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, C> {
+    /// The witnessed polynomials' wires, in slot order.
+    pub(crate) fn witnessed_polys(&self) -> &[PolyWires<'dr, D>] {
+        &self.witnessed_polys
+    }
 
-impl<'dr, D: Driver<'dr>> FrameworkHookOutputs<'dr, D> {
+    /// The raised claims' wires, in call order.
+    pub(crate) fn poly_queries(&self) -> &[QueryWires<'dr, D>] {
+        &self.poly_queries
+    }
+
+    /// The `(inputs, challenge)` wires per challenge slot, in slot order.
+    pub(crate) fn challenge_pairs(&self) -> &[ChallengeWires<'dr, D>] {
+        &self.challenge_pairs
+    }
+
     /// Reads each hook's wires back out as plain values, for the fuse.
-    pub(crate) fn into_values<C: Cycle<CircuitField = D::F>>(
-        self,
-    ) -> Result<DriverValue<D, FrameworkAux<C>>> {
+    pub(crate) fn into_values(self) -> Result<DriverValue<D, FrameworkAux<C>>> {
         let mut polys = Vec::with_capacity(self.witnessed_polys.len());
         for PolyWires {
             coefficients,
@@ -421,7 +397,7 @@ impl<'dr, D: Driver<'dr>> FrameworkHookOutputs<'dr, D> {
         let mut claims = Vec::with_capacity(self.poly_queries.len());
         for QueryWires { coords, x, y } in self.poly_queries {
             claims.push(D::try_just(|| {
-                Ok(PolyQueryClaim {
+                Ok(crate::proof::ClaimOpening {
                     coords: [*coords[0].value().take(), *coords[1].value().take()],
                     x: *x.value().take(),
                     y: *y.value().take(),
@@ -722,14 +698,6 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
         Ok(())
     }
 
-    /// Consumes the container and returns every hook's accumulated output.
-    pub(crate) fn into_outputs(self) -> FrameworkHookOutputs<'dr, D> {
-        FrameworkHookOutputs {
-            witnessed_polys: self.witnessed_polys,
-            poly_queries: self.poly_queries,
-            challenge_pairs: self.challenge_pairs,
-        }
-    }
 }
 
 #[cfg(test)]

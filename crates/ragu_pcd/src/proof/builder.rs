@@ -16,11 +16,8 @@ use ragu_circuits::{
 };
 use ragu_core::Result;
 
-use super::{Cached, Proof};
-use crate::{
-    framework_hooks::{HookLayout, PolyQueryClaim},
-    internal::nested,
-};
+use super::{Cached, ClaimOpening, Proof};
+use crate::{framework_hooks::HookLayout, internal::nested};
 
 /// Produces `pub(crate) fn $name(&mut self, v: $ty)` that sets an `Option`
 /// field, panicking on double-set.
@@ -334,7 +331,7 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     /// pre-checked natively by fuse. The claim *instances* (coords, x, y),
     /// the claim polynomials, and the host commitments are persisted in the
     /// [`Proof`] so the parent fuse can enforce the claims recursively.
-    application_claims: Vec<PolyQueryClaim<C::CircuitField>>,
+    application_claims: Vec<ClaimOpening<C::CircuitField>>,
     /// The coordinate instance wires' values, two per polynomial slot: the
     /// host commitment's embedded affine coordinates — one name per
     /// polynomial, not one per query.
@@ -773,7 +770,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     /// Sets the per-step **queries** for this fuse step, in call order. Each
     /// names one of the polynomials [`set_application_polys`](Self::set_application_polys)
     /// recorded. May only be called once.
-    pub(crate) fn set_application_claims(&mut self, claims: Vec<PolyQueryClaim<C::CircuitField>>) {
+    pub(crate) fn set_application_claims(&mut self, claims: Vec<ClaimOpening<C::CircuitField>>) {
         assert!(
             self.application_claims.is_empty(),
             "double-set: application_claims"
@@ -943,15 +940,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             child_right_stage_rx: take!(child_right_stage_rx),
 
             application_challenges: core::mem::take(&mut self.application_challenges),
-            application_claims: self
-                .application_claims
-                .iter()
-                .map(|c| super::ClaimOpening {
-                    coords: c.coords,
-                    x: c.x,
-                    y: c.y,
-                })
-                .collect(),
+            application_claims: core::mem::take(&mut self.application_claims),
             application_poly_coords: self.application_poly_coords,
             claim_polys: self.claim_polys,
             claim_host_commitments: self

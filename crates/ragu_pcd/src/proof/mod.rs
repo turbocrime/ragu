@@ -705,7 +705,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::Hoo
         );
         builder.set_application_claims(
             (0..self.hook_layout().poly_query.claims)
-                .map(|_| crate::framework_hooks::PolyQueryClaim {
+                .map(|_| ClaimOpening {
                     coords: padding.poly.coords(),
                     // The constant polynomial 1 evaluates to 1 everywhere.
                     x: C::CircuitField::ZERO,

@@ -131,7 +131,6 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize, J: H
         // used. Each hook already rejected a call past the declared capacity,
         // so there is no total to reconcile here.
         hooks.finish_slots::<R>(dr, padding)?;
-        let outputs = hooks.into_outputs();
 
         let mut elements = Vec::with_capacity(
             HEADER_SIZE * 3
@@ -152,12 +151,12 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize, J: H
         // out of `witnessed_polys` — so this writes one pair at two positions
         // and the parent inherits their equality through the revdot identity,
         // with nothing to enforce.
-        for poly in &outputs.witnessed_polys {
+        for poly in hooks.witnessed_polys() {
             for coord in &poly.coords {
                 coord.write(dr, &mut elements)?;
             }
         }
-        for query in &outputs.poly_queries {
+        for query in hooks.poly_queries() {
             for coord in &query.coords {
                 coord.write(dr, &mut elements)?;
             }
@@ -167,7 +166,7 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize, J: H
         // Then the challenge slots: per slot, every input element followed by
         // the challenge. The parent's binding circuit re-derives the
         // challenge from those inputs.
-        for pair in &outputs.challenge_pairs {
+        for pair in hooks.challenge_pairs() {
             for input in &pair.inputs {
                 input.write(dr, &mut elements)?;
             }
@@ -175,7 +174,7 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize, J: H
         }
 
         // Read every hook's wires back out as values for the fuse.
-        let framework = outputs.into_values()?;
+        let framework = hooks.into_values()?;
 
         let adapter_aux = D::try_just(|| {
             let left_header = elements[0..HEADER_SIZE]
