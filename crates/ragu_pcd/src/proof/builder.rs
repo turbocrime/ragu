@@ -667,11 +667,6 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             .get_or_init(|| rx.commit_to_affine(C::nested_generators(self.params))))
     }
 
-    /// The proof's shared bridge-alpha source.
-    pub(crate) fn bridge_alpha(&self) -> C::ScalarField {
-        self.bridge_alpha
-    }
-
     /// The claim host commitments, for the eval bridge stage witness. Requires
     /// `set_application_claims` to have been called.
     fn claim_host_commitments(&self) -> &[C::HostCurve] {

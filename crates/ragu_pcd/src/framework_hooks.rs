@@ -250,31 +250,30 @@ fn collect_values<'dr, D: Driver<'dr>, T: Send>(
 }
 
 /// The hook capacities of an application, as type-level lengths on a marker
-/// type. Usually written as [`AppHooks`] rather than implemented by hand.
+/// type. Usually written as [`AppHooks`](crate::AppHooks) rather than
+/// implemented by hand.
 ///
 /// Each member is a [`Len`], so it slots directly into the `FixedVec`s the
-/// framework sizes with it; the plain numbers are read back through the
-/// provided accessors ([`polys`](Self::polys), [`claims`](Self::claims),
-/// [`challenges`](Self::challenges),
-/// [`challenge_width`](Self::challenge_width)).
+/// framework sizes with it; the plain numbers are read back through
+/// [`layout`](Self::layout).
 ///
-/// [`PolyCount`](Self::PolyCount) is how many
+/// [`PolyWitnesses`](Self::PolyWitnesses) is how many
 /// [`witness_polynomial`](crate::step::StepCtx::witness_polynomial) slots
 /// any one step may fill — the expensive axis: a bridge stage, a
 /// commitment, an MSM, and an endoscaling point per child, each.
-/// [`ClaimCount`](Self::ClaimCount) is how many
+/// [`PolyQueries`](Self::PolyQueries) is how many
 /// [`enforce_poly_query`](crate::step::StepCtx::enforce_poly_query) claims
 /// it may raise — the cheap axis: one instance triple, one `_08_f`
 /// quotient, one `compute_v` triple. A repeat opening costs a claim slot
 /// and no polynomial slot.
 ///
-/// [`ChallengeCount`](Self::ChallengeCount) is how many
+/// [`ChallengeDerivations`](Self::ChallengeDerivations) is how many
 /// [`derive_challenge`](crate::step::StepCtx::derive_challenge) calls any
 /// one step may make, and [`ChallengeWidth`](Self::ChallengeWidth) the
 /// widest input one call may pass, in field elements — a
 /// [`coords`](crate::PolyHandle::coords) pair is two; the width's cost is
-/// [`ChallengeLayout::permutations`](crate::framework_hooks::ChallengeLayout::permutations),
-/// paid by the internal `challenge_binding` circuit per `(child, slot)`.
+/// `⌈width / rate⌉` sponge permutations, paid by the internal
+/// `challenge_binding` circuit per `(child, slot)`.
 ///
 /// Every step of an application exposes exactly these counts, whatever it
 /// uses; unused slots are padded by the framework, and a step that asks for
@@ -335,7 +334,7 @@ pub struct ChallengeLayout {
     /// positions a caller leaves empty taking a fixed sentinel. A
     /// [`PolyHandle::coords`](crate::poly_commitment::PolyHandle::coords)
     /// pair is two; a pinned point's coordinates are two. Its cost is
-    /// [`permutations`](ChallengeLayout::permutations).
+    /// `⌈width / rate⌉` sponge permutations in `challenge_binding`.
     pub width: usize,
 }
 

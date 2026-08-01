@@ -129,9 +129,10 @@ impl<const PW: usize, const PQ: usize, const CD: usize, const CW: usize> HookCon
 ///
 /// See [`HookConfig`](framework_hooks::HookConfig) for what each hook number
 /// prices; together with `HEADER_SIZE` they are the whole of an application
-/// circuit's instance width
-/// ([`HookLayout::instance_len`](framework_hooks::HookLayout::instance_len)
-/// is the single statement):
+/// circuit's instance width, the hook regions priced by
+/// [`PolyQueryLayout::instance_len`](framework_hooks::PolyQueryLayout::instance_len)
+/// and
+/// [`ChallengeLayout::instance_len`](framework_hooks::ChallengeLayout::instance_len):
 ///
 /// ```text
 /// 3·HEADER_SIZE + 2·POLYS + 4·QUERIES + CHALLENGES·(CHALLENGE_WIDTH + 1)

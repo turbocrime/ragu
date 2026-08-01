@@ -686,42 +686,30 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::Hoo
         builder.set_right_header(vec![C::CircuitField::ZERO; HEADER_SIZE]);
 
         // Poly-query claim slots: a trivial proof raises no claims, so every
-        // slot holds the canonical padding claim (mirroring the adapter).
+        // slot holds the application's padding claim (mirroring the adapter).
         // Every query opens polynomial slot 0, matching the adapter's padding —
         // so it carries slot 0's embedded coordinates, the same values
-        // `application_poly_coords` records for that slot. Absent when the
-        // application declares no polynomial slots, which is only reachable
-        // when it declares no claim slots either: a claim has to name a
-        // polynomial.
-        let (padding_host, padding_x, padding_y) =
-            crate::internal::challenge::padding_claim::<C>(self.params);
-        let padding_coord_pair = if self.hook_layout().poly_query.polys == 0 {
-            None
-        } else {
-            Some(
-                crate::internal::challenge::host_coords::<C>(padding_host)
-                    .expect("the padding host has canonical coordinates"),
-            )
-        };
+        // `application_poly_coords` records for that slot.
+        let padding = &self.padding;
         let padding_coords: alloc::vec::Vec<C::CircuitField> =
             (0..self.hook_layout().poly_query.polys)
-                .flat_map(|_| padding_coord_pair.expect("a nonzero capacity has a padding pair"))
+                .flat_map(|_| padding.poly.coords())
                 .collect();
         builder.set_application_polys(
             padding_coords,
             vec![
-                crate::internal::challenge::padding_poly::<C, R>();
+                padding.poly.clone().into_polynomial();
                 self.hook_layout().poly_query.polys
             ],
-            vec![padding_host; self.hook_layout().poly_query.polys],
+            vec![padding.host; self.hook_layout().poly_query.polys],
         );
         builder.set_application_claims(
             (0..self.hook_layout().poly_query.claims)
                 .map(|_| crate::framework_hooks::PolyQueryClaim {
-                    coords: padding_coord_pair
-                        .expect("a claim slot requires a polynomial slot to name"),
-                    x: padding_x,
-                    y: padding_y,
+                    coords: padding.poly.coords(),
+                    // The constant polynomial 1 evaluates to 1 everywhere.
+                    x: C::CircuitField::ZERO,
+                    y: C::CircuitField::ONE,
                 })
                 .collect(),
         );
@@ -731,14 +719,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::Hoo
         // slot uniformly.
         builder.set_application_challenges(
             (0..self.hook_layout().challenge.calls)
-                .map(|_| {
-                    let (inputs, challenge) = crate::internal::challenge::elements_challenge::<C>(
-                        self.params,
-                        &[],
-                        self.hook_layout().challenge.width,
-                    )
-                    .expect("trivial padding challenge");
-                    ChallengeOpening { inputs, challenge }
+                .map(|_| ChallengeOpening {
+                    inputs: vec![padding.sentinel; self.hook_layout().challenge.width],
+                    challenge: padding
+                        .challenge
+                        .expect("a challenge slot implies a nonzero challenge width"),
                 })
                 .collect(),
         );
@@ -834,7 +819,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::Hoo
             alloc::vec![
                 crate::internal::challenge::claim_coord_commitment::<C, R>(
                     self.params,
-                    core::iter::repeat_n(padding_host, self.hook_layout().poly_query.polys),
+                    core::iter::repeat_n(padding.host, self.hook_layout().poly_query.polys),
                 )
                 .expect("the padding host has canonical coordinates")
             ]
@@ -861,7 +846,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::Hoo
                 points.push(registry_xy_commitment); // RegistryXY
                 points.push(host_commitment); // P placeholder
                 for _ in 0..self.hook_layout().poly_query.polys {
-                    points.push(padding_host); // claim slots
+                    points.push(padding.host); // claim slots
                 }
                 points.extend_from_slice(&padding_q); // claim-coordinate q, when polys > 0
             }
@@ -911,7 +896,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::Hoo
                 stashed_ab_b: host_commitment,
                 stashed_registry_xy: registry_xy_commitment,
                 stashed_p: p_commitment,
-                stashed_claims: alloc::vec![padding_host; self.hook_layout().poly_query.polys],
+                stashed_claims: alloc::vec![padding.host; self.hook_layout().poly_query.polys],
                 stashed_q: padding_q.clone(),
             };
             // Placed through the value-level chain: the preamble sits after

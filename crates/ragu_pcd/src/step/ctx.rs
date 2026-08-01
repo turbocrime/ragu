@@ -224,7 +224,7 @@ where
         // padded inputs are witnessed like the supplied ones: the parent
         // absorbs a fixed number per slot, so it must see them all.
         let derived = D::try_just(|| {
-            crate::internal::challenge::elements_challenge::<C>(params, &supplied.take(), width)
+            crate::internal::challenge::padded_challenge::<C>(params, &supplied.take(), width)
         })?;
 
         let allocator = &mut ragu_primitives::allocator::Standard::new();

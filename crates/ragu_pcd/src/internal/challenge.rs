@@ -62,7 +62,7 @@ const HIGH_BITS: usize = 126;
 /// Errors rather than truncating when a coordinate does not fit: see
 /// [`HIGH_BITS`], whose width bound is what makes the split — and therefore
 /// the representation — canonical.
-pub(crate) fn host_limbs<C: CurveAffine>(host: C) -> Result<[u128; 4]> {
+fn host_limbs<C: CurveAffine>(host: C) -> Result<[u128; 4]> {
     let coordinates = host.coordinates().into_option().ok_or_else(|| {
         Error::InvalidWitness(
             "the identity has no coordinates and cannot be witnessed in-circuit".into(),
@@ -155,33 +155,6 @@ pub(crate) fn claim_coord_commitment<C: Cycle, R: Rank>(
         .commit_to_affine::<C::HostCurve>(C::host_generators(params)))
 }
 
-/// The canonical padding claim for an unused poly-query slot (see
-/// the application's poly capacity): its host commitment
-/// and its opening $(x, y) = (0, 1)$.
-///
-/// A slot cannot be padded with zeros — `commit(0)` is the identity, which no
-/// [`Point`](ragu_primitives::Point) can witness — so the padding is a *real*
-/// claim that happens to be trivially true: the constant polynomial $1$, whose
-/// commitment is exactly `g[0]` and whose value at any $x$ is $1$. It travels
-/// the same path as a claim the step raised.
-///
-/// The three values are returned together because they are one claim: $y$ is
-/// [`padding_poly`] evaluated at $x$.
-pub(crate) fn padding_claim<C: Cycle>(
-    params: &C::Params,
-) -> (C::HostCurve, C::CircuitField, C::CircuitField) {
-    use ragu_arithmetic::FixedGenerators;
-
-    let host = C::host_generators(params).g()[0];
-    (host, C::CircuitField::ZERO, C::CircuitField::ONE)
-}
-
-/// The padding claim's polynomial, $p(X) = 1$, for the carriers that hold whole
-/// polynomials rather than openings. Its commitment is [`padding_claim`]'s.
-pub(crate) fn padding_poly<C: Cycle, R: Rank>() -> sparse::Polynomial<C::CircuitField, R> {
-    sparse::Polynomial::from_coeffs(vec![C::CircuitField::ONE])
-}
-
 /// The fixed field element filling an unfilled challenge-input position: the
 /// zeroth nested generator's `x` coordinate — a params-derived constant, like
 /// the point it comes from.
@@ -191,7 +164,7 @@ pub(crate) fn padding_poly<C: Cycle, R: Rank>() -> sparse::Polynomial<C::Circuit
 /// whether or not the caller supplied them all, so the prover, the root
 /// verifier, and the `challenge_binding` circuit agree on the sponge's shape
 /// by construction.
-pub(crate) fn sentinel_element<C: Cycle>(params: &C::Params) -> C::CircuitField {
+fn sentinel_element<C: Cycle>(params: &C::Params) -> C::CircuitField {
     use ragu_arithmetic::FixedGenerators;
 
     *C::nested_generators(params).g()[0]
@@ -227,7 +200,7 @@ pub(crate) fn challenge_from_elements<C: Cycle>(
 
 /// Pads a `derive_challenge` call's inputs to the slot's full complement with
 /// the sentinel and hashes them: the whole prover-side derivation.
-pub(crate) fn elements_challenge<C: Cycle>(
+pub(crate) fn padded_challenge<C: Cycle>(
     params: &C::Params,
     inputs: &[C::CircuitField],
     width: usize,
@@ -251,12 +224,22 @@ pub(crate) fn elements_challenge<C: Cycle>(
 /// correctness the parent's circuits enforce — so they ride the witness
 /// channel into [`Step::witness`](crate::step::Step), absent on
 /// structure-only drivers like every other witness value. This is the same
-/// padding [`ProofBuilder`](crate::proof::ProofBuilder) computes for a
-/// proof's slot lists; computing it once keeps the two in one place.
+/// padding the trivial proof puts in its slot lists; computing it once keeps
+/// the two in one place.
+///
+/// A poly slot cannot be padded with zeros — `commit(0)` is the identity,
+/// which no [`Point`](ragu_primitives::Point) can witness — so the padding is
+/// a *real* claim that happens to be trivially true: the constant polynomial
+/// $1$, whose commitment is exactly `g[0]` and whose value at any $x$ is $1$.
+/// It travels the same path as a claim the step raised.
 pub(crate) struct Padding<C: Cycle, R: Rank> {
     /// The padding claim's committed polynomial: the constant $1$ with its
     /// canonical commitment representation.
     pub poly: crate::PolyCommitment<C, R>,
+    /// The padding claim's commitment as the host point itself, `g[0]` —
+    /// [`PolyCommitment`](crate::PolyCommitment) keeps only the embedded
+    /// coordinates, and a proof's slot lists need the point.
+    pub host: C::HostCurve,
     /// The fixed element filling an unfilled challenge-input position.
     pub sentinel: C::CircuitField,
     /// The challenge an all-sentinel slot derives:
@@ -271,6 +254,7 @@ impl<C: Cycle, R: Rank> Clone for Padding<C, R> {
     fn clone(&self) -> Self {
         Self {
             poly: self.poly.clone(),
+            host: self.host,
             sentinel: self.sentinel,
             challenge: self.challenge,
         }
@@ -281,14 +265,20 @@ impl<C: Cycle, R: Rank> Padding<C, R> {
     /// Computes the padding constants for an application whose challenge
     /// slots absorb `width` elements.
     pub fn new(params: &C::Params, width: usize) -> Result<Self> {
-        let (host, ..) = padding_claim::<C>(params);
+        use ragu_arithmetic::FixedGenerators;
+
+        let host = C::host_generators(params).g()[0];
         Ok(Self {
-            poly: crate::PolyCommitment::new(padding_poly::<C, R>(), host)?,
+            poly: crate::PolyCommitment::new(
+                sparse::Polynomial::from_coeffs(vec![C::CircuitField::ONE]),
+                host,
+            )?,
+            host,
             sentinel: sentinel_element::<C>(params),
             challenge: if width == 0 {
                 None
             } else {
-                Some(elements_challenge::<C>(params, &[], width)?.1)
+                Some(padded_challenge::<C>(params, &[], width)?.1)
             },
         })
     }
