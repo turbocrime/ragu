@@ -9,13 +9,16 @@
 //! [`derive_challenge`](StepCtx::derive_challenge). New framework hooks added in
 //! the future (e.g. transcript threading) belong on [`FrameworkHooks`] as well.
 
+use alloc::vec::Vec;
+
 use ragu_arithmetic::Cycle;
 use ragu_circuits::polynomials::Rank;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
+    gadgets::Gadget,
 };
-use ragu_primitives::Element;
+use ragu_primitives::{Element, GadgetExt as _, io::Write};
 
 use crate::{
     framework_hooks::FrameworkHooks,
@@ -57,8 +60,10 @@ where
     /// polynomial's size. Anything added here must preserve that: allocate
     /// the commitment's coordinates, retain the coefficients as a value.
     ///
-    /// The commitment is reachable via [`PolyHandle::coords`] for challenges,
-    /// hashing and the like; the retained polynomial is what a later
+    /// The handle is itself a writable gadget whose elements are the
+    /// commitment's coordinates — absorb it directly for challenges, hashing
+    /// and the like, or reach the raw pair via [`PolyHandle::coords`]; the
+    /// retained polynomial is what a later
     /// [`enforce_poly_query`](Self::enforce_poly_query) opens. A
     /// [`PolyCommitment`] can only come from
     /// [`Application::commit_polynomial`](crate::Application::commit_polynomial),
@@ -126,7 +131,13 @@ where
         self.hooks.enforce_poly_query(commitment.coords(), x, y)
     }
 
-    /// Derives a sound Fiat–Shamir challenge from `inputs`.
+    /// Derives a sound Fiat–Shamir challenge from `input`.
+    ///
+    /// `input` is any writable gadget, absorbed as the elements its
+    /// [`Write`] emits, in write order: a [`PolyHandle`] is its commitment's
+    /// two coordinate wires, a pinned [`Point`](ragu_primitives::Point) its
+    /// two coordinates, and tuples and arrays absorb their parts in
+    /// declaration order.
     ///
     /// The challenge is `Hash(inputs)`, hashed natively and witnessed here;
     /// the inputs and the challenge go into the circuit's instance, and the
@@ -143,13 +154,11 @@ where
     /// # The caller's obligation
     ///
     /// The framework guarantees only that the challenge is the hash of *these
-    /// elements*. Every input must be one this step has pinned — a
-    /// [`PolyHandle::coords`](crate::poly_commitment::PolyHandle::coords)
-    /// pair (the polynomial's commitment, so the standard poly-query
-    /// Fiat–Shamir shape), header-carried data, or a wire otherwise
-    /// constrained — since a freely witnessed input lets the prover grind the
-    /// challenge by varying it. A pinned [`Point`](ragu_primitives::Point) is
-    /// absorbable as its two coordinate wires.
+    /// elements*. Every element the gadget writes must be one this step has
+    /// pinned — a [`PolyHandle`] (the polynomial's commitment, so the
+    /// standard poly-query Fiat–Shamir shape), header-carried data, or a
+    /// wire otherwise constrained — since a freely witnessed input lets the
+    /// prover grind the challenge by varying it.
     ///
     /// On a value-carrying driver the returned `Element` holds the real
     /// challenge immediately, so the step body can evaluate polynomials at it
@@ -159,11 +168,17 @@ where
     /// derives challenges carries the parameters itself (its constructor
     /// already receives them for its own transcript work in practice); steps
     /// that don't never touch them.
-    pub fn derive_challenge(
+    pub fn derive_challenge<G>(
         &mut self,
         params: &C::Params,
-        inputs: &[Element<'dr, D>],
-    ) -> Result<Element<'dr, D>> {
-        self.hooks.derive_challenge(self.dr, params, inputs)
+        input: &G,
+    ) -> Result<Element<'dr, D>>
+    where
+        G: Gadget<'dr, D>,
+        G::Kind: Write<D::F>,
+    {
+        let mut inputs = Vec::new();
+        input.write(self.dr, &mut inputs)?;
+        self.hooks.derive_challenge(self.dr, params, &inputs)
     }
 }

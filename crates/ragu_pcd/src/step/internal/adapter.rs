@@ -326,7 +326,7 @@ mod tests {
             let right_elem = Element::alloc(ctx.dr, allocator, right)?;
 
             // The outputs are deferred; only the wires are used.
-            let challenge = ctx.derive_challenge(Pasta::baked(), &[])?;
+            let challenge = ctx.derive_challenge(Pasta::baked(), &())?;
 
             // Output = left + right + challenge, so the deferred challenge
             // wire participates in downstream circuit structure.
@@ -433,7 +433,7 @@ mod tests {
 
                 let mut output = left_elem.clone();
                 for _ in 0..3 {
-                    let challenge = ctx.derive_challenge(Pasta::baked(), &[])?;
+                    let challenge = ctx.derive_challenge(Pasta::baked(), &())?;
                     output = output.add(ctx.dr, &challenge);
                 }
 

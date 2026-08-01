@@ -32,9 +32,10 @@ use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
+    gadgets::Gadget,
     maybe::Maybe,
 };
-use ragu_primitives::Element;
+use ragu_primitives::{Element, io::Write};
 
 /// A polynomial together with its commitment's representation.
 ///
@@ -124,11 +125,23 @@ impl<C: Cycle, R: Rank> PolyCommitment<C, R> {
 /// field — but its affine coordinates, canonically bounded below $2^{254}$,
 /// each fit one circuit-field element. The embedding is injective, so the
 /// pair *is* the commitment, in the only form a step can hold.
+///
+/// The handle is a gadget, and plays for the cross-field commitment the role
+/// [`Point`](ragu_primitives::Point) plays for a same-field one: its
+/// [`Write`] emits exactly the two coordinate wires, so absorbing the handle —
+/// into [`derive_challenge`](crate::step::StepCtx::derive_challenge), a
+/// header sponge, or any other buffer — absorbs the commitment. The retained
+/// polynomial is prover-only data and is never written.
+#[derive(Gadget, Write)]
 pub struct PolyHandle<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> {
+    #[ragu(skip)]
+    #[ragu(value)]
     polynomial: DriverValue<D, sparse::Polynomial<D::F, R>>,
     /// The slot's two coordinate instance wires: the commitment's
     /// representation.
+    #[ragu(gadget)]
     coords: [Element<'dr, D>; 2],
+    #[ragu(phantom)]
     _cycle: core::marker::PhantomData<C>,
 }
 

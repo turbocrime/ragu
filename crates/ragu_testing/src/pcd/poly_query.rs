@@ -155,9 +155,9 @@ impl<C: Cycle, R: Rank> Step<C> for CommitAndOpen<'_, C, R> {
         let commitment = witness.map(|w| w.commitment);
         let [handle] = ctx.witness_polynomial::<R, 1>([commitment])?;
 
-        // (2) Derive a challenge bound to the commitment, via its canonical
-        // embedded coordinates.
-        let z = ctx.derive_challenge(self.params, &handle.coords())?;
+        // (2) Derive a challenge bound to the commitment — the handle absorbs
+        // as its canonical embedded coordinates.
+        let z = ctx.derive_challenge(self.params, &handle)?;
 
         // (3) Evaluate the polynomial at the challenge (natively; the
         // polynomial is not in-circuit). A dishonest override, if provided,
@@ -189,9 +189,7 @@ impl<C: Cycle, R: Rank> Step<C> for CommitAndOpen<'_, C, R> {
         // Output digest binds the commitment, via its canonical embedded
         // coordinates — the same identity the challenge absorbed.
         let mut sponge = Sponge::new(ctx.dr, C::circuit_poseidon(self.params));
-        for coord in handle.coords() {
-            coord.write(ctx.dr, &mut sponge)?;
-        }
+        handle.write(ctx.dr, &mut sponge)?;
         let output = sponge.squeeze(ctx.dr)?;
         let output_hash = output.value().map(|v| *v);
         let output_encoded = Encoded::from_gadget(output);
@@ -281,9 +279,7 @@ impl<C: Cycle, R: Rank> Step<C> for OpenAndHash<'_, C, R> {
         let mut sponge = Sponge::new(ctx.dr, self.poseidon_params);
         sponge.absorb(ctx.dr, left_encoded.as_gadget())?;
         sponge.absorb(ctx.dr, right_encoded.as_gadget())?;
-        for coord in handle.coords() {
-            coord.write(ctx.dr, &mut sponge)?;
-        }
+        handle.write(ctx.dr, &mut sponge)?;
         let output = sponge.squeeze(ctx.dr)?;
         let output_hash = output.value().map(|v| *v);
         let output_encoded = Encoded::from_gadget(output);

@@ -233,13 +233,13 @@ impl<C: Cycle, R: Rank> Step<C> for MergeSets<'_, C, R> {
         let a_com = witness.as_ref().map(|w| w.a.clone());
         let b_com = witness.as_ref().map(|w| w.b.clone());
         let c_com = witness.map(|w| w.product.clone());
-        let [a, b, c] = ctx.witness_polynomial::<R, 3>([a_com, b_com, c_com])?;
+        let handles = ctx.witness_polynomial::<R, 3>([a_com, b_com, c_com])?;
 
         // The cross-proof identity check: the contributing sets this step
         // witnessed are exactly the sets the children's headers name. Same
         // canonical representation on both sides, so the check is plain
         // field equality on wires.
-        for (handle, child) in [(&a, &left_encoded), (&b, &right_encoded)] {
+        for (handle, child) in [(&handles[0], &left_encoded), (&handles[1], &right_encoded)] {
             let name = handle.coords();
             let header: &FixedVec<Element<'dr, D>, ConstLen<2>> = child.as_gadget();
             name[0].enforce_equal(ctx.dr, &header[0])?;
@@ -247,11 +247,10 @@ impl<C: Cycle, R: Rank> Step<C> for MergeSets<'_, C, R> {
         }
 
         // z binds all three names: the merged set's commitment is fixed
-        // before the evaluation point is known.
-        let [a0, a1] = a.coords();
-        let [b0, b1] = b.coords();
-        let [c0, c1] = c.coords();
-        let z = ctx.derive_challenge(self.params, &[a0, a1, b0, b1, c0, c1])?;
+        // before the evaluation point is known. Each handle absorbs as its
+        // name's coordinate pair.
+        let z = ctx.derive_challenge(self.params, &handles)?;
+        let [a, b, c] = handles;
 
         // Open the contributing sets at z, and claim the merged set's
         // evaluation *is* their product.
@@ -474,11 +473,11 @@ impl<C: Cycle, R: Rank> Step<C> for ConcatSequences<'_, C, R> {
         let a_com = witness.as_ref().map(|w| w.a.clone());
         let b_com = witness.as_ref().map(|w| w.b.clone());
         let c_com = witness.map(|w| w.output.clone());
-        let [a, b, c] = ctx.witness_polynomial::<R, 3>([a_com, b_com, c_com])?;
+        let handles = ctx.witness_polynomial::<R, 3>([a_com, b_com, c_com])?;
 
         // The cross-proof identity checks: each witnessed input's name
         // equals the corresponding child's header wires.
-        for (handle, child) in [(&a, &left_encoded), (&b, &right_encoded)] {
+        for (handle, child) in [(&handles[0], &left_encoded), (&handles[1], &right_encoded)] {
             let name = handle.coords();
             let header: &FixedVec<Element<'dr, D>, ConstLen<3>> = child.as_gadget();
             name[0].enforce_equal(ctx.dr, &header[0])?;
@@ -486,11 +485,10 @@ impl<C: Cycle, R: Rank> Step<C> for ConcatSequences<'_, C, R> {
         }
 
         // z binds all three names: the output's commitment is fixed before
-        // the evaluation point is known.
-        let [a0, a1] = a.coords();
-        let [b0, b1] = b.coords();
-        let [c0, c1] = c.coords();
-        let z = ctx.derive_challenge(self.params, &[a0, a1, b0, b1, c0, c1])?;
+        // the evaluation point is known. Each handle absorbs as its name's
+        // coordinate pair.
+        let z = ctx.derive_challenge(self.params, &handles)?;
+        let [a, b, c] = handles;
 
         // The offset factor z^{ℓa}, in fixed shape: allocate ℓa's bits,
         // prove they pack to the left child's header-carried length, and
