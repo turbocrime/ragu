@@ -9,10 +9,7 @@
 //! survived until root verification. The pinned slotted registration shape
 //! `(2, 3, 1)` had never been proved by any test before this one.
 
-use ragu_arithmetic::{
-    Cycle,
-    rand::{SeedableRng, rngs::StdRng},
-};
+use ragu_arithmetic::rand::{SeedableRng, rngs::StdRng};
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::Result;
 use ragu_pasta::Pasta;

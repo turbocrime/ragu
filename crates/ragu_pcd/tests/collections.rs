@@ -37,9 +37,7 @@ use ragu_pcd::Pcd;
 use ragu_testing::pcd::collections::{
     collections_app, fuse_concat, fuse_merge, merged_polynomial, seed_sequence, seed_set,
     sequence_polynomial, set_polynomial,
-    step::{
-        ConcatSequences, ConcatSequencesWitness, MergeSets, MergeSetsWitness, SeqHeader, SetHeader,
-    },
+    step::{MergeSets, MergeSetsWitness, SeqHeader, SetHeader},
 };
 
 type R = ProductionRank;

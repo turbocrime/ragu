@@ -9,7 +9,7 @@
 use ragu_arithmetic::{CryptoRngCore, Cycle, ff::Field};
 use ragu_circuits::{
     polynomials::{Rank, sparse},
-    staging::{Stage as StageTrait, StageExt as _},
+    staging::{Stage as StageTrait, StageExt},
 };
 use ragu_core::{
     Result,

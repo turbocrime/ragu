@@ -5,7 +5,7 @@
 //! $f(u)$ is derived from the aforementioned evaluations.
 
 use ragu_arithmetic::{CryptoRngCore, Cycle, ff::Field};
-use ragu_circuits::{polynomials::Rank, staging::StageExt as _};
+use ragu_circuits::{polynomials::Rank, staging::StageExt};
 use ragu_core::{Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::Element;
 
