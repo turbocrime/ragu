@@ -40,23 +40,6 @@ where
         Self { dr, hooks }
     }
 
-    /// The step's polynomial handles, one per slot in the application's
-    /// declared capacity: the commitments
-    /// [`Step::polynomials`](super::Step::polynomials) declared, in
-    /// declaration order, then the padding polynomial in each remaining
-    /// slot. All were witnessed by the framework before the body ran.
-    ///
-    /// The polynomial is handled **abstractly, by its commitment**: each
-    /// handle is two coordinate instance wires — the host commitment's
-    /// affine coordinates, canonically embedded — and the handle is itself a
-    /// writable gadget over exactly those wires. Absorb it for challenges
-    /// and hashing, compare via [`PolyHandle::coords`], evaluate via
-    /// [`PolyHandle::eval`], and open it with
-    /// [`enforce_poly_query`](Self::enforce_poly_query).
-    pub fn polys(&self) -> Vec<PolyHandle<'dr, D, C>> {
-        self.hooks.witnessed_polys().to_vec()
-    }
-
     /// Records a poly-query claim: the polynomial behind `commitment` (a
     /// [`PolyHandle`] from [`polys`](Self::polys)) evaluates to `y` at `x`.
     ///
@@ -95,11 +78,7 @@ where
     /// writes must be one this step has pinned — a [`PolyHandle`],
     /// header-carried data, a wire otherwise constrained — since a freely
     /// witnessed input lets the prover grind the challenge by varying it.
-    pub fn derive_challenge<G>(
-        &mut self,
-        params: &C::Params,
-        input: &G,
-    ) -> Result<Element<'dr, D>>
+    pub fn derive_challenge<G>(&mut self, params: &C::Params, input: &G) -> Result<Element<'dr, D>>
     where
         G: Gadget<'dr, D>,
         G::Kind: Write<D::F>,
