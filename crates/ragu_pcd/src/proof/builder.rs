@@ -15,9 +15,10 @@ use ragu_circuits::{
     registry::CircuitIndex,
 };
 use ragu_core::Result;
+use ragu_primitives::vec::Len as _;
 
 use super::{Cached, ClaimOpening, Proof};
-use crate::{framework_hooks::HookLayout, internal::nested};
+use crate::{framework_hooks::HookConfig, internal::nested};
 
 /// Produces `pub(crate) fn $name(&mut self, v: $ty)` that sets an `Option`
 /// field, panicking on double-set.
@@ -211,7 +212,7 @@ macro_rules! cached_bridge {
 /// Native commitment caches are computed lazily from polynomials on first
 /// access. Special commitments (`a`, `b`, `p`) must be provided explicitly
 /// because they are computed via non-standard techniques.
-pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
+pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, J: HookConfig> {
     params: &'params C::Params,
 
     /// Shared alpha source for the four cached bridge commitments.
@@ -325,22 +326,16 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     claim_polys: Vec<sparse::Polynomial<C::CircuitField, R>>,
     /// The claims' host-curve commitments, in slot order.
     claim_host_commitments: Option<Vec<C::HostCurve>>,
-    /// The application's slot capacity — what every list here is sized to.
-    hook_layout: HookLayout,
+    _marker: core::marker::PhantomData<J>,
 }
 
-impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
+impl<'params, C: Cycle, R: Rank, J: HookConfig> ProofBuilder<'params, C, R, J> {
     /// Create a new empty builder with the given `bridge_alpha` source for
     /// deriving cached bridge polynomial alphas.
-    pub(crate) fn new(
-        params: &'params C::Params,
-        bridge_alpha: C::ScalarField,
-        hook_layout: HookLayout,
-    ) -> Self {
+    pub(crate) fn new(params: &'params C::Params, bridge_alpha: C::ScalarField) -> Self {
         Self {
             params,
             bridge_alpha,
-            hook_layout,
             circuit_id: None,
             left_header: None,
             right_header: None,
@@ -419,6 +414,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             application_challenges: Vec::new(),
             claim_polys: Vec::new(),
             claim_host_commitments: None,
+            _marker: core::marker::PhantomData,
         }
     }
 
@@ -611,7 +607,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     /// The nested bridge chain's value-level geometry at this proof's capacity.
     fn nested_chain(&self) -> &ragu_circuits::staging::InducedStages {
         self.nested_chain.get_or_init(|| {
-            nested::NestedLayouts::chain_layout::<C::HostCurve, R>(self.hook_layout.polys)
+            nested::NestedLayouts::chain_layout::<C::HostCurve, R>(J::PolyWitnesses::len())
         })
     }
 
@@ -714,7 +710,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             self.application_challenges.is_empty(),
             "double-set: application_challenges"
         );
-        assert_eq!(challenges.len(), self.hook_layout.challenge_calls);
+        assert_eq!(challenges.len(), J::ChallengeDerivations::len());
         self.application_challenges = challenges;
     }
 
@@ -730,9 +726,9 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             self.application_poly_coords.is_empty(),
             "double-set: application_polys"
         );
-        assert_eq!(coords.len(), self.hook_layout.polys * 2);
-        assert_eq!(claim_polys.len(), self.hook_layout.polys);
-        assert_eq!(claim_host_commitments.len(), self.hook_layout.polys);
+        assert_eq!(coords.len(), J::PolyWitnesses::len() * 2);
+        assert_eq!(claim_polys.len(), J::PolyWitnesses::len());
+        assert_eq!(claim_host_commitments.len(), J::PolyWitnesses::len());
         self.application_poly_coords = coords;
         self.claim_polys = claim_polys;
         self.claim_host_commitments = Some(claim_host_commitments);
@@ -744,7 +740,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             self.application_claims.is_empty(),
             "double-set: application_claims"
         );
-        assert_eq!(claims.len(), self.hook_layout.claims);
+        assert_eq!(claims.len(), J::PolyQueries::len());
         self.application_claims = claims;
     }
 

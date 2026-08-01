@@ -21,7 +21,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         native_registry: &RegistryAt<'_, C::CircuitField, R>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, J>,
     ) -> Result<NativeSPrime<C, R>> {
         let native = self.compute_native_s_prime(native_registry, left, right)?;
         self.compute_bridge_s_prime(rng, &native, builder)?;
@@ -32,7 +32,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         &self,
         rng: &mut RNG,
         native: &NativeSPrime<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, J>,
     ) -> Result<()> {
         let bridge_rx = self.nested_chain_layout().rx_configured(
             nested::ChainStage::SPrime.index(),

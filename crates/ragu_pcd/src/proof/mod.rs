@@ -543,7 +543,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::Hoo
         points: &[C::HostCurve],
         endoscalar_alpha: C::ScalarField,
         points_alpha: C::ScalarField,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, J>,
     ) -> Result<C::HostCurve> {
         let num_points = crate::internal::nested::num_endoscaling_points(self.hook_layout().polys);
         assert_eq!(points.len(), num_points);
@@ -623,7 +623,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::Hoo
             .native_registry
             .xy(C::CircuitField::ONE, C::CircuitField::ONE);
 
-        let mut builder = ProofBuilder::new(self.params, C::ScalarField::ONE, self.hook_layout());
+        let mut builder = ProofBuilder::new(self.params, C::ScalarField::ONE);
 
         builder.set_circuit_id(CircuitIndex::new(0));
         builder.set_left_header(vec![C::CircuitField::ZERO; HEADER_SIZE]);

@@ -40,7 +40,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         alpha: &Element<'dr, D>,
         s_prime: &NativeSPrime<C, R>,
         registry_wy: &RegistryWy<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, J>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
     ) -> Result<NativeF<C, R>>
@@ -71,7 +71,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         &self,
         rng: &mut RNG,
         native: &NativeF<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, J>,
     ) -> Result<()> {
         let bridge_rx = self.nested_chain_layout().rx_configured(
             nested::ChainStage::F.index(),
@@ -95,7 +95,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         alpha: &Element<'dr, D>,
         s_prime: &NativeSPrime<C, R>,
         registry_wy: &RegistryWy<C, R>,
-        builder: &ProofBuilder<'_, C, R>,
+        builder: &ProofBuilder<'_, C, R, J>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
     ) -> Result<NativeF<C, R>>

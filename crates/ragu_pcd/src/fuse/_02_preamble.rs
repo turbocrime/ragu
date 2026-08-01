@@ -22,7 +22,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         rng: &mut RNG,
         left: &'a Proof<C, R>,
         right: &'a Proof<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, J>,
     ) -> Result<native::stages::preamble::Witness<'a, C, R, HEADER_SIZE>> {
         let preamble_witness = self.compute_native_preamble(rng, left, right, builder)?;
         self.compute_bridge_preamble(rng, left, right, builder)?;
@@ -34,7 +34,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         rng: &mut RNG,
         left: &'a Proof<C, R>,
         right: &'a Proof<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, J>,
     ) -> Result<native::stages::preamble::Witness<'a, C, R, HEADER_SIZE>> {
         let preamble_witness = native::stages::preamble::Witness::new(
             left,
@@ -67,7 +67,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         rng: &mut RNG,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
-        builder: &mut ProofBuilder<'_, C, R>,
+        builder: &mut ProofBuilder<'_, C, R, J>,
     ) -> Result<()> {
         // The preamble stage is an induced run, so its wires come from the
         // slot list rather than from a stage body. The run is still one
