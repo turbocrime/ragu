@@ -110,34 +110,6 @@ pub struct PointsWitness<C: CurveAffine, L: Len> {
     pub interstitials: FixedVec<C, NumStepsLen<L>>,
 }
 
-impl<C: CurveAffine, L: Len> PointsWitness<C, L> {
-    /// The point in slot `i` of [`slot_points`](Self::slot_points), without
-    /// building the whole list.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `i` is past the last interstitial.
-    pub fn slot(&self, i: usize) -> C {
-        if i == 0 {
-            self.initial
-        } else if i <= self.inputs.len() {
-            self.inputs[i - 1]
-        } else {
-            self.interstitials[i - 1 - self.inputs.len()]
-        }
-    }
-
-    /// The stage's points in slot order — the order the run places, the order
-    /// [`Points::from_slots`] reads back, and the wire order the rx path commits.
-    pub fn slot_points(&self) -> vec::Vec<C> {
-        let mut points = vec::Vec::with_capacity(1 + self.inputs.len() + self.interstitials.len());
-        points.push(self.initial);
-        points.extend_from_slice(&self.inputs);
-        points.extend_from_slice(&self.interstitials);
-        points
-    }
-}
-
 impl<C: CurveAffine, L: Len> PointsWitness<C, L>
 where
     C::Scalar: WithSmallOrderMulGroup<3>,
@@ -423,17 +395,7 @@ impl<C: CurveAffine, R: Rank, L: Len> MultiStageCircuit<C::Base, R> for Endoscal
         witness: DriverValue<D, Self::Witness<'source>>,
     ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>> {
         let (endoscalar_guard, dr) = dr.add_stage::<EndoscalarStage>()?;
-        // One slot per point, anchored where `EndoscalarStage` ends.
-        let layout = {
-            use ragu_circuits::staging::Stage as _;
-            ragu_circuits::staging::InducedStages::after::<C::Base, R, EndoscalarStage>(
-                alloc::vec![PointSlotStage::<C, R>::values(); points_stage_num_slots(L::len())],
-            )
-        };
-        let (point_guards, dr) = dr.configure_induced_sized::<PointsStage<C, L>, _>(
-            PointSlotStage::<C, R>::default(),
-            &layout,
-        )?;
+        let (points_guard, dr) = dr.add_stage::<PointsStage<C, L>>()?;
         let dr = dr.finish();
 
         // Stages are loaded unenforced here. Curve membership for points and
@@ -441,17 +403,7 @@ impl<C: CurveAffine, R: Rank, L: Len> MultiStageCircuit<C::Base, R> for Endoscal
         // circuits (see #172). This only constrains the Horner accumulation
         // relationship between inputs and interstitials.
         let endoscalar = endoscalar_guard.unenforced(dr, witness.as_ref().map(|w| w.endoscalar))?;
-        let points = Points::<D, C, L>::from_slots(
-            point_guards
-                .into_iter()
-                .enumerate()
-                .map(|(slot, guard)| {
-                    Ok(guard
-                        .unenforced(dr, witness.as_ref().map(|w| w.points.slot(slot)))?
-                        .point)
-                })
-                .collect::<Result<alloc::vec::Vec<_>>>()?,
-        )?;
+        let points = points_guard.unenforced(dr, witness.as_ref().map(|w| w.points))?;
 
         // acc = initial or previous interstitial, depending on step index
         let initial = self
@@ -497,7 +449,7 @@ mod tests {
     use ragu_circuits::{
         CircuitExt,
         polynomials::{self},
-        staging::{InducedStages, MultiStage, Stage, StageExt},
+        staging::{MultiStage, StageExt},
     };
     use ragu_core::{
         Result,
@@ -513,16 +465,10 @@ mod tests {
         PointsStage, PointsWitness, num_steps,
     };
 
-    /// The value-level layout of an endoscaling step circuit's two stages:
-    /// the endoscalar, then the points at the given count.
-    fn test_layout<const NUM_POINTS: usize>() -> InducedStages {
-        InducedStages::new(alloc::vec![
-            <EndoscalarStage as Stage<Fp, R>>::values(),
-            <PointsStage<EpAffine, ConstLen<NUM_POINTS>> as Stage<Fp, R>>::values(),
-        ])
-    }
-
     type R = polynomials::ProductionRank;
+
+    /// The points stage at a test point count.
+    type Points<const NUM_POINTS: usize> = PointsStage<EpAffine, ConstLen<NUM_POINTS>>;
 
     /// Computes the effective scalar for an endoscalar via emulated `lift`.
     fn compute_effective_scalar(endo: u128) -> Fq {
@@ -613,24 +559,22 @@ mod tests {
         assert_eq!(points.interstitials[num_steps - 1], expected);
 
         // Run each step through the multi-stage circuit and verify correctness.
-        let layout = test_layout::<NUM_POINTS>();
         for step in 0..num_steps {
             let step_circuit = EndoscalingStep::<EpAffine, R, ConstLen<NUM_POINTS>>::new(step);
             let mut builder = TestRegistryBuilder::new();
             let staged_h = builder.register_circuit(MultiStage::new(step_circuit.clone()))?;
-            let endo_mask_h = builder.register_bonding(layout.mask(0)?);
-            let pts_mask_h = builder.register_bonding(layout.mask(1)?);
-            let final_mask_h = builder.register_bonding(layout.final_mask()?);
+            let endo_mask_h =
+                builder.register_bonding(<EndoscalarStage as StageExt<Fp, R>>::mask()?);
+            let pts_mask_h =
+                builder.register_bonding(<Points<NUM_POINTS> as StageExt<Fp, R>>::mask()?);
+            let final_mask_h =
+                builder.register_bonding(<Points<NUM_POINTS> as StageExt<Fp, R>>::final_mask()?);
             let registry = builder.finalize()?;
 
             let staged = MultiStage::new(step_circuit);
 
             let endoscalar_rx = <EndoscalarStage as StageExt<Fp, R>>::rx(Fp::ZERO, endoscalar)?;
-            let points_rx = layout.rx(
-                1,
-                Fp::ZERO,
-                &crate::internal::point_run_values(&points.slot_points())?,
-            )?;
+            let points_rx = <Points<NUM_POINTS> as StageExt<Fp, R>>::rx(Fp::ZERO, &points)?;
             let final_trace = staged
                 .trace(EndoscalingStepWitness {
                     endoscalar,
@@ -686,14 +630,13 @@ mod tests {
         assert_eq!(points.interstitials[num_steps - 1], expected);
 
         // Run each step through the multi-stage circuit.
-        let layout = test_layout::<NUM_POINTS>();
         for step in 0..num_steps {
             let step_circuit = EndoscalingStep::<EpAffine, R, ConstLen<NUM_POINTS>>::new(step);
             let mut builder = TestRegistryBuilder::new();
             let staged_h = builder.register_circuit(MultiStage::new(step_circuit.clone()))?;
-            builder.register_bonding(layout.mask(0)?);
-            builder.register_bonding(layout.mask(1)?);
-            builder.register_bonding(layout.final_mask()?);
+            builder.register_bonding(<EndoscalarStage as StageExt<Fp, R>>::mask()?);
+            builder.register_bonding(<Points<NUM_POINTS> as StageExt<Fp, R>>::mask()?);
+            builder.register_bonding(<Points<NUM_POINTS> as StageExt<Fp, R>>::final_mask()?);
             let registry = builder.finalize()?;
 
             let staged = MultiStage::new(step_circuit);
@@ -709,11 +652,7 @@ mod tests {
             let y = Fp::random(&mut ragu_arithmetic::rand::rng());
 
             let endoscalar_rx = <EndoscalarStage as StageExt<Fp, R>>::rx(Fp::ZERO, endoscalar)?;
-            let points_rx = layout.rx(
-                1,
-                Fp::ZERO,
-                &crate::internal::point_run_values(&points.slot_points())?,
-            )?;
+            let points_rx = <Points<NUM_POINTS> as StageExt<Fp, R>>::rx(Fp::ZERO, &points)?;
 
             // Verify combined circuit identity.
             let mut lhs = final_rx.clone();

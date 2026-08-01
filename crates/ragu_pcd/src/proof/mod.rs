@@ -19,7 +19,7 @@ use ragu_circuits::{
     CircuitExt,
     polynomials::{Rank, sparse},
     registry::CircuitIndex,
-    staging::MultiStage,
+    staging::{MultiStage, StageExt},
 };
 use ragu_core::Result;
 use ragu_primitives::extract_endoscalar;
@@ -553,21 +553,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::Hoo
             crate::internal::nested::EndoPoints<J::PolyWitnesses>,
         >::new(beta_endo, points)?;
 
-        // Via the value-level chain, not `StageExt::rx`: stage width and
-        // position follow the application's capacity.
-        let chain = self.nested_chain_layout();
-        let endoscalar_rx = chain.rx_configured(
-            nested::ChainStage::Endoscalar.index(),
-            endoscalar_alpha,
-            &EndoscalarStage,
-            beta_endo,
-        )?;
-        // Induced run: wires come from the slot list, not a stage body.
-        let points_rx = chain.rx(
-            nested::ChainStage::Points.index(),
-            points_alpha,
-            &crate::internal::point_run_values(&witness.slot_points())?,
-        )?;
+        let endoscalar_rx =
+            <EndoscalarStage as StageExt<C::ScalarField, R>>::rx(endoscalar_alpha, beta_endo)?;
+        let points_rx = <crate::internal::endoscalar::PointsStage<
+            C::HostCurve,
+            crate::internal::nested::EndoPoints<J::PolyWitnesses>,
+        > as StageExt<C::ScalarField, R>>::rx(points_alpha, &witness)?;
 
         let num_steps = crate::internal::endoscalar::num_steps(num_points);
         let mut step_rxs = Vec::with_capacity(num_steps);
