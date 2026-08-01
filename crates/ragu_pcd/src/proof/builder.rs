@@ -13,6 +13,7 @@ use ragu_arithmetic::{Cycle, ff::Field};
 use ragu_circuits::{
     polynomials::{Rank, sparse},
     registry::CircuitIndex,
+    staging::StageExt,
 };
 use ragu_core::Result;
 use ragu_primitives::vec::Len as _;
@@ -611,8 +612,8 @@ impl<'params, C: Cycle, R: Rank, J: HookConfig> ProofBuilder<'params, C, R, J> {
         })
     }
 
-    /// The eval bridge, written out rather than through [`cached_bridge!`]:
-    /// its stage is an induced run, so its wires come from the slot list.
+    /// The eval bridge; its witness holds the claim host commitments, which
+    /// [`cached_bridge!`]'s single-getter fields cannot express.
     pub(crate) fn bridge_eval_rx(&self) -> Result<&sparse::Polynomial<C::ScalarField, R>> {
         if let Some(rx) = self.bridge_eval_rx.get() {
             return Ok(rx);
@@ -621,10 +622,9 @@ impl<'params, C: Cycle, R: Rank, J: HookConfig> ProofBuilder<'params, C, R, J> {
             native_eval: self.native_eval_commitment(),
             claims: self.claim_host_commitments().to_vec(),
         };
-        let rx = self.nested_chain().rx(
-            nested::ChainStage::Eval.index(),
+        let rx = nested::stages::eval::Stage::<C::HostCurve, R, J::PolyWitnesses>::rx(
             self.bridge_alpha_power(nested::RxIndex::BridgeEval),
-            &crate::internal::point_run_values(&witness.slot_points())?,
+            &witness,
         )?;
         Ok(self.bridge_eval_rx.get_or_init(|| rx))
     }

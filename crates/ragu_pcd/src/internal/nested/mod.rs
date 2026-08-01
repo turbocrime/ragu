@@ -113,43 +113,14 @@ impl ChainStage {
     }
 }
 
-/// Subdivides one span of [`NestedLayouts::chain_layout`] into `slots`
-/// one-point slots. The stage keeps its single mask and commitment: the
-/// subdivision decides where wires land, and the slot width comes from `Slot`.
-fn run_layout<F, R, Slot>(
-    chain: &ragu_circuits::staging::InducedStages,
-    stage: ChainStage,
-    slots: usize,
-) -> ragu_circuits::staging::InducedStages
-where
-    F: ragu_arithmetic::ff::Field,
-    R: Rank,
-    Slot: ragu_circuits::staging::Stage<F, R>,
-{
-    ragu_circuits::staging::InducedStages::anchored(
-        chain.skip_gates(stage.index()),
-        alloc::vec![Slot::values(); slots],
-    )
-}
-
-/// Every layout needed to walk a nested trace, built together:
-/// [`loading`](circuits::loading) and [`copying`](circuits::copying) must
-/// place every stage at the same gate, so both walks come from one value.
-pub struct NestedLayouts {
-    /// The chain itself, in [`ChainStage`] order.
-    pub chain: ragu_circuits::staging::InducedStages,
-    /// [`ChainStage::Points`], subdivided into one-point slots.
-    pub points: ragu_circuits::staging::InducedStages,
-    /// [`ChainStage::Preamble`], subdivided into one-point slots.
-    pub preamble: ragu_circuits::staging::InducedStages,
-    /// [`ChainStage::Eval`], subdivided into one-point slots.
-    pub eval: ragu_circuits::staging::InducedStages,
-}
+/// Namespace for the nested chain's value-level geometry, used by the
+/// remaining erased-side mask and rx sites.
+pub struct NestedLayouts;
 
 impl NestedLayouts {
     /// The nested stage chain's widths at the application's declared capacity,
-    /// in [`ChainStage`] order — the source [`new`](Self::new) subdivides.
-    /// Every step exposes the same shape, so one capacity sizes all stages.
+    /// in [`ChainStage`] order, read off the typed stages. Every step exposes
+    /// the same shape, so one capacity sizes all stages.
     pub fn chain_layout<HC: ragu_arithmetic::CurveAffine, R: Rank, L: ragu_primitives::vec::Len>()
     -> ragu_circuits::staging::InducedStages {
         use ragu_circuits::staging::{InducedStages, Stage};
@@ -174,37 +145,6 @@ impl NestedLayouts {
     /// circuit, and the two copying circuits — circuits before bondings.
     pub(crate) fn num_internal(polys: usize) -> usize {
         num_endoscaling_steps(polys) + BLOCK_FIXED.len() + 3
-    }
-
-    /// Builds every layout for an application of the given capacity.
-    pub fn new<HC: ragu_arithmetic::CurveAffine, R: Rank, L: ragu_primitives::vec::Len>() -> Self {
-        use ragu_primitives::vec::Len as _;
-
-        let chain = Self::chain_layout::<HC, R, L>();
-        Self {
-            points: run_layout::<HC::Base, R, endoscalar::PointSlotStage<HC, R>>(
-                &chain,
-                ChainStage::Points,
-                endoscalar::points_stage_num_slots(EndoPoints::<L>::len()),
-            ),
-            preamble: run_layout::<HC::Base, R, stages::host_bridge::Slot<HC, R>>(
-                &chain,
-                ChainStage::Preamble,
-                stages::preamble::num_slots(L::len()),
-            ),
-            eval: run_layout::<HC::Base, R, stages::host_bridge::Slot<HC, R>>(
-                &chain,
-                ChainStage::Eval,
-                stages::eval::num_slots(L::len()),
-            ),
-            chain,
-        }
-    }
-
-    /// The span width of a stage placed whole, for
-    /// [`configure_stage_sized`](ragu_circuits::staging::StageBuilder::configure_stage_sized).
-    pub fn width(&self, stage: ChainStage) -> usize {
-        self.chain.width(stage.index())
     }
 }
 
@@ -417,7 +357,6 @@ pub mod stages {
     pub mod ab;
     pub mod eval;
     pub mod f;
-    pub mod host_bridge;
     pub mod inner_error;
     pub mod outer_error;
     pub mod preamble;

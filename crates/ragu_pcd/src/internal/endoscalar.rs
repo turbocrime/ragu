@@ -194,41 +194,6 @@ pub struct Points<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> {
     pub interstitials: FixedVec<Point<'dr, D, C>, NumStepsLen<L>>,
 }
 
-impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> Points<'dr, D, C, L> {
-    /// Rebuild the named view from the run's slots; a short run reports
-    /// [`MalformedEncoding`](ragu_core::Error::MalformedEncoding).
-    pub fn from_slots(slots: impl IntoIterator<Item = Point<'dr, D, C>>) -> Result<Self> {
-        let slots = &mut slots.into_iter();
-        let mut next = || {
-            slots.next().ok_or_else(|| {
-                ragu_core::Error::MalformedEncoding(
-                    "the points run yielded fewer slots than the layout sized it for".into(),
-                )
-            })
-        };
-
-        let initial = next()?;
-        let inputs = (0..InputsLen::<L>::len())
-            .map(|_| next())
-            .collect::<Result<alloc::vec::Vec<_>>>()?;
-        let interstitials = (0..NumStepsLen::<L>::len())
-            .map(|_| next())
-            .collect::<Result<alloc::vec::Vec<_>>>()?;
-
-        Ok(Points {
-            initial,
-            inputs: inputs.try_into()?,
-            interstitials: interstitials.try_into()?,
-        })
-    }
-}
-
-/// The number of one-point slots [`PointsStage`] spans for an accumulation of
-/// `num_points` points: the points themselves plus one interstitial per step.
-pub fn points_stage_num_slots(num_points: usize) -> usize {
-    num_points + num_steps(num_points)
-}
-
 /// Stage for allocating all point witnesses (inputs and interstitials).
 pub struct PointsStage<C: CurveAffine, L: Len> {
     _marker: core::marker::PhantomData<(C, L)>,
@@ -271,56 +236,6 @@ impl<C: CurveAffine, R: Rank, L: Len> Stage<C::Base, R> for PointsStage<C, L> {
             initial,
             inputs,
             interstitials,
-        })
-    }
-}
-
-/// One slot of a [`PointsStage`] run: a single curve point.
-#[derive(Gadget)]
-pub struct PointSlot<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
-    #[ragu(gadget)]
-    pub point: Point<'dr, D, C>,
-}
-
-/// The per-slot witness body of a [`PointsStage`] run.
-pub struct PointSlotStage<C: CurveAffine, R> {
-    _marker: core::marker::PhantomData<(C, R)>,
-}
-
-impl<C: CurveAffine, R> Default for PointSlotStage<C, R> {
-    fn default() -> Self {
-        Self {
-            _marker: core::marker::PhantomData,
-        }
-    }
-}
-
-impl<C: CurveAffine, R> Clone for PointSlotStage<C, R> {
-    fn clone(&self) -> Self {
-        Self::default()
-    }
-}
-
-impl<C: CurveAffine, R: Rank> Stage<C::Base, R> for PointSlotStage<C, R> {
-    type Parent = ();
-
-    fn values() -> usize {
-        2
-    }
-
-    type Witness<'source> = C;
-    type OutputKind = Kind![C::Base; PointSlot<'_, _, C>];
-
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
-        &self,
-        dr: &mut D,
-        witness: DriverValue<D, Self::Witness<'source>>,
-    ) -> Result<Bound<'dr, D, Self::OutputKind>>
-    where
-        Self: 'dr,
-    {
-        Ok(PointSlot {
-            point: Point::alloc(dr, witness)?,
         })
     }
 }

@@ -30,27 +30,6 @@ pub mod native;
 pub mod nested;
 pub mod transcript;
 
-/// The wire values a run of one-point slots produces, in slot order — what
-/// [`InducedStages::rx`](ragu_circuits::staging::InducedStages::rx) needs.
-/// Extracted through [`Point::alloc`](ragu_primitives::Point::alloc) itself,
-/// so this order is the wire order by construction.
-pub(crate) fn point_run_values<C: ragu_arithmetic::CurveAffine>(
-    points: &[C],
-) -> ragu_core::Result<alloc::vec::Vec<C::Base>> {
-    use ragu_core::{
-        drivers::emulator::Emulator,
-        maybe::{Always, MaybeKind},
-    };
-
-    let mut values = alloc::vec::Vec::with_capacity(points.len() * 2);
-    for point in points {
-        let mut dr = Emulator::extractor();
-        let allocated = ragu_primitives::Point::alloc(&mut dr, Always::maybe_just(|| *point))?;
-        values.extend(dr.wires(&allocated)?);
-    }
-    Ok(values)
-}
-
 /// Identifies which of the two child proofs a component came from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Side {

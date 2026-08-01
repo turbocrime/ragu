@@ -32,7 +32,7 @@ use ragu_core::{
 use ragu_primitives::{GadgetExt as _, Point};
 
 use crate::internal::{
-    endoscalar::{EndoscalarStage, PointSlotStage, Points, PointsStage},
+    endoscalar::{EndoscalarStage, Points, PointsStage},
     native::RxIndex,
     nested::{EndoPoints, stages},
 };
@@ -112,45 +112,15 @@ impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> MultiStageCircuit<C:
         dr: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
         _witness: DriverValue<D, ()>,
     ) -> Result<WithAux<Bound<'dr, D, ()>, DriverValue<D, ()>>> {
-        use crate::internal::nested::{ChainStage, NestedLayouts};
-
-        // As in `copying`: every position comes from the value-level chain.
-        let layouts = NestedLayouts::new::<C, R, L>();
-
-        let dr = dr.skip_stage_sized(EndoscalarStage, layouts.width(ChainStage::Endoscalar))?;
-        let (point_guards, dr) = dr.configure_induced_sized::<PointsStage<C, EndoPoints<L>>, _>(
-            PointSlotStage::<C, R>::default(),
-            &layouts.points,
-        )?;
-        let (preamble_guards, dr) = dr
-            .configure_induced_sized::<stages::preamble::Stage<C, R, L>, _>(
-                stages::host_bridge::Slot::<C, R>::default(),
-                &layouts.preamble,
-            )?;
-        let (s_prime_guard, dr) = dr.configure_stage_sized(
-            stages::s_prime::Stage::<C, R, L>::default(),
-            layouts.width(ChainStage::SPrime),
-        )?;
-        let (inner_error_guard, dr) = dr.configure_stage_sized(
-            stages::inner_error::Stage::<C, R, L>::default(),
-            layouts.width(ChainStage::InnerError),
-        )?;
-        let dr = dr.skip_stage_sized(
-            stages::outer_error::Stage::<C, R, L>::default(),
-            layouts.width(ChainStage::OuterError),
-        )?;
-        let (ab_guard, dr) = dr.configure_stage_sized(
-            stages::ab::Stage::<C, R, L>::default(),
-            layouts.width(ChainStage::Ab),
-        )?;
-        let (query_guard, dr) = dr.configure_stage_sized(
-            stages::query::Stage::<C, R, L>::default(),
-            layouts.width(ChainStage::Query),
-        )?;
-        let (f_guard, dr) = dr.configure_stage_sized(
-            stages::f::Stage::<C, R, L>::default(),
-            layouts.width(ChainStage::F),
-        )?;
+        let dr = dr.skip_stage::<EndoscalarStage>()?;
+        let (points_guard, dr) = dr.add_stage::<PointsStage<C, EndoPoints<L>>>()?;
+        let (preamble_guard, dr) = dr.add_stage::<stages::preamble::Stage<C, R, L>>()?;
+        let (s_prime_guard, dr) = dr.add_stage::<stages::s_prime::Stage<C, R, L>>()?;
+        let (inner_error_guard, dr) = dr.add_stage::<stages::inner_error::Stage<C, R, L>>()?;
+        let dr = dr.skip_stage::<stages::outer_error::Stage<C, R, L>>()?;
+        let (ab_guard, dr) = dr.add_stage::<stages::ab::Stage<C, R, L>>()?;
+        let (query_guard, dr) = dr.add_stage::<stages::query::Stage<C, R, L>>()?;
+        let (f_guard, dr) = dr.add_stage::<stages::f::Stage<C, R, L>>()?;
         let dr = dr.finish();
 
         // Load stage gadgets. Witness values are never accessed — the circuit
@@ -160,18 +130,8 @@ impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> MultiStageCircuit<C:
                 _witness.as_ref().map(|_| unreachable!())
             };
         }
-        let points = Points::<D, C, EndoPoints<L>>::from_slots(
-            point_guards
-                .into_iter()
-                .map(|guard| Ok(guard.unenforced(dr, w!())?.point))
-                .collect::<Result<alloc::vec::Vec<_>>>()?,
-        )?;
-        let preamble = stages::preamble::Output::<D, C, L>::from_slots(
-            preamble_guards
-                .into_iter()
-                .map(|guard| Ok(guard.unenforced(dr, w!())?.host))
-                .collect::<Result<alloc::vec::Vec<_>>>()?,
-        )?;
+        let points = points_guard.unenforced(dr, w!())?;
+        let preamble = preamble_guard.unenforced(dr, w!())?;
         let s_prime = s_prime_guard.unenforced(dr, w!())?;
         let inner_error = inner_error_guard.unenforced(dr, w!())?;
         let ab = ab_guard.unenforced(dr, w!())?;

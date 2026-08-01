@@ -243,46 +243,6 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> core::ops::Index<
     }
 }
 
-impl<C: CurveAffine> ChildWitness<C> {
-    /// This child's points in slot order — the flat list the run places, and
-    /// the order [`ChildOutput::from_slots`] reads them back in.
-    fn slot_points(&self) -> Vec<C> {
-        let mut points = alloc::vec![
-            self.application,
-            self.hashes_1,
-            self.hashes_2,
-            self.inner_collapse,
-            self.outer_collapse,
-            self.compute_v,
-            self.challenge_binding,
-            self.stashed_preamble,
-            self.stashed_inner_error,
-            self.stashed_outer_error,
-            self.stashed_query,
-            self.stashed_eval,
-            self.stashed_challenges,
-            self.stashed_ab_a,
-            self.stashed_ab_b,
-            self.stashed_registry_xy,
-            self.stashed_p,
-        ];
-        points.extend_from_slice(&self.stashed_claims);
-        points.extend_from_slice(&self.stashed_q);
-        points
-    }
-}
-
-/// Pulls the next slot, or reports the run was short.
-fn next_slot<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>>(
-    slots: &mut impl Iterator<Item = Point<'dr, D, C>>,
-) -> Result<Point<'dr, D, C>> {
-    slots.next().ok_or_else(|| {
-        ragu_core::Error::MalformedEncoding(
-            "the preamble run yielded fewer slots than the layout sized it for".into(),
-        )
-    })
-}
-
 impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> ChildOutput<'dr, D, C, L> {
     /// Allocates one child's block, in field order.
     fn alloc(dr: &mut D, witness: DriverValue<D, &ChildWitness<C>>) -> Result<Self> {
@@ -313,56 +273,6 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> ChildOutput<'dr, 
         })
     }
 
-    /// Rebuild one child's block from the run's slots, in the order
-    /// [`ChildWitness::slot_points`] emitted it. A short run reports
-    /// [`MalformedEncoding`](ragu_core::Error::MalformedEncoding).
-    fn from_slots(slots: &mut impl Iterator<Item = Point<'dr, D, C>>) -> Result<Self> {
-        let application = next_slot(slots)?;
-        let hashes_1 = next_slot(slots)?;
-        let hashes_2 = next_slot(slots)?;
-        let inner_collapse = next_slot(slots)?;
-        let outer_collapse = next_slot(slots)?;
-        let compute_v = next_slot(slots)?;
-        let challenge_binding = next_slot(slots)?;
-        let stashed_preamble = next_slot(slots)?;
-        let stashed_inner_error = next_slot(slots)?;
-        let stashed_outer_error = next_slot(slots)?;
-        let stashed_query = next_slot(slots)?;
-        let stashed_eval = next_slot(slots)?;
-        let stashed_challenges = next_slot(slots)?;
-        let stashed_ab_a = next_slot(slots)?;
-        let stashed_ab_b = next_slot(slots)?;
-        let stashed_registry_xy = next_slot(slots)?;
-        let stashed_p = next_slot(slots)?;
-        let stashed_claims = (0..L::len())
-            .map(|_| next_slot(slots))
-            .collect::<Result<Vec<_>>>()?;
-        let stashed_q = (0..QStashLen::<L>::len())
-            .map(|_| next_slot(slots))
-            .collect::<Result<Vec<_>>>()?;
-
-        Ok(ChildOutput {
-            application,
-            hashes_1,
-            hashes_2,
-            inner_collapse,
-            outer_collapse,
-            compute_v,
-            challenge_binding,
-            stashed_preamble,
-            stashed_inner_error,
-            stashed_outer_error,
-            stashed_query,
-            stashed_eval,
-            stashed_challenges,
-            stashed_ab_a,
-            stashed_ab_b,
-            stashed_registry_xy,
-            stashed_p,
-            stashed_claims: stashed_claims.try_into()?,
-            stashed_q: stashed_q.try_into()?,
-        })
-    }
 }
 
 /// The preamble bridge stage's points, as the circuit body names them.
@@ -377,26 +287,6 @@ pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> {
     /// Points from the right child proof.
     #[ragu(gadget)]
     pub right: ChildOutput<'dr, D, C, L>,
-}
-
-impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> Output<'dr, D, C, L> {
-    /// Rebuild the named view from the run's slots: `native_preamble`, then
-    /// each child's block in turn. One `L` sizes both children's blocks,
-    /// matching [`num_points`].
-    pub fn from_slots(slots: impl IntoIterator<Item = Point<'dr, D, C>>) -> Result<Self> {
-        let slots = &mut slots.into_iter();
-
-        Ok(Output {
-            native_preamble: next_slot(slots)?,
-            left: ChildOutput::from_slots(slots)?,
-            right: ChildOutput::from_slots(slots)?,
-        })
-    }
-}
-
-/// This stage's slot count: one slot per point of [`num_points`].
-pub const fn num_slots(polys: usize) -> usize {
-    num_points(polys)
 }
 
 /// The preamble bridge stage: `native_preamble`, then each child's block.
@@ -439,64 +329,3 @@ impl<C: CurveAffine, R: Rank, L: Len> ragu_circuits::staging::Stage<C::Base, R>
     }
 }
 
-impl<C: CurveAffine> Witness<C> {
-    /// This stage's points in slot order — the list [`Output::from_slots`]
-    /// reads back and the rx path feeds
-    /// [`InducedStages::rx`](ragu_circuits::staging::InducedStages::rx), so
-    /// this order is the wire order the commitment covers.
-    pub fn slot_points(&self) -> Vec<C> {
-        let mut points = alloc::vec![self.native_preamble];
-        points.extend(self.left.slot_points());
-        points.extend(self.right.slot_points());
-        points
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use ragu_pasta::EqAffine;
-
-    use super::*;
-
-    /// The witness emits exactly the slots the layout sizes.
-    #[test]
-    fn slot_points_matches_slot_count() {
-        for polys in [0, 1, 4, 8] {
-            let child = ChildWitness::<EqAffine> {
-                application: EqAffine::default(),
-                hashes_1: EqAffine::default(),
-                hashes_2: EqAffine::default(),
-                inner_collapse: EqAffine::default(),
-                outer_collapse: EqAffine::default(),
-                compute_v: EqAffine::default(),
-                challenge_binding: EqAffine::default(),
-                stashed_preamble: EqAffine::default(),
-                stashed_inner_error: EqAffine::default(),
-                stashed_outer_error: EqAffine::default(),
-                stashed_query: EqAffine::default(),
-                stashed_eval: EqAffine::default(),
-                stashed_challenges: EqAffine::default(),
-                stashed_ab_a: EqAffine::default(),
-                stashed_ab_b: EqAffine::default(),
-                stashed_registry_xy: EqAffine::default(),
-                stashed_p: EqAffine::default(),
-                stashed_claims: alloc::vec![EqAffine::default(); polys],
-                stashed_q: alloc::vec![
-                    EqAffine::default();
-                    crate::internal::nested::q_slots(polys)
-                ],
-            };
-            let witness = Witness {
-                native_preamble: EqAffine::default(),
-                left: child.clone(),
-                right: child,
-            };
-
-            assert_eq!(
-                witness.slot_points().len(),
-                num_slots(polys),
-                "polys={polys}"
-            );
-        }
-    }
-}

@@ -69,18 +69,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         right: &Proof<C, R>,
         builder: &mut ProofBuilder<'_, C, R, J>,
     ) -> Result<()> {
-        // The preamble stage is an induced run, so its wires come from the
-        // slot list rather than from a stage body. The run is still one
-        // commitment, so this is the same rx a whole-stage body would produce.
         let witness = nested::stages::preamble::Witness {
             native_preamble: builder.native_preamble_commitment(),
             left: nested::stages::preamble::ChildWitness::from_proof(self.params, left)?,
             right: nested::stages::preamble::ChildWitness::from_proof(self.params, right)?,
         };
-        let bridge_rx = self.nested_chain_layout().rx(
-            nested::ChainStage::Preamble.index(),
+        let bridge_rx = nested::stages::preamble::Stage::<C::HostCurve, R, J::PolyWitnesses>::rx(
             C::ScalarField::random(&mut *rng),
-            &crate::internal::point_run_values(&witness.slot_points())?,
+            &witness,
         )?;
         let bridge_commitment = bridge_rx.commit_to_affine(C::nested_generators(self.params));
         builder.set_bridge_preamble_rx(bridge_rx, bridge_commitment);

@@ -831,22 +831,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::Hoo
                 stashed_claims: alloc::vec![padding_host; self.hook_layout().polys],
                 stashed_q: padding_q.clone(),
             };
-            // Induced run via the value-level chain: the preamble's position
-            // follows the capacity-sized points stage.
             let witness = nested::stages::preamble::Witness {
                 native_preamble: host_commitment,
                 left: trivial_child_witness.clone(),
                 right: trivial_child_witness,
             };
-            let rx = self
-                .nested_chain_layout()
-                .rx(
-                    nested::ChainStage::Preamble.index(),
-                    C::ScalarField::ONE,
-                    &crate::internal::point_run_values(&witness.slot_points())
-                        .expect("trivial preamble slot values"),
-                )
-                .expect("trivial preamble rx");
+            let rx = nested::stages::preamble::Stage::<C::HostCurve, R, J::PolyWitnesses>::rx(
+                C::ScalarField::ONE,
+                &witness,
+            )
+            .expect("trivial preamble rx");
             let commitment = rx.commit_to_affine(nested_gen);
             builder.set_bridge_preamble_rx(rx, commitment);
         }
