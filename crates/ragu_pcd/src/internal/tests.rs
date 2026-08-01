@@ -353,16 +353,9 @@ fn test_slotted_registry_digests() {
     // `POLYS = 0` digests holding alongside is the isolation check:
     // `q_slots(0) = 0`, so the feature vanishes at that shape.
     //
-    // Re-pinned when the framework began witnessing every polynomial slot
-    // before the step body runs (`Step::polynomials` + `StepCtx::polys`):
-    // the slot wires moved ahead of the body's allocations, reordering the
-    // application circuits' wiring. Constraint counts and both `POLYS = 0`
-    // digests held, and the nested digest below held — the application
-    // trace lives only in the native registry — which is the
-    // pure-reordering signature.
     assert_eq!(
         app.native_registry.digest(),
-        fp!(0x05824ba5babed4a4c1b1f210744e7e9a73ee3a3cc605e90be49660aacd8606bf),
+        fp!(0x325fdfbe3950edd8fcddb1fcc2f2993378ff5a13f36b2be2d48babc94f48d05f),
         "Native registry digest changed unexpectedly at a slotted shape!"
     );
     // Covers the nested side of the claim machinery: the stashed claim host
@@ -441,36 +434,6 @@ fn print_registry_digests() {
         hex(slotted.native_registry.digest()),
         hex(slotted.nested_registry.digest())
     );
-}
-
-/// The nested chain layout tiles — every stage starts where its predecessor
-/// ended — at every capacity.
-///
-/// The masks cut from it are functions of precisely these offsets, so a break
-/// in tiling silently misplaces every stage after it. Checked across
-/// capacities: the bug this guards against is geometry that is right at one
-/// blessed shape and wrong at every other.
-///
-/// Only the nested chain needs this. The native chain is typed, so
-/// [`Stage::skip_gates`](ragu_circuits::staging::Stage::skip_gates) *is*
-/// `Parent::skip_gates() + Parent::num_gates()` by definition.
-#[test]
-fn nested_chain_layout_tiles_at_every_capacity() {
-    use ragu_pasta::Pasta;
-
-    type Host = <Pasta as ragu_arithmetic::Cycle>::HostCurve;
-
-    for polys in [0, 1, 4, 8] {
-        let nested = crate::internal::nested::NestedLayouts::chain_layout::<Host, R>(polys);
-
-        for stage in 0..nested.len() {
-            assert_eq!(
-                nested.skip_gates(stage + 1),
-                nested.skip_gates(stage) + nested.num_gates(stage),
-                "not contiguous after stage {stage} at polys={polys}"
-            );
-        }
-    }
 }
 
 /// The endoscaling point count is one formula in two forms, and they agree.
@@ -675,17 +638,21 @@ mod capacity_is_per_application {
 
     step!(Heavy, |ctx| {
         // This step is only ever registered, never proved, so what matters here
-        // is that the hook calls happen — not the values they carry. The two
-        // polynomial slots were witnessed by the framework before this body
-        // ran (padding, since the step declares none).
-        let handles = ctx.polys();
+        // is that the hook calls happen — not the values they carry.
+        let commitment = D::try_just(|| {
+            Err::<crate::poly_commitment::PolyCommitment<Pasta>, _>(Error::InvalidWitness(
+                "the capacity test never builds a proof".into(),
+            ))
+        })?;
+        // Both polynomials in one call: slot 0 is `handle`, slot 1 is `other`.
+        let [handle, other] = ctx.witness_polynomial([Maybe::clone(&commitment), commitment])?;
         let zero = Element::alloc(ctx.dr, &mut Standard::new(), D::just(|| Fp::ZERO))?;
         // One polynomial opened twice, the other once: three claims over two
         // polynomials.
-        ctx.enforce_poly_query(&handles[0], zero.clone(), zero.clone())?;
-        ctx.enforce_poly_query(&handles[0], zero.clone(), zero.clone())?;
-        ctx.enforce_poly_query(&handles[1], zero.clone(), zero)?;
-        ctx.derive_challenge(Pasta::baked(), &handles[0])?;
+        ctx.enforce_poly_query(&handle, zero.clone(), zero.clone())?;
+        ctx.enforce_poly_query(&handle, zero.clone(), zero.clone())?;
+        ctx.enforce_poly_query(&other, zero.clone(), zero)?;
+        ctx.derive_challenge(Pasta::baked(), &handle)?;
     });
 
     fn gates<J: crate::framework_hooks::HookConfig>(

@@ -487,10 +487,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
     /// coefficients on the host curve; its representation is the affine
     /// coordinates canonically embedded in the circuit field
     /// ([`PolyCommitment::coords`]). Thread the returned [`PolyCommitment`]
-    /// into a step's witness and declare it from
-    /// [`Step::polynomials`](step::Step::polynomials); the framework
-    /// witnesses it into an in-circuit [`PolyHandle`] reached via
-    /// [`StepCtx::polys`](step::StepCtx::polys), and
+    /// into a step's witness and turn it into an in-circuit [`PolyHandle`]
+    /// with [`StepCtx::witness_polynomial`](step::StepCtx::witness_polynomial);
     /// [`StepCtx::enforce_poly_query`](step::StepCtx::enforce_poly_query) then
     /// raises the opening claim. Because the representation is derived from
     /// the polynomial here, the two cannot be mismatched by an honest caller.

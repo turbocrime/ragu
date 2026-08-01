@@ -13,12 +13,10 @@
 //!   [`Application::commit_polynomial`](crate::Application::commit_polynomial):
 //!   the representation is *derived from* the polynomial, so an honest caller
 //!   cannot mismatch them.
-//! * [`PolyHandle`] is the in-circuit form, witnessed by the framework from
-//!   the commitments a [`Step::polynomials`](crate::step::Step::polynomials)
-//!   declares and handed to the body via
-//!   [`StepCtx::polys`](crate::step::StepCtx::polys): the representation as
-//!   two coordinate wires (usable for challenges, hashing, cross-proof
-//!   comparison), consumed by
+//! * [`PolyHandle`] is the in-circuit form, created by
+//!   [`StepCtx::witness_polynomial`](crate::step::StepCtx::witness_polynomial):
+//!   the representation as two coordinate wires (usable for challenges,
+//!   hashing, cross-proof comparison), consumed by
 //!   [`enforce_poly_query`](crate::step::StepCtx::enforce_poly_query).
 //!
 //! [`PolyCommitment::coords`] and [`PolyHandle::coords`] produce **identical
@@ -114,9 +112,9 @@ fn embed_coordinate<F: PrimeField>(lo: u128, hi: u128) -> F {
 /// Produced by
 /// [`Application::commit_polynomial`](crate::Application::commit_polynomial),
 /// which derives the representation from the polynomial. Thread this into a
-/// [`Step`](crate::step::Step)'s witness, declare it from
-/// [`Step::polynomials`](crate::step::Step::polynomials), and the framework
-/// witnesses it into an in-circuit [`PolyHandle`].
+/// [`Step`](crate::step::Step)'s witness and turn it into an in-circuit
+/// [`PolyHandle`] with
+/// [`StepCtx::witness_polynomial`](crate::step::StepCtx::witness_polynomial).
 ///
 /// Coefficients are held rank-erased (little-endian `Vec`); the framework
 /// re-ranks them where its rank is in scope.
@@ -233,8 +231,9 @@ impl<C: Cycle> PolyCommitment<C> {
 /// representation as two coordinate wires, plus the retained coefficients
 /// (prover-only) for the claim.
 ///
-/// Witnessed by the framework and reached via
-/// [`StepCtx::polys`](crate::step::StepCtx::polys); opened via
+/// Created by
+/// [`StepCtx::witness_polynomial`](crate::step::StepCtx::witness_polynomial);
+/// opened via
 /// [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query).
 ///
 /// A host-curve point cannot be a [`Point`](ragu_primitives::Point) in a step

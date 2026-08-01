@@ -145,9 +145,8 @@ impl ChainStage {
 /// single commitment: the subdivision decides where wires land, not how many
 /// commitments there are.
 ///
-/// `nested_chain_layout_tiles_at_every_capacity` pins that each run's slots sum
-/// to the span they subdivide. The slot width comes from `Slot` itself, so the
-/// layout and the stage it tiles agree by construction.
+/// The slot width comes from `Slot` itself, so the layout and the stage it
+/// tiles agree by construction.
 fn run_layout<F, R, Slot>(
     chain: &ragu_circuits::staging::InducedStages,
     stage: ChainStage,
@@ -196,8 +195,7 @@ impl NestedLayouts {
     /// exposes the same shape, so one capacity sizes all three. The widths
     /// come from each stage's `num_values` (capacity-dependent stages) or its
     /// typed `values()` (the stages whose width really is a property of their
-    /// type); `nested_chain_layout_tiles_at_every_capacity` pins that the
-    /// result is contiguous.
+    /// type).
     pub fn chain_layout<HC: ragu_arithmetic::CurveAffine, R: Rank>(
         polys: usize,
     ) -> ragu_circuits::staging::InducedStages {

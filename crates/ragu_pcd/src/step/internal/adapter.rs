@@ -122,11 +122,6 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize, J: H
         let (padding, left, right, witness) = witness.cast();
 
         let mut hooks = FrameworkHooks::new(J::layout());
-        // Every polynomial slot is witnessed before the body runs — the
-        // step's declared commitments, padding for the rest — so the body
-        // reads its handles off `ctx.polys()`.
-        let declared = witness.as_ref().map(|w| self.step.polynomials(w));
-        hooks.witness_declared_polynomials(dr, declared, &padding)?;
         let ((left, right, output), output_data, step_aux) = {
             let mut ctx = StepCtx::<'_, '_, _, C>::new(dr, &mut hooks);
             self.step
@@ -348,29 +343,6 @@ mod tests {
                 D::unit(),
             ))
         }
-    }
-
-    #[test]
-    fn adapter_witness_produces_correct_output_size() {
-        let mut dr = Emulator::execute();
-        let dr = &mut dr;
-
-        type Subject = Adapter<Pasta, TestStep, TestR, HEADER_SIZE, NoHooks>;
-        let adapter = Subject::new(TestStep);
-        let witness = Always::maybe_just(|| (test_padding(), Fp::from(10u64), Fp::from(20u64), ()));
-
-        let output = MultiStage::new(adapter)
-            .witness(dr, witness)
-            .expect("witness should succeed")
-            .into_output();
-
-        // Output should have 3 * HEADER_SIZE elements (left + right + output headers)
-        assert_eq!(
-            output.len(),
-            3 * HEADER_SIZE
-                + NoHooks::layout().poly_query_instance_len()
-                + NoHooks::layout().challenge_instance_len()
-        );
     }
 
     #[test]

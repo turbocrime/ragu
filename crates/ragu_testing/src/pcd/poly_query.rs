@@ -131,13 +131,6 @@ impl<C: Cycle, R: Rank> Step<C> for CommitAndOpen<'_, C, R> {
     type Right = ();
     type Output = HashedOpening<R>;
 
-    fn polynomials<'source>(
-        &self,
-        witness: &Self::Witness<'source>,
-    ) -> Vec<PolyCommitment<C>> {
-        vec![witness.commitment.clone()]
-    }
-
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         ctx: &mut StepCtx<'_, 'dr, D, C>,
@@ -158,11 +151,12 @@ impl<C: Cycle, R: Rank> Step<C> for CommitAndOpen<'_, C, R> {
     {
         let allocator = &mut Standard::new();
 
-        // (1) The framework witnessed the declared commitment into slot 0
-        // before this body ran; take its handle.
+        // (1) Witness the committed polynomial: allocate its commitment
+        // in-circuit and retain the coefficients for the claim.
         let claimed_y = witness.as_ref().map(|w| w.claimed_y);
         let polynomial = witness.as_ref().map(|w| w.polynomial.clone());
-        let handle = ctx.polys().remove(0);
+        let commitment = witness.map(|w| w.commitment);
+        let [handle] = ctx.witness_polynomial([commitment])?;
 
         // (2) Derive a challenge bound to the commitment — the handle absorbs
         // as its canonical embedded coordinates.
@@ -247,13 +241,6 @@ impl<C: Cycle, R: Rank> Step<C> for OpenAndHash<'_, C, R> {
     type Right = HashedOpening<R>;
     type Output = HashedOpening<R>;
 
-    fn polynomials<'source>(
-        &self,
-        witness: &Self::Witness<'source>,
-    ) -> Vec<PolyCommitment<C>> {
-        vec![witness.commitment.clone()]
-    }
-
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         ctx: &mut StepCtx<'_, 'dr, D, C>,
@@ -279,7 +266,8 @@ impl<C: Cycle, R: Rank> Step<C> for OpenAndHash<'_, C, R> {
         let x_witness = witness.as_ref().map(|w| w.x);
         let y_witness = witness.as_ref().map(|w| w.y);
         let polynomial = witness.as_ref().map(|w| w.polynomial.clone());
-        let handle = ctx.polys().remove(0);
+        let commitment = witness.map(|w| w.commitment);
+        let [handle] = ctx.witness_polynomial([commitment])?;
 
         let x = Element::alloc(ctx.dr, allocator, x_witness)?;
         let y = Element::alloc(ctx.dr, allocator, y_witness)?;

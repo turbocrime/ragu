@@ -5,12 +5,9 @@
 
 use alloc::vec;
 
-use ragu_arithmetic::{
-    CurveAffine, Cycle,
-    ff::{Field, PrimeField},
-};
+use ragu_arithmetic::{CurveAffine, Cycle, ff::Field};
 use ragu_circuits::polynomials::{Rank, sparse};
-use ragu_core::{Error, Result};
+use ragu_core::Result;
 
 /// The framework polynomial `q` for a proof's recorded claim hosts: per slot,
 /// the two [`PolyCommitment::host_coords`](crate::PolyCommitment::host_coords)
@@ -150,4 +147,3 @@ impl<C: Cycle> Padding<C> {
         })
     }
 }
-

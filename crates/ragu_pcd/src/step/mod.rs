@@ -159,11 +159,7 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
     const INDEX: Index;
 
     /// The witness data needed to construct a proof for this step.
-    ///
-    /// `Sync` because the framework reads it in place (e.g.
-    /// [`polynomials`](Self::polynomials)) before handing it to
-    /// [`witness`](Self::witness); witness data is inert prover-side values.
-    type Witness<'source>: Send + Sync;
+    type Witness<'source>: Send;
 
     /// The "left" header expected during this step.
     type Left: Header<C::CircuitField>;
@@ -184,9 +180,10 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
     /// carried in the resulting PCD, and any auxiliary witness data.
     ///
     /// `ctx` bundles the underlying [`Driver`] with the framework hooks,
-    /// reached via [`StepCtx::polys`], [`StepCtx::enforce_poly_query`] and
-    /// [`StepCtx::derive_challenge`]. Steps that don't need any framework hooks
-    /// simply use `ctx.dr` and ignore the rest.
+    /// reached via [`StepCtx::witness_polynomial`],
+    /// [`StepCtx::enforce_poly_query`] and [`StepCtx::derive_challenge`].
+    /// Steps that don't need any framework hooks simply use `ctx.dr` and
+    /// ignore the rest.
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         ctx: &mut StepCtx<'_, 'dr, D, C>,

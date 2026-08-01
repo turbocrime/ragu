@@ -33,6 +33,8 @@
 //! every header length below the rank's capacity, so the output length
 //! `ℓc = ℓa + ℓb` cannot wrap or overflow.
 
+#![allow(clippy::type_complexity)]
+
 use core::marker::PhantomData;
 
 use ff::{Field, PrimeField};
@@ -132,13 +134,6 @@ impl<C: Cycle, R: Rank> Step<C> for SeedSet<C, R> {
     type Right = ();
     type Output = SetHeader<R>;
 
-    fn polynomials<'source>(
-        &self,
-        witness: &Self::Witness<'source>,
-    ) -> Vec<PolyCommitment<C>> {
-        vec![witness.set.clone()]
-    }
-
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         ctx: &mut StepCtx<'_, 'dr, D, C>,
@@ -158,7 +153,8 @@ impl<C: Cycle, R: Rank> Step<C> for SeedSet<C, R> {
         Self: 'dr,
     {
         let polynomial = witness.as_ref().map(|w| w.polynomial.clone());
-        let handle = ctx.polys().remove(0);
+        let set = witness.map(|w| w.set.clone());
+        let [handle] = ctx.witness_polynomial([set])?;
 
         let output_data = set_data(&handle, polynomial);
         let header = name_header(&handle)?;
@@ -222,13 +218,6 @@ impl<C: Cycle, R: Rank> Step<C> for MergeSets<'_, C, R> {
     type Right = SetHeader<R>;
     type Output = SetHeader<R>;
 
-    fn polynomials<'source>(
-        &self,
-        witness: &Self::Witness<'source>,
-    ) -> Vec<PolyCommitment<C>> {
-        vec![witness.a.clone(), witness.b.clone(), witness.product.clone()]
-    }
-
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         ctx: &mut StepCtx<'_, 'dr, D, C>,
@@ -252,12 +241,17 @@ impl<C: Cycle, R: Rank> Step<C> for MergeSets<'_, C, R> {
         let left_encoded = Encoded::new(ctx.dr, allocator, left)?;
         let right_encoded = Encoded::new(ctx.dr, allocator, right)?;
 
+        let a_com = witness.as_ref().map(|w| w.a.clone());
+        let b_com = witness.as_ref().map(|w| w.b.clone());
         let product_polynomial = witness.as_ref().map(|w| w.product_polynomial.clone());
+        let c_com = witness.map(|w| w.product.clone());
+        let handles = ctx.witness_polynomial([a_com, b_com, c_com])?;
         let left_header: &FixedVec<Element<'dr, D>, ConstLen<2>> = left_encoded.as_gadget();
         let right_header: &FixedVec<Element<'dr, D>, ConstLen<2>> = right_encoded.as_gadget();
         let ([a, b, c], z) = bind_and_challenge(
             ctx,
             self.params,
+            handles,
             [&left_header[0], &left_header[1]],
             [&right_header[0], &right_header[1]],
         )?;
@@ -368,13 +362,6 @@ impl<C: Cycle, R: Rank> Step<C> for SeedSequence<C, R> {
     type Right = ();
     type Output = SeqHeader;
 
-    fn polynomials<'source>(
-        &self,
-        witness: &Self::Witness<'source>,
-    ) -> Vec<PolyCommitment<C>> {
-        vec![witness.sequence.clone()]
-    }
-
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         ctx: &mut StepCtx<'_, 'dr, D, C>,
@@ -394,7 +381,8 @@ impl<C: Cycle, R: Rank> Step<C> for SeedSequence<C, R> {
         Self: 'dr,
     {
         let member = witness.as_ref().map(|w| w.member);
-        let seq = ctx.polys().remove(0);
+        let seq_com = witness.map(|w| w.sequence.clone());
+        let [seq] = ctx.witness_polynomial([seq_com])?;
 
         let output_data = seq_data(&seq, member.map(|m| vec![m]));
         let header: FixedVec<Element<'dr, D>, ConstLen<3>> = seq
@@ -454,17 +442,10 @@ impl<C: Cycle, R: Rank> Step<C> for ConcatSequences<'_, C, R> {
     type Right = SeqHeader;
     type Output = SeqHeader;
 
-    fn polynomials<'source>(
-        &self,
-        witness: &Self::Witness<'source>,
-    ) -> Vec<PolyCommitment<C>> {
-        vec![witness.a.clone(), witness.b.clone(), witness.output.clone()]
-    }
-
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         ctx: &mut StepCtx<'_, 'dr, D, C>,
-        _witness: DriverValue<D, Self::Witness<'source>>,
+        witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, SeqData<C::CircuitField>>,
         right: DriverValue<D, SeqData<C::CircuitField>>,
     ) -> Result<(
@@ -493,12 +474,17 @@ impl<C: Cycle, R: Rank> Step<C> for ConcatSequences<'_, C, R> {
         let left_encoded = Encoded::new(ctx.dr, allocator, left)?;
         let right_encoded = Encoded::new(ctx.dr, allocator, right)?;
 
+        let a_com = witness.as_ref().map(|w| w.a.clone());
+        let b_com = witness.as_ref().map(|w| w.b.clone());
+        let c_com = witness.map(|w| w.output.clone());
+        let handles = ctx.witness_polynomial([a_com, b_com, c_com])?;
         let ([a, b, c], z) = {
             let left_header: &FixedVec<Element<'dr, D>, ConstLen<3>> = left_encoded.as_gadget();
             let right_header: &FixedVec<Element<'dr, D>, ConstLen<3>> = right_encoded.as_gadget();
             bind_and_challenge(
                 ctx,
                 self.params,
+                handles,
                 [&left_header[0], &left_header[1]],
                 [&right_header[0], &right_header[1]],
             )?
@@ -579,14 +565,10 @@ impl<C: Cycle, R: Rank> Step<C> for ConcatSequences<'_, C, R> {
 fn bind_and_challenge<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
     ctx: &mut StepCtx<'_, 'dr, D, C>,
     params: &C::Params,
+    handles: [PolyHandle<'dr, D, C>; 3],
     left_name: [&Element<'dr, D>; 2],
     right_name: [&Element<'dr, D>; 2],
 ) -> Result<([PolyHandle<'dr, D, C>; 3], Element<'dr, D>)> {
-    let handles: [_; 3] = ctx.polys().try_into().map_err(|_| {
-        ragu_core::Error::InvalidWitness(
-            "the collections application declares exactly three polynomial slots".into(),
-        )
-    })?;
     for (handle, header_name) in [(&handles[0], left_name), (&handles[1], right_name)] {
         let name = handle.coords();
         name[0].enforce_equal(ctx.dr, header_name[0])?;

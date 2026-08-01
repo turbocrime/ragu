@@ -3,7 +3,8 @@
 //! Bundles the framework-side state — the [`Driver`] and the
 //! [`FrameworkHooks`] container — so that reusable sub-components called from a
 //! step body can take a single `&mut StepCtx` rather than juggling individual
-//! arguments. The hooks are exposed as [`polys`](StepCtx::polys),
+//! arguments. The hooks are exposed as
+//! [`witness_polynomial`](StepCtx::witness_polynomial),
 //! [`enforce_poly_query`](StepCtx::enforce_poly_query) and
 //! [`derive_challenge`](StepCtx::derive_challenge). New framework hooks added in
 //! the future (e.g. transcript threading) belong on [`FrameworkHooks`] as well.
@@ -11,10 +12,17 @@
 use alloc::vec::Vec;
 
 use ragu_arithmetic::Cycle;
-use ragu_core::{Result, drivers::Driver, gadgets::Gadget};
+use ragu_core::{
+    Result,
+    drivers::{Driver, DriverValue},
+    gadgets::Gadget,
+};
 use ragu_primitives::{Element, GadgetExt as _, io::Write};
 
-use crate::{framework_hooks::FrameworkHooks, poly_commitment::PolyHandle};
+use crate::{
+    framework_hooks::FrameworkHooks,
+    poly_commitment::{PolyCommitment, PolyHandle},
+};
 
 /// Framework-side state threaded through [`Step::witness`](super::Step::witness).
 /// The poly-query claim sink is exposed via
@@ -40,8 +48,34 @@ where
         Self { dr, hooks }
     }
 
+    /// Witnesses this step's polynomials in-circuit, producing one
+    /// [`PolyHandle`] per [`PolyCommitment`] — all in a single call, handles
+    /// in argument order: slot `i` is index `i`.
+    ///
+    /// The polynomial is handled **abstractly, by its commitment**: each
+    /// handle is two coordinate instance wires — the host commitment's
+    /// affine coordinates, canonically embedded — and the handle is itself a
+    /// writable gadget over exactly those wires. Absorb it for challenges
+    /// and hashing, compare via [`PolyHandle::coords`], evaluate via
+    /// [`PolyHandle::eval`], and open it with
+    /// [`enforce_poly_query`](Self::enforce_poly_query).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidWitness`](ragu_core::Error::InvalidWitness) if
+    /// called more than once, or if `N` exceeds the application's polynomial
+    /// capacity.
+    pub fn witness_polynomial<const N: usize>(
+        &mut self,
+        commitments: [DriverValue<D, PolyCommitment<C>>; N],
+    ) -> Result<[PolyHandle<'dr, D, C>; N]> {
+        self.hooks.witness_polynomials(self.dr, commitments)
+    }
+
     /// Records a poly-query claim: the polynomial behind `commitment` (a
-    /// [`PolyHandle`] from [`polys`](Self::polys)) evaluates to `y` at `x`.
+    /// [`PolyHandle`] from
+    /// [`witness_polynomial`](Self::witness_polynomial)) evaluates to `y` at
+    /// `x`.
     ///
     /// The polynomial stays out of the circuit: the claim occupies one of the
     /// circuit's claim instance slots, and the **parent** fuse enforces it

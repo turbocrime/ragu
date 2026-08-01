@@ -27,7 +27,6 @@ use ragu_core::{Error, Result};
 use crate::{
     Application, Header, Pcd, Proof,
     framework_hooks::{FrameworkAux, HookConfig},
-    internal::challenge,
     proof::ProofBuilder,
     step::{
         Step,
