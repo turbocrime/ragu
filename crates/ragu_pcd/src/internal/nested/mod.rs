@@ -73,79 +73,13 @@ impl<L: ragu_primitives::vec::Len> ragu_primitives::vec::Len for EndoPoints<L> {
     }
 }
 
-/// A stage's position in [`NestedLayouts::chain_layout`]. The discriminants
-/// *are* the indices, pinned by `nested_chain_positions_match_layout`;
-/// reordering the chain means reordering both together.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(usize)]
-pub enum ChainStage {
-    Endoscalar = 0,
-    Points = 1,
-    Preamble = 2,
-    SPrime = 3,
-    InnerError = 4,
-    OuterError = 5,
-    Ab = 6,
-    Query = 7,
-    F = 8,
-    Eval = 9,
-}
+/// The number of nested internal circuits and bondings [`register_all`]
+/// registers: the endoscaling steps, then [`BLOCK_FIXED`], the loading
+/// circuit, and the two copying circuits — circuits before bondings.
+pub(crate) fn num_internal<L: ragu_primitives::vec::Len>() -> usize {
+    use ragu_primitives::vec::Len as _;
 
-impl ChainStage {
-    /// The chain's stages in layout order — the same order
-    /// [`NestedLayouts::chain_layout`] pushes widths.
-    pub const ALL: [Self; 10] = [
-        Self::Endoscalar,
-        Self::Points,
-        Self::Preamble,
-        Self::SPrime,
-        Self::InnerError,
-        Self::OuterError,
-        Self::Ab,
-        Self::Query,
-        Self::F,
-        Self::Eval,
-    ];
-
-    /// This stage's index into [`NestedLayouts::chain_layout`].
-    pub const fn index(self) -> usize {
-        self as usize
-    }
-}
-
-/// Namespace for the nested chain's value-level geometry, used by the
-/// remaining erased-side mask and rx sites.
-pub struct NestedLayouts;
-
-impl NestedLayouts {
-    /// The nested stage chain's widths at the application's declared capacity,
-    /// in [`ChainStage`] order, read off the typed stages. Every step exposes
-    /// the same shape, so one capacity sizes all stages.
-    pub fn chain_layout<HC: ragu_arithmetic::CurveAffine, R: Rank, L: ragu_primitives::vec::Len>()
-    -> ragu_circuits::staging::InducedStages {
-        use ragu_circuits::staging::{InducedStages, Stage};
-
-        // This vector's order is `ChainStage::ALL`.
-        InducedStages::new(alloc::vec![
-            <endoscalar::EndoscalarStage as Stage<HC::Base, R>>::values(),
-            <endoscalar::PointsStage<HC, EndoPoints<L>> as Stage<HC::Base, R>>::values(),
-            <stages::preamble::Stage<HC, R, L> as Stage<HC::Base, R>>::values(),
-            <stages::s_prime::Stage<HC, R, L> as Stage<HC::Base, R>>::values(),
-            <stages::inner_error::Stage<HC, R, L> as Stage<HC::Base, R>>::values(),
-            <stages::outer_error::Stage<HC, R, L> as Stage<HC::Base, R>>::values(),
-            <stages::ab::Stage<HC, R, L> as Stage<HC::Base, R>>::values(),
-            <stages::query::Stage<HC, R, L> as Stage<HC::Base, R>>::values(),
-            <stages::f::Stage<HC, R, L> as Stage<HC::Base, R>>::values(),
-            <stages::eval::Stage<HC, R, L> as Stage<HC::Base, R>>::values(),
-        ])
-    }
-
-    /// The number of nested internal circuits and bondings [`register_all`]
-    /// registers: the endoscaling steps, then [`BLOCK_FIXED`], the loading
-    /// circuit, and the two copying circuits — circuits before bondings.
-    pub(crate) fn num_internal(polys: usize) -> usize {
-        num_endoscaling_steps(polys) + BLOCK_FIXED.len() + 3
-    }
+    endoscalar::NumStepsLen::<EndoPoints<L>>::len() + BLOCK_FIXED.len() + 3
 }
 
 /// Positions inside the bonding block, before the per-slot masks.
@@ -365,20 +299,26 @@ pub mod stages {
 }
 
 /// Registers internal nested circuits into the provided registry, in the
-/// order [`NestedLayouts::num_internal`] documents.
+/// order [`num_internal`] documents.
 ///
 /// Circuits are registered as internal to ensure they occupy prefix indices
 /// before application steps.
 pub fn register_all<'params, C: Cycle, R: Rank, L: ragu_primitives::vec::Len>(
     mut registry: RegistryBuilder<'params, C::ScalarField, R>,
-    polys: usize,
 ) -> Result<RegistryBuilder<'params, C::ScalarField, R>> {
+    use ragu_circuits::staging::StageExt;
+    use ragu_primitives::vec::Len as _;
+
+    use crate::internal::endoscalar::{EndoscalarStage, NumStepsLen, PointsStage};
+
+    type ScalarOf<C> = <C as Cycle>::ScalarField;
+
     let initial_internal_circuits = registry.num_internal_circuits();
 
     // Circuits first, then bondings - matching RegistryBuilder::finalize()'s
-    // concatenation order and the layout `NestedLayouts::num_internal` documents.
+    // concatenation order and the layout `num_internal` documents.
     {
-        for step in 0..num_endoscaling_steps(polys) {
+        for step in 0..NumStepsLen::<EndoPoints<L>>::len() {
             let step_circuit =
                 endoscalar::EndoscalingStep::<C::HostCurve, R, EndoPoints<L>>::new(step);
             registry = registry.register_internal_circuit(MultiStage::new(step_circuit))?;
@@ -386,19 +326,42 @@ pub fn register_all<'params, C: Cycle, R: Rank, L: ragu_primitives::vec::Len>(
     }
 
     {
-        let chain = NestedLayouts::chain_layout::<C::HostCurve, R, L>();
-
         // The fixed block, in BLOCK_FIXED order.
         registry = registry
-            .register_bonding(chain.mask::<C::ScalarField, R>(ChainStage::Endoscalar.index())?);
-        registry =
-            registry.register_bonding(chain.mask::<C::ScalarField, R>(ChainStage::Points.index())?);
-        registry = registry.register_bonding(
-            chain.final_mask_through::<C::ScalarField, R>(ChainStage::Points.index())?,
-        );
-        for stage in &ChainStage::ALL[ChainStage::Preamble.index()..] {
-            registry = registry.register_bonding(chain.mask::<C::ScalarField, R>(stage.index())?);
-        }
+            .register_bonding(<EndoscalarStage as StageExt<ScalarOf<C>, R>>::mask()?)
+            .register_bonding(
+                <PointsStage<C::HostCurve, EndoPoints<L>> as StageExt<ScalarOf<C>, R>>::mask()?,
+            )
+            .register_bonding(
+                <PointsStage<C::HostCurve, EndoPoints<L>> as StageExt<ScalarOf<C>, R>>::final_mask(
+                )?,
+            )
+            .register_bonding(
+                <stages::preamble::Stage<C::HostCurve, R, L> as StageExt<ScalarOf<C>, R>>::mask()?,
+            )
+            .register_bonding(
+                <stages::s_prime::Stage<C::HostCurve, R, L> as StageExt<ScalarOf<C>, R>>::mask()?,
+            )
+            .register_bonding(<stages::inner_error::Stage<C::HostCurve, R, L> as StageExt<
+                ScalarOf<C>,
+                R,
+            >>::mask()?)
+            .register_bonding(<stages::outer_error::Stage<C::HostCurve, R, L> as StageExt<
+                ScalarOf<C>,
+                R,
+            >>::mask()?)
+            .register_bonding(
+                <stages::ab::Stage<C::HostCurve, R, L> as StageExt<ScalarOf<C>, R>>::mask()?,
+            )
+            .register_bonding(
+                <stages::query::Stage<C::HostCurve, R, L> as StageExt<ScalarOf<C>, R>>::mask()?,
+            )
+            .register_bonding(
+                <stages::f::Stage<C::HostCurve, R, L> as StageExt<ScalarOf<C>, R>>::mask()?,
+            )
+            .register_bonding(
+                <stages::eval::Stage<C::HostCurve, R, L> as StageExt<ScalarOf<C>, R>>::mask()?,
+            );
 
         let circuit = circuits::loading::Circuit::<C::HostCurve, R, L>::new();
         registry = registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?);
@@ -413,7 +376,7 @@ pub fn register_all<'params, C: Cycle, R: Rank, L: ragu_primitives::vec::Len>(
 
     assert_eq!(
         registry.num_internal_circuits(),
-        initial_internal_circuits + NestedLayouts::num_internal(polys),
+        initial_internal_circuits + num_internal::<L>(),
         "internal circuit count mismatch"
     );
 

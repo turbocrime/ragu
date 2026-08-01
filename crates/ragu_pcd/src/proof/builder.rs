@@ -176,20 +176,15 @@ macro_rules! explicit_commitment_getter {
 /// prepends `self.` to each getter call so that the generated function's own
 /// `self` is used (avoiding macro hygiene issues with `self` in token trees).
 ///
-/// `$pos` is a [`nested::ChainStage`]; the macro calls `.index()` itself.
 macro_rules! cached_bridge {
     ($rx:ident, $commitment:ident,
-     $idx:expr, $pos:expr, $stage:ident, { $($wit_field:ident : $getter:ident()),* }) => {
+     $idx:expr, $stage:ident, { $($wit_field:ident : $getter:ident()),* }) => {
         pub(crate) fn $rx(&self) -> Result<&sparse::Polynomial<C::ScalarField, R>> {
             if let Some(rx) = self.$rx.get() {
                 return Ok(rx);
             }
-            // Via the value-level chain: a bridge's position follows the
-            // application's capacity.
-            let rx = self.nested_chain().rx_configured(
-                $pos.index(),
+            let rx = nested::stages::$stage::Stage::<C::HostCurve, R, J::PolyWitnesses>::rx(
                 self.bridge_alpha_power($idx),
-                &nested::stages::$stage::Stage::<C::HostCurve, R, J::PolyWitnesses>::default(),
                 &nested::stages::$stage::Witness {
                     $($wit_field: self.$getter()),*
                 },
@@ -261,9 +256,6 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, J: HookConfig> {
     bridge_ab_rx: OnceCell<sparse::Polynomial<C::ScalarField, R>>,
     bridge_query_rx: OnceCell<sparse::Polynomial<C::ScalarField, R>>,
     bridge_eval_rx: OnceCell<sparse::Polynomial<C::ScalarField, R>>,
-    /// The chain every bridge rx above is placed through; cached, derived
-    /// from the capacity alone.
-    nested_chain: OnceCell<ragu_circuits::staging::InducedStages>,
 
     // Nested endoscaling data
     nested_endoscaling_step_rxs: Option<Vec<sparse::Polynomial<C::ScalarField, R>>>,
@@ -369,7 +361,6 @@ impl<'params, C: Cycle, R: Rank, J: HookConfig> ProofBuilder<'params, C, R, J> {
             bridge_ab_rx: OnceCell::new(),
             bridge_query_rx: OnceCell::new(),
             bridge_eval_rx: OnceCell::new(),
-            nested_chain: OnceCell::new(),
             nested_endoscaling_step_rxs: None,
             nested_endoscalar_rx: None,
             nested_points_rx: None,
@@ -582,7 +573,6 @@ impl<'params, C: Cycle, R: Rank, J: HookConfig> ProofBuilder<'params, C, R, J> {
         bridge_outer_error_rx,
         bridge_outer_error_commitment,
         nested::RxIndex::BridgeOuterError,
-        nested::ChainStage::OuterError,
         outer_error,
         { native_outer_error: native_outer_error_commitment() }
     );
@@ -591,7 +581,6 @@ impl<'params, C: Cycle, R: Rank, J: HookConfig> ProofBuilder<'params, C, R, J> {
         bridge_ab_rx,
         bridge_ab_commitment,
         nested::RxIndex::BridgeAB,
-        nested::ChainStage::Ab,
         ab,
         { a: native_a_commitment(), b: native_b_commitment() }
     );
@@ -600,17 +589,9 @@ impl<'params, C: Cycle, R: Rank, J: HookConfig> ProofBuilder<'params, C, R, J> {
         bridge_query_rx,
         bridge_query_commitment,
         nested::RxIndex::BridgeQuery,
-        nested::ChainStage::Query,
         query,
         { native_query: native_query_commitment(), registry_xy: native_registry_xy_commitment() }
     );
-
-    /// The nested bridge chain's value-level geometry at this proof's capacity.
-    fn nested_chain(&self) -> &ragu_circuits::staging::InducedStages {
-        self.nested_chain.get_or_init(|| {
-            nested::NestedLayouts::chain_layout::<C::HostCurve, R, J::PolyWitnesses>()
-        })
-    }
 
     /// The eval bridge; its witness holds the claim host commitments, which
     /// [`cached_bridge!`]'s single-getter fields cannot express.

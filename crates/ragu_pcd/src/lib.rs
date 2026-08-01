@@ -242,12 +242,9 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
             "final circuit count mismatch"
         );
 
-        // The nested side needs exactly one number, the poly-slot count —
-        // as a value for the layouts and as a `Len` for the gadgets.
-        self.nested_registry = internal::nested::register_all::<C, R, J::PolyWitnesses>(
-            self.nested_registry,
-            J::PolyWitnesses::len(),
-        )?;
+        // The nested side needs exactly one shape, the poly-slot count.
+        self.nested_registry =
+            internal::nested::register_all::<C, R, J::PolyWitnesses>(self.nested_registry)?;
 
         Ok(Application {
             native_registry: self.native_registry.finalize()?,
@@ -314,12 +311,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
     /// so there is no second representation to keep in step.
     pub(crate) fn hook_layout(&self) -> framework_hooks::HookLayout {
         J::layout()
-    }
-
-    /// The nested bridge chain's value-level geometry at this application's
-    /// capacity.
-    pub(crate) fn nested_chain_layout(&self) -> ragu_circuits::staging::InducedStages {
-        internal::nested::NestedLayouts::chain_layout::<C::HostCurve, R, J::PolyWitnesses>()
     }
 
     /// Seed a new computation by running a step with trivial inputs.

@@ -406,33 +406,6 @@ fn endoscaling_points_len_matches_the_value_formula() {
     check::<8>();
 }
 
-/// [`ChainStage`](crate::internal::nested::ChainStage) discriminants match the
-/// indices `chain_layout` builds; nothing else enforces the two orders agree.
-#[test]
-fn nested_chain_positions_match_layout() {
-    use ragu_pasta::Pasta;
-
-    use crate::internal::nested::ChainStage;
-
-    type Host = <Pasta as ragu_arithmetic::Cycle>::HostCurve;
-
-    let chain = crate::internal::nested::NestedLayouts::chain_layout::<Host, R, ConstLen<4>>();
-
-    assert_eq!(
-        chain.len(),
-        ChainStage::ALL.len(),
-        "the chain and `ChainStage::ALL` disagree on how many stages there are"
-    );
-    for (position, stage) in ChainStage::ALL.iter().enumerate() {
-        assert_eq!(
-            stage.index(),
-            position,
-            "{stage:?} is at position {position} of ALL but reports index {}",
-            stage.index()
-        );
-    }
-}
-
 #[test]
 fn test_internal_circuit_index_all_exhaustive() {
     let mut collected = alloc::vec::Vec::new();

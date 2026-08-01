@@ -54,10 +54,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         registry_wy: &RegistryWy<C, R>,
         builder: &mut ProofBuilder<'_, C, R, J>,
     ) -> Result<()> {
-        let bridge_rx = self.nested_chain_layout().rx_configured(
-            nested::ChainStage::InnerError.index(),
+        let bridge_rx = nested::stages::inner_error::Stage::<C::HostCurve, R, J::PolyWitnesses>::rx(
             C::ScalarField::random(&mut *rng),
-            &nested::stages::inner_error::Stage::<C::HostCurve, R, J::PolyWitnesses>::default(),
             &nested::stages::inner_error::Witness {
                 native_inner_error: builder.native_inner_error_commitment(),
                 registry_wy: registry_wy.commitment,

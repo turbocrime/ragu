@@ -4,7 +4,7 @@
 //! $m(w, x_i, Y)$ polynomials for the $i$th child proof's $x$ challenge.
 
 use ragu_arithmetic::{CryptoRngCore, Cycle, ff::Field};
-use ragu_circuits::{polynomials::Rank, registry::RegistryAt};
+use ragu_circuits::{polynomials::Rank, registry::RegistryAt, staging::StageExt};
 use ragu_core::Result;
 
 use super::NativeSPrime;
@@ -34,10 +34,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         native: &NativeSPrime<C, R>,
         builder: &mut ProofBuilder<'_, C, R, J>,
     ) -> Result<()> {
-        let bridge_rx = self.nested_chain_layout().rx_configured(
-            nested::ChainStage::SPrime.index(),
+        let bridge_rx = nested::stages::s_prime::Stage::<C::HostCurve, R, J::PolyWitnesses>::rx(
             C::ScalarField::random(&mut *rng),
-            &nested::stages::s_prime::Stage::<C::HostCurve, R, J::PolyWitnesses>::default(),
             &nested::stages::s_prime::Witness {
                 registry_wx0: native.registry_wx0_commitment,
                 registry_wx1: native.registry_wx1_commitment,

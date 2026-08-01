@@ -11,7 +11,10 @@
 use alloc::{vec, vec::Vec};
 
 use ragu_arithmetic::{CryptoRngCore, Cycle, ff::Field};
-use ragu_circuits::polynomials::{Rank, sparse};
+use ragu_circuits::{
+    polynomials::{Rank, sparse},
+    staging::StageExt,
+};
 use ragu_core::{Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::Element;
 
@@ -73,10 +76,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         native: &NativeF<C, R>,
         builder: &mut ProofBuilder<'_, C, R, J>,
     ) -> Result<()> {
-        let bridge_rx = self.nested_chain_layout().rx_configured(
-            nested::ChainStage::F.index(),
+        let bridge_rx = nested::stages::f::Stage::<C::HostCurve, R, J::PolyWitnesses>::rx(
             C::ScalarField::random(&mut *rng),
-            &nested::stages::f::Stage::<C::HostCurve, R, J::PolyWitnesses>::default(),
             &nested::stages::f::Witness {
                 native_f: native.commitment,
             },

@@ -692,50 +692,38 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::Hoo
         // p_commitment for ChildWitness.p), then native_p_poly.
         let nested_gen = C::nested_generators(self.params);
         {
-            let rx = self
-                .nested_chain_layout()
-                .rx_configured(
-                    nested::ChainStage::SPrime.index(),
-                    C::ScalarField::ONE,
-                    &nested::stages::s_prime::Stage::<C::HostCurve, R, J::PolyWitnesses>::default(),
-                    &nested::stages::s_prime::Witness {
-                        registry_wx0: host_commitment,
-                        registry_wx1: host_commitment,
-                        stashed_preamble: host_commitment,
-                    },
-                )
-                .expect("trivial s_prime rx");
+            let rx = nested::stages::s_prime::Stage::<C::HostCurve, R, J::PolyWitnesses>::rx(
+                C::ScalarField::ONE,
+                &nested::stages::s_prime::Witness {
+                    registry_wx0: host_commitment,
+                    registry_wx1: host_commitment,
+                    stashed_preamble: host_commitment,
+                },
+            )
+            .expect("trivial s_prime rx");
             let commitment = rx.commit_to_affine(nested_gen);
             builder.set_bridge_s_prime_rx(rx, commitment);
         }
         {
-            let rx = self
-                .nested_chain_layout()
-                .rx_configured(
-                    nested::ChainStage::InnerError.index(),
-                    C::ScalarField::ONE,
-                    &nested::stages::inner_error::Stage::<C::HostCurve, R, J::PolyWitnesses>::default(),
-                    &nested::stages::inner_error::Witness {
-                        native_inner_error: host_commitment,
-                        registry_wy: host_commitment,
-                    },
-                )
-                .expect("trivial inner_error rx");
+            let rx = nested::stages::inner_error::Stage::<C::HostCurve, R, J::PolyWitnesses>::rx(
+                C::ScalarField::ONE,
+                &nested::stages::inner_error::Witness {
+                    native_inner_error: host_commitment,
+                    registry_wy: host_commitment,
+                },
+            )
+            .expect("trivial inner_error rx");
             let commitment = rx.commit_to_affine(nested_gen);
             builder.set_bridge_inner_error_rx(rx, commitment);
         }
         {
-            let rx = self
-                .nested_chain_layout()
-                .rx_configured(
-                    nested::ChainStage::F.index(),
-                    C::ScalarField::ONE,
-                    &nested::stages::f::Stage::<C::HostCurve, R, J::PolyWitnesses>::default(),
-                    &nested::stages::f::Witness {
-                        native_f: host_commitment,
-                    },
-                )
-                .expect("trivial f rx");
+            let rx = nested::stages::f::Stage::<C::HostCurve, R, J::PolyWitnesses>::rx(
+                C::ScalarField::ONE,
+                &nested::stages::f::Witness {
+                    native_f: host_commitment,
+                },
+            )
+            .expect("trivial f rx");
             let commitment = rx.commit_to_affine(nested_gen);
             builder.set_bridge_f_rx(rx, commitment);
         }
