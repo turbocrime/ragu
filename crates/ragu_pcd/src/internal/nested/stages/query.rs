@@ -45,9 +45,7 @@ impl<C: CurveAffine, R, L> Default for Stage<C, R, L> {
     }
 }
 
-impl<C: CurveAffine, R: Rank, L: Len> ragu_circuits::staging::Stage<C::Base, R>
-    for Stage<C, R, L>
-{
+impl<C: CurveAffine, R: Rank, L: Len> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R, L> {
     type Parent = super::ab::Stage<C, R, L>;
     type Witness<'source> = &'source Witness<C>;
     type OutputKind = Kind![C::Base; Output<'_, _, C>];

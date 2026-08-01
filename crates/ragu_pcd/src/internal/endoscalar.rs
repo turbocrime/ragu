@@ -181,9 +181,7 @@ impl<C: CurveAffine, R: Rank, L: Len> Clone for EndoscalingStep<C, R, L> {
 }
 
 /// The accumulated points, as the circuit body names them: initial, inputs,
-/// and interstitials. Field order is the slot order
-/// [`PointsWitness::slot_points`] emits and [`from_slots`](Self::from_slots)
-/// consumes.
+/// and interstitials. See [`PointsWitness`].
 #[derive(Gadget)]
 pub struct Points<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> {
     #[ragu(gadget)]
@@ -384,6 +382,15 @@ mod tests {
 
     /// The points stage at a test point count.
     type Points<const NUM_POINTS: usize> = PointsStage<EpAffine, ConstLen<NUM_POINTS>>;
+
+    #[test]
+    fn stage_values_matches_wire_count() {
+        use crate::internal::tests::assert_stage_values;
+
+        assert_stage_values::<Fp, R, _>(&Points::<1>::default());
+        assert_stage_values::<Fp, R, _>(&Points::<11>::default());
+        assert_stage_values::<Fp, R, _>(&Points::<13>::default());
+    }
 
     /// Computes the effective scalar for an endoscalar via emulated `lift`.
     fn compute_effective_scalar(endo: u128) -> Fq {

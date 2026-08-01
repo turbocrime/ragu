@@ -329,39 +329,46 @@ pub fn register_all<'params, C: Cycle, R: Rank, L: ragu_primitives::vec::Len>(
         // The fixed block, in BLOCK_FIXED order.
         registry = registry
             .register_bonding(<EndoscalarStage as StageExt<ScalarOf<C>, R>>::mask()?)
+            .register_bonding(<PointsStage<C::HostCurve, EndoPoints<L>> as StageExt<
+                ScalarOf<C>,
+                R,
+            >>::mask()?)
+            .register_bonding(<PointsStage<C::HostCurve, EndoPoints<L>> as StageExt<
+                ScalarOf<C>,
+                R,
+            >>::final_mask()?)
+            .register_bonding(<stages::preamble::Stage<C::HostCurve, R, L> as StageExt<
+                ScalarOf<C>,
+                R,
+            >>::mask()?)
+            .register_bonding(<stages::s_prime::Stage<C::HostCurve, R, L> as StageExt<
+                ScalarOf<C>,
+                R,
+            >>::mask()?)
             .register_bonding(
-                <PointsStage<C::HostCurve, EndoPoints<L>> as StageExt<ScalarOf<C>, R>>::mask()?,
-            )
-            .register_bonding(
-                <PointsStage<C::HostCurve, EndoPoints<L>> as StageExt<ScalarOf<C>, R>>::final_mask(
+                <stages::inner_error::Stage<C::HostCurve, R, L> as StageExt<ScalarOf<C>, R>>::mask(
                 )?,
             )
             .register_bonding(
-                <stages::preamble::Stage<C::HostCurve, R, L> as StageExt<ScalarOf<C>, R>>::mask()?,
+                <stages::outer_error::Stage<C::HostCurve, R, L> as StageExt<ScalarOf<C>, R>>::mask(
+                )?,
             )
-            .register_bonding(
-                <stages::s_prime::Stage<C::HostCurve, R, L> as StageExt<ScalarOf<C>, R>>::mask()?,
-            )
-            .register_bonding(<stages::inner_error::Stage<C::HostCurve, R, L> as StageExt<
+            .register_bonding(<stages::ab::Stage<C::HostCurve, R, L> as StageExt<
                 ScalarOf<C>,
                 R,
             >>::mask()?)
-            .register_bonding(<stages::outer_error::Stage<C::HostCurve, R, L> as StageExt<
+            .register_bonding(<stages::query::Stage<C::HostCurve, R, L> as StageExt<
                 ScalarOf<C>,
                 R,
             >>::mask()?)
-            .register_bonding(
-                <stages::ab::Stage<C::HostCurve, R, L> as StageExt<ScalarOf<C>, R>>::mask()?,
-            )
-            .register_bonding(
-                <stages::query::Stage<C::HostCurve, R, L> as StageExt<ScalarOf<C>, R>>::mask()?,
-            )
-            .register_bonding(
-                <stages::f::Stage<C::HostCurve, R, L> as StageExt<ScalarOf<C>, R>>::mask()?,
-            )
-            .register_bonding(
-                <stages::eval::Stage<C::HostCurve, R, L> as StageExt<ScalarOf<C>, R>>::mask()?,
-            );
+            .register_bonding(<stages::f::Stage<C::HostCurve, R, L> as StageExt<
+                ScalarOf<C>,
+                R,
+            >>::mask()?)
+            .register_bonding(<stages::eval::Stage<C::HostCurve, R, L> as StageExt<
+                ScalarOf<C>,
+                R,
+            >>::mask()?);
 
         let circuit = circuits::loading::Circuit::<C::HostCurve, R, L>::new();
         registry = registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?);

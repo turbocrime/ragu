@@ -54,13 +54,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         registry_wy: &RegistryWy<C, R>,
         builder: &mut ProofBuilder<'_, C, R, J>,
     ) -> Result<()> {
-        let bridge_rx = nested::stages::inner_error::Stage::<C::HostCurve, R, J::PolyWitnesses>::rx(
-            C::ScalarField::random(&mut *rng),
-            &nested::stages::inner_error::Witness {
-                native_inner_error: builder.native_inner_error_commitment(),
-                registry_wy: registry_wy.commitment,
-            },
-        )?;
+        let bridge_rx =
+            nested::stages::inner_error::Stage::<C::HostCurve, R, J::PolyWitnesses>::rx(
+                C::ScalarField::random(&mut *rng),
+                &nested::stages::inner_error::Witness {
+                    native_inner_error: builder.native_inner_error_commitment(),
+                    registry_wy: registry_wy.commitment,
+                },
+            )?;
         let bridge_commitment = bridge_rx.commit_to_affine(C::nested_generators(self.params));
         builder.set_bridge_inner_error_rx(bridge_rx, bridge_commitment);
         Ok(())

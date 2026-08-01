@@ -14,26 +14,7 @@ use ragu_core::{
     maybe::Empty,
 };
 
-/// The number of wires `stage` actually allocates.
-pub fn stage_wire_count<F, R, S>(stage: &S) -> usize
-where
-    F: PrimeField,
-    R: Rank,
-    S: Stage<F, R>,
-    for<'dr> Bound<'dr, Emulator<Wireless<Empty, F>>, S::OutputKind>:
-        Gadget<'dr, Emulator<Wireless<Empty, F>>>,
-{
-    let mut emulator = Emulator::counter();
-    stage
-        .witness(&mut emulator, Empty)
-        .expect("allocation should succeed")
-        .num_wires()
-        .expect("wire counting should succeed")
-}
-
-/// A shape-free stage allocates exactly `Stage::values()` wires. Stages sized
-/// by the application have no `values()`; assert against `num_values(capacity)`
-/// instead.
+/// A stage allocates exactly `Stage::values()` wires.
 pub fn assert_stage_values<F, R, S>(stage: &S)
 where
     F: PrimeField,
@@ -42,8 +23,14 @@ where
     for<'dr> Bound<'dr, Emulator<Wireless<Empty, F>>, S::OutputKind>:
         Gadget<'dr, Emulator<Wireless<Empty, F>>>,
 {
+    let mut emulator = Emulator::counter();
+    let num_wires = stage
+        .witness(&mut emulator, Empty)
+        .expect("allocation should succeed")
+        .num_wires()
+        .expect("wire counting should succeed");
     assert_eq!(
-        stage_wire_count(stage),
+        num_wires,
         S::values(),
         "Stage::values() does not match actual wire count"
     );
@@ -262,6 +249,89 @@ fn print_internal_stage_parameters() {
     line::<pinned_chain::Challenges>("Challenges");
 }
 
+/// The nested stage types `test_nested_stage_parameters` pins, at eight
+/// polynomial slots.
+mod pinned_nested_chain {
+    use ragu_primitives::vec::ConstLen;
+
+    use super::R;
+    use crate::internal::{
+        endoscalar,
+        nested::{EndoPoints, stages},
+    };
+
+    type Host = <ragu_pasta::Pasta as ragu_arithmetic::Cycle>::HostCurve;
+    type L = ConstLen<8>;
+
+    pub type Endoscalar = endoscalar::EndoscalarStage;
+    pub type Points = endoscalar::PointsStage<Host, EndoPoints<L>>;
+    pub type Preamble = stages::preamble::Stage<Host, R, L>;
+    pub type SPrime = stages::s_prime::Stage<Host, R, L>;
+    pub type InnerError = stages::inner_error::Stage<Host, R, L>;
+    pub type OuterError = stages::outer_error::Stage<Host, R, L>;
+    pub type Ab = stages::ab::Stage<Host, R, L>;
+    pub type Query = stages::query::Stage<Host, R, L>;
+    pub type F = stages::f::Stage<Host, R, L>;
+    pub type Eval = stages::eval::Stage<Host, R, L>;
+}
+
+/// Pins the nested chain's gate geometry at a stated slot count.
+#[rustfmt::skip]
+#[test]
+fn test_nested_stage_parameters() {
+    use ragu_circuits::staging::StageExt;
+
+    macro_rules! check_stage {
+        ($stage:ty, $name:literal, skip = $skip:expr, num = $num:expr) => {{
+            assert_eq!(<$stage as Stage<ragu_pasta::Fq, R>>::skip_gates(), $skip, "{}: skip", $name);
+            assert_eq!(<$stage as StageExt<ragu_pasta::Fq, R>>::num_gates(), $num, "{}: num", $name);
+        }};
+    }
+
+    check_stage!(pinned_nested_chain::Endoscalar, "Endoscalar", skip =   1, num =  64);
+    check_stage!(pinned_nested_chain::Points,     "Points",     skip =  65, num =  74);
+    check_stage!(pinned_nested_chain::Preamble,   "Preamble",   skip = 139, num =  53);
+    check_stage!(pinned_nested_chain::SPrime,     "SPrime",     skip = 192, num =   3);
+    check_stage!(pinned_nested_chain::InnerError, "InnerError", skip = 195, num =   2);
+    check_stage!(pinned_nested_chain::OuterError, "OuterError", skip = 197, num =   1);
+    check_stage!(pinned_nested_chain::Ab,         "Ab",         skip = 198, num =   2);
+    check_stage!(pinned_nested_chain::Query,      "Query",      skip = 200, num =   2);
+    check_stage!(pinned_nested_chain::F,          "F",          skip = 202, num =   1);
+    check_stage!(pinned_nested_chain::Eval,       "Eval",       skip = 203, num =   9);
+}
+
+/// Helper test to print current nested stage parameters in copy-pasteable
+/// format. Run with:
+/// `cargo test -p ragu_pcd --release print_nested_stage -- --nocapture`
+#[test]
+fn print_nested_stage_parameters() {
+    use std::println;
+
+    use ragu_circuits::staging::StageExt as _;
+
+    fn line<S: ragu_circuits::staging::Stage<ragu_pasta::Fq, R>>(name: &str) {
+        println!(
+            "    check_stage!(pinned_nested_chain::{:<12} {:<13} skip = {:>3}, num = {:>3});",
+            alloc::format!("{name},"),
+            alloc::format!("\"{name}\","),
+            S::skip_gates(),
+            S::num_gates()
+        );
+    }
+
+    println!("\n// Copy-paste the following into test_nested_stage_parameters:");
+    line::<pinned_nested_chain::Endoscalar>("Endoscalar");
+    line::<pinned_nested_chain::Points>("Points");
+    line::<pinned_nested_chain::Preamble>("Preamble");
+    line::<pinned_nested_chain::SPrime>("SPrime");
+    line::<pinned_nested_chain::InnerError>("InnerError");
+    line::<pinned_nested_chain::OuterError>("OuterError");
+    line::<pinned_nested_chain::Ab>("Ab");
+    line::<pinned_nested_chain::Query>("Query");
+    line::<pinned_nested_chain::F>("F");
+    line::<pinned_nested_chain::Eval>("Eval");
+}
+
 /// Verifies the native registry digest matches the expected value.
 ///
 /// This test ensures the wiring polynomial structure is mathematically
@@ -372,16 +442,15 @@ fn print_registry_digests() {
     );
 }
 
-/// `num_endoscaling_points` (value-level) and `EndoPoints` (type-level `Len`)
-/// agree across shapes. The expected side is spelled out longhand so this is
-/// not `x == x`.
+/// [`EndoPoints`] matches the accumulation walk. The expected side is spelled
+/// out longhand so this is not `x == x`.
 #[test]
-fn endoscaling_points_len_matches_the_value_formula() {
+fn endoscaling_points_len_matches_the_accumulation_walk() {
     use ragu_primitives::vec::{ConstLen, Len};
 
     use crate::internal::{
         native::{RxIndex, stages::eval::CURRENT_STEP_COMPONENTS},
-        nested::{EndoPoints, num_endoscaling_points},
+        nested::EndoPoints,
     };
 
     fn check<const POLYS: usize>() {
@@ -389,14 +458,9 @@ fn endoscaling_points_len_matches_the_value_formula() {
         let longhand = 1 + 2 * (RxIndex::NUM + 4 + POLYS + q) + CURRENT_STEP_COMPONENTS;
 
         assert_eq!(
-            num_endoscaling_points(POLYS),
-            longhand,
-            "the value formula drifted at polys={POLYS}"
-        );
-        assert_eq!(
             EndoPoints::<ConstLen<POLYS>>::len(),
             longhand,
-            "the type-level count disagrees with the value formula at polys={POLYS}"
+            "the point count drifted at polys={POLYS}"
         );
     }
 

@@ -24,9 +24,8 @@ pub struct Witness<C: CurveAffine> {
     pub claims: Vec<C>,
 }
 
-/// This stage's points, as the circuit body names them. The wire order is
-/// `native_eval` then one slot per claim — the order
-/// [`Witness::slot_points`] emits.
+/// This stage's points, as the circuit body names them: `native_eval`, then
+/// one slot per claim.
 #[derive(Gadget, Write)]
 pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> {
     #[ragu(gadget)]
@@ -50,9 +49,7 @@ impl<C: CurveAffine, R, L> Default for Stage<C, R, L> {
     }
 }
 
-impl<C: CurveAffine, R: Rank, L: Len> ragu_circuits::staging::Stage<C::Base, R>
-    for Stage<C, R, L>
-{
+impl<C: CurveAffine, R: Rank, L: Len> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R, L> {
     type Parent = super::f::Stage<C, R, L>;
     type Witness<'source> = &'source Witness<C>;
     type OutputKind = Kind![C::Base; Output<'_, _, C, L>];
@@ -78,3 +75,18 @@ impl<C: CurveAffine, R: Rank, L: Len> ragu_circuits::staging::Stage<C::Base, R>
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use ragu_pasta::EqAffine;
+    use ragu_primitives::vec::ConstLen;
+
+    use super::*;
+    use crate::internal::tests::{R, assert_stage_values};
+
+    #[test]
+    fn stage_values_matches_wire_count() {
+        assert_stage_values(&Stage::<EqAffine, R, ConstLen<0>>::default());
+        assert_stage_values(&Stage::<EqAffine, R, ConstLen<4>>::default());
+        assert_stage_values(&Stage::<EqAffine, R, ConstLen<8>>::default());
+    }
+}

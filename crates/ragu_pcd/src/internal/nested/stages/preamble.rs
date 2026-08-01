@@ -29,8 +29,7 @@ use crate::{
 pub const fn num_points(polys: usize) -> usize {
     use crate::internal::nested::child_endoscaling_points;
 
-    /// The leading slot [`Output::from_slots`] reads before either child's
-    /// block (not `f.commitment`).
+    /// The leading slot before either child's block (not `f.commitment`).
     const NATIVE_PREAMBLE_SLOT: usize = 1;
 
     NATIVE_PREAMBLE_SLOT + 2 * child_endoscaling_points(polys)
@@ -141,8 +140,7 @@ pub struct Witness<C: CurveAffine> {
 }
 
 /// One child proof's points in the preamble bridge stage, as the circuit body
-/// names them. Field order is the slot order [`ChildWitness::slot_points`]
-/// emits and [`from_slots`](Self::from_slots) consumes.
+/// names them.
 #[derive(Gadget, Write)]
 pub struct ChildOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> {
     // Field order matches `_10_p` accumulation order.
@@ -272,7 +270,6 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> ChildOutput<'dr, 
             })?,
         })
     }
-
 }
 
 /// The preamble bridge stage's points, as the circuit body names them.
@@ -302,9 +299,7 @@ impl<C: CurveAffine, R, L> Default for Stage<C, R, L> {
     }
 }
 
-impl<C: CurveAffine, R: Rank, L: Len> ragu_circuits::staging::Stage<C::Base, R>
-    for Stage<C, R, L>
-{
+impl<C: CurveAffine, R: Rank, L: Len> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R, L> {
     type Parent = PointsStage<C, EndoPoints<L>>;
     type Witness<'source> = &'source Witness<C>;
     type OutputKind = Kind![C::Base; Output<'_, _, C, L>];
@@ -329,3 +324,18 @@ impl<C: CurveAffine, R: Rank, L: Len> ragu_circuits::staging::Stage<C::Base, R>
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use ragu_pasta::EqAffine;
+    use ragu_primitives::vec::ConstLen;
+
+    use super::*;
+    use crate::internal::tests::{R, assert_stage_values};
+
+    #[test]
+    fn stage_values_matches_wire_count() {
+        assert_stage_values(&Stage::<EqAffine, R, ConstLen<0>>::default());
+        assert_stage_values(&Stage::<EqAffine, R, ConstLen<4>>::default());
+        assert_stage_values(&Stage::<EqAffine, R, ConstLen<8>>::default());
+    }
+}
