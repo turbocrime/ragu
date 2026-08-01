@@ -96,7 +96,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         for witnessed in polys.iter() {
             // Reject an over-capacity coefficient vector gracefully; otherwise
             // `sparse::Polynomial::from_coeffs` would panic on it.
-            if witnessed.coefficients.len() > R::num_coeffs() {
+            if witnessed.coefficients().len() > R::num_coeffs() {
                 return Err(Error::InvalidWitness(
                     "poly-query claim rejected: coefficient count exceeds the polynomial rank \
                      capacity"
@@ -104,11 +104,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
                 ));
             }
             let poly = sparse::Polynomial::<C::CircuitField, R>::from_coeffs(
-                witnessed.coefficients.clone(),
+                witnessed.coefficients().to_vec(),
             );
             let host = challenge::host_commitment::<C, R>(self.params, &poly)?;
             let expected = challenge::host_coords::<C>(host)?;
-            if precheck && expected != witnessed.coords {
+            if precheck && expected != witnessed.coords() {
                 return Err(Error::InvalidWitness(
                     "poly-query claim rejected: the claimed commitment does not bind the claimed \
                      polynomial"
@@ -126,7 +126,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         for claim in claims.iter() {
             let slot = polys
                 .iter()
-                .position(|witnessed| witnessed.coords == claim.coords)
+                .position(|witnessed| witnessed.coords() == claim.coords)
                 .ok_or_else(|| {
                     Error::InvalidWitness(
                         "poly-query claim names a commitment outside the instance".into(),
@@ -147,7 +147,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
 
         builder.set_native_application_rx(rx);
         builder.set_application_polys(
-            polys.iter().flat_map(|p| p.coords).collect(),
+            polys.iter().flat_map(|p| p.coords()).collect(),
             claim_polys,
             claim_host_commitments,
         );

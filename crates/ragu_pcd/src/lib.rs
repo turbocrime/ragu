@@ -351,7 +351,7 @@ pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: 
     /// values, computed once at [`finalize`](ApplicationBuilder::finalize)
     /// and supplied to every trace. See
     /// [`Padding`](internal::challenge::Padding).
-    padding: internal::challenge::Padding<C, R>,
+    padding: internal::challenge::Padding<C>,
     num_application_steps: usize,
     /// Cached seeded trivial proof for rerandomization.
     seeded_trivial: OnceCell<Proof<C, R>>,
@@ -509,8 +509,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
     pub fn commit_polynomial(
         &self,
         polynomial: &ragu_circuits::polynomials::sparse::Polynomial<C::CircuitField, R>,
-    ) -> Result<PolyCommitment<C, R>> {
+    ) -> Result<PolyCommitment<C>> {
         let host = internal::challenge::host_commitment::<C, R>(self.params, polynomial)?;
-        PolyCommitment::new(polynomial.clone(), host)
+        PolyCommitment::new(polynomial.iter_coeffs().collect(), host)
     }
 }

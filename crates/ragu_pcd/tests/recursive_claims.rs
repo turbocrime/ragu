@@ -61,6 +61,7 @@ fn corrupted_claim_is_rejected_directly_and_recursively() -> Result<()> {
         OpenAndHash::new(Pasta::circuit_poseidon(pasta)),
         OpenAndHashWitness {
             commitment: com1,
+            polynomial: p1.clone(),
             x,
             y,
         },
@@ -130,6 +131,7 @@ fn forged_challenge_is_rejected_directly_and_recursively() -> Result<()> {
         OpenAndHash::new(Pasta::circuit_poseidon(pasta)),
         OpenAndHashWitness {
             commitment: com3,
+            polynomial: p3.clone(),
             x,
             y,
         },
@@ -192,6 +194,7 @@ fn a_claim_naming_no_slot_is_rejected() -> Result<()> {
         OpenAndHash::new(Pasta::circuit_poseidon(pasta)),
         OpenAndHashWitness {
             commitment: com3,
+            polynomial: p3.clone(),
             x,
             y,
         },
@@ -252,13 +255,15 @@ fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
     // step's challenge is bound to P while the parent folds P'.
     let host_of_p =
         p.commit_to_affine::<<Pasta as Cycle>::HostCurve>(Pasta::host_generators(pasta));
-    let desynced = PolyCommitment::<Pasta, R>::desync_for_testing(p_prime.clone(), host_of_p)?;
+    let desynced =
+        PolyCommitment::<Pasta>::desync_for_testing(p_prime.iter_coeffs().collect(), host_of_p)?;
 
     let (cheat, ()) = app.seed(
         &mut rng,
         CommitAndOpen::new(pasta),
         CommitAndOpenWitness {
             commitment: desynced,
+            polynomial: p_prime.clone(),
             claimed_y: None,
         },
     )?;
@@ -296,6 +301,7 @@ fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
         OpenAndHash::new(Pasta::circuit_poseidon(pasta)),
         OpenAndHashWitness {
             commitment: com3,
+            polynomial: p3.clone(),
             x,
             y,
         },
@@ -381,6 +387,7 @@ fn forged_coordinate_wires_are_rejected_directly_and_recursively() -> Result<()>
         OpenAndHash::new(Pasta::circuit_poseidon(pasta)),
         OpenAndHashWitness {
             commitment: com3,
+            polynomial: p3.clone(),
             x,
             y,
         },

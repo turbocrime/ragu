@@ -95,8 +95,12 @@ impl<F: Field, R: Rank> Header<F> for SetHeader<R> {
 }
 
 /// Witness for [`SeedSet`]: the one-member set as a committed polynomial.
+///
+/// `polynomial` rides beside the commitment because the step's output data
+/// carries it onward; the in-circuit handle exposes only evaluation.
 pub struct SeedSetWitness<C: Cycle, R: Rank> {
-    pub set: PolyCommitment<C, R>,
+    pub set: PolyCommitment<C>,
+    pub polynomial: sparse::Polynomial<C::CircuitField, R>,
 }
 
 /// A leaf establishing a one-member set: witnesses its committed polynomial
@@ -146,10 +150,11 @@ impl<C: Cycle, R: Rank> Step<C> for SeedSet<C, R> {
     where
         Self: 'dr,
     {
+        let polynomial = witness.as_ref().map(|w| w.polynomial.clone());
         let set = witness.map(|w| w.set.clone());
-        let [handle] = ctx.witness_polynomial::<R, 1>([set])?;
+        let [handle] = ctx.witness_polynomial::<1>([set])?;
 
-        let output_data = set_data(&handle);
+        let output_data = set_data(&handle, polynomial);
         let header = name_header(&handle)?;
 
         Ok((
@@ -166,10 +171,14 @@ impl<C: Cycle, R: Rank> Step<C> for SeedSet<C, R> {
 
 /// Witness for the [`MergeSets`] fuse: the two contributing sets (which must
 /// match the children's header-carried names) and the claimed merged set.
+///
+/// `product_polynomial` rides beside the commitments because the step's
+/// output data carries it onward.
 pub struct MergeSetsWitness<C: Cycle, R: Rank> {
-    pub a: PolyCommitment<C, R>,
-    pub b: PolyCommitment<C, R>,
-    pub product: PolyCommitment<C, R>,
+    pub a: PolyCommitment<C>,
+    pub b: PolyCommitment<C>,
+    pub product: PolyCommitment<C>,
+    pub product_polynomial: sparse::Polynomial<C::CircuitField, R>,
 }
 
 /// The merging fuse: takes two [`SetHeader`] children, binds its witnessed
@@ -232,8 +241,9 @@ impl<C: Cycle, R: Rank> Step<C> for MergeSets<'_, C, R> {
 
         let a_com = witness.as_ref().map(|w| w.a.clone());
         let b_com = witness.as_ref().map(|w| w.b.clone());
+        let product_polynomial = witness.as_ref().map(|w| w.product_polynomial.clone());
         let c_com = witness.map(|w| w.product.clone());
-        let handles = ctx.witness_polynomial::<R, 3>([a_com, b_com, c_com])?;
+        let handles = ctx.witness_polynomial::<3>([a_com, b_com, c_com])?;
 
         // The cross-proof identity check: the contributing sets this step
         // witnessed are exactly the sets the children's headers name. Same
@@ -261,7 +271,7 @@ impl<C: Cycle, R: Rank> Step<C> for MergeSets<'_, C, R> {
 
         // The output header is the merged set's name — the contributing
         // sets do not appear.
-        let output_data = set_data(&c);
+        let output_data = set_data(&c, product_polynomial);
         let header = name_header(&c)?;
 
         Ok((
@@ -323,8 +333,8 @@ impl<F: PrimeField> Header<F> for SeqHeader {
 /// Witness for [`SeedSequence`]: the literal member and its one-member
 /// sequence `[member, 1]` — the member and the sentinel — as a committed
 /// polynomial.
-pub struct SeedSequenceWitness<C: Cycle, R: Rank> {
-    pub sequence: PolyCommitment<C, R>,
+pub struct SeedSequenceWitness<C: Cycle> {
+    pub sequence: PolyCommitment<C>,
     pub member: C::CircuitField,
 }
 
@@ -352,7 +362,7 @@ impl<C, R> Default for SeedSequence<C, R> {
 
 impl<C: Cycle, R: Rank> Step<C> for SeedSequence<C, R> {
     const INDEX: Index = Index::new(1);
-    type Witness<'source> = SeedSequenceWitness<C, R>;
+    type Witness<'source> = SeedSequenceWitness<C>;
     type Aux<'source> = ();
     type Left = ();
     type Right = ();
@@ -378,7 +388,7 @@ impl<C: Cycle, R: Rank> Step<C> for SeedSequence<C, R> {
     {
         let member = witness.as_ref().map(|w| w.member);
         let seq_com = witness.map(|w| w.sequence.clone());
-        let [seq] = ctx.witness_polynomial::<R, 1>([seq_com])?;
+        let [seq] = ctx.witness_polynomial::<1>([seq_com])?;
 
         let output_data = seq_data(&seq, member.map(|m| vec![m]));
         let header: FixedVec<Element<'dr, D>, ConstLen<3>> = seq
@@ -403,10 +413,10 @@ impl<C: Cycle, R: Rank> Step<C> for SeedSequence<C, R> {
 /// Witness for the [`ConcatSequences`] fuse: the contributing sequences
 /// (which must match the children's header-carried names) and the claimed
 /// concatenation.
-pub struct ConcatSequencesWitness<C: Cycle, R: Rank> {
-    pub a: PolyCommitment<C, R>,
-    pub b: PolyCommitment<C, R>,
-    pub output: PolyCommitment<C, R>,
+pub struct ConcatSequencesWitness<C: Cycle> {
+    pub a: PolyCommitment<C>,
+    pub b: PolyCommitment<C>,
+    pub output: PolyCommitment<C>,
 }
 
 /// The concatenation fuse: takes two [`SeqHeader`] children, binds its two
@@ -432,7 +442,7 @@ impl<'params, C: Cycle, R> ConcatSequences<'params, C, R> {
 
 impl<C: Cycle, R: Rank> Step<C> for ConcatSequences<'_, C, R> {
     const INDEX: Index = Index::new(3);
-    type Witness<'source> = ConcatSequencesWitness<C, R>;
+    type Witness<'source> = ConcatSequencesWitness<C>;
     type Aux<'source> = ();
     type Left = SeqHeader;
     type Right = SeqHeader;
@@ -473,7 +483,7 @@ impl<C: Cycle, R: Rank> Step<C> for ConcatSequences<'_, C, R> {
         let a_com = witness.as_ref().map(|w| w.a.clone());
         let b_com = witness.as_ref().map(|w| w.b.clone());
         let c_com = witness.map(|w| w.output.clone());
-        let handles = ctx.witness_polynomial::<R, 3>([a_com, b_com, c_com])?;
+        let handles = ctx.witness_polynomial::<3>([a_com, b_com, c_com])?;
 
         // The cross-proof identity checks: each witnessed input's name
         // equals the corresponding child's header wires.
@@ -559,41 +569,40 @@ impl<C: Cycle, R: Rank> Step<C> for ConcatSequences<'_, C, R> {
 
 /// Opens `handle` at `z`: allocates the evaluation natively and claims it
 /// with a poly query.
-fn open_at<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, R: Rank>(
+fn open_at<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
     ctx: &mut StepCtx<'_, 'dr, D, C>,
     allocator: &mut impl Allocator<'dr, D>,
-    handle: &PolyHandle<'dr, D, C, R>,
+    handle: &PolyHandle<'dr, D, C>,
     z: &Element<'dr, D>,
 ) -> Result<Element<'dr, D>> {
-    let y_value = z
-        .value()
-        .map(|z| *z)
-        .and_then(|z| handle.polynomial().as_ref().map(|p| p.eval(z)));
+    let y_value = handle.eval(z.value().map(|z| *z));
     let y = Element::alloc(ctx.dr, allocator, y_value)?;
     ctx.enforce_poly_query(handle, z.clone(), y.clone())?;
     Ok(y)
 }
 
-/// Assembles a [`SetData`] value from a handle's name and polynomial.
+/// Assembles a [`SetData`] value from a handle's name and the
+/// witness-carried polynomial.
 fn set_data<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank>(
-    handle: &PolyHandle<'dr, D, C, R>,
+    handle: &PolyHandle<'dr, D, C>,
+    polynomial: DriverValue<D, sparse::Polynomial<D::F, R>>,
 ) -> DriverValue<D, SetData<D::F, R>> {
     let [c0, c1] = handle.coords();
     let c0 = c0.value().map(|v| *v);
     let c1 = c1.value().map(|v| *v);
-    handle.polynomial().as_ref().and_then(|polynomial| {
+    polynomial.and_then(|polynomial| {
         c0.and_then(|c0| {
             c1.map(|c1| SetData {
                 coords: [c0, c1],
-                polynomial: polynomial.clone(),
+                polynomial,
             })
         })
     })
 }
 
 /// Assembles a [`SeqData`] value from a handle's name and the member list.
-fn seq_data<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank>(
-    handle: &PolyHandle<'dr, D, C, R>,
+fn seq_data<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>>(
+    handle: &PolyHandle<'dr, D, C>,
     members: DriverValue<D, Vec<D::F>>,
 ) -> DriverValue<D, SeqData<D::F>> {
     let [c0, c1] = handle.coords();
@@ -611,8 +620,8 @@ fn seq_data<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank>(
 
 /// The two header wires for a set's name — the handle's own coordinate
 /// wires, reused rather than re-allocated.
-fn name_header<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank>(
-    handle: &PolyHandle<'dr, D, C, R>,
+fn name_header<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>>(
+    handle: &PolyHandle<'dr, D, C>,
 ) -> Result<FixedVec<Element<'dr, D>, ConstLen<2>>> {
     handle.coords().into_iter().collect::<Vec<_>>().try_into()
 }

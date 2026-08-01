@@ -669,13 +669,13 @@ mod capacity_is_per_application {
         // This step is only ever registered, never proved, so what matters here
         // is that the hook calls happen — not the values they carry.
         let commitment = D::try_just(|| {
-            Err::<crate::poly_commitment::PolyCommitment<Pasta, R>, _>(Error::InvalidWitness(
+            Err::<crate::poly_commitment::PolyCommitment<Pasta>, _>(Error::InvalidWitness(
                 "the capacity test never builds a proof".into(),
             ))
         })?;
         // Both polynomials in one call: slot 0 is `handle`, slot 1 is `other`.
         let [handle, other] =
-            ctx.witness_polynomial::<R, 2>([Maybe::clone(&commitment), commitment])?;
+            ctx.witness_polynomial::<2>([Maybe::clone(&commitment), commitment])?;
         let zero = Element::alloc(ctx.dr, &mut Standard::new(), D::just(|| Fp::ZERO))?;
         // One polynomial opened twice, the other once: three claims over two
         // polynomials.

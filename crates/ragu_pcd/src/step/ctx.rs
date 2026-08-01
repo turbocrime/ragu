@@ -12,7 +12,6 @@
 use alloc::vec::Vec;
 
 use ragu_arithmetic::Cycle;
-use ragu_circuits::polynomials::Rank;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
@@ -77,10 +76,10 @@ where
     /// Returns [`Error::InvalidWitness`](ragu_core::Error::InvalidWitness) if
     /// called more than once, or if `N` exceeds the application's polynomial
     /// capacity.
-    pub fn witness_polynomial<R: Rank, const N: usize>(
+    pub fn witness_polynomial<const N: usize>(
         &mut self,
-        commitments: [DriverValue<D, PolyCommitment<C, R>>; N],
-    ) -> Result<[PolyHandle<'dr, D, C, R>; N]> {
+        commitments: [DriverValue<D, PolyCommitment<C>>; N],
+    ) -> Result<[PolyHandle<'dr, D, C>; N]> {
         self.hooks.witness_polynomials(self.dr, commitments)
     }
 
@@ -122,9 +121,9 @@ where
     /// opening; a **root** proof's own claims are checked natively by
     /// [`Application::verify`](crate::Application::verify). See
     /// [`framework_hooks`](crate::framework_hooks) for the chain.
-    pub fn enforce_poly_query<R: Rank>(
+    pub fn enforce_poly_query(
         &mut self,
-        commitment: &PolyHandle<'dr, D, C, R>,
+        commitment: &PolyHandle<'dr, D, C>,
         x: Element<'dr, D>,
         y: Element<'dr, D>,
     ) -> Result<()> {

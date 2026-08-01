@@ -56,6 +56,7 @@ fn oracle_end_to_end() -> Result<()> {
         CommitAndOpen::new(pasta),
         CommitAndOpenWitness {
             commitment: com1.clone(),
+            polynomial: p1.clone(),
             claimed_y: None,
         },
     )?;
@@ -73,6 +74,7 @@ fn oracle_end_to_end() -> Result<()> {
         OpenAndHash::new(Pasta::circuit_poseidon(pasta)),
         OpenAndHashWitness {
             commitment: com1,
+            polynomial: p1.clone(),
             x,
             y,
         },
@@ -99,6 +101,7 @@ fn dishonest_evaluation_is_rejected() -> Result<()> {
         CommitAndOpen::new(pasta),
         CommitAndOpenWitness {
             commitment,
+            polynomial: p.clone(),
             claimed_y: Some(Fp::from(42u64)),
         },
     );

@@ -106,11 +106,13 @@ pub fn seed_set<C: Cycle, R: Rank, RNG: CryptoRngCore>(
     rng: &mut RNG,
     member: C::CircuitField,
 ) -> Result<Pcd<C, R, SetHeader<R>>> {
+    let polynomial = set_polynomial(&[member]);
     let (leaf, ()) = app.seed(
         rng,
         SeedSet::new(),
         SeedSetWitness {
-            set: app.commit_polynomial(&set_polynomial(&[member]))?,
+            set: app.commit_polynomial(&polynomial)?,
+            polynomial,
         },
     )?;
     Ok(leaf)
@@ -129,6 +131,7 @@ pub fn fuse_merge<C: Cycle, R: Rank, RNG: CryptoRngCore>(
         a: app.commit_polynomial(&left.data().polynomial)?,
         b: app.commit_polynomial(&right.data().polynomial)?,
         product: app.commit_polynomial(&product)?,
+        product_polynomial: product,
     };
     let (merged, ()) = app.fuse(rng, MergeSets::new(app.params()), witness, left, right)?;
     Ok(merged)
@@ -143,7 +146,7 @@ pub fn seed_sequence<C: Cycle, R: Rank, RNG: CryptoRngCore>(
 ) -> Result<Pcd<C, R, SeqHeader>> {
     let (leaf, ()) = app.seed(
         rng,
-        SeedSequence::new(),
+        SeedSequence::<C, R>::new(),
         SeedSequenceWitness {
             sequence: app.commit_polynomial(&sequence_polynomial(&[member]))?,
             member,
@@ -174,7 +177,7 @@ pub fn fuse_concat<C: Cycle, R: Rank, RNG: CryptoRngCore>(
     };
     let (out, ()) = app.fuse(
         rng,
-        ConcatSequences::new(app.params()),
+        ConcatSequences::<C, R>::new(app.params()),
         witness,
         left,
         right,

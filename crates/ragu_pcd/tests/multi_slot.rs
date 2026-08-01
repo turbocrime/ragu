@@ -33,12 +33,14 @@ fn the_pinned_slotted_shape_proves_and_verifies() -> Result<()> {
         .finalize(pasta)?;
     let mut rng = StdRng::seed_from_u64(999);
 
-    let commitment = app.commit_polynomial(&poly(&[3, 1, 4, 1, 5]))?;
+    let polynomial = poly(&[3, 1, 4, 1, 5]);
+    let commitment = app.commit_polynomial(&polynomial)?;
     let (leaf, ()) = app.seed(
         &mut rng,
         CommitAndOpen::new(pasta),
         CommitAndOpenWitness {
             commitment,
+            polynomial,
             claimed_y: None,
         },
     )?;

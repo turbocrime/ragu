@@ -698,7 +698,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::Hoo
         builder.set_application_polys(
             padding_coords,
             vec![
-                padding.poly.clone().into_polynomial();
+                sparse::Polynomial::from_coeffs(padding.poly.coefficients().to_vec());
                 self.hook_layout().poly_query.polys
             ],
             vec![padding.host; self.hook_layout().poly_query.polys],

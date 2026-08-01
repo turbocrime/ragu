@@ -94,7 +94,6 @@
 use alloc::vec::Vec;
 
 use ragu_arithmetic::{Cycle, ff::Field};
-use ragu_circuits::polynomials::Rank;
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverValue},
@@ -107,22 +106,6 @@ use crate::{
     poly_commitment::{PolyCommitment, PolyHandle},
 };
 
-/// A single witnessed polynomial: its embedded commitment coordinates and its
-/// coefficients.
-///
-/// The framework needs the coefficients (not just the commitment) so it can
-/// check queries at fuse time — and batch the polynomial into the proof
-/// system's $(P, u, v)$ accumulator.
-pub struct WitnessedPoly<F: Field> {
-    /// Coefficients of the polynomial $p(X)$, little-endian
-    /// (`coefficients[i]` is the coefficient of $X^i$).
-    pub coefficients: Vec<F>,
-    /// The values of the slot's two coordinate instance wires: the host
-    /// commitment's affine coordinates, canonically embedded in the circuit
-    /// field. The polynomial's in-circuit identity.
-    pub coords: [F; 2],
-}
-
 /// The in-circuit wires of a derived challenge: the field elements it was
 /// hashed from, and the challenge itself. All of them go into the application
 /// circuit's public instance so the parent can re-derive the challenge from
@@ -133,27 +116,6 @@ pub struct ChallengeWires<'dr, D: Driver<'dr>> {
     pub inputs: Vec<Element<'dr, D>>,
     /// The challenge, hashed from [`inputs`](Self::inputs).
     pub challenge: Element<'dr, D>,
-}
-
-/// The in-circuit wires of a single witnessed **polynomial**, retained so the
-/// adapter can write them into the application circuit's public instance
-/// (binding them to the circuit's $k(Y)$), alongside the witness-only
-/// coefficient values the fuse needs for the PCS folding.
-///
-/// One of these per [`witness_polynomial`](crate::step::StepCtx::witness_polynomial)
-/// call. `coords` is the polynomial's identity, and a claim that opens it
-/// carries **these same wires** — a step's [`PolyHandle`] holds them, and
-/// padding reads slot 0's back out — so the polynomial region and the claim
-/// region hold one pair of wires at two instance positions and their equality
-/// needs no constraint.
-pub struct PolyWires<'dr, D: Driver<'dr>> {
-    /// The polynomial's coefficient values (witness-only; never wires).
-    pub coefficients: DriverValue<D, Vec<D::F>>,
-    /// The slot's two coordinate instance wires: the commitment's
-    /// representation, allocated at witnessing as plain value-filled wires —
-    /// free wires, and still fail-closed: the accumulator and the root
-    /// recompute force them to be the recorded host's, or no proof exists.
-    pub coords: [Element<'dr, D>; 2],
 }
 
 /// The in-circuit wires of a single **query**: which polynomial is opened,
@@ -191,8 +153,10 @@ pub struct FrameworkHooks<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     poly_queries: Vec<QueryWires<'dr, D>>,
     /// One entry per
     /// [`witness_polynomial`](crate::step::StepCtx::witness_polynomial) call,
-    /// in call order. A polynomial's position here is its slot.
-    witnessed_polys: Vec<PolyWires<'dr, D>>,
+    /// in call order — a clone of the very handle the step body holds, so the
+    /// instance names the caller's wires. A polynomial's position here is its
+    /// slot.
+    witnessed_polys: Vec<PolyHandle<'dr, D, C>>,
     /// The `(inputs, challenge)` record each
     /// [`derive_challenge`](crate::step::StepCtx::derive_challenge) call
     /// produced, in slot order. Its length *is* the call count.
@@ -217,7 +181,7 @@ pub struct FrameworkAux<C: Cycle> {
     /// capacity, in slot order — matching the instance layout the circuit
     /// committed to. Each carries its coefficients, which the fuse folds into
     /// the PCS accumulator.
-    pub polys: Vec<WitnessedPoly<C::CircuitField>>,
+    pub polys: Vec<PolyCommitment<C>>,
     /// The step's opening claims, padded to the application's claim capacity,
     /// in call order. Each carries the embedded commitment coordinates of one
     /// of [`polys`](Self::polys). Fuse pre-checks every claim natively,
@@ -362,8 +326,8 @@ impl PolyQueryLayout {
 }
 
 impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, C> {
-    /// The witnessed polynomials' wires, in slot order.
-    pub(crate) fn witnessed_polys(&self) -> &[PolyWires<'dr, D>] {
+    /// The witnessed polynomials' handles, in slot order.
+    pub(crate) fn witnessed_polys(&self) -> &[PolyHandle<'dr, D, C>] {
         &self.witnessed_polys
     }
 
@@ -380,16 +344,14 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     /// Reads each hook's wires back out as plain values, for the fuse.
     pub(crate) fn into_values(self) -> Result<DriverValue<D, FrameworkAux<C>>> {
         let mut polys = Vec::with_capacity(self.witnessed_polys.len());
-        for PolyWires {
-            coefficients,
-            coords,
-        } in self.witnessed_polys
-        {
+        for handle in self.witnessed_polys {
+            let coefficients = handle.coefficients();
+            let coords = handle.coords();
             polys.push(D::try_just(|| {
-                Ok(WitnessedPoly {
-                    coefficients: coefficients.take(),
-                    coords: [*coords[0].value().take(), *coords[1].value().take()],
-                })
+                Ok(PolyCommitment::from_parts(
+                    coefficients.take(),
+                    [*coords[0].value().take(), *coords[1].value().take()],
+                ))
             })?);
         }
         let polys = collect_values::<D, _>(polys)?;
@@ -457,11 +419,11 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     /// Witnesses the step's polynomials — the work behind
     /// [`StepCtx::witness_polynomial`](crate::step::StepCtx::witness_polynomial),
     /// which documents the step-facing contract.
-    pub(crate) fn witness_polynomials<R: Rank, const N: usize>(
+    pub(crate) fn witness_polynomials<const N: usize>(
         &mut self,
         dr: &mut D,
-        commitments: [DriverValue<D, PolyCommitment<C, R>>; N],
-    ) -> Result<[PolyHandle<'dr, D, C, R>; N]> {
+        commitments: [DriverValue<D, PolyCommitment<C>>; N],
+    ) -> Result<[PolyHandle<'dr, D, C>; N]> {
         if !self.witnessed_polys.is_empty() {
             return Err(Error::InvalidWitness(
                 "witness_polynomial may only be called once per step".into(),
@@ -470,7 +432,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
 
         let mut handles = Vec::with_capacity(N);
         for commitment in commitments {
-            handles.push(self.witness_one_polynomial::<R>(dr, commitment)?);
+            handles.push(self.witness_one_polynomial(dr, commitment)?);
         }
 
         // `N` handles were pushed, one per element of a `[_; N]`.
@@ -485,11 +447,11 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     ///
     /// The call sequence is circuit structure — it must not depend on witness
     /// values — so the slot assignment is deterministic: call order.
-    fn witness_one_polynomial<R: Rank>(
+    fn witness_one_polynomial(
         &mut self,
         dr: &mut D,
-        commitment: DriverValue<D, PolyCommitment<C, R>>,
-    ) -> Result<PolyHandle<'dr, D, C, R>> {
+        commitment: DriverValue<D, PolyCommitment<C>>,
+    ) -> Result<PolyHandle<'dr, D, C>> {
         if self.witnessed_polys.len() >= self.hook_layout.poly_query.polys {
             return Err(Error::InvalidWitness(
                 "step witnessed more polynomials than there are polynomial slots".into(),
@@ -505,12 +467,9 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
             Element::alloc(dr, &mut (), coord_values.as_ref().map(|c| c[0]))?,
             Element::alloc(dr, &mut (), coord_values.as_ref().map(|c| c[1]))?,
         ];
-        let polynomial = commitment.map(PolyCommitment::into_polynomial);
-        let handle = PolyHandle::new(polynomial, coords.clone());
-        self.witnessed_polys.push(PolyWires {
-            coefficients: handle.coefficients(),
-            coords,
-        });
+        let coefficients = commitment.map(PolyCommitment::into_coefficients);
+        let handle = PolyHandle::new(coefficients, coords);
+        self.witnessed_polys.push(handle.clone());
         Ok(handle)
     }
 
@@ -621,19 +580,17 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     /// [`derive_challenge`](Self::derive_challenge), needs no cycle
     /// parameters.
     ///
-    /// `R` is a method parameter so the rank stays out of the container's
-    /// type, and out of every `Step::witness` signature with it.
-    pub(crate) fn finish_slots<R: Rank>(
+    pub(crate) fn finish_slots(
         &mut self,
         dr: &mut D,
-        padding: DriverValue<D, Padding<C, R>>,
+        padding: DriverValue<D, Padding<C>>,
     ) -> Result<()> {
         // Polynomials first, so every query slot has something to name. The
         // handle is discarded — the slot is recorded, and every padding query
         // names slot 0.
         while self.witnessed_polys.len() < self.hook_layout.poly_query.polys {
             let commitment = padding.as_ref().map(|p| p.poly.clone());
-            self.witness_one_polynomial::<R>(dr, commitment)?;
+            self.witness_one_polynomial(dr, commitment)?;
         }
 
         // Then queries. Every padding query is the *same* query — slot 0
@@ -647,15 +604,14 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
             let slot_zero = self.witnessed_polys.first().ok_or_else(|| {
                 Error::InvalidWitness("a padding claim requires a polynomial slot to name".into())
             })?;
-            let coords = slot_zero.coords.clone();
+            let coords = slot_zero.coords();
             let (x, y) = match &padding_query {
                 Some((x, y)) => (x.clone(), y.clone()),
                 None => {
                     let x = Element::alloc(dr, allocator, D::just(|| D::F::ZERO))?;
                     // Slot 0's value at zero is its constant term.
                     let y_value = slot_zero
-                        .coefficients
-                        .as_ref()
+                        .coefficients()
                         .map(|coefficients| coefficients.first().copied().unwrap_or(D::F::ZERO));
                     let y = Element::alloc(dr, allocator, y_value)?;
                     padding_query = Some((x.clone(), y.clone()));

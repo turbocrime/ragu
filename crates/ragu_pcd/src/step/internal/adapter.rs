@@ -87,7 +87,7 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize, J: H
     /// computed once at finalize and supplied to every proof. See
     /// [`Padding`](crate::internal::challenge::Padding).
     type Witness<'source> = (
-        crate::internal::challenge::Padding<C, R>,
+        crate::internal::challenge::Padding<C>,
         <S::Left as Header<C::CircuitField>>::Data,
         <S::Right as Header<C::CircuitField>>::Data,
         S::Witness<'source>,
@@ -130,7 +130,7 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize, J: H
         // Fill whatever slots the body left over, through the same hooks it
         // used. Each hook already rejected a call past the declared capacity,
         // so there is no total to reconcile here.
-        hooks.finish_slots::<R>(dr, padding)?;
+        hooks.finish_slots(dr, padding)?;
 
         let mut elements = Vec::with_capacity(
             HEADER_SIZE * 3
@@ -152,7 +152,7 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize, J: H
         // and the parent inherits their equality through the revdot identity,
         // with nothing to enforce.
         for poly in hooks.witnessed_polys() {
-            for coord in &poly.coords {
+            for coord in &poly.coords() {
                 coord.write(dr, &mut elements)?;
             }
         }
@@ -226,7 +226,7 @@ mod tests {
 
     /// The padding constants a value-carrying witness tuple leads with —
     /// what `finalize` computes for a real application.
-    fn test_padding() -> crate::internal::challenge::Padding<Pasta, TestR> {
+    fn test_padding() -> crate::internal::challenge::Padding<Pasta> {
         crate::internal::challenge::Padding::new(Pasta::baked(), 0)
             .expect("padding constants exist for baked parameters")
     }

@@ -84,12 +84,14 @@ impl<F: Field, R: Rank> Header<F> for HashedOpening<R> {
 ///
 /// `commitment` comes from
 /// [`Application::commit_polynomial`](ragu_pcd::Application::commit_polynomial),
-/// which bundles the polynomial with the commitment derived from it.
+/// derived from `polynomial` — which rides here because the step's output
+/// data carries it onward; the handle exposes only evaluation.
 /// `claimed_y` overrides the honestly-computed evaluation when set; it exists
 /// so tests can exercise the framework's rejection of dishonest evaluation
 /// claims.
 pub struct CommitAndOpenWitness<C: Cycle, R: Rank> {
-    pub commitment: PolyCommitment<C, R>,
+    pub commitment: PolyCommitment<C>,
+    pub polynomial: sparse::Polynomial<C::CircuitField, R>,
     pub claimed_y: Option<C::CircuitField>,
 }
 
@@ -152,8 +154,9 @@ impl<C: Cycle, R: Rank> Step<C> for CommitAndOpen<'_, C, R> {
         // (1) Witness the committed polynomial: allocate its commitment
         // in-circuit and retain the polynomial for the claim.
         let claimed_y = witness.as_ref().map(|w| w.claimed_y);
+        let polynomial = witness.as_ref().map(|w| w.polynomial.clone());
         let commitment = witness.map(|w| w.commitment);
-        let [handle] = ctx.witness_polynomial::<R, 1>([commitment])?;
+        let [handle] = ctx.witness_polynomial::<1>([commitment])?;
 
         // (2) Derive a challenge bound to the commitment — the handle absorbs
         // as its canonical embedded coordinates.
@@ -162,12 +165,9 @@ impl<C: Cycle, R: Rank> Step<C> for CommitAndOpen<'_, C, R> {
         // (3) Evaluate the polynomial at the challenge (natively; the
         // polynomial is not in-circuit). A dishonest override, if provided,
         // takes the evaluation's place so fuse-time rejection can be tested.
-        let y_value = z.value().map(|z| *z).and_then(|z| {
-            handle
-                .polynomial()
-                .as_ref()
-                .and_then(|p| claimed_y.map(|claimed| claimed.unwrap_or_else(|| p.eval(z))))
-        });
+        let y_value = handle
+            .eval(z.value().map(|z| *z))
+            .and_then(|honest| claimed_y.map(|claimed| claimed.unwrap_or(honest)));
         let y = Element::alloc(ctx.dr, allocator, y_value)?;
 
         // (4) Enforce the evaluation as a poly-query claim.
@@ -179,10 +179,7 @@ impl<C: Cycle, R: Rank> Step<C> for CommitAndOpen<'_, C, R> {
         // stage, commitment, MSM or endoscaling point. Exercising it here means
         // every test in this fixture's suite covers it end to end.
         let zero = Element::alloc(ctx.dr, allocator, D::just(|| C::CircuitField::ZERO))?;
-        let at_zero_value = handle
-            .polynomial()
-            .as_ref()
-            .map(|p| p.eval(C::CircuitField::ZERO));
+        let at_zero_value = handle.eval(D::just(|| C::CircuitField::ZERO));
         let at_zero = Element::alloc(ctx.dr, allocator, at_zero_value)?;
         ctx.enforce_poly_query(&handle, zero, at_zero)?;
 
@@ -194,12 +191,8 @@ impl<C: Cycle, R: Rank> Step<C> for CommitAndOpen<'_, C, R> {
         let output_hash = output.value().map(|v| *v);
         let output_encoded = Encoded::from_gadget(output);
 
-        let output_data = output_hash.and_then(|hash| {
-            handle
-                .polynomial()
-                .clone()
-                .map(|polynomial| HashedOpeningData { hash, polynomial })
-        });
+        let output_data = output_hash
+            .and_then(|hash| polynomial.map(|polynomial| HashedOpeningData { hash, polynomial }));
 
         Ok((
             (
@@ -215,7 +208,9 @@ impl<C: Cycle, R: Rank> Step<C> for CommitAndOpen<'_, C, R> {
 
 /// Witness for [`OpenAndHash`]: an opening `(x, y)` of a committed polynomial.
 pub struct OpenAndHashWitness<C: Cycle, R: Rank> {
-    pub commitment: PolyCommitment<C, R>,
+    pub commitment: PolyCommitment<C>,
+    /// The committed polynomial itself — the step's output data carries it.
+    pub polynomial: sparse::Polynomial<C::CircuitField, R>,
     pub x: C::CircuitField,
     pub y: C::CircuitField,
 }
@@ -270,8 +265,9 @@ impl<C: Cycle, R: Rank> Step<C> for OpenAndHash<'_, C, R> {
 
         let x_witness = witness.as_ref().map(|w| w.x);
         let y_witness = witness.as_ref().map(|w| w.y);
+        let polynomial = witness.as_ref().map(|w| w.polynomial.clone());
         let commitment = witness.map(|w| w.commitment);
-        let [handle] = ctx.witness_polynomial::<R, 1>([commitment])?;
+        let [handle] = ctx.witness_polynomial::<1>([commitment])?;
 
         let x = Element::alloc(ctx.dr, allocator, x_witness)?;
         let y = Element::alloc(ctx.dr, allocator, y_witness)?;
@@ -286,12 +282,8 @@ impl<C: Cycle, R: Rank> Step<C> for OpenAndHash<'_, C, R> {
 
         ctx.enforce_poly_query(&handle, x, y)?;
 
-        let output_data = output_hash.and_then(|hash| {
-            handle
-                .polynomial()
-                .clone()
-                .map(|polynomial| HashedOpeningData { hash, polynomial })
-        });
+        let output_data = output_hash
+            .and_then(|hash| polynomial.map(|polynomial| HashedOpeningData { hash, polynomial }));
 
         Ok((
             (left_encoded, right_encoded, output_encoded),
@@ -348,12 +340,14 @@ pub fn seed_leaf<C: Cycle, R: Rank, RNG: CryptoRngCore>(
     rng: &mut RNG,
     coeffs: &[u64],
 ) -> Result<Pcd<C, R, HashedOpening<R>>> {
-    let commitment = app.commit_polynomial(&poly(coeffs))?;
+    let polynomial = poly(coeffs);
+    let commitment = app.commit_polynomial(&polynomial)?;
     let (leaf, ()) = app.seed(
         rng,
         CommitAndOpen::new(params),
         CommitAndOpenWitness {
             commitment,
+            polynomial,
             claimed_y: None,
         },
     )?;

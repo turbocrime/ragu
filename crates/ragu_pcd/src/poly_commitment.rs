@@ -27,8 +27,7 @@
 
 use alloc::vec::Vec;
 
-use ragu_arithmetic::Cycle;
-use ragu_circuits::polynomials::{Rank, sparse};
+use ragu_arithmetic::{Cycle, ff::Field};
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
@@ -37,7 +36,7 @@ use ragu_core::{
 };
 use ragu_primitives::{Element, io::Write};
 
-/// A polynomial together with its commitment's representation.
+/// A polynomial's coefficients together with its commitment's representation.
 ///
 /// Produced by
 /// [`Application::commit_polynomial`](crate::Application::commit_polynomial),
@@ -45,34 +44,50 @@ use ragu_primitives::{Element, io::Write};
 /// [`Step`](crate::step::Step)'s witness and turn it into an in-circuit
 /// [`PolyHandle`] with
 /// [`StepCtx::witness_polynomial`](crate::step::StepCtx::witness_polynomial).
-pub struct PolyCommitment<C: Cycle, R: Rank> {
-    polynomial: sparse::Polynomial<C::CircuitField, R>,
+///
+/// Coefficients are held rank-erased (little-endian `Vec`); the framework
+/// re-ranks them where its rank is in scope.
+pub struct PolyCommitment<C: Cycle> {
+    coefficients: Vec<C::CircuitField>,
     coords: [C::CircuitField; 2],
 }
 
-impl<C: Cycle, R: Rank> Clone for PolyCommitment<C, R> {
+impl<C: Cycle> Clone for PolyCommitment<C> {
     fn clone(&self) -> Self {
         Self {
-            polynomial: self.polynomial.clone(),
+            coefficients: self.coefficients.clone(),
             coords: self.coords,
         }
     }
 }
 
-impl<C: Cycle, R: Rank> PolyCommitment<C, R> {
-    /// Bundles a polynomial with the representation of `host`, its host-curve
-    /// commitment.
+impl<C: Cycle> PolyCommitment<C> {
+    /// Bundles a polynomial's coefficients with the representation of `host`,
+    /// its host-curve commitment.
     ///
-    /// The one site where canonicity is established: the embedding rejects
-    /// the identity and any coordinate at or above $2^{254}$, so every
-    /// constructed value has exactly one representation and
-    /// [`coords`](Self::coords) is infallible.
-    pub(crate) fn new(
-        polynomial: sparse::Polynomial<C::CircuitField, R>,
-        host: C::HostCurve,
-    ) -> Result<Self> {
+    /// The one author-facing site where canonicity is established: the
+    /// embedding rejects the identity and any coordinate at or above
+    /// $2^{254}$, so every constructed value has exactly one representation
+    /// and [`coords`](Self::coords) is infallible.
+    pub(crate) fn new(coefficients: Vec<C::CircuitField>, host: C::HostCurve) -> Result<Self> {
         let coords = crate::internal::challenge::host_coords::<C>(host)?;
-        Ok(Self { polynomial, coords })
+        Ok(Self {
+            coefficients,
+            coords,
+        })
+    }
+
+    /// Assembles a commitment from already-witnessed values — the drain path
+    /// from a proved circuit's wires, where the fuse's pre-check (not this
+    /// constructor) establishes that the coords bind the coefficients.
+    pub(crate) fn from_parts(
+        coefficients: Vec<C::CircuitField>,
+        coords: [C::CircuitField; 2],
+    ) -> Self {
+        Self {
+            coefficients,
+            coords,
+        }
     }
 
     /// The commitment's **representation**: the host commitment's affine
@@ -95,15 +110,20 @@ impl<C: Cycle, R: Rank> PolyCommitment<C, R> {
     /// [`ApplicationBuilder::skip_claim_precheck_for_testing`](crate::ApplicationBuilder::skip_claim_precheck_for_testing).
     #[cfg(feature = "unstable-fuzzing")]
     pub fn desync_for_testing(
-        polynomial: sparse::Polynomial<C::CircuitField, R>,
+        coefficients: Vec<C::CircuitField>,
         host: C::HostCurve,
     ) -> Result<Self> {
-        Self::new(polynomial, host)
+        Self::new(coefficients, host)
     }
 
-    /// Consumes the bundle, returning the polynomial.
-    pub(crate) fn into_polynomial(self) -> sparse::Polynomial<C::CircuitField, R> {
-        self.polynomial
+    /// The polynomial's coefficients, little-endian.
+    pub(crate) fn coefficients(&self) -> &[C::CircuitField] {
+        &self.coefficients
+    }
+
+    /// Consumes the bundle, returning the coefficients.
+    pub(crate) fn into_coefficients(self) -> Vec<C::CircuitField> {
+        self.coefficients
     }
 }
 
@@ -133,10 +153,10 @@ impl<C: Cycle, R: Rank> PolyCommitment<C, R> {
 /// header sponge, or any other buffer — absorbs the commitment. The retained
 /// polynomial is prover-only data and is never written.
 #[derive(Gadget, Write)]
-pub struct PolyHandle<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> {
+pub struct PolyHandle<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     #[ragu(skip)]
     #[ragu(value)]
-    polynomial: DriverValue<D, sparse::Polynomial<D::F, R>>,
+    coefficients: DriverValue<D, Vec<D::F>>,
     /// The slot's two coordinate instance wires: the commitment's
     /// representation.
     #[ragu(gadget)]
@@ -145,14 +165,14 @@ pub struct PolyHandle<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Ran
     _cycle: core::marker::PhantomData<C>,
 }
 
-impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> PolyHandle<'dr, D, C, R> {
-    /// Bundles a witnessed representation with its retained polynomial.
+impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> PolyHandle<'dr, D, C> {
+    /// Bundles a witnessed representation with its retained coefficients.
     pub(crate) fn new(
-        polynomial: DriverValue<D, sparse::Polynomial<D::F, R>>,
+        coefficients: DriverValue<D, Vec<D::F>>,
         coords: [Element<'dr, D>; 2],
     ) -> Self {
         Self {
-            polynomial,
+            coefficients,
             coords,
             _cycle: core::marker::PhantomData,
         }
@@ -169,16 +189,27 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank> PolyHandle<'dr
         self.coords.clone()
     }
 
-    /// The retained polynomial (prover-only), e.g. to compute the evaluation
-    /// `y = p(x)` that the claim asserts.
-    pub fn polynomial(&self) -> &DriverValue<D, sparse::Polynomial<D::F, R>> {
-        &self.polynomial
+    /// Evaluates the retained polynomial at `x`, as a prover-only value.
+    ///
+    /// The one sanctioned use of the retained coefficients: a step allocates
+    /// the result and claims it with
+    /// [`enforce_poly_query`](crate::step::StepCtx::enforce_poly_query) —
+    /// which is what binds it. The coefficients themselves stay inaccessible
+    /// to the step body: nothing in-circuit could bind them, so nothing may
+    /// depend on them except through a claim.
+    pub fn eval(&self, x: DriverValue<D, D::F>) -> DriverValue<D, D::F> {
+        self.coefficients.as_ref().and_then(|coefficients| {
+            x.map(|x| {
+                coefficients
+                    .iter()
+                    .rev()
+                    .fold(D::F::ZERO, |acc, coefficient| acc * x + coefficient)
+            })
+        })
     }
 
     /// The polynomial's coefficients (little-endian), for the claim.
     pub(crate) fn coefficients(&self) -> DriverValue<D, Vec<D::F>> {
-        self.polynomial
-            .as_ref()
-            .map(|p| p.iter_coeffs().collect::<Vec<_>>())
+        self.coefficients.clone()
     }
 }

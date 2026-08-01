@@ -209,10 +209,10 @@ pub(crate) fn padded_challenge<C: Cycle>(
 /// a *real* claim that happens to be trivially true: the constant polynomial
 /// $1$, whose commitment is exactly `g[0]` and whose value at any $x$ is $1$.
 /// It travels the same path as a claim the step raised.
-pub(crate) struct Padding<C: Cycle, R: Rank> {
+pub(crate) struct Padding<C: Cycle> {
     /// The padding claim's committed polynomial: the constant $1$ with its
     /// canonical commitment representation.
-    pub poly: crate::PolyCommitment<C, R>,
+    pub poly: crate::PolyCommitment<C>,
     /// The padding claim's commitment as the host point itself, `g[0]` —
     /// [`PolyCommitment`](crate::PolyCommitment) keeps only the embedded
     /// coordinates, and a proof's slot lists need the point.
@@ -227,7 +227,7 @@ pub(crate) struct Padding<C: Cycle, R: Rank> {
     pub challenge: Option<C::CircuitField>,
 }
 
-impl<C: Cycle, R: Rank> Clone for Padding<C, R> {
+impl<C: Cycle> Clone for Padding<C> {
     fn clone(&self) -> Self {
         Self {
             poly: self.poly.clone(),
@@ -238,7 +238,7 @@ impl<C: Cycle, R: Rank> Clone for Padding<C, R> {
     }
 }
 
-impl<C: Cycle, R: Rank> Padding<C, R> {
+impl<C: Cycle> Padding<C> {
     /// Computes the padding constants for an application whose challenge
     /// slots absorb `width` elements.
     pub fn new(params: &C::Params, width: usize) -> Result<Self> {
@@ -246,10 +246,7 @@ impl<C: Cycle, R: Rank> Padding<C, R> {
 
         let host = C::host_generators(params).g()[0];
         Ok(Self {
-            poly: crate::PolyCommitment::new(
-                sparse::Polynomial::from_coeffs(vec![C::CircuitField::ONE]),
-                host,
-            )?,
+            poly: crate::PolyCommitment::new(vec![C::CircuitField::ONE], host)?,
             host,
             sentinel: sentinel_element::<C>(params),
             challenge: if width == 0 {
