@@ -92,10 +92,10 @@ impl<L: ragu_primitives::vec::Len> ragu_primitives::vec::Len for EndoPoints<L> {
     }
 }
 
-/// A stage's position in [`chain_layout`], so the runs and the mask
+/// A stage's position in [`NestedLayouts::chain_layout`], so the runs and the mask
 /// registration name a stage instead of an integer.
 ///
-/// The discriminants *are* the indices — [`chain_layout`] builds its widths in
+/// The discriminants *are* the indices — [`NestedLayouts::chain_layout`] builds its widths in
 /// this order, and `nested_chain_positions_match_layout` pins that the two
 /// agree. Reordering the chain means reordering both together.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -115,7 +115,7 @@ pub enum ChainStage {
 
 impl ChainStage {
     /// The chain's stages in layout order — the same order
-    /// [`chain_layout`] pushes widths.
+    /// [`NestedLayouts::chain_layout`] pushes widths.
     pub const ALL: [Self; 10] = [
         Self::Endoscalar,
         Self::Points,
@@ -129,62 +129,26 @@ impl ChainStage {
         Self::Eval,
     ];
 
-    /// This stage's index into [`chain_layout`].
+    /// This stage's index into [`NestedLayouts::chain_layout`].
     pub const fn index(self) -> usize {
         self as usize
     }
 }
 
-/// The nested stage chain's value-level geometry at the application's declared
-/// capacity.
-///
-/// The chain is linear, in [`ChainStage`] order: endoscalar → points →
-/// preamble → s_prime → inner_error → outer_error → ab → query → f → eval.
-/// The points and preamble stages carry the *children's*
-/// blocks, the eval stage the current step's own slots — but every step in an
-/// application exposes the same shape, so one capacity sizes all three. The
-/// widths come from each stage's `num_values` (capacity-dependent stages) or
-/// its typed `values()` (the stages whose width really is a property of their
-/// type); `nested_chain_layout_tiles_at_every_capacity` pins that the result is
-/// contiguous.
-pub fn chain_layout<HC: ragu_arithmetic::CurveAffine, R: Rank>(
-    polys: usize,
-) -> ragu_circuits::staging::InducedStages {
-    use ragu_circuits::staging::{InducedStages, Stage};
-
-    // The three shape-carrying stages (points, preamble, eval) take their
-    // widths from the capacity; each is subdivided into one-point slots by
-    // `run_layout`. The seven between them are shape-free, so their widths come
-    // from their own types.
-    //
-    // This vector's order is `ChainStage::ALL`.
-    InducedStages::new(alloc::vec![
-        <endoscalar::EndoscalarStage as Stage<HC::Base, R>>::values(),
-        endoscalar::points_stage_num_values(num_endoscaling_points(polys)),
-        stages::preamble::num_values(polys),
-        <stages::s_prime::Stage<HC, R> as Stage<HC::Base, R>>::values(),
-        <stages::inner_error::Stage<HC, R> as Stage<HC::Base, R>>::values(),
-        <stages::outer_error::Stage<HC, R> as Stage<HC::Base, R>>::values(),
-        <stages::ab::Stage<HC, R> as Stage<HC::Base, R>>::values(),
-        <stages::query::Stage<HC, R> as Stage<HC::Base, R>>::values(),
-        <stages::f::Stage<HC, R> as Stage<HC::Base, R>>::values(),
-        stages::eval::num_values(polys),
-    ])
-}
-
-/// Subdivides one span of [`chain_layout`] into `slots` one-point slots.
+/// Subdivides one span of [`NestedLayouts::chain_layout`] into `slots`
+/// one-point slots.
 ///
 /// The three shape-carrying nested stages — points, preamble, eval — are each
 /// a flat list of curve points whose length follows the application's shape.
 /// Each is placed as an induced run of one-point slots inside the span
-/// [`chain_layout`] already gives it, so the stage keeps its single mask and
+/// the chain already gives it, so the stage keeps its single mask and
 /// single commitment: the subdivision decides where wires land, not how many
 /// commitments there are.
 ///
 /// `nested_chain_layout_tiles_at_every_capacity` pins that each run's slots sum
 /// to the span they subdivide. The slot width comes from `Slot` itself, so the
 /// layout and the stage it tiles agree by construction.
-pub fn run_layout<F, R, Slot>(
+fn run_layout<F, R, Slot>(
     chain: &ragu_circuits::staging::InducedStages,
     stage: ChainStage,
     slots: usize,
@@ -222,9 +186,60 @@ pub struct NestedLayouts {
 }
 
 impl NestedLayouts {
+    /// The nested stage chain's value-level geometry at the application's
+    /// declared capacity — the source [`new`](Self::new) subdivides.
+    ///
+    /// The chain is linear, in [`ChainStage`] order: endoscalar → points →
+    /// preamble → s_prime → inner_error → outer_error → ab → query → f → eval.
+    /// The points and preamble stages carry the *children's* blocks, the eval
+    /// stage the current step's own slots — but every step in an application
+    /// exposes the same shape, so one capacity sizes all three. The widths
+    /// come from each stage's `num_values` (capacity-dependent stages) or its
+    /// typed `values()` (the stages whose width really is a property of their
+    /// type); `nested_chain_layout_tiles_at_every_capacity` pins that the
+    /// result is contiguous.
+    pub fn chain_layout<HC: ragu_arithmetic::CurveAffine, R: Rank>(
+        polys: usize,
+    ) -> ragu_circuits::staging::InducedStages {
+        use ragu_circuits::staging::{InducedStages, Stage};
+
+        // The three shape-carrying stages (points, preamble, eval) take their
+        // widths from the capacity; each is subdivided into one-point slots by
+        // `run_layout`. The seven between them are shape-free, so their widths
+        // come from their own types.
+        //
+        // This vector's order is `ChainStage::ALL`.
+        InducedStages::new(alloc::vec![
+            <endoscalar::EndoscalarStage as Stage<HC::Base, R>>::values(),
+            endoscalar::points_stage_num_values(num_endoscaling_points(polys)),
+            stages::preamble::num_values(polys),
+            <stages::s_prime::Stage<HC, R> as Stage<HC::Base, R>>::values(),
+            <stages::inner_error::Stage<HC, R> as Stage<HC::Base, R>>::values(),
+            <stages::outer_error::Stage<HC, R> as Stage<HC::Base, R>>::values(),
+            <stages::ab::Stage<HC, R> as Stage<HC::Base, R>>::values(),
+            <stages::query::Stage<HC, R> as Stage<HC::Base, R>>::values(),
+            <stages::f::Stage<HC, R> as Stage<HC::Base, R>>::values(),
+            stages::eval::num_values(polys),
+        ])
+    }
+
+    /// The number of nested internal circuits and bondings [`register_all`]
+    /// registers at `capacity`.
+    ///
+    /// Layout (circuits before bondings, matching
+    /// `RegistryBuilder::finalize()`): the endoscaling step circuits, then one
+    /// bonding block — the eleven fixed entries of [`BLOCK_FIXED`], the
+    /// loading circuit, and the two copying circuits.
+    ///
+    /// Every one of these is built at the capacity, children included, which
+    /// is why there is a single block rather than a family keyed by shape.
+    pub(crate) fn num_internal(polys: usize) -> usize {
+        num_endoscaling_steps(polys) + BLOCK_FIXED.len() + 3
+    }
+
     /// Builds every layout for an application of the given capacity.
     pub fn new<HC: ragu_arithmetic::CurveAffine, R: Rank>(polys: usize) -> Self {
-        let chain = chain_layout::<HC, R>(polys);
+        let chain = Self::chain_layout::<HC, R>(polys);
         let num_points = num_endoscaling_points(polys);
         Self {
             points: run_layout::<HC::Base, R, endoscalar::PointSlotStage<HC, R>>(
@@ -267,20 +282,6 @@ const BLOCK_FIXED: [InternalCircuitIndex; 11] = [
     InternalCircuitIndex::BridgeF,
     InternalCircuitIndex::BridgeEval,
 ];
-
-/// The number of nested internal circuits and bondings [`register_all`]
-/// registers at `capacity`.
-///
-/// Layout (circuits before bondings, matching `RegistryBuilder::finalize()`):
-/// the endoscaling step circuits, then one bonding block — the eleven fixed
-/// entries of [`BLOCK_FIXED`], the loading circuit, and the two copying
-/// circuits.
-///
-/// Every one of these is built at the capacity, children included, which is
-/// why there is a single block rather than a family keyed by shape.
-pub(crate) fn num_internal(polys: usize) -> usize {
-    num_endoscaling_steps(polys) + BLOCK_FIXED.len() + 3
-}
 
 /// Index of internal nested circuits registered into the registry.
 ///
@@ -493,7 +494,7 @@ pub mod stages {
 
 /// Registers internal nested circuits into the provided registry: the
 /// endoscaling step circuits, then the bonding block — in exactly the order
-/// [`num_internal`] documents.
+/// [`NestedLayouts::num_internal`] documents.
 ///
 /// Circuits are registered as internal to ensure they occupy prefix indices
 /// before application steps.
@@ -504,7 +505,7 @@ pub fn register_all<'params, C: Cycle, R: Rank, L: ragu_primitives::vec::Len>(
     let initial_internal_circuits = registry.num_internal_circuits();
 
     // Circuits first, then bondings - matching RegistryBuilder::finalize()'s
-    // concatenation order and the layout `num_internal` documents.
+    // concatenation order and the layout `NestedLayouts::num_internal` documents.
     {
         for step in 0..num_endoscaling_steps(polys) {
             let step_circuit =
@@ -514,7 +515,7 @@ pub fn register_all<'params, C: Cycle, R: Rank, L: ragu_primitives::vec::Len>(
     }
 
     {
-        let chain = chain_layout::<C::HostCurve, R>(polys);
+        let chain = NestedLayouts::chain_layout::<C::HostCurve, R>(polys);
 
         // The fixed block, in BLOCK_FIXED order: endoscalar, points, points
         // final, then the eight bridge masks in chain order.
@@ -543,7 +544,7 @@ pub fn register_all<'params, C: Cycle, R: Rank, L: ragu_primitives::vec::Len>(
 
     assert_eq!(
         registry.num_internal_circuits(),
-        initial_internal_circuits + num_internal(polys),
+        initial_internal_circuits + NestedLayouts::num_internal(polys),
         "internal circuit count mismatch"
     );
 

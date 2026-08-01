@@ -12,103 +12,9 @@ use ragu_arithmetic::{
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{Error, Result};
 
-/// The host-curve commitment to a poly-query polynomial, rejecting the
-/// identity (which has no affine coordinates, so it could not be witnessed as
-/// a `Point` nor bridged).
-pub(crate) fn host_commitment<C: Cycle, R: Rank>(
-    params: &C::Params,
-    polynomial: &sparse::Polynomial<C::CircuitField, R>,
-) -> Result<C::HostCurve> {
-    let host = polynomial.commit_to_affine::<C::HostCurve>(C::host_generators(params));
-    if host.coordinates().into_option().is_none() {
-        return Err(Error::InvalidWitness(
-            "polynomial commitment is the identity and cannot be witnessed in-circuit".into(),
-        ));
-    }
-    Ok(host)
-}
-
-/// Bits admitted in a coordinate's high half.
-///
-/// Two short of a limb's 128, which is what makes the decomposition canonical:
-/// the largest value `lo + 2^128·hi` can then take is `2^254 - 1`, below both
-/// Pasta moduli, so no coordinate has a wrapped second decomposition. The cost
-/// is a completeness bound: a commitment with a coordinate at or above `2^254`
-/// — a `~2^-129` fraction of the field — cannot be witnessed.
-const HIGH_BITS: usize = 126;
-
-/// The four 128-bit limbs `[x_lo, x_hi, y_lo, y_hi]` of a host commitment's
-/// coordinates — the split of `to_repr()` into 16-byte halves that
-/// [`host_coords`] recomposes into the commitment's representation.
-///
-/// Errors rather than truncating when a coordinate does not fit: see
-/// [`HIGH_BITS`], whose width bound is what makes the split — and therefore
-/// the representation — canonical.
-fn host_limbs<C: CurveAffine>(host: C) -> Result<[u128; 4]> {
-    let coordinates = host.coordinates().into_option().ok_or_else(|| {
-        Error::InvalidWitness(
-            "the identity has no coordinates and cannot be witnessed in-circuit".into(),
-        )
-    })?;
-
-    let mut limbs = [0u128; 4];
-    for (coordinate, pair) in [*coordinates.x(), *coordinates.y()]
-        .into_iter()
-        .zip(limbs.chunks_mut(2))
-    {
-        let repr = coordinate.to_repr();
-        let (lo, hi) = split_coordinate(repr.as_ref())?;
-        pair[0] = lo;
-        pair[1] = hi;
-    }
-
-    Ok(limbs)
-}
-
-/// Splits a coordinate's canonical little-endian bytes into 16-byte halves,
-/// rejecting values at or above `2^254`.
-fn split_coordinate(bytes: &[u8]) -> Result<(u128, u128)> {
-    if bytes.len() < 32 {
-        return Err(Error::InvalidWitness(
-            "a coordinate narrower than 32 bytes is not a supported cycle's".into(),
-        ));
-    }
-
-    let lo = u128::from_le_bytes(bytes[..16].try_into().expect("16 bytes"));
-    let hi = u128::from_le_bytes(bytes[16..32].try_into().expect("16 bytes"));
-
-    if hi >> HIGH_BITS != 0 || bytes[32..].iter().any(|byte| *byte != 0) {
-        return Err(Error::InvalidWitness(
-            "a polynomial commitment with a coordinate at or above 2^254 cannot be \
-             decomposed canonically and so cannot be witnessed in-circuit"
-                .into(),
-        ));
-    }
-
-    Ok((lo, hi))
-}
-
-/// A host commitment's affine coordinates, canonically embedded in the circuit
-/// field — one element per coordinate, `lo + 2^128·hi` over the limbs
-/// [`host_limbs`] splits (and bounds: a coordinate is below `2^254`, so the
-/// embedding is injective and every embedded value fits the circuit field).
-pub(crate) fn host_coords<C: Cycle>(host: C::HostCurve) -> Result<[C::CircuitField; 2]> {
-    let [x_lo, x_hi, y_lo, y_hi] = host_limbs(host)?;
-    Ok([
-        embed_coordinate::<C::CircuitField>(x_lo, x_hi),
-        embed_coordinate::<C::CircuitField>(y_lo, y_hi),
-    ])
-}
-
-/// `lo + 2^128·hi` in `F`. With `hi < 2^126` (the [`host_limbs`] bound) the
-/// result is below `2^254 < |F|`, so no reduction occurs.
-fn embed_coordinate<F: PrimeField>(lo: u128, hi: u128) -> F {
-    let shift = F::from_u128(1 << 64).square();
-    F::from_u128(lo) + shift * F::from_u128(hi)
-}
-
 /// The framework polynomial `q` for a proof's recorded claim hosts: per slot,
-/// the two [`host_coords`] of the host commitment, slot-major.
+/// the two [`PolyCommitment::host_coords`](crate::PolyCommitment::host_coords)
+/// of the host commitment, slot-major.
 ///
 /// Fully deterministic from the recorded hosts — any party can rebuild it, so
 /// it is rebuilt rather than carried. Empty when there are no slots: the
@@ -123,7 +29,7 @@ pub(crate) fn claim_coord_poly<C: Cycle, R: Rank>(
 ) -> Result<sparse::Polynomial<C::CircuitField, R>> {
     let mut coeffs = alloc::vec::Vec::new();
     for host in hosts {
-        coeffs.extend(host_coords::<C>(host)?);
+        coeffs.extend(crate::PolyCommitment::<C>::host_coords(host)?);
     }
     Ok(sparse::Polynomial::from_coeffs(coeffs))
 }
@@ -258,62 +164,3 @@ impl<C: Cycle> Padding<C> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The limbs are the coordinates: `lo + 2^128·hi`, recomposed in the
-    /// field, is the coordinate itself.
-    ///
-    /// Longhand on purpose — the shift is built by doubling, and the expected
-    /// value never calls the code under test, so the assertion checks that the
-    /// split really is the inverse of recomposition rather than restating it.
-    #[test]
-    fn limbs_recompose_to_the_coordinates() {
-        use ragu_arithmetic::{group::Group as _, pasta_curves::group::Curve};
-        use ragu_pasta::{EqAffine, Fp};
-
-        // The host curve's scalars are the *circuit* field — the fact the
-        // whole limb mechanism exists to exploit.
-        let host = (<EqAffine as CurveAffine>::CurveExt::generator() * Fp::from(7)).to_affine();
-        let limbs = host_limbs(host).expect("the generator's multiple is decomposable");
-
-        let mut shift = <EqAffine as CurveAffine>::Base::ONE;
-        for _ in 0..128 {
-            shift = shift.double();
-        }
-
-        let coordinates = host.coordinates().unwrap();
-        for (coordinate, pair) in [*coordinates.x(), *coordinates.y()]
-            .into_iter()
-            .zip(limbs.chunks(2))
-        {
-            let recomposed = <EqAffine as CurveAffine>::Base::from_u128(pair[0])
-                + <EqAffine as CurveAffine>::Base::from_u128(pair[1]) * shift;
-            assert_eq!(recomposed, coordinate, "the limbs are not the coordinate");
-        }
-    }
-
-    /// A high half with bit 126 or 127 set encodes a value at or above
-    /// `2^254`, which has no canonical decomposition and is refused.
-    #[test]
-    fn a_coordinate_at_2_254_is_rejected() {
-        let mut bytes = [0u8; 32];
-
-        bytes[31] = 0x40; // bit 254
-        assert!(split_coordinate(&bytes).is_err());
-
-        bytes[31] = 0x20; // bit 253, the top admissible bit
-        assert!(split_coordinate(&bytes).is_ok());
-    }
-
-    /// The identity has no coordinates, so it cannot be witnessed — the same
-    /// rejection [`Point::alloc`](ragu_primitives::Point::alloc) makes.
-    #[test]
-    fn the_identity_is_rejected() {
-        use ragu_arithmetic::group::CurveAffine as _;
-
-        assert!(host_limbs(ragu_pasta::EqAffine::identity()).is_err());
-    }
-
-}

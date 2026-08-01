@@ -385,7 +385,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
     /// *runs* of per-slot bridge stages, which need span arithmetic to cut
     /// one mask per slot from a single span.
     pub(crate) fn nested_chain_layout(&self) -> ragu_circuits::staging::InducedStages {
-        internal::nested::chain_layout::<C::HostCurve, R>(J::PolyWitnesses::len())
+        internal::nested::NestedLayouts::chain_layout::<C::HostCurve, R>(J::PolyWitnesses::len())
     }
 
     /// Seed a new computation by running a step with trivial inputs.
@@ -512,7 +512,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         &self,
         polynomial: &ragu_circuits::polynomials::sparse::Polynomial<C::CircuitField, R>,
     ) -> Result<PolyCommitment<C>> {
-        let host = internal::challenge::host_commitment::<C, R>(self.params, polynomial)?;
+        let host = PolyCommitment::<C>::host_commitment(self.params, polynomial)?;
         PolyCommitment::new(polynomial.iter_coeffs().collect(), host)
     }
 }

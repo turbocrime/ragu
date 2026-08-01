@@ -106,8 +106,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
             let poly = sparse::Polynomial::<C::CircuitField, R>::from_coeffs(
                 witnessed.coefficients().to_vec(),
             );
-            let host = challenge::host_commitment::<C, R>(self.params, &poly)?;
-            let expected = challenge::host_coords::<C>(host)?;
+            let host = crate::PolyCommitment::<C>::host_commitment(self.params, &poly)?;
+            let expected = crate::PolyCommitment::<C>::host_coords(host)?;
             if precheck && expected != witnessed.coords() {
                 return Err(Error::InvalidWitness(
                     "poly-query claim rejected: the claimed commitment does not bind the claimed \

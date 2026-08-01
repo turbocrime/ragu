@@ -630,7 +630,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     /// capacity. Every bridge rx is placed through it.
     fn nested_chain(&self) -> &ragu_circuits::staging::InducedStages {
         self.nested_chain.get_or_init(|| {
-            nested::chain_layout::<C::HostCurve, R>(self.hook_layout.poly_query.polys)
+            nested::NestedLayouts::chain_layout::<C::HostCurve, R>(self.hook_layout.poly_query.polys)
         })
     }
 

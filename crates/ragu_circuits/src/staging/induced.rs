@@ -118,11 +118,6 @@ impl InducedStages {
         self.widths.len()
     }
 
-    /// Returns `true` if the layout contains no stages.
-    pub fn is_empty(&self) -> bool {
-        self.widths.is_empty()
-    }
-
     /// Returns the wire width of the given stage.
     ///
     /// # Panics
@@ -563,7 +558,7 @@ mod tests {
     #[test]
     fn empty_layout() {
         let layout = InducedStages::new(alloc::vec![]);
-        assert!(layout.is_empty());
+        assert_eq!(layout.len(), 0);
         // The final trace starts right after the SYSTEM gate, like an
         // ordinary single-stage circuit.
         assert_eq!(layout.final_skip_gates(), 1);

@@ -461,7 +461,7 @@ fn nested_chain_layout_tiles_at_every_capacity() {
     type Host = <Pasta as ragu_arithmetic::Cycle>::HostCurve;
 
     for polys in [0, 1, 4, 8] {
-        let nested = crate::internal::nested::chain_layout::<Host, R>(polys);
+        let nested = crate::internal::nested::NestedLayouts::chain_layout::<Host, R>(polys);
 
         for stage in 0..nested.len() {
             assert_eq!(
@@ -534,7 +534,7 @@ fn nested_chain_positions_match_layout() {
 
     type Host = <Pasta as ragu_arithmetic::Cycle>::HostCurve;
 
-    let chain = crate::internal::nested::chain_layout::<Host, R>(4);
+    let chain = crate::internal::nested::NestedLayouts::chain_layout::<Host, R>(4);
 
     assert_eq!(
         chain.len(),

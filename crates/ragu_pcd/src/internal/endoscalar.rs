@@ -292,7 +292,7 @@ pub fn points_stage_num_slots(num_points: usize) -> usize {
 /// anchored where [`EndoscalarStage`] ends.
 /// The slot width comes from [`PointSlotStage`], the stage this layout tiles, so
 /// the two cannot disagree.
-pub fn points_run_layout<C: CurveAffine, R: Rank>(
+fn points_run_layout<C: CurveAffine, R: Rank>(
     num_points: usize,
 ) -> ragu_circuits::staging::InducedStages {
     use ragu_circuits::staging::Stage as _;

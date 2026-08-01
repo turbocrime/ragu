@@ -189,7 +189,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         let poly_coords = poly_commitments
             && (0..capacity.poly_query.polys).all(|slot| {
                 let host = pcd.proof().claim_host_commitment(slot);
-                crate::internal::challenge::host_coords::<C>(host).is_ok_and(|coords| {
+                crate::PolyCommitment::<C>::host_coords(host).is_ok_and(|coords| {
                     (0..2).all(|k| pcd.proof().application_poly_coords()[2 * slot + k] == coords[k])
                 })
             });
