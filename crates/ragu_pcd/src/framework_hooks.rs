@@ -205,15 +205,13 @@ pub struct FrameworkHooks<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     /// [`derive_challenge`](crate::step::StepCtx::derive_challenge) call
     /// produced, in slot order. Its length *is* the call count.
     challenge_pairs: Vec<ChallengeWires<'dr, D>>,
-    /// The cycle parameters, for the hook bodies that compute witness values.
-    /// A [`DriverValue`] because their absence is exactly the driver's
-    /// absence of values: every use sits inside a `try_just` that a
-    /// structure-only driver discards.
-    params: DriverValue<D, &'dr C::Params>,
     /// The application's declared slot capacities: what every circuit's
     /// instance exposes, what padding fills to, and what each hook checks
     /// calls against.
     hook_layout: HookLayout,
+    /// The cycle anchors the output types ([`FrameworkAux`] is per-cycle);
+    /// the hooks themselves hold no cycle data.
+    _marker: core::marker::PhantomData<C>,
 }
 
 /// Every hook's output as plain values, for the fuse.
@@ -453,20 +451,24 @@ impl<'dr, D: Driver<'dr>> FrameworkHookOutputs<'dr, D> {
 }
 
 impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, C> {
-    /// Creates a hook container at the application's declared `capacity`, with
-    /// the proof-level values the hooks commit to.
+    /// Creates a hook container at the application's declared `capacity`.
     ///
     /// There is one constructor because there is one pass. The capacity is
     /// declared, so nothing has to be learned from the step body first — each
     /// hook simply refuses a call past the capacity, at the call that exceeds
-    /// it.
-    pub(crate) fn new(hook_layout: HookLayout, params: DriverValue<D, &'dr C::Params>) -> Self {
+    /// it. Nothing else is needed: the hooks accumulate wires, and the two
+    /// values the framework computes for them arrive from outside — the
+    /// challenge hash through
+    /// [`derive_challenge`](crate::step::StepCtx::derive_challenge)'s
+    /// parameters argument, the padding constants through the witness
+    /// channel.
+    pub(crate) fn new(hook_layout: HookLayout) -> Self {
         Self {
             poly_queries: Vec::new(),
             witnessed_polys: Vec::new(),
             challenge_pairs: Vec::new(),
-            params,
             hook_layout,
+            _marker: core::marker::PhantomData,
         }
     }
 
@@ -474,11 +476,6 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
     /// [`finish_slots`](crate::step::StepCtx) pads to.
     pub(crate) fn hook_layout(&self) -> HookLayout {
         self.hook_layout
-    }
-
-    /// The cycle parameters, for the hook bodies that compute witness values.
-    pub(crate) fn params(&self) -> DriverValue<D, &'dr C::Params> {
-        Maybe::clone(&self.params)
     }
 
     /// The slot the next witnessed polynomial will occupy, in
@@ -663,7 +660,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
 mod tests {
     use ragu_core::{
         drivers::emulator::{Emulator, Wireless},
-        maybe::{Empty, MaybeKind},
+        maybe::Empty,
     };
     use ragu_pasta::{Fp, Pasta};
 
@@ -675,13 +672,10 @@ mod tests {
     #[test]
     fn challenge_slots_are_capped() {
         let with_capacity = |calls| {
-            FrameworkHooks::<Dr<'_>, Pasta>::new(
-                HookLayout {
-                    challenge: ChallengeLayout { calls, width: 2 },
-                    poly_query: PolyQueryLayout::default(),
-                },
-                <Empty as MaybeKind>::empty::<&<Pasta as Cycle>::Params>(),
-            )
+            FrameworkHooks::<Dr<'_>, Pasta>::new(HookLayout {
+                challenge: ChallengeLayout { calls, width: 2 },
+                poly_query: PolyQueryLayout::default(),
+            })
         };
 
         with_capacity(1)

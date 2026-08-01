@@ -183,25 +183,23 @@ pub struct MergeSetsWitness<C: Cycle, R: Rank> {
 /// `A` and `B` are opened at `z`, and `C`'s claim carries the in-circuit
 /// `a(z)·b(z)` as its claimed evaluation, so a wrong `C` makes the claim
 /// false by Schwartz–Zippel over `z`.
-pub struct MergeSets<C, R> {
-    _marker: PhantomData<(C, R)>,
+pub struct MergeSets<'params, C: Cycle, R> {
+    /// The cycle parameters — a step that derives challenges carries them
+    /// itself, for [`derive_challenge`](StepCtx::derive_challenge).
+    params: &'params C::Params,
+    _marker: PhantomData<R>,
 }
 
-impl<C, R> MergeSets<C, R> {
-    pub fn new() -> Self {
+impl<'params, C: Cycle, R> MergeSets<'params, C, R> {
+    pub fn new(params: &'params C::Params) -> Self {
         Self {
+            params,
             _marker: PhantomData,
         }
     }
 }
 
-impl<C, R> Default for MergeSets<C, R> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<C: Cycle, R: Rank> Step<C> for MergeSets<C, R> {
+impl<C: Cycle, R: Rank> Step<C> for MergeSets<'_, C, R> {
     const INDEX: Index = Index::new(2);
     type Witness<'source> = MergeSetsWitness<C, R>;
     type Aux<'source> = ();
@@ -253,7 +251,7 @@ impl<C: Cycle, R: Rank> Step<C> for MergeSets<C, R> {
         let [a0, a1] = a.coords();
         let [b0, b1] = b.coords();
         let [c0, c1] = c.coords();
-        let z = ctx.derive_challenge(&[a0, a1, b0, b1, c0, c1])?;
+        let z = ctx.derive_challenge(self.params, &[a0, a1, b0, b1, c0, c1])?;
 
         // Open the contributing sets at z, and claim the merged set's
         // evaluation *is* their product.
@@ -417,25 +415,23 @@ pub struct ConcatSequencesWitness<C: Cycle, R: Rank> {
 /// factor `z^{ℓa}` from the left child's header-carried length, proves
 /// `C = A + X^{ℓa}·(B − 1)`, and outputs `C`'s name with length
 /// `ℓc = ℓa + ℓb`.
-pub struct ConcatSequences<C, R> {
-    _marker: PhantomData<(C, R)>,
+pub struct ConcatSequences<'params, C: Cycle, R> {
+    /// The cycle parameters — a step that derives challenges carries them
+    /// itself, for [`derive_challenge`](StepCtx::derive_challenge).
+    params: &'params C::Params,
+    _marker: PhantomData<R>,
 }
 
-impl<C, R> ConcatSequences<C, R> {
-    pub fn new() -> Self {
+impl<'params, C: Cycle, R> ConcatSequences<'params, C, R> {
+    pub fn new(params: &'params C::Params) -> Self {
         Self {
+            params,
             _marker: PhantomData,
         }
     }
 }
 
-impl<C, R> Default for ConcatSequences<C, R> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<C: Cycle, R: Rank> Step<C> for ConcatSequences<C, R> {
+impl<C: Cycle, R: Rank> Step<C> for ConcatSequences<'_, C, R> {
     const INDEX: Index = Index::new(3);
     type Witness<'source> = ConcatSequencesWitness<C, R>;
     type Aux<'source> = ();
@@ -494,7 +490,7 @@ impl<C: Cycle, R: Rank> Step<C> for ConcatSequences<C, R> {
         let [a0, a1] = a.coords();
         let [b0, b1] = b.coords();
         let [c0, c1] = c.coords();
-        let z = ctx.derive_challenge(&[a0, a1, b0, b1, c0, c1])?;
+        let z = ctx.derive_challenge(self.params, &[a0, a1, b0, b1, c0, c1])?;
 
         // The offset factor z^{ℓa}, in fixed shape: allocate ℓa's bits,
         // prove they pack to the left child's header-carried length, and

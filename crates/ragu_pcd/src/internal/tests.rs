@@ -682,7 +682,7 @@ mod capacity_is_per_application {
         ctx.enforce_poly_query(&handle, zero.clone(), zero.clone())?;
         ctx.enforce_poly_query(&handle, zero.clone(), zero.clone())?;
         ctx.enforce_poly_query(&other, zero.clone(), zero)?;
-        ctx.derive_challenge(&handle.coords())?;
+        ctx.derive_challenge(Pasta::baked(), &handle.coords())?;
     });
 
     fn gates<J: crate::framework_hooks::HookConfig>(

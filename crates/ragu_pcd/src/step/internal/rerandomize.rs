@@ -133,12 +133,10 @@ fn test_rerandomize_consistency() {
     let circuit_single =
         super::adapter::Adapter::<Pasta, Rerandomize<Single>, R, HEADER_SIZE, crate::NoHooks>::new(
             Rerandomize::new(),
-            Some(Pasta::baked()),
         );
     let circuit_pair =
         super::adapter::Adapter::<Pasta, Rerandomize<Pair>, R, HEADER_SIZE, crate::NoHooks>::new(
             Rerandomize::new(),
-            Some(Pasta::baked()),
         );
 
     let mut builder: TestRegistryBuilder<'_, _, R> = TestRegistryBuilder::new();

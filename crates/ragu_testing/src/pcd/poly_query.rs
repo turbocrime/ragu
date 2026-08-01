@@ -105,14 +105,17 @@ pub struct CommitAndOpenWitness<C: Cycle, R: Rank> {
 /// The output header carries a Poseidon digest binding the commitment, and
 /// the polynomial rides along as PCD data.
 pub struct CommitAndOpen<'params, C: Cycle, R> {
-    pub poseidon_params: &'params C::CircuitPoseidon,
+    /// The cycle parameters: this step both derives a challenge (which
+    /// takes them) and runs its own Poseidon sponge (whose constants derive
+    /// from them).
+    pub params: &'params C::Params,
     _marker: PhantomData<R>,
 }
 
 impl<'params, C: Cycle, R> CommitAndOpen<'params, C, R> {
-    pub fn new(poseidon_params: &'params C::CircuitPoseidon) -> Self {
+    pub fn new(params: &'params C::Params) -> Self {
         Self {
-            poseidon_params,
+            params,
             _marker: PhantomData,
         }
     }
@@ -154,7 +157,7 @@ impl<C: Cycle, R: Rank> Step<C> for CommitAndOpen<'_, C, R> {
 
         // (2) Derive a challenge bound to the commitment, via its canonical
         // embedded coordinates.
-        let z = ctx.derive_challenge(&handle.coords())?;
+        let z = ctx.derive_challenge(self.params, &handle.coords())?;
 
         // (3) Evaluate the polynomial at the challenge (natively; the
         // polynomial is not in-circuit). A dishonest override, if provided,
@@ -185,7 +188,7 @@ impl<C: Cycle, R: Rank> Step<C> for CommitAndOpen<'_, C, R> {
 
         // Output digest binds the commitment, via its canonical embedded
         // coordinates — the same identity the challenge absorbed.
-        let mut sponge = Sponge::new(ctx.dr, self.poseidon_params);
+        let mut sponge = Sponge::new(ctx.dr, C::circuit_poseidon(self.params));
         for coord in handle.coords() {
             coord.write(ctx.dr, &mut sponge)?;
         }
@@ -325,7 +328,7 @@ pub fn poly<F: PrimeField, R: Rank>(coeffs: &[u64]) -> sparse::Polynomial<F, R> 
 /// [`open_app`].
 pub fn open_app_builder<C: Cycle, R: Rank>(params: &C::Params) -> Result<OpenAppBuilder<'_, C, R>> {
     OpenAppBuilder::<C, R>::new()
-        .register(CommitAndOpen::<C, R>::new(C::circuit_poseidon(params)))?
+        .register(CommitAndOpen::<C, R>::new(params))?
         .register(OpenAndHash::<C, R>::new(C::circuit_poseidon(params)))
 }
 
@@ -352,7 +355,7 @@ pub fn seed_leaf<C: Cycle, R: Rank, RNG: CryptoRngCore>(
     let commitment = app.commit_polynomial(&poly(coeffs))?;
     let (leaf, ()) = app.seed(
         rng,
-        CommitAndOpen::new(C::circuit_poseidon(params)),
+        CommitAndOpen::new(params),
         CommitAndOpenWitness {
             commitment,
             claimed_y: None,

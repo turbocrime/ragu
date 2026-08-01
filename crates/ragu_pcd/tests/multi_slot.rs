@@ -29,16 +29,14 @@ const HEADER_SIZE: usize = 4;
 fn the_pinned_slotted_shape_proves_and_verifies() -> Result<()> {
     let pasta = Pasta::baked();
     let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE, AppHooks<2, 3, 1, 2>>::new()
-        .register(CommitAndOpen::<Pasta, R>::new(Pasta::circuit_poseidon(
-            pasta,
-        )))?
+        .register(CommitAndOpen::<Pasta, R>::new(pasta))?
         .finalize(pasta)?;
     let mut rng = StdRng::seed_from_u64(999);
 
     let commitment = app.commit_polynomial(&poly(&[3, 1, 4, 1, 5]))?;
     let (leaf, ()) = app.seed(
         &mut rng,
-        CommitAndOpen::new(Pasta::circuit_poseidon(pasta)),
+        CommitAndOpen::new(pasta),
         CommitAndOpenWitness {
             commitment,
             claimed_y: None,

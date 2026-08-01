@@ -205,11 +205,9 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         // happens here, before `finalize` supplies them. Hand-over freezes
         // the circuit's shape, which is settled: every term of the instance
         // comes from a declared parameter.
-        self.native_registry =
-            self.native_registry
-                .register_circuit(MultiStage::new(Adapter::<C, S, R, HEADER_SIZE, J>::new(
-                    step, None,
-                )))?;
+        self.native_registry = self.native_registry.register_circuit(MultiStage::new(
+            Adapter::<C, S, R, HEADER_SIZE, J>::new(step),
+        ))?;
         self.num_application_steps += 1;
 
         Ok(self)
@@ -246,12 +244,9 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         // circuit-index order: internal steps first, then application steps.
         let rerandomize = Adapter::<C, _, R, HEADER_SIZE, J>::new(
             step::internal::rerandomize::Rerandomize::<()>::new(),
-            Some(params),
         );
-        let trivial = Adapter::<C, _, R, HEADER_SIZE, J>::new(
-            step::internal::trivial::Trivial::new(),
-            Some(params),
-        );
+        let trivial =
+            Adapter::<C, _, R, HEADER_SIZE, J>::new(step::internal::trivial::Trivial::new());
 
         let (total_circuits, log2_circuits) =
             internal::native::total_circuit_counts(self.num_application_steps);
@@ -303,6 +298,10 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
             native_registry: self.native_registry.finalize()?,
             nested_registry: self.nested_registry.finalize()?,
             params,
+            // The padding constants every proof's unused hook slots take,
+            // computed here — where the parameters enter — and supplied to
+            // each trace as witness data.
+            padding: internal::challenge::Padding::new(params, J::ChallengeWidth::len())?,
             num_application_steps: self.num_application_steps,
             seeded_trivial: OnceCell::new(),
             #[cfg(feature = "unstable-fuzzing")]
@@ -347,6 +346,11 @@ pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: 
     native_registry: Registry<'params, C::CircuitField, R>,
     nested_registry: Registry<'params, C::ScalarField, R>,
     params: &'params C::Params,
+    /// The padding constants for unused hook slots — per-application witness
+    /// values, computed once at [`finalize`](ApplicationBuilder::finalize)
+    /// and supplied to every trace. See
+    /// [`Padding`](internal::challenge::Padding).
+    padding: internal::challenge::Padding<C, R>,
     num_application_steps: usize,
     /// Cached seeded trivial proof for rerandomization.
     seeded_trivial: OnceCell<Proof<C, R>>,
@@ -449,6 +453,17 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
     /// Returns a reference to the native [`Registry`].
     pub fn native_registry(&self) -> &Registry<'_, C::CircuitField, R> {
         &self.native_registry
+    }
+
+    /// The cycle parameters this application was finalized against.
+    ///
+    /// Steps that call
+    /// [`derive_challenge`](step::StepCtx::derive_challenge) carry the
+    /// parameters themselves; this is where a caller constructing such a
+    /// step gets them without threading the reference beside the
+    /// application it came from.
+    pub fn params(&self) -> &C::Params {
+        self.params
     }
 
     /// Whether the fuse-time poly-query pre-check runs. Always `true` outside

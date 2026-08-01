@@ -239,6 +239,61 @@ pub(crate) fn elements_challenge<C: Cycle>(
     Ok((padded, challenge))
 }
 
+/// The values that pad a step's unused hook slots, computed once at
+/// [`finalize`](crate::ApplicationBuilder::finalize) — where the cycle
+/// parameters enter — and supplied to every proof as ordinary witness data.
+///
+/// Every field is a per-application constant: the padding claim's committed
+/// polynomial (the constant $1$, whose commitment is `g[0]`), the sentinel
+/// element filling an empty challenge-input position, and the challenge a
+/// slot of all-sentinel inputs hashes to. They are witness *values* — the
+/// wires they fill are locally unconstrained instance wires whose
+/// correctness the parent's circuits enforce — so they ride the witness
+/// channel into [`Step::witness`](crate::step::Step), absent on
+/// structure-only drivers like every other witness value. This is the same
+/// padding [`ProofBuilder`](crate::proof::ProofBuilder) computes for a
+/// proof's slot lists; computing it once keeps the two in one place.
+pub(crate) struct Padding<C: Cycle, R: Rank> {
+    /// The padding claim's committed polynomial: the constant $1$ with its
+    /// canonical commitment representation.
+    pub poly: crate::PolyCommitment<C, R>,
+    /// The fixed element filling an unfilled challenge-input position.
+    pub sentinel: C::CircuitField,
+    /// The challenge an all-sentinel slot derives:
+    /// `H(sentinel, .., sentinel)` at the application's challenge width.
+    /// `None` at width zero, where there is nothing to hash — an application
+    /// with challenge slots of width zero could never derive a challenge in
+    /// the first place, so the value is only read where it exists.
+    pub challenge: Option<C::CircuitField>,
+}
+
+impl<C: Cycle, R: Rank> Clone for Padding<C, R> {
+    fn clone(&self) -> Self {
+        Self {
+            poly: self.poly.clone(),
+            sentinel: self.sentinel,
+            challenge: self.challenge,
+        }
+    }
+}
+
+impl<C: Cycle, R: Rank> Padding<C, R> {
+    /// Computes the padding constants for an application whose challenge
+    /// slots absorb `width` elements.
+    pub fn new(params: &C::Params, width: usize) -> Result<Self> {
+        let (host, ..) = padding_claim::<C>(params);
+        Ok(Self {
+            poly: crate::PolyCommitment::new(padding_poly::<C, R>(), host)?,
+            sentinel: sentinel_element::<C>(params),
+            challenge: if width == 0 {
+                None
+            } else {
+                Some(elements_challenge::<C>(params, &[], width)?.1)
+            },
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -56,13 +56,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         let (right_proof, right_data) = right.into_parts();
         // The same capacity registration used — it comes off the same const
         // parameters — so the same instance width the registry committed to.
-        // Building the adapter here only wraps the step.
-        let (trace, aux) = MultiStage::new(Adapter::<C, S, R, HEADER_SIZE, J>::new(
-            step,
-            Some(self.params),
-        ))
-        .trace((left_data, right_data, witness))?
-        .into_parts();
+        // Building the adapter here only wraps the step; the application's
+        // padding constants lead the witness tuple.
+        let (trace, aux) = MultiStage::new(Adapter::<C, S, R, HEADER_SIZE, J>::new(step))
+            .trace((self.padding.clone(), left_data, right_data, witness))?
+            .into_parts();
         let rx = self.native_registry.assemble(
             &trace,
             S::INDEX.circuit_index(self.num_application_steps)?,

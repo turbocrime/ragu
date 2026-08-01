@@ -53,7 +53,7 @@ fn oracle_end_to_end() -> Result<()> {
     let com1 = app.commit_polynomial(&p1)?;
     let (leaf1, ()) = app.seed(
         &mut rng,
-        CommitAndOpen::new(Pasta::circuit_poseidon(pasta)),
+        CommitAndOpen::new(pasta),
         CommitAndOpenWitness {
             commitment: com1.clone(),
             claimed_y: None,
@@ -96,7 +96,7 @@ fn dishonest_evaluation_is_rejected() -> Result<()> {
     let commitment = app.commit_polynomial(&p)?;
     let result = app.seed(
         &mut rng,
-        CommitAndOpen::new(Pasta::circuit_poseidon(pasta)),
+        CommitAndOpen::new(pasta),
         CommitAndOpenWitness {
             commitment,
             claimed_y: Some(Fp::from(42u64)),

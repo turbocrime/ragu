@@ -46,8 +46,8 @@ pub fn collections_app<C: Cycle, R: Rank>(params: &C::Params) -> Result<Collecti
     CollectionsAppBuilder::<C, R>::new()
         .register(SeedSet::<C, R>::new())?
         .register(SeedSequence::<C, R>::new())?
-        .register(MergeSets::<C, R>::new())?
-        .register(ConcatSequences::<C, R>::new())?
+        .register(MergeSets::<C, R>::new(params))?
+        .register(ConcatSequences::<C, R>::new(params))?
         .finalize(params)
 }
 
@@ -130,7 +130,7 @@ pub fn fuse_merge<C: Cycle, R: Rank, RNG: CryptoRngCore>(
         b: app.commit_polynomial(&right.data().polynomial)?,
         product: app.commit_polynomial(&product)?,
     };
-    let (merged, ()) = app.fuse(rng, MergeSets::new(), witness, left, right)?;
+    let (merged, ()) = app.fuse(rng, MergeSets::new(app.params()), witness, left, right)?;
     Ok(merged)
 }
 
@@ -172,6 +172,12 @@ pub fn fuse_concat<C: Cycle, R: Rank, RNG: CryptoRngCore>(
         b: app.commit_polynomial(&sequence_polynomial(&right.data().members))?,
         output: app.commit_polynomial(&sequence_polynomial(&concatenated))?,
     };
-    let (out, ()) = app.fuse(rng, ConcatSequences::new(), witness, left, right)?;
+    let (out, ()) = app.fuse(
+        rng,
+        ConcatSequences::new(app.params()),
+        witness,
+        left,
+        right,
+    )?;
     Ok(out)
 }

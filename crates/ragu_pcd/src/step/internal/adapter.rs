@@ -49,42 +49,28 @@ pub(crate) struct AdapterAux<'source, C: Cycle, S: Step<C>, const HEADER_SIZE: u
     pub framework: FrameworkAux<C>,
 }
 
-pub(crate) struct Adapter<'params, C: Cycle, S, R: Rank, const HEADER_SIZE: usize, J: HookConfig> {
+pub(crate) struct Adapter<C: Cycle, S, R: Rank, const HEADER_SIZE: usize, J: HookConfig> {
     step: S,
-    /// The cycle's runtime parameters, absent during registration.
-    ///
-    /// `ApplicationBuilder::register` runs before
-    /// [`finalize`](crate::ApplicationBuilder::finalize) supplies them, and it
-    /// only needs the circuit's *structure*; the parameters are read solely to
-    /// build a proof's witness values. So registration passes `None`, and the
-    /// one place that reads them — [`witness`](MultiStageCircuit::witness) —
-    /// does so inside a `try_just` that a structure-only driver discards.
-    params: Option<&'params C::Params>,
     _marker: PhantomData<(C, R, J)>,
 }
 
-impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
-    Adapter<'params, C, S, R, HEADER_SIZE, J>
+impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
+    Adapter<C, S, R, HEADER_SIZE, J>
 {
     /// Wraps `step` for registration/keygen at the layout's capacity — the
     /// only constructor, and it takes no capacity: the counts are this
     /// type's `J` parameter. A step that asks for more slots is
     /// rejected by the hooks at the call that exceeds the capacity.
-    ///
-    /// `params` is `None` at registration, which runs before the cycle
-    /// parameters exist and needs only the circuit's structure; see the
-    /// field's documentation.
-    pub fn new(step: S, params: Option<&'params C::Params>) -> Self {
+    pub fn new(step: S) -> Self {
         Adapter {
             step,
-            params,
             _marker: PhantomData,
         }
     }
 }
 
 impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
-    MultiStageCircuit<C::CircuitField, R> for Adapter<'_, C, S, R, HEADER_SIZE, J>
+    MultiStageCircuit<C::CircuitField, R> for Adapter<C, S, R, HEADER_SIZE, J>
 {
     /// An application circuit has no stages: a challenge input is a point,
     /// already a commitment, so there is nothing to compress into a committed
@@ -95,7 +81,13 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize, J: H
         FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
         <S::Output as Header<C::CircuitField>>::Data,
     );
+    /// The padding constants ride in front of the step's own witness: they
+    /// are wire assignments like everything else here — the values of the
+    /// locally-unconstrained instance wires that fill unused hook slots —
+    /// computed once at finalize and supplied to every proof. See
+    /// [`Padding`](crate::internal::challenge::Padding).
     type Witness<'source> = (
+        crate::internal::challenge::Padding<C, R>,
         <S::Left as Header<C::CircuitField>>::Data,
         <S::Right as Header<C::CircuitField>>::Data,
         S::Witness<'source>,
@@ -127,23 +119,9 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize, J: H
     {
         let dr = builder.finish();
 
-        let (left, right, witness) = witness.cast();
-        // `Self: 'dr` gives `'params: 'dr`, so the parameters coerce. The
-        // closure runs only on a value-carrying driver, and every such driver
-        // is building a proof — which only `Application` can do, and only with
-        // the parameters it was finalized against. Registration, the one pass
-        // built with `None`, is structure-only, so `Empty::try_just` discards
-        // this without calling it.
-        let params = self.params;
-        let params = D::try_just(move || {
-            params.ok_or_else(|| {
-                ragu_core::Error::InvalidWitness(
-                    "step witnessed with proof values but no cycle parameters".into(),
-                )
-            })
-        })?;
+        let (padding, left, right, witness) = witness.cast();
 
-        let mut hooks = FrameworkHooks::new(J::layout(), Maybe::clone(&params));
+        let mut hooks = FrameworkHooks::new(J::layout());
         let ((left, right, output), output_data, step_aux) = {
             let mut ctx = StepCtx::<'_, '_, _, C>::new(dr, &mut hooks);
             let body = self
@@ -152,7 +130,7 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize, J: H
             // Fill whatever slots the body left over, through the same hooks it
             // used. Each hook already rejected a call past the declared
             // capacity, so there is no total to reconcile here.
-            ctx.finish_slots::<R>()?;
+            ctx.finish_slots::<R>(padding)?;
             body
         };
         let outputs = hooks.into_outputs();
@@ -249,6 +227,13 @@ mod tests {
     type TestR = ragu_circuits::polynomials::ProductionRank;
     const HEADER_SIZE: usize = 4;
 
+    /// The padding constants a value-carrying witness tuple leads with —
+    /// what `finalize` computes for a real application.
+    fn test_padding() -> crate::internal::challenge::Padding<Pasta, TestR> {
+        crate::internal::challenge::Padding::new(Pasta::baked(), 0)
+            .expect("padding constants exist for baked parameters")
+    }
+
     struct TestHeader;
 
     impl Header<Fp> for TestHeader {
@@ -343,7 +328,7 @@ mod tests {
             let right_elem = Element::alloc(ctx.dr, allocator, right)?;
 
             // The outputs are deferred; only the wires are used.
-            let challenge = ctx.derive_challenge(&[])?;
+            let challenge = ctx.derive_challenge(Pasta::baked(), &[])?;
 
             // Output = left + right + challenge, so the deferred challenge
             // wire participates in downstream circuit structure.
@@ -368,9 +353,9 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        type Subject = Adapter<'static, Pasta, TestStep, TestR, HEADER_SIZE, NoHooks>;
-        let adapter = Subject::new(TestStep, Some(Pasta::baked()));
-        let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
+        type Subject = Adapter<Pasta, TestStep, TestR, HEADER_SIZE, NoHooks>;
+        let adapter = Subject::new(TestStep);
+        let witness = Always::maybe_just(|| (test_padding(), Fp::from(10u64), Fp::from(20u64), ()));
 
         let output = MultiStage::new(adapter)
             .witness(dr, witness)
@@ -391,11 +376,8 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE, NoHooks>::new(
-            TestStep,
-            Some(Pasta::baked()),
-        );
-        let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
+        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE, NoHooks>::new(TestStep);
+        let witness = Always::maybe_just(|| (test_padding(), Fp::from(10u64), Fp::from(20u64), ()));
 
         let aux = MultiStage::new(adapter)
             .witness(dr, witness)
@@ -453,7 +435,7 @@ mod tests {
 
                 let mut output = left_elem.clone();
                 for _ in 0..3 {
-                    let challenge = ctx.derive_challenge(&[])?;
+                    let challenge = ctx.derive_challenge(Pasta::baked(), &[])?;
                     output = output.add(ctx.dr, &challenge);
                 }
 
@@ -474,7 +456,6 @@ mod tests {
         let adapter =
             Adapter::<Pasta, TooManyChallenges, TestR, HEADER_SIZE, AppHooks<0, 0, 2, 2>>::new(
                 TooManyChallenges,
-                Some(Pasta::baked()),
             );
 
         let mut dr: Emulator<Wireless<Empty, Fp>> = Emulator::counter();
@@ -498,9 +479,8 @@ mod tests {
         let mut dr: Emulator<Wireless<Empty, Fp>> = Emulator::counter();
         let dr = &mut dr;
 
-        type Subject =
-            Adapter<'static, Pasta, ChallengeStep, TestR, HEADER_SIZE, AppHooks<0, 0, 1, 2>>;
-        let adapter = Subject::new(ChallengeStep, Some(Pasta::baked()));
+        type Subject = Adapter<Pasta, ChallengeStep, TestR, HEADER_SIZE, AppHooks<0, 0, 1, 2>>;
+        let adapter = Subject::new(ChallengeStep);
 
         let output = MultiStage::new(adapter)
             .witness(dr, Empty)

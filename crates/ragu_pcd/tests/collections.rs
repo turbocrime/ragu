@@ -124,7 +124,7 @@ fn a_parent_cannot_merge_a_set_that_is_not_the_childs() -> Result<()> {
     let b = set_polynomial::<Fp, R>(&[Fp::from(7u64)]);
     let result = app.fuse(
         &mut rng,
-        MergeSets::new(),
+        MergeSets::new(pasta),
         MergeSetsWitness {
             a: app.commit_polynomial(&substitute)?,
             b: app.commit_polynomial(&b)?,
@@ -160,7 +160,7 @@ fn a_wrong_merge_is_rejected() -> Result<()> {
     // The claimed merge drops member 7.
     let result = app.fuse(
         &mut rng,
-        MergeSets::new(),
+        MergeSets::new(pasta),
         MergeSetsWitness {
             a: app.commit_polynomial(&set_polynomial(&[Fp::from(3u64)]))?,
             b: app.commit_polynomial(&set_polynomial(&[Fp::from(7u64)]))?,
@@ -261,7 +261,7 @@ fn a_parent_cannot_concatenate_a_sequence_that_is_not_the_childs() -> Result<()>
     let substitute = [Fp::from(11u64)];
     let result = app.fuse(
         &mut rng,
-        ConcatSequences::new(),
+        ConcatSequences::new(pasta),
         ConcatSequencesWitness {
             a: app.commit_polynomial(&sequence_polynomial(&substitute))?,
             b: app.commit_polynomial(&sequence_polynomial(&[Fp::from(7u64)]))?,
@@ -298,7 +298,7 @@ fn a_wrong_concatenation_is_rejected() -> Result<()> {
     // The claimed output drops member 7.
     let result = app.fuse(
         &mut rng,
-        ConcatSequences::new(),
+        ConcatSequences::new(pasta),
         ConcatSequencesWitness {
             a: app.commit_polynomial(&sequence_polynomial(&[Fp::from(3u64)]))?,
             b: app.commit_polynomial(&sequence_polynomial(&[Fp::from(7u64)]))?,

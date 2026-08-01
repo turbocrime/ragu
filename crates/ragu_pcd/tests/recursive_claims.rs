@@ -256,7 +256,7 @@ fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
 
     let (cheat, ()) = app.seed(
         &mut rng,
-        CommitAndOpen::new(Pasta::circuit_poseidon(pasta)),
+        CommitAndOpen::new(pasta),
         CommitAndOpenWitness {
             commitment: desynced,
             claimed_y: None,
