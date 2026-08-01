@@ -69,13 +69,9 @@ impl<'pts, 'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: ragu_primitives:
     }
 }
 
-/// Loading circuit that loads the entire nested stage hierarchy.
-///
-/// `L` is the application's poly count as a
-/// [`Len`](ragu_primitives::vec::Len): what [`Points`] needs in order to be a
-/// gadget, and the *only* shape this circuit needs. Every value-level layout it
-/// builds is a function of that one number, so there is no runtime capacity here
-/// to disagree with the type.
+/// Loading circuit that loads the entire nested stage hierarchy. `L` is the
+/// application's poly count as a [`Len`](ragu_primitives::vec::Len) — the
+/// only shape this circuit needs.
 pub struct Circuit<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> {
     _marker: PhantomData<(C, R, L)>,
 }

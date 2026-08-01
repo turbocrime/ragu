@@ -221,22 +221,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
                 let alpha = unified_output.alpha.read(dr, allocator)?;
                 let u = unified_output.u.read(dr, allocator)?;
 
-                // Each child's q(u), re-derived from its coordinate instance
-                // wires: the embedded coordinates are q's coefficients
-                // slot-major, so a Horner walk over u is q(u) itself.
-                // Enforcing it against the eval stage's q_eval — the value the
-                // v fold below consumes — is what makes a step's
-                // instance-bound coordinates binding: a q that disagrees with
-                // them breaks v against P at the deferred opening. The same
-                // shape as `challenge_binding`'s re-derivation, paid out of
-                // the framework's own gate budget.
+                // Re-derive each child's q(u) from its embedded coordinates
+                // (q's coefficients, slot-major) and enforce it against the
+                // eval stage's q_eval that the v fold below consumes.
                 for (child_eval, child_preamble) in
                     [(&eval.left, &preamble.left), (&eval.right, &preamble.right)]
                 {
                     for q_eval in child_eval.q_eval.iter() {
-                        // Horner gives the first write the highest power, so
-                        // the coefficients go in reverse: q's top coefficient
-                        // first, its constant term last.
+                        // Horner: highest power first, so coefficients reversed.
                         let mut horner = Horner::new(&u);
                         for poly in child_preamble.polys.iter().rev() {
                             for coord in poly.coords.iter().rev() {
@@ -249,11 +241,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
 
                 let denominators =
                     Denominators::new(dr, &u, &w, x.element(), &y, z.element(), &preamble)?;
-                // Resolve each query's polynomial before the accumulation: a
-                // query names its polynomial by index, and turning an index
-                // into an evaluation costs constraints, so it happens here
-                // rather than inside the query list (which only assembles
-                // references).
+                // Resolve each claim's named polynomial to its evaluation.
                 let selected = {
                     let mut per_child = Vec::with_capacity(2);
                     for (child_eval, child_preamble) in
@@ -322,8 +310,7 @@ struct ChildDenominators<'dr, D: Driver<'dr>> {
     y: Element<'dr, D>,
     x: Element<'dr, D>,
     circuit_id: Element<'dr, D>,
-    /// Per-claim-slot denominators $(u - x_i)^{-1}$, where $x_i$ is the
-    /// child's claim opening point (bound via the preamble's claim instances).
+    /// Per-claim-slot denominators $(u - x_i)^{-1}$ at the claim opening points.
     claims: Vec<Element<'dr, D>>,
 }
 
@@ -649,9 +636,7 @@ fn compute_axbx<'dr, D: Driver<'dr>, P: Parameters>(
 ///    recomputation (undilated) and $B(x)$ ($Z$-dilated).
 /// 6. **Internal circuit registry evaluations** - $m(\omega^j, x, y)$ for each
 ///    internal index
-/// 7. **Child poly-query claims** — $p_i(u) = y_i$ at $x_i$ for each child's
-///    claim slot, with $(x_i, y_i)$ bound via the preamble's claim instances
-///    (and hence the child's application $k(Y)$)
+/// 7. **Child poly-query claims** — $p_i(u) = y_i$ at $x_i$ per child claim slot
 ///
 /// The queries must be ordered exactly as in the prover's computation of $f(X)$
 /// in [`compute_f`], since the ordering affects the weight (with respect to
@@ -724,9 +709,7 @@ fn poly_queries<
     .chain(InternalCircuitIndex::ALL.iter().map(|&id| {
         (&eval.registry_xy, query.fixed_registry.get(id), d.internal.get(id))
     }))
-    // Child poly-query claims: p_i(u), the claimed y_i (bound via the
-    // preamble's claim instances), and (u - x_i)^{-1}, per child per slot.
-    // Trailing block, matching `compute_f`.
+    // Child poly-query claims, trailing block matching `compute_f`.
     .chain([(&selected[0], &preamble.left, &d.left), (&selected[1], &preamble.right, &d.right)]
         .into_iter()
         .flat_map(move |(child_selected, child_preamble, child_d)|
@@ -734,28 +717,12 @@ fn poly_queries<
                 (&child_selected[i], &child_preamble.claims[i].y, &child_d.claims[i]))))
 }
 
-/// Selects the evaluation of the polynomial a claim opens, through a one-hot
-/// witnessed in this circuit and keyed on the claim's **name** — the opened
-/// polynomial's embedded commitment coordinates.
-///
-/// A claim carries its polynomial's name, and the parent has to turn that
-/// into the matching entry of `evaluations` without indexing — circuit
-/// structure cannot depend on a witnessed value. The one-hot is the standard
-/// way, and it is bound by four constraints, none of which may be dropped:
-///
-/// * each entry is boolean (`b(b - 1) = 0`),
-/// * the entries sum to one, and
-/// * `Σ b_j · coords_j` equals the claim's `coords`, in **both** positions.
-///
-/// The first two together force exactly one entry to be set; the last forces
-/// *which*. Without booleanity the first two are underdetermined for more than
-/// two slots — a prover could spread weight across several entries and blend
-/// their evaluations freely — so all four are load-bearing.
-///
-/// The key is the name, not an index: an index has to be resolved, and a
-/// resolution that goes wrong denotes a different polynomial silently, where
-/// a name mismatch selects nothing and no proof exists. `_08_f` matches the
-/// same name natively, so the two resolutions agree by construction.
+/// Selects the evaluation of the polynomial a claim opens via a witnessed
+/// one-hot keyed on the claim's name (the polynomial's embedded commitment
+/// coordinates): each bit is boolean, the bits sum to one, and
+/// `Σ b_j · coords_j` must equal the claim's `coords` in both positions.
+/// All four constraints are load-bearing. `_08_f` matches the same name
+/// natively, so the two resolutions agree by construction.
 fn select_claim<'dr, D: Driver<'dr>, A: ragu_primitives::allocator::Allocator<'dr, D>>(
     dr: &mut D,
     allocator: &mut A,
@@ -771,16 +738,9 @@ fn select_claim<'dr, D: Driver<'dr>, A: ragu_primitives::allocator::Allocator<'d
         "one evaluation per polynomial slot"
     );
 
-    // The prover-side match: the FIRST slot holding this claim's name. The
-    // search itself carries no weight — only the constraints below bind the
-    // resulting bits — but it must set exactly one bit even when several
-    // slots share a name (padding slots routinely do: they all hold the
-    // padding polynomial), or the sum-to-one constraint below is violated
-    // and no proof exists. First-match also keeps this resolution aligned
-    // with `_08_f`'s and `verify`'s native `.position()` matches; for
-    // duplicate names any choice is sound (equal names mean equal
-    // polynomials under binding, so every candidate slot has the same
-    // evaluation).
+    // Prover-side first-match: must set exactly one bit even when several
+    // slots share a name (padding slots do), or sum-to-one fails; duplicate
+    // names denote equal polynomials under binding, so any match is sound.
     let matched = {
         let target = [coords[0].value(), coords[1].value()];
         let name_values: Vec<[_; 2]> = names
@@ -793,8 +753,7 @@ fn select_claim<'dr, D: Driver<'dr>, A: ragu_primitives::allocator::Allocator<'d
             name_values
                 .into_iter()
                 .position(|[name_0, name_1]| [*name_0.take(), *name_1.take()] == target)
-                // A name matching no slot sets no bit at all, so the
-                // sum-to-one constraint fails — the fail-closed arm.
+                // No match sets no bit; sum-to-one then fails (fail-closed).
                 .unwrap_or(usize::MAX)
         })
     };

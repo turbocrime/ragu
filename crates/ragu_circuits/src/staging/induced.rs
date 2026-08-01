@@ -1,52 +1,21 @@
-//! Value-level stage layouts for stages that are not known at Rust compile
-//! time.
-//!
-//! The typed staging surface ([`Stage`](super::Stage),
-//! [`MultiStageCircuit`](super::MultiStageCircuit)) pins a circuit's stage
-//! hierarchy in the type system: the `Parent` chain and the `values()` /
-//! `num_gates()` / `skip_gates()` associated functions determine the partial
-//! trace layout statically.
-//!
-//! Some layouts cannot be known that early. A circuit whose stage count is a
-//! property of the *application* being built — not of any Rust type — has its
-//! geometry settled at registry time instead. [`InducedStages`] mirrors a
-//! [`Stage`](super::Stage) chain for exactly that case: same wire positions,
-//! same masks, same rx, but folded over recorded widths rather than over a
-//! `Parent` type chain.
-//!
-//! ## An induced run is still one typed stage
+//! Value-level stage layouts, for stages whose count is a property of the
+//! application being built rather than of any Rust type. [`InducedStages`]
+//! mirrors a typed [`Stage`](super::Stage) chain — same wire positions, same
+//! masks, same rx — folded over recorded widths instead of a `Parent` chain.
 //!
 //! A layout does not replace the typed hierarchy; it subdivides one stage of
-//! it. The type system keeps describing the whole chain — the run appears in it
-//! as a single [`Stage`](super::Stage) whose `values()` spans every slot — and
-//! the layout says only where the slot boundaries fall *inside* that span.
+//! it. The run appears in the typed chain as a single stage whose `values()`
+//! spans every slot, and the layout says where the slot boundaries fall
+//! inside that span. Gate spans add — a stage of `w` wires occupies
+//! `w.div_ceil(2)` gates — so a run whose slot widths are all even spans
+//! exactly as many gates as the sum of its parts, and `skip_gates` stays
+//! correct for everything chained after it.
 //!
-//! That works because gate spans add: a stage occupying `w` wires occupies
-//! `w.div_ceil(2)` gates, so a run of slots whose widths are all even spans
-//! exactly as many gates as the sum of its parts. Declaring the run as one
-//! typed stage therefore leaves `skip_gates` correct for everything that
-//! follows, and ordinary typed stages — including
-//! [`MultiStageCircuit::Last`](super::MultiStageCircuit::Last) — chain after it
-//! with no special handling. Nothing downstream of the run has to know the run
-//! was subdivided.
-//!
-//! Layouts are anchored for exactly this reason: [`InducedStages::after`] takes
-//! the run's position from the typed stage that spans it, so the layout
-//! describes a suffix of the trace rather than restating the prefix. See
+//! Layouts are anchored ([`InducedStages::after`]) rather than restating the
+//! prefix, so the typed chain stays the single source of truth for
+//! everything before the run. See
 //! [`configure_induced_sized`](super::StageBuilder::configure_induced_sized),
 //! which reserves a run and checks the layout against the span it was given.
-//!
-//! * [`skip_gates`](InducedStages::skip_gates) / [`num_gates`](InducedStages::num_gates)
-//!   mirror [`Stage::skip_gates`](super::Stage::skip_gates) and
-//!   [`StageExt::num_gates`](super::StageExt::num_gates) — the fold over the
-//!   `Parent` type chain becomes a fold over the recorded widths.
-//! * [`mask`](InducedStages::mask) / [`final_mask`](InducedStages::final_mask)
-//!   mirror [`StageExt::mask`](super::StageExt::mask) and
-//!   [`StageExt::final_mask`](super::StageExt::final_mask).
-//! * [`rx_configured`](InducedStages::rx_configured) mirrors
-//!   [`StageExt::rx_configured`](super::StageExt::rx_configured), running a
-//!   stage body for its values but positioning them from the layout;
-//!   [`rx`](InducedStages::rx) is the same thing given the values directly.
 
 use alloc::{boxed::Box, vec::Vec};
 
@@ -59,11 +28,8 @@ use crate::{
     polynomials::{Rank, sparse},
 };
 
-/// A discovered, value-level stage layout: the wire width of each induced
-/// stage, in stage order, plus the gate the run starts at.
-///
-/// See [`InducedStages`]'s module for how this mirrors the typed
-/// [`Stage`](super::Stage) geometry.
+/// A value-level stage layout: the wire width of each induced stage, in
+/// stage order, plus the gate the run starts at.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InducedStages {
     /// Gates before the first slot, including the SYSTEM gate — the run's
@@ -73,13 +39,9 @@ pub struct InducedStages {
 }
 
 impl InducedStages {
-    /// Creates a layout from the wire width of each stage, in stage order,
-    /// anchored at the start of the trace.
-    /// (does not count the final stage, which is left as implicit)
+    /// Creates a layout anchored at the start of the trace (after the SYSTEM
+    /// gate); the final stage is implicit.
     pub fn new(widths: Vec<usize>) -> Self {
-        // What `after::<_, _, ()>` would produce: the base stage skips the
-        // SYSTEM gate and occupies nothing. Spelled out because `new` has no
-        // field or rank to name `()`'s `Stage` impl with.
         Self {
             skip_gates: 1,
             widths,
@@ -87,10 +49,8 @@ impl InducedStages {
     }
 
     /// Creates a layout anchored at an explicit start gate (including the
-    /// SYSTEM gate) — for a run whose position comes from a value-level chain
-    /// rather than a typed stage. The value-anchored sibling of
-    /// [`after`](Self::after): when the stages before the run have value-level
-    /// widths, no type knows where the run begins, so the caller says where.
+    /// SYSTEM gate) — the value-anchored sibling of [`after`](Self::after),
+    /// for a run whose position comes from a value-level chain.
     pub fn anchored(skip_gates: usize, widths: Vec<usize>) -> Self {
         Self { skip_gates, widths }
     }
@@ -98,12 +58,6 @@ impl InducedStages {
     /// Creates a layout for a run that begins immediately after the typed
     /// stage `S` — the run's slots subdivide the span of the stage that
     /// *follows* `S`.
-    ///
-    /// This is the constructor to reach for whenever the run is not the first
-    /// thing in the trace. Anchoring here rather than restating the prefix
-    /// widths means the typed chain stays the single source of truth for
-    /// everything before the run, so a change to an earlier stage cannot leave
-    /// the layout silently describing the wrong gates.
     pub fn after<F: Field, R: Rank, S: super::Stage<F, R>>(widths: Vec<usize>) -> Self {
         use super::StageExt;
 
@@ -114,6 +68,7 @@ impl InducedStages {
     }
 
     /// Returns the number of stages in this layout.
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.widths.len()
     }
@@ -127,8 +82,7 @@ impl InducedStages {
         self.widths[stage]
     }
 
-    /// Returns the number of gates occupied by the given stage; the
-    /// value-level mirror of [`StageExt::num_gates`](super::StageExt::num_gates).
+    /// Returns the number of gates occupied by the given stage.
     ///
     /// # Panics
     ///
@@ -138,8 +92,7 @@ impl InducedStages {
     }
 
     /// Returns the number of gates to skip before the given stage, including
-    /// the SYSTEM gate (gate 0); the value-level mirror of
-    /// [`Stage::skip_gates`](super::Stage::skip_gates).
+    /// the SYSTEM gate (gate 0).
     ///
     /// # Panics
     ///
@@ -154,15 +107,12 @@ impl InducedStages {
     }
 
     /// Returns `skip_gates` for the final trace — the first gate after every
-    /// stage in the layout. Mirrors what
-    /// [`StageExt::final_mask`](super::StageExt::final_mask) computes from the
-    /// last typed stage.
+    /// stage in the layout.
     pub fn final_skip_gates(&self) -> usize {
         self.skip_gates(self.len())
     }
 
-    /// Creates the well-formedness mask for the given stage; the value-level
-    /// mirror of [`StageExt::mask`](super::StageExt::mask).
+    /// Creates the well-formedness mask for the given stage.
     ///
     /// # Panics
     ///
@@ -175,21 +125,15 @@ impl InducedStages {
     }
 
     /// Creates the well-formedness mask for the final trace of a circuit with
-    /// this stage layout; the value-level mirror of
-    /// [`StageExt::final_mask`](super::StageExt::final_mask).
+    /// this stage layout.
     pub fn final_mask<'a, F: Field, R: Rank>(&self) -> Result<BondingObject<'a, F, R>> {
         Ok(BondingObject::new(Box::new(StageMask::<R>::new_final(
             self.final_skip_gates(),
         )?)))
     }
 
-    /// Creates the well-formedness mask for the final trace of a circuit whose
-    /// last stage is the given stage of this layout —
-    /// [`final_mask`](Self::final_mask) for a chain that stops partway
-    /// through: several chains may share a prefix of stages and diverge after
-    /// it, and each prefix's final trace starts right after its last stage.
-    ///
-    /// `final_mask_through(self.len() - 1)` is `final_mask()`.
+    /// [`final_mask`](Self::final_mask) for a chain that stops after the
+    /// given stage — chains may share a layout prefix and diverge after it.
     ///
     /// # Panics
     ///
@@ -204,12 +148,8 @@ impl InducedStages {
     }
 
     /// Computes the (partial) $r(X)$ polynomial for the given stage from its
-    /// slot values; the value-level mirror of
-    /// [`StageExt::rx_configured`](super::StageExt::rx_configured).
-    ///
-    /// `values` are the stage's wire values in canonical traversal order and
-    /// may be shorter than the stage's gate capacity (the remainder is
-    /// zero-padded). See `rx_configured` for the role of `alpha`.
+    /// slot values, which may be shorter than the stage's width (the
+    /// remainder is zero-padded).
     ///
     /// # Panics
     ///
@@ -224,22 +164,17 @@ impl InducedStages {
             alpha,
             self.skip_gates(stage),
             self.num_gates(stage),
-            // The declared width, matching what the typed path
-            // (`StageExt::rx_configured`) passes as `Self::values()`. Not
-            // `2 * num_gates(stage)`: `num_gates` is `width.div_ceil(2)`, so
-            // that rounds an odd width up and would accept `width + 1` values.
+            // The declared width, not `2 * num_gates(stage)` — that would
+            // round an odd width up and accept `width + 1` values.
             self.width(stage),
             values,
         )
     }
 
-    /// Computes the (partial) $r(X)$ polynomial for the given stage by running
-    /// a [`Stage`](super::Stage) body for its values; the value-level mirror of
-    /// [`StageExt::rx_configured`](super::StageExt::rx_configured).
-    ///
-    /// The stage supplies the witness body only — where the resulting wires
-    /// land comes from this layout, not from the type's own chain position.
-    /// That is the whole point: one stage type serves every slot of a run.
+    /// [`rx`](Self::rx) with the values produced by running a
+    /// [`Stage`](super::Stage) body: the stage supplies the witness only, and
+    /// the position comes from this layout, so one stage type serves every
+    /// slot of a run.
     ///
     /// # Panics
     ///
@@ -333,9 +268,7 @@ mod tests {
     }
 
     /// Geometry-only twin of the second induced stage (width 3), chained onto
-    /// [`TypedFour`] as its parent. Only its static geometry
-    /// (`values` / `Parent`) is exercised, so the witness machinery is stubbed
-    /// out like the base `()` stage.
+    /// [`TypedFour`]; the witness machinery is stubbed out.
     #[derive(Default)]
     struct TypedThree;
 
@@ -447,14 +380,9 @@ mod tests {
         Ok(())
     }
 
-    /// A layout that does not begin where the builder has actually reserved to
-    /// is rejected before any wire is allocated — the check that keeps the
+    /// A layout that does not begin where the builder has actually reserved
+    /// to is rejected before any wire is allocated — the check that keeps the
     /// value-level and type-level geometries from drifting apart.
-    ///
-    /// The wrong gate has to come from the *layout* here. There is no
-    /// `start_gate` argument to pass a wrong value to: the builder tracks its
-    /// own cursor, so the only way to be misaligned is to actually be
-    /// misaligned.
     #[test]
     fn induced_run_must_start_where_the_builder_is() {
         use ragu_core::{
@@ -479,11 +407,8 @@ mod tests {
         );
     }
 
-    /// A run that follows an earlier stage must be anchored past it: the cursor
-    /// has moved, so a layout still anchored at the SYSTEM gate is rejected.
-    ///
-    /// This is what the builder's own cursor buys: a start value derived from
-    /// the layout would compare the layout to itself and accept any anchor.
+    /// A run that follows an earlier stage must be anchored past it: a layout
+    /// still anchored at the SYSTEM gate is rejected.
     #[test]
     fn induced_run_must_account_for_stages_before_it() {
         use ragu_core::{

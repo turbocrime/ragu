@@ -31,9 +31,7 @@ use crate::internal::claims::{Builder, Source, sum_polynomials};
 /// [`challenge_binding`].
 ///
 /// Note: [`hashes_1`] separately uses `unified_bridge_ky` because its public
-/// inputs include child proof headers (see [`hashes_1::Output`]). It is a sixth
-/// circuit raising an `internal_circuit_claim`, so the arm count in `build` is
-/// one more than this.
+/// inputs include child proof headers (see [`hashes_1::Output`]).
 ///
 /// [`hashes_1`]: crate::internal::native::circuits::hashes_1
 /// [`hashes_1::Output`]: crate::internal::native::circuits::hashes_1::Output
@@ -163,8 +161,7 @@ where
         processor.raw_claim(a, b);
     }
 
-    // App circuits (interleaved per proof). An application circuit has no
-    // stages, so its claim is its trace alone.
+    // App circuits (interleaved per proof)
     for (app_id, rx) in source.app_circuits().zip(source.rx(Rx(Application))) {
         processor.circuit_claim(app_id, core::iter::once(rx));
     }
@@ -228,10 +225,7 @@ where
             }
 
             // challenge_binding: ChallengeBinding + Preamble + OuterError +
-            // Challenges. It reads only the preamble and the challenge slots,
-            // but the challenge stage hangs below `outer_error`, and a
-            // circuit's trace spans every stage up to its last one — so the
-            // stage it skips is still part of the trace this claim covers.
+            // Challenges (the trace spans the skipped `outer_error` stage)
             ChallengeBindingCircuit => {
                 for (((cb, pre), en), ch) in source
                     .rx(Rx(ChallengeBinding))
@@ -275,8 +269,7 @@ where
             EvalFinalStaged => {
                 processor.bonding_claim(id, source.rx(Rx(ComputeV)))?;
             }
-            // Both circuits that read challenge slots end at that stage, so
-            // they share its final trace.
+            // Both circuits that read challenge slots share this final trace.
             ChallengesFinalStaged => {
                 processor.bonding_claim(
                     id,

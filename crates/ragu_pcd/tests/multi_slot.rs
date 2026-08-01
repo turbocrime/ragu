@@ -1,13 +1,8 @@
 //! Multi-slot proving regression: shapes with more than one polynomial slot
-//! must prove *and verify*.
-//!
-//! Found by the multiset characterization: `select_claim`'s prover-side
-//! matcher set a bit for **every** slot sharing the claim's name, and a
-//! trivial child's padding slots all share the padding polynomial's name —
-//! so at `POLYS ≥ 2` the one-hot's sum-to-one constraint was violated in
-//! the trace, and (since assembly does not check satisfaction) the proof
-//! survived until root verification. The pinned slotted registration shape
-//! `(2, 3, 1)` had never been proved by any test before this one.
+//! must prove *and verify*. `select_claim`'s prover-side matcher once set a
+//! bit for **every** slot sharing the claim's name, and padding slots share
+//! a name — so at `POLYS ≥ 2` the one-hot's sum-to-one was violated in the
+//! trace and the proof survived until root verification.
 
 use ragu_arithmetic::rand::{SeedableRng, rngs::StdRng};
 use ragu_circuits::polynomials::ProductionRank;

@@ -29,13 +29,9 @@ pub mod stages {
 }
 
 /// The native fuse's stage chain, named once so the registration list and the
-/// fuse steps that write each stage agree by construction.
-///
-/// `Parent` makes this a tree rooted at [`chain::Preamble`]: the error branch runs
-/// preamble → outer_error → {inner_error, challenges}, and the query branch
-/// runs preamble → query → eval. Every width is a compile-time `values()`, so
-/// masks and rx positions come off the types — no value-level layout is
-/// involved.
+/// fuse steps that write each stage agree by construction. A tree rooted at
+/// [`chain::Preamble`]: preamble → outer_error → {inner_error, challenges}
+/// on the error branch, preamble → query → eval on the query branch.
 pub mod chain {
     use super::{RevdotParameters, stages};
 
@@ -51,8 +47,7 @@ pub mod chain {
     pub type InnerError<C, R, const HEADER_SIZE: usize, J> =
         stages::inner_error::Stage<C, R, HEADER_SIZE, J, RevdotParameters>;
 
-    /// The challenge slots — the other error-branch leaf, sibling of
-    /// [`InnerError`].
+    /// The challenge slots — the other error-branch leaf.
     pub type Challenges<C, R, const HEADER_SIZE: usize, J> =
         stages::slots::ChallengesStage<C, R, HEADER_SIZE, J, RevdotParameters>;
 
@@ -91,9 +86,7 @@ pub enum InternalCircuitIndex {
     QueryStage,
     EvalStage,
     ChallengesStage,
-    // Final stage masks. There is no `PreambleFinalStaged`: no circuit ends at
-    // the preamble — both `challenge_binding` and `outer_collapse` end at the
-    // challenge-slot stage.
+    // Final stage masks (no circuit ends at the preamble)
     InnerErrorFinalStaged,
     OuterErrorFinalStaged,
     EvalFinalStaged,
@@ -101,8 +94,7 @@ pub enum InternalCircuitIndex {
 }
 
 /// Compute the total circuit count and log2 domain size from the number of
-/// application-defined steps. The rest of the registry — the internal steps and
-/// the native internal circuits and masks — is a framework constant.
+/// application-defined steps.
 pub fn total_circuit_counts(num_application_steps: usize) -> (usize, u32) {
     let total_circuits =
         num_application_steps + step::NUM_INTERNAL_STEPS + InternalCircuitIndex::NUM;
@@ -261,11 +253,7 @@ pub enum RxIndex {
     OuterError,
     Query,
     Eval,
-    /// The challenge-slot stage: the last stage of the error chain, holding
-    /// both children's derived-challenge records. Its own stage rather than a
-    /// region of [`Preamble`](Self::Preamble) so that the counts sizing it are
-    /// named only by the circuits that read it — see
-    /// [`slots`](stages::slots).
+    /// The challenge-slot stage — see [`slots`](stages::slots).
     Challenges,
 }
 
@@ -395,10 +383,6 @@ pub enum RxComponent {
 /// Registers internal native circuits and masks into the provided registry,
 /// in exactly [`InternalCircuitIndex::ALL`] order.
 ///
-/// Every circuit here is built for the slot counts the application declared:
-/// the shape every one of its steps exposes, children included. That is why
-/// there is one of each rather than a family keyed by child shape.
-///
 /// Does not register internal steps (rerandomize, trivial); those are
 /// registered by the caller after this function returns.
 pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>(
@@ -458,9 +442,7 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: Hoo
         use ragu_circuits::staging::StageExt as _;
 
         // Stage masks, then final-trace masks, in `InternalCircuitIndex::ALL`
-        // order. Every stage's geometry follows from its `Parent` chain and its
-        // `values()`, both compile-time, so the masks come straight off the
-        // types.
+        // order.
         registry = registry.register_bonding(Preamble::<C, R, HEADER_SIZE, J>::mask()?);
         registry = registry.register_bonding(InnerError::<C, R, HEADER_SIZE, J>::mask()?);
         registry = registry.register_bonding(OuterError::<C, R, HEADER_SIZE, J>::mask()?);

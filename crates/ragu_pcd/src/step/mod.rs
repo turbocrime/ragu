@@ -61,11 +61,8 @@ impl Index {
     /// final index of this step. Returns an error if an application step index
     /// exceeds the number of registered steps.
     ///
-    /// The internal-circuit count is [`InternalCircuitIndex::NUM`], read here
-    /// rather than passed: it is the *native* list, which is a framework
-    /// constant. Only the nested list became capacity-dependent — see
-    /// [`nested::InternalCircuitIndex::circuit_index`](crate::internal::nested::InternalCircuitIndex::circuit_index),
-    /// which does take the capacity.
+    /// The native internal-circuit count is a framework constant, read here;
+    /// only the nested list is capacity-dependent.
     pub(crate) fn circuit_index(&self, num_application_steps: usize) -> Result<CircuitIndex> {
         let num_internal_circuits = crate::internal::native::InternalCircuitIndex::NUM;
         match self.index {
@@ -179,11 +176,8 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
     /// Returns the encoded headers (left, right, output), the data to be
     /// carried in the resulting PCD, and any auxiliary witness data.
     ///
-    /// `ctx` bundles the underlying [`Driver`] with the framework hooks,
-    /// reached via [`StepCtx::witness_polynomial`],
-    /// [`StepCtx::enforce_poly_query`] and [`StepCtx::derive_challenge`].
-    /// Steps that don't need any framework hooks simply use `ctx.dr` and
-    /// ignore the rest.
+    /// `ctx` bundles the underlying [`Driver`] with the framework hooks;
+    /// hook-free steps just use `ctx.dr`.
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         ctx: &mut StepCtx<'_, 'dr, D, C>,

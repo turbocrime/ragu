@@ -35,17 +35,14 @@ impl<const HEADER_SIZE: usize, J: HookConfig> Len for AdapterLen<HEADER_SIZE, J>
     }
 }
 
-/// Auxiliary data produced by [`Adapter::witness`]: the two input headers, the
-/// output data carried by the resulting PCD, the inner step's own aux, and the
-/// polynomial-query claims raised by the step (checked and recorded by fuse —
-/// see [`FrameworkHooks`]).
+/// Auxiliary data produced by [`Adapter::witness`]: the input headers, the
+/// output data, the inner step's own aux, and the framework hooks' outputs.
 pub(crate) struct AdapterAux<'source, C: Cycle, S: Step<C>, const HEADER_SIZE: usize> {
     pub left_header: FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
     pub right_header: FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
     pub output_data: <S::Output as Header<C::CircuitField>>::Data,
     pub step_aux: S::Aux<'source>,
-    /// Every framework hook's output, as one named group beside the step's own
-    /// aux. See [`FrameworkAux`].
+    /// Every framework hook's output; see [`FrameworkAux`].
     pub framework: FrameworkAux<C>,
 }
 
@@ -57,10 +54,8 @@ pub(crate) struct Adapter<C: Cycle, S, R: Rank, const HEADER_SIZE: usize, J: Hoo
 impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
     Adapter<C, S, R, HEADER_SIZE, J>
 {
-    /// Wraps `step` for registration/keygen at the layout's capacity — the
-    /// only constructor, and it takes no capacity: the counts are this
-    /// type's `J` parameter. A step that asks for more slots is
-    /// rejected by the hooks at the call that exceeds the capacity.
+    /// Wraps `step`; the capacity comes from `J`. A step that asks for more
+    /// slots is rejected by the hooks at the offending call.
     pub fn new(step: S) -> Self {
         Adapter {
             step,
@@ -72,20 +67,15 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
 impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
     MultiStageCircuit<C::CircuitField, R> for Adapter<C, S, R, HEADER_SIZE, J>
 {
-    /// An application circuit has no stages: a challenge input is a point,
-    /// already a commitment, so there is nothing to compress into a committed
-    /// partial trace and nothing to stage.
+    /// An application circuit has no stages.
     type Last = ();
     type Instance<'source> = (
         FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
         FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
         <S::Output as Header<C::CircuitField>>::Data,
     );
-    /// The padding constants ride in front of the step's own witness: they
-    /// are wire assignments like everything else here — the values of the
-    /// locally-unconstrained instance wires that fill unused hook slots —
-    /// computed once at finalize and supplied to every proof. See
-    /// [`Padding`](crate::internal::challenge::Padding).
+    /// The padding constants ride in front of the step's own witness —
+    /// computed once at finalize; see [`Padding`](crate::internal::challenge::Padding).
     type Witness<'source> = (
         crate::internal::challenge::Padding<C>,
         <S::Left as Header<C::CircuitField>>::Data,
@@ -127,9 +117,7 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize, J: H
             self.step
                 .witness::<_, HEADER_SIZE>(&mut ctx, witness, left, right)?
         };
-        // Fill whatever slots the body left over, through the same hooks it
-        // used. Each hook already rejected a call past the declared capacity,
-        // so there is no total to reconcile here.
+        // Fill the slots the body left over, through the same hooks it used.
         hooks.finish_slots(dr, padding)?;
 
         let mut elements = Vec::with_capacity(
@@ -140,17 +128,12 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize, J: H
         left.write(dr, &mut elements)?;
         right.write(dr, &mut elements)?;
         output.write(dr, &mut elements)?;
-        // The polynomial slots follow the headers: per slot, the host
-        // commitment's two embedded affine coordinates — the polynomial's
-        // name. Then the query slots: per slot, the opened polynomial's name,
-        // the opening point, and the claimed evaluation. This layout must
-        // match `ProofInputs::application_ky`.
-        //
-        // A query's `coords` are the very wires its polynomial's slot wrote —
-        // a step's `PolyHandle` holds them, and padding reads slot 0's back
-        // out of `witnessed_polys` — so this writes one pair at two positions
-        // and the parent inherits their equality through the revdot identity,
-        // with nothing to enforce.
+        // The k(Y) instance layout, which must match
+        // `ProofInputs::application_ky`: after the three headers come the
+        // polynomial slots (two embedded commitment coordinates each), then
+        // the query slots (the opened polynomial's coordinate pair, the point
+        // x, the evaluation y), then the challenge slots (the input elements,
+        // then the challenge).
         for poly in hooks.witnessed_polys() {
             for coord in &poly.coords() {
                 coord.write(dr, &mut elements)?;
@@ -163,9 +146,6 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize, J: H
             query.x.write(dr, &mut elements)?;
             query.y.write(dr, &mut elements)?;
         }
-        // Then the challenge slots: per slot, every input element followed by
-        // the challenge. The parent's binding circuit re-derives the
-        // challenge from those inputs.
         for pair in hooks.challenge_pairs() {
             for input in &pair.inputs {
                 input.write(dr, &mut elements)?;
@@ -218,14 +198,12 @@ mod tests {
         step::{Encoded, Index, Step},
     };
 
-    // The per-claim bridge stages sit at the end of the nested stage chain, so
-    // building one needs a rank that fits `skip_gates + num_gates` (~177).
-    // `TestRank` (n = 32) is too small; production rank is unaffected.
+    // The per-claim bridge stages need a rank fitting `skip_gates + num_gates`
+    // (~177); `TestRank` (n = 32) is too small.
     type TestR = ragu_circuits::polynomials::ProductionRank;
     const HEADER_SIZE: usize = 4;
 
-    /// The padding constants a value-carrying witness tuple leads with —
-    /// what `finalize` computes for a real application.
+    /// The padding constants a value-carrying witness tuple leads with.
     fn test_padding() -> crate::internal::challenge::Padding<Pasta> {
         crate::internal::challenge::Padding::new(Pasta::baked(), 0)
             .expect("padding constants exist for baked parameters")
@@ -290,11 +268,8 @@ mod tests {
         }
     }
 
-    /// Like [`TestStep`], but derives a challenge and folds it into the output.
-    ///
-    /// The challenge takes no input points: a step's cost does not depend on
-    /// how many it passes, and these tests are about the call's circuit
-    /// structure, not about what the challenge binds.
+    /// Like [`TestStep`], but derives a (no-input) challenge and folds it
+    /// into the output.
     struct ChallengeStep;
 
     impl Step<Pasta> for ChallengeStep {
@@ -324,11 +299,10 @@ mod tests {
             let left_elem = Element::alloc(ctx.dr, allocator, left)?;
             let right_elem = Element::alloc(ctx.dr, allocator, right)?;
 
-            // The outputs are deferred; only the wires are used.
             let challenge = ctx.derive_challenge(Pasta::baked(), &())?;
 
-            // Output = left + right + challenge, so the deferred challenge
-            // wire participates in downstream circuit structure.
+            // Output = left + right + challenge: the deferred challenge wire
+            // participates in downstream circuit structure.
             let sum = left_elem.add(ctx.dr, &right_elem);
             let output_elem = sum.add(ctx.dr, &challenge);
             let output_val = output_elem.value().map(|v| *v);
@@ -374,8 +348,7 @@ mod tests {
         assert_eq!(output_data, Fp::from(30u64));
     }
 
-    /// A step body that derives more challenges than the application declared
-    /// is rejected by the hook, at the call that exceeds the capacity.
+    /// A step deriving more challenges than declared is rejected at the call.
     #[test]
     fn a_step_that_exceeds_the_declared_capacity_is_rejected() {
         struct TooManyChallenges;
@@ -443,13 +416,11 @@ mod tests {
         );
     }
 
-    /// The full adapter synthesis (in-circuit challenge derivation + deferred
-    /// output allocation) completes on a structure-only driver for a step
+    /// Adapter synthesis completes on a structure-only driver for a step
     /// that derives a challenge.
     #[test]
     fn adapter_witness_synthesizes_challenge_structure() {
-        // A counting driver: no witness values, so the deferred output value
-        // closures never run.
+        // A counting driver: no witness values, so deferred closures never run.
         let mut dr: Emulator<Wireless<Empty, Fp>> = Emulator::counter();
         let dr = &mut dr;
 

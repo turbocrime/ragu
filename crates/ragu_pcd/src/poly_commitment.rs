@@ -1,28 +1,13 @@
-//! Handles that bundle a polynomial with its poly-query commitment.
+//! Handles that bundle a polynomial with its poly-query commitment, so the
+//! two cannot drift apart: [`PolyCommitment`] is the native form (the
+//! representation is *derived from* the polynomial by
+//! [`Application::commit_polynomial`](crate::Application::commit_polynomial)),
+//! [`PolyHandle`] the in-circuit form.
 //!
-//! The poly-query oracle needs two things that must not drift apart: the
-//! polynomial (prover-only) and its commitment's **representation** — the
-//! host commitment's affine coordinates, canonically embedded in the circuit
-//! field. Passing them to
-//! [`enforce_poly_query`](crate::step::StepCtx::enforce_poly_query) as
-//! separate arguments would let a step body supply a representation for one
-//! polynomial and coefficients for another. These two handles keep them
-//! together:
-//!
-//! * [`PolyCommitment`] is the native form, produced by
-//!   [`Application::commit_polynomial`](crate::Application::commit_polynomial):
-//!   the representation is *derived from* the polynomial, so an honest caller
-//!   cannot mismatch them.
-//! * [`PolyHandle`] is the in-circuit form, created by
-//!   [`StepCtx::witness_polynomial`](crate::step::StepCtx::witness_polynomial):
-//!   the representation as two coordinate wires (usable for challenges,
-//!   hashing, cross-proof comparison), consumed by
-//!   [`enforce_poly_query`](crate::step::StepCtx::enforce_poly_query).
-//!
-//! [`PolyCommitment::coords`] and [`PolyHandle::coords`] produce **identical
-//! values** for every proof the framework accepts — one representation, in
-//! and out of circuit. That is the whole consumer contract: hash it, store
-//! it, compare it; the host-curve point itself never crosses this API.
+//! [`PolyCommitment::coords`] and [`PolyHandle::coords`] produce identical
+//! values for every proof the framework accepts — one representation, in and
+//! out of circuit: hash it, store it, compare it. The host-curve point
+//! itself never crosses this API.
 
 use alloc::vec::Vec;
 
@@ -49,13 +34,8 @@ use ragu_primitives::{Element, io::Write};
 const HIGH_BITS: usize = 126;
 
 /// The four 128-bit limbs `[x_lo, x_hi, y_lo, y_hi]` of a host commitment's
-/// coordinates — the split of `to_repr()` into 16-byte halves that
-/// [`PolyCommitment::host_coords`] recomposes into the commitment's
-/// representation.
-///
-/// Errors rather than truncating when a coordinate does not fit: see
-/// [`HIGH_BITS`], whose width bound is what makes the split — and therefore
-/// the representation — canonical.
+/// coordinates; errors rather than truncating when a coordinate exceeds the
+/// [`HIGH_BITS`] bound that makes the split canonical.
 fn host_limbs<C: CurveAffine>(host: C) -> Result<[u128; 4]> {
     let coordinates = host.coordinates().into_option().ok_or_else(|| {
         Error::InvalidWitness(
@@ -107,17 +87,9 @@ fn embed_coordinate<F: PrimeField>(lo: u128, hi: u128) -> F {
     F::from_u128(lo) + shift * F::from_u128(hi)
 }
 
-/// A polynomial's coefficients together with its commitment's representation.
-///
-/// Produced by
-/// [`Application::commit_polynomial`](crate::Application::commit_polynomial),
-/// which derives the representation from the polynomial. Thread this into a
-/// [`Step`](crate::step::Step)'s witness and turn it into an in-circuit
-/// [`PolyHandle`] with
+/// A polynomial's coefficients (rank-erased, little-endian) together with
+/// its commitment's representation. Thread this into a step's witness for
 /// [`StepCtx::witness_polynomial`](crate::step::StepCtx::witness_polynomial).
-///
-/// Coefficients are held rank-erased (little-endian `Vec`); the framework
-/// re-ranks them where its rank is in scope.
 pub struct PolyCommitment<C: Cycle> {
     coefficients: Vec<C::CircuitField>,
     coords: [C::CircuitField; 2],
@@ -150,10 +122,8 @@ impl<C: Cycle> PolyCommitment<C> {
     }
 
     /// A host commitment's affine coordinates, canonically embedded in the
-    /// circuit field — one element per coordinate, `lo + 2^128·hi` over the
-    /// limbs [`host_limbs`] splits (and bounds: a coordinate is below
-    /// `2^254`, so the embedding is injective and every embedded value fits
-    /// the circuit field).
+    /// circuit field — `lo + 2^128·hi` per coordinate, injective under the
+    /// [`host_limbs`] bound.
     pub(crate) fn host_coords(host: C::HostCurve) -> Result<[C::CircuitField; 2]> {
         let [x_lo, x_hi, y_lo, y_hi] = host_limbs(host)?;
         Ok([
@@ -162,13 +132,9 @@ impl<C: Cycle> PolyCommitment<C> {
         ])
     }
 
-    /// Bundles a polynomial's coefficients with the representation of `host`,
-    /// its host-curve commitment.
-    ///
-    /// The one author-facing site where canonicity is established: the
-    /// embedding rejects the identity and any coordinate at or above
-    /// $2^{254}$, so every constructed value has exactly one representation
-    /// and [`coords`](Self::coords) is infallible.
+    /// Bundles a polynomial's coefficients with the representation of its
+    /// host-curve commitment — the one author-facing site where canonicity
+    /// is established, so [`coords`](Self::coords) is infallible.
     pub(crate) fn new(coefficients: Vec<C::CircuitField>, host: C::HostCurve) -> Result<Self> {
         let coords = Self::host_coords(host)?;
         Ok(Self {
@@ -190,23 +156,15 @@ impl<C: Cycle> PolyCommitment<C> {
         }
     }
 
-    /// The commitment's **representation**: the host commitment's affine
-    /// coordinates, canonically embedded in the circuit field. Canonical for
-    /// the polynomial and identical to what
-    /// [`PolyHandle::coords`] exposes in-circuit — hash this for an anchor,
-    /// store it, compare it.
+    /// The commitment's representation, identical to what
+    /// [`PolyHandle::coords`] exposes in-circuit.
     pub fn coords(&self) -> [C::CircuitField; 2] {
         self.coords
     }
 
     /// Builds a handle whose representation deliberately does **not** bind
-    /// its polynomial, modelling a prover that patched
-    /// [`Application::commit_polynomial`](crate::Application::commit_polynomial)
-    /// out of the loop.
-    ///
-    /// The honest API makes this state unrepresentable; it exists only so
-    /// tests can exercise the framework's own enforcement rather than the
-    /// prover-side pre-check. Pair with
+    /// its polynomial — unrepresentable through the honest API — so tests can
+    /// exercise the framework's own enforcement. Pair with
     /// [`ApplicationBuilder::skip_claim_precheck_for_testing`](crate::ApplicationBuilder::skip_claim_precheck_for_testing).
     #[cfg(feature = "unstable-fuzzing")]
     pub fn desync_for_testing(
@@ -227,22 +185,13 @@ impl<C: Cycle> PolyCommitment<C> {
     }
 }
 
-/// The in-circuit form of a [`PolyCommitment`]: the commitment's
-/// representation as two coordinate wires, plus the retained coefficients
-/// (prover-only) for the claim.
-///
-/// Created by
-/// [`StepCtx::witness_polynomial`](crate::step::StepCtx::witness_polynomial);
-/// opened via
-/// [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query).
-///
-/// A host-curve point cannot be a [`Point`](ragu_primitives::Point) in a step
-/// (`Point` requires `Base = D::F`, and `HostCurve::Base` is the *scalar*
-/// field), but its affine coordinates — canonically bounded below $2^{254}$ —
-/// each fit one circuit-field element, injectively. So the pair *is* the
-/// commitment, and the handle plays `Point`'s role for it: a writable gadget
-/// whose [`Write`] emits exactly the two coordinate wires. Absorbing the
-/// handle absorbs the commitment; the coefficients are never written.
+/// The in-circuit form of a [`PolyCommitment`], created by
+/// [`StepCtx::witness_polynomial`](crate::step::StepCtx::witness_polynomial):
+/// the representation as two coordinate wires, plus the retained
+/// coefficients (prover-only). A host-curve point cannot be a
+/// [`Point`](ragu_primitives::Point) in a step, so the coordinate pair *is*
+/// the commitment here: its [`Write`] emits exactly the two coordinate
+/// wires, and the coefficients are never written.
 #[derive(Gadget, Write)]
 pub struct PolyHandle<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     #[ragu(skip)]
@@ -269,25 +218,18 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> PolyHandle<'dr, D, C> {
         }
     }
 
-    /// The polynomial's **canonical** in-circuit identity: its commitment's
-    /// representation, as the slot's coordinate instance wires. The same for
-    /// every proof that commits this polynomial, and identical to
-    /// [`PolyCommitment::coords`] natively — so this is what a
-    /// [`derive_challenge`](crate::step::StepCtx::derive_challenge) call
-    /// absorbs, what an anchor hashes, and what cross-proof comparisons
-    /// compare.
+    /// The polynomial's canonical in-circuit identity — the same for every
+    /// proof that commits this polynomial, and identical to
+    /// [`PolyCommitment::coords`] natively.
     pub fn coords(&self) -> [Element<'dr, D>; 2] {
         self.coords.clone()
     }
 
-    /// Evaluates the retained polynomial at `x`, as a prover-only value.
-    ///
-    /// The one sanctioned use of the retained coefficients: a step allocates
-    /// the result and claims it with
-    /// [`enforce_poly_query`](crate::step::StepCtx::enforce_poly_query) —
-    /// which is what binds it. The coefficients themselves stay inaccessible
-    /// to the step body: nothing in-circuit could bind them, so nothing may
-    /// depend on them except through a claim.
+    /// Evaluates the retained polynomial at `x`, as a prover-only value —
+    /// the one sanctioned use of the coefficients: allocate the result and
+    /// claim it with
+    /// [`enforce_poly_query`](crate::step::StepCtx::enforce_poly_query),
+    /// which is what binds it.
     pub fn eval(&self, x: DriverValue<D, D::F>) -> DriverValue<D, D::F> {
         self.coefficients.as_ref().and_then(|coefficients| {
             x.map(|x| {
@@ -309,12 +251,8 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> PolyHandle<'dr, D, C> {
 mod tests {
     use super::*;
 
-    /// The limbs are the coordinates: `lo + 2^128·hi`, recomposed in the
-    /// field, is the coordinate itself.
-    ///
-    /// Longhand on purpose — the shift is built by doubling, and the expected
-    /// value never calls the code under test, so the assertion checks that the
-    /// split really is the inverse of recomposition rather than restating it.
+    /// The limbs recompose to the coordinate itself; longhand on purpose, so
+    /// the expected value never calls the code under test.
     #[test]
     fn limbs_recompose_to_the_coordinates() {
         use ragu_arithmetic::{group::Group as _, pasta_curves::group::Curve};

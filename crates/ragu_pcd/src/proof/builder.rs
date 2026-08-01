@@ -174,8 +174,7 @@ macro_rules! explicit_commitment_getter {
 /// prepends `self.` to each getter call so that the generated function's own
 /// `self` is used (avoiding macro hygiene issues with `self` in token trees).
 ///
-/// `$pos` is a [`nested::ChainStage`], not its index: the macro calls
-/// `.index()` itself, so a bare integer here does not compile.
+/// `$pos` is a [`nested::ChainStage`]; the macro calls `.index()` itself.
 macro_rules! cached_bridge {
     ($rx:ident, $commitment:ident,
      $idx:expr, $pos:expr, $stage:ident, { $($wit_field:ident : $getter:ident()),* }) => {
@@ -183,10 +182,8 @@ macro_rules! cached_bridge {
             if let Some(rx) = self.$rx.get() {
                 return Ok(rx);
             }
-            // Placed through the value-level chain, not the typed
-            // `Stage::skip_gates()`: where a bridge sits depends on how wide
-            // the stages before it are, which follows the application's
-            // capacity.
+            // Via the value-level chain: a bridge's position follows the
+            // application's capacity.
             let rx = self.nested_chain().rx_configured(
                 $pos.index(),
                 self.bridge_alpha_power($idx),
@@ -262,9 +259,8 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     bridge_ab_rx: OnceCell<sparse::Polynomial<C::ScalarField, R>>,
     bridge_query_rx: OnceCell<sparse::Polynomial<C::ScalarField, R>>,
     bridge_eval_rx: OnceCell<sparse::Polynomial<C::ScalarField, R>>,
-    /// The chain every bridge rx above is placed through. Derived from
-    /// `capacity` alone, so it is cached like everything else here rather than
-    /// rebuilt per bridge — `chain_layout` is a ten-element allocation.
+    /// The chain every bridge rx above is placed through; cached, derived
+    /// from the capacity alone.
     nested_chain: OnceCell<ragu_circuits::staging::InducedStages>,
 
     // Nested endoscaling data
@@ -319,25 +315,13 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank> {
     child_left_stage_rx: Option<super::ChildStageRx<C::ScalarField, R>>,
     child_right_stage_rx: Option<super::ChildStageRx<C::ScalarField, R>>,
 
-    /// The derived-challenge pairs the application circuit exposed, in slot
-    /// order, padded by the adapter to exactly
-    /// the application's challenge capacity.
+    /// The derived-challenge pairs the application circuit exposed, in slot order.
     application_challenges: Vec<crate::proof::ChallengeOpening<C::CircuitField>>,
-    /// Per-step polynomial-query claims raised by the user's
-    /// [`Step::witness`](crate::step::Step::witness) via
-    /// [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query),
-    /// padded by the adapter to exactly
-    /// the application's poly capacity and
-    /// pre-checked natively by fuse. The claim *instances* (coords, x, y),
-    /// the claim polynomials, and the host commitments are persisted in the
-    /// [`Proof`] so the parent fuse can enforce the claims recursively.
+    /// Poly-query claims raised via `StepCtx::enforce_poly_query`, adapter-padded.
     application_claims: Vec<ClaimOpening<C::CircuitField>>,
-    /// The coordinate instance wires' values, two per polynomial slot: the
-    /// host commitment's embedded affine coordinates — one name per
-    /// polynomial, not one per query.
+    /// Coordinate instance wires: two coords per polynomial slot.
     application_poly_coords: Vec<C::CircuitField>,
-    /// The claim polynomials, in slot order (paired with
-    /// `application_poly_coords`).
+    /// The claim polynomials, in slot order.
     claim_polys: Vec<sparse::Polynomial<C::CircuitField, R>>,
     /// The claims' host-curve commitments, in slot order.
     claim_host_commitments: Option<Vec<C::HostCurve>>,
@@ -592,11 +576,9 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     );
 
     /// Returns the derived alpha for a cached bridge, as a distinct power of
-    /// `bridge_alpha` — [`bridge_alpha_exponent`]'s single ordering is what
-    /// keeps every bridge stage's blind distinct.
+    /// `bridge_alpha` (see [`bridge_alpha_exponent`]).
     fn bridge_alpha_power(&self, idx: nested::RxIndex) -> C::ScalarField {
-        self.bridge_alpha
-            .pow_vartime([bridge_alpha_exponent(idx)])
+        self.bridge_alpha.pow_vartime([bridge_alpha_exponent(idx)])
     }
 
     cached_bridge!(
@@ -626,8 +608,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         { native_query: native_query_commitment(), registry_xy: native_registry_xy_commitment() }
     );
 
-    /// The nested bridge chain's value-level geometry at this proof's
-    /// capacity. Every bridge rx is placed through it.
+    /// The nested bridge chain's value-level geometry at this proof's capacity.
     fn nested_chain(&self) -> &ragu_circuits::staging::InducedStages {
         self.nested_chain.get_or_init(|| {
             nested::NestedLayouts::chain_layout::<C::HostCurve, R>(self.hook_layout.polys)
@@ -635,17 +616,13 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     }
 
     /// The eval bridge, written out rather than through [`cached_bridge!`]:
-    /// its stage is an induced run of one-point slots, so its wires come from
-    /// the slot list rather than from a stage body. The run is still one
-    /// commitment, so this is the same rx a whole-stage body would produce.
+    /// its stage is an induced run, so its wires come from the slot list.
     pub(crate) fn bridge_eval_rx(&self) -> Result<&sparse::Polynomial<C::ScalarField, R>> {
         if let Some(rx) = self.bridge_eval_rx.get() {
             return Ok(rx);
         }
         let witness = nested::stages::eval::Witness {
             native_eval: self.native_eval_commitment(),
-            // `eval::Witness` owns its list, so this is the one site that needs
-            // the clone — once per proof, where it is visible.
             claims: self.claim_host_commitments().to_vec(),
         };
         let rx = self.nested_chain().rx(
@@ -663,8 +640,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             .get_or_init(|| rx.commit_to_affine(C::nested_generators(self.params))))
     }
 
-    /// The claim host commitments, for the eval bridge stage witness. Requires
-    /// `set_application_claims` to have been called.
+    /// The claim host commitments; requires `set_application_polys` first.
     fn claim_host_commitments(&self) -> &[C::HostCurve] {
         self.claim_host_commitments
             .as_deref()
@@ -742,10 +718,8 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         self.application_challenges = challenges;
     }
 
-    /// Sets the per-step **polynomials** for this fuse step: the embedded
-    /// commitment coordinates the instance exposes, the polynomials
-    /// themselves, and their host commitments, all in slot order. May only be
-    /// called once.
+    /// Sets the per-step polynomials: instance coordinates, the polynomials,
+    /// and their host commitments, in slot order. May only be called once.
     pub(crate) fn set_application_polys(
         &mut self,
         coords: Vec<C::CircuitField>,
@@ -758,18 +732,13 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
         );
         assert_eq!(coords.len(), self.hook_layout.polys * 2);
         assert_eq!(claim_polys.len(), self.hook_layout.polys);
-        assert_eq!(
-            claim_host_commitments.len(),
-            self.hook_layout.polys
-        );
+        assert_eq!(claim_host_commitments.len(), self.hook_layout.polys);
         self.application_poly_coords = coords;
         self.claim_polys = claim_polys;
         self.claim_host_commitments = Some(claim_host_commitments);
     }
 
-    /// Sets the per-step **queries** for this fuse step, in call order. Each
-    /// names one of the polynomials [`set_application_polys`](Self::set_application_polys)
-    /// recorded. May only be called once.
+    /// Sets the per-step queries, in call order. May only be called once.
     pub(crate) fn set_application_claims(&mut self, claims: Vec<ClaimOpening<C::CircuitField>>) {
         assert!(
             self.application_claims.is_empty(),
@@ -953,12 +922,9 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     }
 }
 
-/// The exponent of `bridge_alpha` for a blinded bridge stage: its position in
-/// the ordering `outer_error`, `ab`, `query`, `eval`, offset past the
-/// unusable zeroth power. Deriving every exponent from a single ordering
-/// keeps all blinds distinct by construction. `preamble`, `s_prime`,
-/// `inner_error` and `f` are absent: the fuse stages blind them with an
-/// in-circuit challenge, and this panics on them.
+/// The exponent of `bridge_alpha` for a blinded bridge stage; the single
+/// ordering keeps all blinds distinct. Panics on stages blinded with an
+/// in-circuit challenge (`preamble`, `s_prime`, `inner_error`, `f`).
 fn bridge_alpha_exponent(idx: nested::RxIndex) -> u64 {
     match idx {
         nested::RxIndex::BridgeOuterError => 1,
@@ -973,23 +939,17 @@ fn bridge_alpha_exponent(idx: nested::RxIndex) -> u64 {
 mod tests {
     use super::*;
 
-    /// Pins the `bridge_alpha` exponent series.
-    ///
-    /// These blinds are prover-side — derived at proof time, never part of a
-    /// circuit — so **no registry digest covers them**. Two stages colliding
-    /// on one blind would be silent; this test is the only thing that would
-    /// notice.
+    /// Pins the `bridge_alpha` exponent series: no registry digest covers
+    /// these prover-side blinds, so a collision would otherwise be silent.
     #[test]
     fn bridge_alpha_exponents_are_the_expected_series() {
-        // Spelled out so a reordering has to be deliberate.
         assert_eq!(bridge_alpha_exponent(nested::RxIndex::BridgeOuterError), 1);
         assert_eq!(bridge_alpha_exponent(nested::RxIndex::BridgeAB), 2);
         assert_eq!(bridge_alpha_exponent(nested::RxIndex::BridgeQuery), 3);
         assert_eq!(bridge_alpha_exponent(nested::RxIndex::BridgeEval), 4);
     }
 
-    /// The bridges the fuse stages blind with an in-circuit challenge are not
-    /// on this series at all.
+    /// Bridges blinded with an in-circuit challenge are not on this series.
     #[test]
     #[should_panic(expected = "not blinded from bridge_alpha")]
     fn unblinded_bridges_are_rejected() {

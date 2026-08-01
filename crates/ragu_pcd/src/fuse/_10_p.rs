@@ -86,10 +86,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
             };
 
             for proof in [left, right] {
-                // Every rx component, including the application circuit's
-                // challenge stages: `RxIndex::ALL` is the one order the eval
-                // stage's `Write` impl, `loading`'s point walk, and this
-                // accumulation all follow.
+                // `RxIndex::ALL` is the one order the eval stage's `Write`
+                // impl, `loading`'s point walk, and this accumulation follow.
                 for &id in &RxIndex::ALL {
                     acc.acc(&proof[id], proof.native_rx_commitment(id));
                 }
@@ -106,20 +104,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
                     proof.native_registry_xy_commitment(),
                 );
                 acc.acc(proof.native_p_poly(), proof.native_p_commitment());
-                // The child's poly-query claim polynomials, in slot order.
-                // Folding them here (with their host commitments entering the
-                // endoscaling points list) is what makes the claims' commitment
-                // binding recursive.
+                // The child's poly-query claim polynomials, in slot order,
+                // folded with their host commitments.
                 for (poly, host) in proof.claim_polys.iter().zip(proof.claim_host_commitments()) {
                     acc.acc(poly, host);
                 }
-                // The child's claim-coordinate polynomial q — deterministic
-                // from the recorded hosts, so rebuilt rather than carried —
-                // folded with its commitment C_q. This is what makes a step's
-                // instance-bound coordinates bind: `compute_v` re-derives q(u)
-                // from the child's coordinate instance wires, so a q that
-                // disagrees with them breaks v against P at the deferred
-                // opening. Absent at POLYS = 0.
+                // The child's claim-coordinate polynomial q (rebuilt from the
+                // recorded hosts), folded with its commitment C_q; `compute_v`
+                // re-derives q(u) and enforces it. Absent at POLYS = 0.
                 if proof.claim_host_commitments().len() > 0 {
                     let q = crate::internal::challenge::claim_coord_poly::<C, R>(
                         proof.claim_host_commitments(),

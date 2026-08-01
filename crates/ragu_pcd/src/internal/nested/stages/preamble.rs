@@ -18,18 +18,14 @@ use crate::{
     internal::{endoscalar::PointsStage, native::RxIndex},
 };
 
-/// Number of curve points in this stage: the native preamble commitment plus,
-/// per child, the `_10_p` components (one per [`RxIndex`] entry — plus `a`,
-/// `b`, `registry_xy` and `p`) and the stashed poly-query claim commitments.
-///
-/// Both children present the application's capacity, so one value sizes both.
+/// Number of curve points in this stage: the native preamble commitment plus
+/// one block per child. Both children present the application's capacity, so
+/// one value sizes both.
 pub const fn num_points(polys: usize) -> usize {
     use crate::internal::nested::child_endoscaling_points;
 
     /// The leading slot [`Output::from_slots`] reads before either child's
-    /// block. Not to be confused with the leading point of
-    /// [`num_endoscaling_points`](crate::internal::nested::num_endoscaling_points),
-    /// which is `f.commitment`.
+    /// block (not `f.commitment`).
     const NATIVE_PREAMBLE_SLOT: usize = 1;
 
     NATIVE_PREAMBLE_SLOT + 2 * child_endoscaling_points(polys)
@@ -88,15 +84,10 @@ pub struct ChildWitness<C: CurveAffine> {
     /// Stashed accumulated P commitment from the child.
     pub stashed_p: C,
     /// Stashed poly-query claim host commitments from the child, in slot
-    /// order. Loading enforces these against the [`PointsStage`] inputs (they
-    /// enter the `_10_p` accumulation); copying verifies them against the
-    /// child's own eval bridge stage record. Must contain exactly the stage's
-    /// poly-slot count; the stage body indexes it up to that count.
+    /// order; must contain exactly the stage's poly-slot count.
     pub stashed_claims: Vec<C>,
     /// Stashed commitment to the child's claim-coordinate polynomial `q` —
     /// one entry when the shape has polynomial slots, none otherwise.
-    /// Deterministic from the child's recorded hosts, so computed here rather
-    /// than read off the proof.
     pub stashed_q: Vec<C>,
 }
 
@@ -150,19 +141,9 @@ pub struct Witness<C: CurveAffine> {
     pub right: ChildWitness<C>,
 }
 
-/// One child proof's **fixed** points in the preamble bridge stage, as the
-/// circuit body names them.
-///
-/// A gadget: the derive places these wires from the field list, so the field
-/// list is the one statement of their order.
-///
-/// The child's poly-query claims are the last field rather than a separate type.
-/// `FixedVec`'s length is a [`Len`], so a member whose count is the application's
-/// poly capacity is still a gadget member — which is what lets the whole block be
-/// one derive instead of a struct plus a hand-written tail.
-///
-/// Field order is the slot order [`ChildWitness::slot_points`] emits and
-/// [`from_slots`](Self::from_slots) consumes.
+/// One child proof's points in the preamble bridge stage, as the circuit body
+/// names them. Field order is the slot order [`ChildWitness::slot_points`]
+/// emits and [`from_slots`](Self::from_slots) consumes.
 #[derive(Gadget, Write)]
 pub struct ChildOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> {
     // Field order matches `_10_p` accumulation order.
@@ -218,20 +199,12 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len>
     /// Stashed accumulated P commitment from the child.
     #[ragu(gadget)]
     pub stashed_p: Point<'dr, D, C>,
-    /// Stashed poly-query claim host commitments from the child, in slot order —
-    /// one per polynomial it witnessed. Loading enforces these against the
-    /// [`PointsStage`] inputs (they enter the `_10_p` accumulation); copying
-    /// verifies them against the child's own eval bridge stage record.
-    ///
-    /// Ordered so the per-child block is the seventeen named points then the
-    /// claims, which is the order `_10_p` accumulates.
+    /// Stashed poly-query claim host commitments from the child, in slot
+    /// order after the named points — the order `_10_p` accumulates.
     #[ragu(gadget)]
     pub stashed_claims: FixedVec<Point<'dr, D, C>, L>,
-    /// Stashed commitment to the child's claim-coordinate polynomial `q` — one point
-    /// when the shape has polynomial slots, none otherwise, at its `_10_p`
-    /// fold position after the claims. Loading enforces it against the
-    /// [`PointsStage`] inputs; `C_q` ↔ `q` is the deferred PCS opening, like
-    /// every accumulated commitment's.
+    /// Stashed `C_q` — one point when the shape has polynomial slots, none
+    /// otherwise, at its `_10_p` fold position after the claims.
     #[ragu(gadget)]
     pub stashed_q: FixedVec<Point<'dr, D, C>, QStashLen<L>>,
 }
@@ -313,12 +286,8 @@ fn next_slot<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>>(
 
 impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> ChildOutput<'dr, D, C, L> {
     /// Rebuild one child's block from the run's slots, in the order
-    /// [`ChildWitness::slot_points`] emitted it: the named points, then the
-    /// claims.
-    ///
-    /// Takes no count: the named points' width is the field list's and the claim
-    /// block's is `L`'s. A run shorter than that is what
-    /// [`MalformedEncoding`](ragu_core::Error::MalformedEncoding) reports.
+    /// [`ChildWitness::slot_points`] emitted it. A short run reports
+    /// [`MalformedEncoding`](ragu_core::Error::MalformedEncoding).
     fn from_slots(slots: &mut impl Iterator<Item = Point<'dr, D, C>>) -> Result<Self> {
         let application = next_slot(slots)?;
         let hashes_1 = next_slot(slots)?;
@@ -383,12 +352,9 @@ pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> {
 }
 
 impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> Output<'dr, D, C, L> {
-    /// Rebuild the named view from the run's slots: `native_preamble`, then each
-    /// child's block in turn.
-    ///
-    /// One `L` sizes both children's blocks, because [`num_points`] measures the
-    /// span the same way — `1 + 2 * child_endoscaling_points`. An asymmetric pair
-    /// would mis-tile the run.
+    /// Rebuild the named view from the run's slots: `native_preamble`, then
+    /// each child's block in turn. One `L` sizes both children's blocks,
+    /// matching [`num_points`].
     pub fn from_slots(slots: impl IntoIterator<Item = Point<'dr, D, C>>) -> Result<Self> {
         let slots = &mut slots.into_iter();
 
@@ -406,30 +372,19 @@ pub const fn num_slots(polys: usize) -> usize {
 }
 
 /// The witness body for one slot of the run: a single host-curve point.
-///
-/// Its own chain position is unused — where a slot's wires land comes from the
-/// layout, not from this type — so one type serves every point in the stage.
+/// Its chain position is unused — the layout decides where wires land.
 pub type Slot<C, R> = super::host_bridge::Stage<C, R, ()>;
 
-/// The preamble bridge, spanning one run of one-point slots.
-///
-/// How many points there are depends on the children's poly counts, which is a
-/// property of the application, so the run's width is a value (see
-/// [`num_values`]) and this type carries no slot count. It exists to hold the
-/// run's position in the `Parent` chain; the framework reaches the layout and
-/// [`Slot`] instead, never this stage's own geometry.
-///
-/// The whole run is masked and committed as **one** stage — the subdivision
-/// decides where wires land, not how many commitments there are.
+/// The preamble bridge, spanning one run of one-point slots. The run's width
+/// is a value ([`num_values`]), and the whole run is masked and committed as
+/// **one** stage — the subdivision only decides where wires land.
 pub type Stage<C, R> = crate::internal::Run<C, R, PointsStage<C, R>>;
 
 impl<C: CurveAffine> Witness<C> {
-    /// This stage's points in slot order — the flat list the run places, and
-    /// the list [`Output::from_slots`] reads back.
-    ///
-    /// This is also what the rx path feeds
-    /// [`InducedStages::rx`](ragu_circuits::staging::InducedStages::rx), so the
-    /// order here is the wire order the commitment covers.
+    /// This stage's points in slot order — the list [`Output::from_slots`]
+    /// reads back and the rx path feeds
+    /// [`InducedStages::rx`](ragu_circuits::staging::InducedStages::rx), so
+    /// this order is the wire order the commitment covers.
     pub fn slot_points(&self) -> Vec<C> {
         let mut points = alloc::vec![self.native_preamble];
         points.extend(self.left.slot_points());
@@ -445,9 +400,7 @@ mod tests {
     use super::*;
     use crate::internal::tests::{R, stage_wire_count};
 
-    /// The run's total width is exactly its slots' — the span this stage
-    /// occupies in the chain has to be what the subdivision tiles, or every
-    /// stage after it starts at the wrong gate.
+    /// The stage's chain span must be exactly what the subdivision tiles.
     #[test]
     fn num_values_matches_slots() {
         for polys in [0, 1, 4, 8] {
@@ -459,9 +412,7 @@ mod tests {
         }
     }
 
-    /// The witness emits exactly the slots the layout sizes, and
-    /// `Output::from_slots` reads back exactly that many. These two orders are
-    /// the same list stated twice; this is what pins them together.
+    /// The witness emits exactly the slots the layout sizes.
     #[test]
     fn slot_points_matches_slot_count() {
         for polys in [0, 1, 4, 8] {

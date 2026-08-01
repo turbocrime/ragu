@@ -1,14 +1,8 @@
 //! The shared shape of a nested-side bridge stage: one host-curve point
-//! carried as stage wires. Committing it on the nested generators yields a
-//! point whose coordinates are `CircuitField`, so the native side can
-//! witness it — every value crossing the curve boundary does so this way.
-//!
-//! [`Stage`] takes its parent as a type parameter so a family can attach
-//! anywhere. A family whose length follows the application becomes a
-//! [`crate::internal::Run`] subdivided by an
-//! [`InducedStages`](ragu_circuits::staging::InducedStages) layout; each slot
-//! is a whole number of gates, so a run of `n` slots spans exactly the gates
-//! a chain of `n` aliases would (`induced_run_matches_typed_chain` pins it).
+//! carried as stage wires, committed on the nested generators so the native
+//! side can witness its coordinates. A run of `n` one-point slots spans
+//! exactly the gates a chain of `n` aliases would
+//! (`induced_run_matches_typed_chain` pins it).
 
 use core::marker::PhantomData;
 
@@ -39,13 +33,9 @@ pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     pub host: Point<'dr, D, C>,
 }
 
-/// A bridge stage carrying one host-curve point, chained after `P`.
-///
-/// The chain is expressed through the `Parent` associated type, which cannot be
-/// computed from a const generic on stable Rust. A family whose length is fixed
-/// by a Rust type writes itself as a chain of aliases over this; a family whose
-/// length is a property of the application uses [`Run`] instead, and passes
-/// this as the per-slot witness body with its chain position unused.
+/// A bridge stage carrying one host-curve point, chained after `P`. A
+/// type-fixed family chains aliases over this; an application-shaped family
+/// uses [`Run`](crate::internal::Run) with this as the per-slot body.
 pub struct Stage<C, R, P> {
     _marker: PhantomData<(C, R, P)>,
 }

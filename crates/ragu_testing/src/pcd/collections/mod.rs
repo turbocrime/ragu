@@ -1,17 +1,9 @@
-//! The shared application for the polynomial-collection fixtures: multiset
-//! merging and sequence concatenation, registered as the four steps of
-//! **one** application ([`step`]).
-//!
-//! Both collections follow the same lifecycle: a **seed** proves a
-//! one-member collection from a literal element, and a **fuse** combines
-//! two proven collections, binding its witnessed inputs to the children's
-//! header-carried names in-circuit. Growth happens only by fusing, so a
-//! collection of `N` members is a tree of `N` seeds and `N − 1` fuses, and
-//! well-formedness is inductive from the singleton base case.
-//!
-//! The two fuses present the same shape — three polynomials, three claims,
-//! one width-6 challenge — so registering them together costs no padding
-//! asymmetry: the shared capacity is every step's exact need.
+//! Polynomial-collection fixtures, registered as the four steps of one
+//! application ([`step`]). Multisets are monic root polynomials (merge =
+//! multiply); sequences are coefficient-list polynomials with a monic
+//! sentinel (concat = shifted addition). A seed proves a one-member
+//! collection from a literal element; a fuse combines two proven children,
+//! binding its witnessed inputs to the names their headers carry.
 
 pub mod step;
 
@@ -26,9 +18,8 @@ use self::step::{
     SeedSequenceWitness, SeedSet, SeedSetWitness, SeqHeader, SetHeader,
 };
 
-/// The shared header size. One slot is reserved for the suffix, so the
-/// sequence header's three elements (name + length) need `HEADER_SIZE = 4`;
-/// the set header's two fit inside it.
+/// The shared header size: a suffix slot plus the sequence header's three
+/// elements; the set header's two fit inside it.
 pub const HEADER_SIZE: usize = 4;
 
 /// An [`Application`] at the shared capacity.
@@ -39,9 +30,7 @@ pub type CollectionsApp<'params, C, R> =
 pub type CollectionsAppBuilder<'params, C, R> =
     ApplicationBuilder<'params, C, R, HEADER_SIZE, AppHooks<3, 3, 1, 6>>;
 
-/// All four collection steps registered and finalized: the one application
-/// every collection test proves through — two singleton seeds, two fuses
-/// combining children by their header-carried names.
+/// All four collection steps registered and finalized.
 pub fn collections_app<C: Cycle, R: Rank>(params: &C::Params) -> Result<CollectionsApp<'_, C, R>> {
     CollectionsAppBuilder::<C, R>::new()
         .register(SeedSet::<C, R>::new())?
@@ -52,18 +41,12 @@ pub fn collections_app<C: Cycle, R: Rank>(params: &C::Params) -> Result<Collecti
 }
 
 /// The monic set polynomial `∏ (X − m)` over `members`, multiplicity
-/// included, via the library's [`poly_with_roots`] (a product tree over the
-/// FFT multiply): a multiset of `N` members is a degree-`N` polynomial with
-/// `N + 1` coefficients. The empty set is the constant polynomial `1`.
-///
-/// Panics (via `from_coeffs`) if `members.len() + 1` exceeds the rank's
-/// coefficient capacity — the size ceiling the tests pin.
+/// included; the empty set is the constant `1`.
 pub fn set_polynomial<F: PrimeField, R: Rank>(members: &[F]) -> sparse::Polynomial<F, R> {
     sparse::Polynomial::from_coeffs(poly_with_roots(members))
 }
 
-/// A polynomial's coefficients with the zero tail dropped, for feeding
-/// [`poly_mul`] without ballooning to the rank's dense width.
+/// A polynomial's coefficients with the zero tail dropped.
 pub fn trimmed_coeffs<F: PrimeField, R: Rank>(poly: &sparse::Polynomial<F, R>) -> Vec<F> {
     let mut coeffs: Vec<F> = poly.iter_coeffs().collect();
     while coeffs.last() == Some(&F::ZERO) {
@@ -82,18 +65,9 @@ pub fn merged_polynomial<F: PrimeField, R: Rank>(
     sparse::Polynomial::from_coeffs(out)
 }
 
-/// The monic coefficient polynomial of a sequence: member `i` is the
-/// coefficient of `Xⁱ`, and one **sentinel** coefficient `1` sits above the
-/// last member, so a sequence of `L` members has degree exactly `L`.
-///
-/// The sentinel keeps every sequence's commitment well-defined — `[0]` and
-/// even the empty sequence commit to a nonzero polynomial — and marks the
-/// end of the members in-band.
-///
-/// Panics (via `from_coeffs`) when `members.len() + 1` exceeds the rank's
-/// coefficient capacity: the ceiling is `num_coeffs − 1` members — the same
-/// ceiling as a multiset, for the same reason (one coefficient above the
-/// last member).
+/// The sequence polynomial: member `i` is the coefficient of `Xⁱ`, with a
+/// monic sentinel coefficient `1` above the last member, so a sequence of
+/// `L` members has degree exactly `L`.
 pub fn sequence_polynomial<F: PrimeField, R: Rank>(members: &[F]) -> sparse::Polynomial<F, R> {
     let mut coeffs = members.to_vec();
     coeffs.push(F::ONE);
@@ -118,8 +92,7 @@ pub fn seed_set<C: Cycle, R: Rank, RNG: CryptoRngCore>(
     Ok(leaf)
 }
 
-/// Fuse two set children into their merge, computing the product honestly
-/// from the polynomials the children carry.
+/// Fuse two set children into their merged product.
 pub fn fuse_merge<C: Cycle, R: Rank, RNG: CryptoRngCore>(
     app: &CollectionsApp<'_, C, R>,
     rng: &mut RNG,
@@ -137,8 +110,7 @@ pub fn fuse_merge<C: Cycle, R: Rank, RNG: CryptoRngCore>(
     Ok(merged)
 }
 
-/// Seed a one-member sequence from its literal member: the committed
-/// polynomial is `[member, 1]` — the member and the sentinel.
+/// Seed a one-member sequence from its literal member.
 pub fn seed_sequence<C: Cycle, R: Rank, RNG: CryptoRngCore>(
     app: &CollectionsApp<'_, C, R>,
     rng: &mut RNG,
@@ -155,8 +127,7 @@ pub fn seed_sequence<C: Cycle, R: Rank, RNG: CryptoRngCore>(
     Ok(leaf)
 }
 
-/// Fuse two sequence children into their concatenation, computing the
-/// output honestly from the members the children carry.
+/// Fuse two sequence children into their concatenation.
 pub fn fuse_concat<C: Cycle, R: Rank, RNG: CryptoRngCore>(
     app: &CollectionsApp<'_, C, R>,
     rng: &mut RNG,

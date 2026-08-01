@@ -4,17 +4,9 @@
 //! the step witness. This sets the application fields on the [`ProofBuilder`]
 //! and returns the child proofs along with the output data from the step circuit.
 //!
-//! Poly-query claims raised by the step (via
-//! [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query))
-//! are *pre-checked* natively here: each claim's evaluation is re-checked
-//! against its polynomial, and the claimed commitment is re-derived with
-//! [`Application::commit_polynomial`]. A claim that does not hold aborts the
-//! fuse with [`Error::InvalidWitness`] — an honest prover with a dishonest
-//! witness fails early instead of producing a proof whose *parent* fuse (which
-//! recursively enforces the claims through the PCS accumulator and the
-//! `compute_v` circuit) would be unable to open. The claim instances, their
-//! polynomials, and their host commitments are recorded on the builder so the
-//! parent can fold them.
+//! Poly-query claims raised by the step are also pre-checked natively here:
+//! this is prover-side and fail-fast, while the parent fuse and root verifier
+//! enforce the same claims fault-tolerantly.
 
 use ragu_arithmetic::{CryptoRngCore, Cycle};
 use ragu_circuits::{
@@ -53,10 +45,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
     )> {
         let (left_proof, left_data) = left.into_parts();
         let (right_proof, right_data) = right.into_parts();
-        // The same capacity registration used — it comes off the same const
-        // parameters — so the same instance width the registry committed to.
-        // Building the adapter here only wraps the step; the application's
-        // padding constants lead the witness tuple.
         let (trace, aux) = MultiStage::new(Adapter::<C, S, R, HEADER_SIZE, J>::new(step))
             .trace((self.padding.clone(), left_data, right_data, witness))?
             .into_parts();
@@ -79,17 +67,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
                 },
         } = aux;
 
-        // Pre-check every claim natively so an honest prover with a dishonest
-        // witness fails here with a useful error; no soundness weight (the
-        // parent fuse and the root verifier enforce the same claims). Along
-        // the way, collect the claim polynomials and host commitments the
-        // parent's PCS folding will consume.
+        // Prover-side, fail-fast pre-check; no soundness weight (the parent
+        // fuse and root verifier enforce the same claims fault-tolerantly).
         let precheck = self.claim_precheck_enabled();
         let mut claim_polys = alloc::vec::Vec::with_capacity(polys.len());
         let mut claim_host_commitments = alloc::vec::Vec::with_capacity(polys.len());
         for witnessed in polys.iter() {
-            // Reject an over-capacity coefficient vector gracefully; otherwise
-            // `sparse::Polynomial::from_coeffs` would panic on it.
+            // `sparse::Polynomial::from_coeffs` panics on over-capacity input.
             if witnessed.coefficients().len() > R::num_coeffs() {
                 return Err(Error::InvalidWitness(
                     "poly-query claim rejected: coefficient count exceeds the polynomial rank \
@@ -114,9 +98,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         }
 
         // Then each query, against the polynomial its embedded commitment
-        // coordinates identify. A claim's `coords` are copied from the slot it
-        // opens, so a name with no matching slot here means the hooks and the
-        // instance layout have diverged, not that a witness is bad.
+        // coordinates identify.
         for claim in claims.iter() {
             let slot = polys
                 .iter()

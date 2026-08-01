@@ -30,24 +30,11 @@ pub enum Corruption<F> {
     LeftHeaderLen(usize),
     /// Resize `right_header` to the given length.
     RightHeaderLen(usize),
-    /// Perturb the claimed evaluation `y` of the poly-query claim in the
-    /// given slot, breaking the claim's evaluation binding. The root verifier
-    /// rejects the proof directly; a parent fuse's circuits reject it
-    /// recursively (the instance-bound claim no longer matches the
-    /// application circuit's k(Y), and `compute_v`'s claim quotient breaks).
+    /// Perturb the claimed evaluation `y` of the poly-query claim in the given slot.
     ClaimY(usize, F),
-    /// Perturb the first coordinate of the given claim slot's **name** — the
-    /// opened polynomial's embedded host coordinates — leaving the poly
-    /// region and everything else untouched, so the name matches no slot.
-    /// The root verifier's claim walk resolves it to nothing; a parent's
-    /// `_08_f` finds no polynomial for the quotient and `compute_v`'s one-hot
-    /// cannot select.
+    /// Perturb the first coordinate of the given claim slot's name so it matches no slot.
     ClaimName(usize, F),
-    /// Perturb the derived challenge in the given slot, leaving the point it
-    /// was derived from intact. This is the challenge-grinding shape: a prover
-    /// who wants a challenge other than the one its committed inputs hash to.
-    /// The `challenge_binding` circuit re-derives $\text{Hash}(\text{point})$
-    /// for every child slot, so a parent cannot assemble its trace at all.
+    /// Perturb the derived challenge in the given slot (the challenge-grinding shape).
     ChallengeValue(usize, F),
 }
 
@@ -94,28 +81,14 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 }
 
 impl<C: Cycle, R: Rank> Proof<C, R> {
-    /// Replaces one coordinate instance wire's recorded value, leaving
-    /// everything else — the recorded hosts and the claim polynomials —
-    /// untouched.
-    ///
-    /// Models a prover whose step used a representation that is not the
-    /// recorded host's. Exactly two checks are supposed to reject it: at
-    /// root, `verify` recomputes every slot's coordinates from the recorded
-    /// host; fused as a child, the parent's `compute_v` re-derives the
-    /// claim-coordinate polynomial's $q(u)$ from these wires and enforces it
-    /// against the eval stage's carried value.
+    /// Replaces one coordinate instance wire's recorded value, leaving the
+    /// recorded hosts and the claim polynomials untouched.
     pub fn corrupt_application_coord(&mut self, index: usize, value: C::CircuitField) {
         self.application_poly_coords[index] = value;
     }
 
-    /// The instance-bound opening $(x, y)$ this proof claims in `slot`.
-    ///
-    /// Exists for one job: letting a test establish *what* a proof claims
-    /// before asserting how the verifier treats it, so a rejection can be
-    /// attributed to the desync under test. Behind this feature because a
-    /// consumer's contract with a proof is
-    /// [`Application::verify`](crate::Application::verify), which checks the
-    /// slot lists itself.
+    /// The instance-bound opening $(x, y)$ this proof claims in `slot`, so a
+    /// test can establish what a proof claims before asserting rejection.
     pub fn claim_opening_for_testing(&self, slot: usize) -> (C::CircuitField, C::CircuitField) {
         let claim = &self.application_claims[slot];
         (claim.x, claim.y)

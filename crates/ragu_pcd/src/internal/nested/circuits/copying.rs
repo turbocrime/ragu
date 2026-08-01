@@ -34,12 +34,8 @@ use crate::internal::{
 };
 
 /// Copying circuit that relates the current preamble to a child's stages.
-///
 /// `L` is the application's poly count as a
-/// [`Len`](ragu_primitives::vec::Len): what [`Points`] needs in order to be a
-/// gadget, and the only shape this circuit needs. This circuit traverses a
-/// *child's* trace, but every step in an application exposes the same shape —
-/// child and grandchildren included — so one count describes the whole walk.
+/// [`Len`](ragu_primitives::vec::Len); a child exposes the same shape.
 pub struct Circuit<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> {
     side: Side,
     _marker: PhantomData<(C, R, L)>,
@@ -76,10 +72,8 @@ impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> MultiStageCircuit<C:
         dr: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
         _witness: DriverValue<D, ()>,
     ) -> Result<WithAux<Bound<'dr, D, ()>, DriverValue<D, ()>>> {
-        // Every stage is placed from the child's value-level chain, including
-        // the shape-free ones: a stage's position depends on how wide the
-        // stages before it are, so once any of them follows a shape, none of
-        // the typed positions after it are right.
+        // Every stage is placed from the value-level chain, shape-free ones
+        // included: one misplaced width misplaces every stage after it.
         use crate::internal::nested::{ChainStage, NestedLayouts};
 
         let layouts = NestedLayouts::new::<C, R>(L::len());

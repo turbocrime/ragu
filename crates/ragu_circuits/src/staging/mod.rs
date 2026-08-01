@@ -459,22 +459,13 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
 
 impl<F: Field, R: Rank, S: Stage<F, R>> StageExt<F, R> for S {}
 
-/// Builds a (partial) stage trace polynomial from raw slot values.
+/// Builds a (partial) stage trace polynomial from raw slot values. Shared by
+/// the typed path ([`StageExt::rx_configured`]) and the value-level path
+/// ([`InducedStages::rx`]).
 ///
-/// Shared between the typed path ([`StageExt::rx_configured`], where the
-/// geometry comes from the [`Stage`] associated functions) and the value-level
-/// path ([`InducedStages::rx`], where it comes from a layout discovered at
-/// registration time).
-///
-/// `num_slots` is the stage's declared slot count (a/d wire slots, two per
-/// gate); `values` may be shorter and is zero-padded to fill the remaining
-/// slots. `num_gates` is the gate span of those slots — always
-/// `num_slots.div_ceil(2)`, so it is redundant in principle. It is passed
-/// explicitly rather than re-derived here because both callers already have it
-/// in hand (the typed path from [`StageExt::num_gates`], the induced path from
-/// [`InducedStages::num_gates`], where it also drives `skip_gates` and the
-/// stage mask), and threading it through keeps this function a thin layout
-/// primitive that never recomputes geometry.
+/// `values` may be shorter than `num_slots` and is zero-padded. `num_gates`
+/// is always `num_slots.div_ceil(2)`, passed explicitly because both callers
+/// already have it in hand.
 fn build_stage_rx<F: Field, R: Rank>(
     alpha: F,
     skip_gates: usize,

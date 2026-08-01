@@ -27,8 +27,7 @@ use crate::{
 
 type HeaderVec<'dr, D, const HEADER_SIZE: usize> = FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>>;
 
-/// One child's polynomial slots, in slot order — the [`HeaderVec`] of the
-/// poly-slot region.
+/// One child's polynomial slots, in slot order.
 pub type PolyVec<'dr, D, J> = FixedVec<PolyInstance<'dr, D>, <J as HookConfig>::PolyWitnesses>;
 
 /// One child's poly-query claim slots, in slot order.
@@ -41,15 +40,7 @@ pub type ChallengeVec<'dr, D, J> =
 /// A single poly-query claim instance witnessed from a child proof: the opened
 /// polynomial's embedded commitment coordinates and the $(x, y)$ opening. The
 /// wire layout (coords, x, y) matches the claim-slot region of the application
-/// circuit's instance, so writing these into the
-/// [`application_ky`](ProofInputs::application_ky) Horner binds them to the
-/// child's committed application rx.
-///
-/// `coords` are the same values one of [`ProofInputs::polys`] holds — in the
-/// child's own circuit literally the same wires, since the pair is allocated
-/// once and written at both instance positions. The parent does not have to
-/// enforce that: a trace satisfying the child's registered wiring cannot have
-/// them differ, and the revdot identity is what carries it here.
+/// circuit's instance.
 #[derive(Gadget, Consistent)]
 pub struct ClaimInstance<'dr, D: Driver<'dr>> {
     #[ragu(gadget)]
@@ -62,11 +53,7 @@ pub struct ClaimInstance<'dr, D: Driver<'dr>> {
 
 /// A single witnessed polynomial as the application circuit's instance exposes
 /// it: its host commitment's affine coordinates, canonically embedded in the
-/// circuit field. The wire layout matches the polynomial-slot region of that
-/// instance.
-///
-/// One per polynomial, not one per query — see
-/// [`HookLayout::instance_len`](crate::framework_hooks::HookLayout::instance_len).
+/// circuit field. One per polynomial, not one per query.
 #[derive(Gadget, Consistent)]
 pub struct PolyInstance<'dr, D: Driver<'dr>> {
     #[ragu(gadget)]
@@ -74,9 +61,7 @@ pub struct PolyInstance<'dr, D: Driver<'dr>> {
 }
 
 /// A single derived challenge witnessed from a child proof: the field
-/// elements it was hashed from, and the challenge itself. The wire layout
-/// (every input element, then the challenge) matches the challenge-slot
-/// region of the application circuit's instance.
+/// elements it was hashed from (in order), then the challenge itself.
 #[derive(Gadget, Consistent)]
 pub struct ChallengeInstance<'dr, D: Driver<'dr>, J: HookConfig> {
     #[ragu(gadget)]
@@ -151,13 +136,12 @@ pub struct ProofInputs<
     /// Output header of this child proof.
     #[ragu(gadget)]
     pub output_header: HeaderVec<'dr, D, HEADER_SIZE>,
-    /// The poly-query claim instances this child proof raised, in slot order.
-    /// Unused slots hold the canonical padding claim.
+    /// The poly-query claim instances this child proof raised, in slot order;
+    /// unused slots hold the canonical padding claim.
     #[ragu(gadget)]
     pub claims: ClaimVec<'dr, D, J>,
-    /// The polynomials this child proof witnessed, in slot order. Unused slots
-    /// hold the canonical padding polynomial. Each claim above carries the
-    /// embedded commitment coordinates of one of these.
+    /// The polynomials this child proof witnessed, in slot order; unused slots
+    /// hold the canonical padding polynomial.
     #[ragu(gadget)]
     pub polys: PolyVec<'dr, D, J>,
     #[ragu(gadget)]
@@ -205,20 +189,10 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
     /// Compute k(y) for the application circuit instance.
     ///
     /// Returns `application_ky` = k(y) for `(children.left, children.right,
-    /// output_header, polys, claims, challenges)` — the polynomial slots follow
-    /// the headers, the query slots follow those, and the challenge slots
-    /// follow those, matching the instance layout the adapter writes
-    /// ([`HookLayout::instance_len`](crate::framework_hooks::HookLayout::instance_len)).
-    /// This is what binds the
-    /// witnessed polynomials, claim instances and derived challenges to the
-    /// child's committed application rx.
-    ///
-    /// `challenges` comes in as an argument because the challenge slots are
-    /// their own stage
-    /// ([`ChallengesStage`](super::slots::ChallengesStage)) rather than a field
-    /// here. The fold still walks one contiguous instance; only which stage
-    /// each region's wires live in differs, and that is deliberate — see that
-    /// module for why the slot regions do not belong on the chain's root.
+    /// output_header, polys, claims, challenges)`, in the instance layout the
+    /// adapter writes; this binds the slots to the child's committed
+    /// application rx. `challenges` is an argument because those slots are
+    /// their own stage ([`ChallengesStage`](super::slots::ChallengesStage)).
     pub fn application_ky(
         &self,
         dr: &mut D,
@@ -261,9 +235,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
     ProofInputs<'dr, D, C, HEADER_SIZE, J>
 {
     /// Allocate ProofInputs from a proof reference and pre-computed output
-    /// header. The slot counts are circuit-construction parameters: they fix
-    /// the wire shape regardless of whether a witness is present, and the
-    /// proof's own slot lists are checked against them.
+    /// header; the proof's slot lists are checked against the configured counts.
     pub fn alloc<R: Rank>(
         dr: &mut D,
         proof: DriverValue<D, &Proof<C, R>>,
@@ -457,11 +429,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig> staging::Stage<
     ];
 
     fn values() -> usize {
-        // Per child: the three headers, the poly and claim slot regions
-        // (priced once, by the layout), the circuit id, and the unified
-        // wires. The challenge slots are their own stage — see
-        // [`slots`](super::slots) for why the chain's root does not hold
-        // them.
+        // Per child: three headers, the poly and claim slot regions, the
+        // circuit id, and the unified wires. Challenge slots are their own
+        // stage ([`slots`](super::slots)).
         2 * (3 * HEADER_SIZE + J::layout().poly_query_instance_len() + 1 + unified::NUM_WIRES)
     }
 
@@ -499,8 +469,6 @@ mod tests {
         internal::tests::{HEADER_SIZE, R, assert_stage_values},
     };
 
-    /// `values()` predicts the wire count at every slot count, not just one.
-    /// This is what lets the stage's position in the chain come off its type.
     #[test]
     fn stage_values_matches_wire_count() {
         fn check<const POLYS: usize>() {

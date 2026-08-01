@@ -166,18 +166,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
             ));
         }
 
-        // Child poly-query claims: the quotient (p_i(X) - y_i)/(X - x_i) for
-        // each child proof's query slot, in slot order. This recursively
-        // enforces the claims the children raised via `enforce_poly_query`.
-        // Must remain the trailing block, matching `poly_queries`.
-        //
-        // A claim carries the embedded commitment coordinates of the
-        // polynomial it opens, so the quotient is taken against the polynomial
-        // that name identifies — not the one at the claim's own position.
-        // `compute_v` reaches the same polynomial through a one-hot keyed on
-        // the same pair, so the two resolutions agree by construction: they
-        // match on one value that a prover cannot forge, rather than on two
-        // mechanisms kept in step by hand.
+        // Child poly-query claims: the quotient (p_i(X) - y_i)/(X - x_i) per
+        // child claim slot, against the polynomial the claim's coords name
+        // (`compute_v` resolves the same name via its one-hot). Must remain
+        // the trailing block, matching `poly_queries`.
         for proof in [left, right] {
             for claim in &proof.application_claims {
                 let coords = proof.application_poly_coords();

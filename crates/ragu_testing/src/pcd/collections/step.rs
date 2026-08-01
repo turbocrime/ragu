@@ -1,37 +1,11 @@
 //! The four steps of the collections application: singleton seeds and
-//! name-binding fuses.
-//!
-//! Every collection starts as a **seed** proving a one-member collection
-//! from a literal element, and grows only by **fusing** two proven
-//! collections, so well-formedness is inductive from the singleton base
-//! case. The cross-proof identity mechanism is shared by both fuses: a
-//! child's header carries its output's *name* — the commitment's two
-//! canonical coordinates — and the parent re-witnesses the polynomial and
-//! enforces its handle's name equal to the child's header wires, so
-//! polynomial identity threads across proofs as plain field equality.
-//!
-//! **Multisets** ([`SeedSet`], [`MergeSets`]) are monic polynomials whose
-//! roots are the members; merging is multiplication, proven by one opened
-//! claim `c(z) = a(z)·b(z)`.
-//!
-//! **Sequences** ([`SeedSequence`], [`ConcatSequences`]) are polynomials
-//! whose coefficients are the members, with a **sentinel** coefficient `1`
-//! above the last member, and their headers carry the member count next to
-//! the name. Concatenation is the shifted addition
-//!
-//! ```text
-//! C = A + X^{ℓa} · (B − 1)
-//! ```
-//!
-//! (the `− 1` removes `A`'s sentinel, which `B`'s lowest member overwrites;
-//! `B`'s own sentinel becomes `C`'s). The offset factor `z^{ℓa}` is not
-//! witnessed — a freely witnessed factor could be chosen *after* the
-//! challenge is known, proving any claimed "concatenation" — but computed
-//! in fixed shape from the child's header-carried length: `ℓa`'s
-//! `log₂(num_coeffs)` bits are allocated, proven to pack to the header
-//! wire, and square-and-multiplied into `z^{ℓa}`. The same packing proves
-//! every header length below the rank's capacity, so the output length
-//! `ℓc = ℓa + ℓb` cannot wrap or overflow.
+//! name-binding fuses. A child's header carries its output's *name* — the
+//! commitment's two canonical coordinates — and the parent re-witnesses the
+//! polynomial and enforces its handle's name equal to the child's header
+//! wires. Multisets ([`SeedSet`], [`MergeSets`]) are monic root
+//! polynomials, merged by multiplication; sequences ([`SeedSequence`],
+//! [`ConcatSequences`]) are coefficient-list polynomials with a monic
+//! sentinel, concatenated by shifted addition.
 
 #![allow(clippy::type_complexity)]
 
@@ -58,9 +32,8 @@ use ragu_primitives::{
     vec::{CollectFixed, ConstLen, FixedVec, Len},
 };
 
-/// Data carried by a [`SetHeader`]: the set's name (its commitment's
-/// canonical coordinates) and the set polynomial as unstructured PCD data
-/// (the circuit never sees the polynomial; the name is what headers bind).
+/// Data carried by a [`SetHeader`]: the set's name and its polynomial as
+/// unstructured PCD data (the circuit never sees the polynomial).
 pub struct SetData<F: Field, R: Rank> {
     pub coords: [F; 2],
     pub polynomial: sparse::Polynomial<F, R>,
@@ -75,9 +48,7 @@ impl<F: Field, R: Rank> Clone for SetData<F, R> {
     }
 }
 
-/// Header carrying a set's **name** as two raw elements, so a parent step
-/// can `enforce_equal` its own handle's coordinates against the child's
-/// header wires.
+/// Header carrying a set's name as two raw elements.
 pub struct SetHeader<R>(PhantomData<R>);
 
 impl<F: Field, R: Rank> Header<F> for SetHeader<R> {
@@ -97,17 +68,13 @@ impl<F: Field, R: Rank> Header<F> for SetHeader<R> {
 }
 
 /// Witness for [`SeedSet`]: the one-member set as a committed polynomial.
-///
-/// `polynomial` rides beside the commitment because the step's output data
-/// carries it onward; the in-circuit handle exposes only evaluation.
 pub struct SeedSetWitness<C: Cycle, R: Rank> {
     pub set: PolyCommitment<C>,
     pub polynomial: sparse::Polynomial<C::CircuitField, R>,
 }
 
 /// A leaf establishing a one-member set: witnesses its committed polynomial
-/// (binding the name to this proof's instance) and outputs the name in the
-/// header.
+/// and outputs the name in the header.
 pub struct SeedSet<C, R> {
     _marker: PhantomData<(C, R)>,
 }
@@ -171,11 +138,8 @@ impl<C: Cycle, R: Rank> Step<C> for SeedSet<C, R> {
     }
 }
 
-/// Witness for the [`MergeSets`] fuse: the two contributing sets (which must
-/// match the children's header-carried names) and the claimed merged set.
-///
-/// `product_polynomial` rides beside the commitments because the step's
-/// output data carries it onward.
+/// Witness for the [`MergeSets`] fuse: the two contributing sets and the
+/// claimed merged set.
 pub struct MergeSetsWitness<C: Cycle, R: Rank> {
     pub a: PolyCommitment<C>,
     pub b: PolyCommitment<C>,
@@ -183,20 +147,10 @@ pub struct MergeSetsWitness<C: Cycle, R: Rank> {
     pub product_polynomial: sparse::Polynomial<C::CircuitField, R>,
 }
 
-/// The merging fuse: takes two [`SetHeader`] children, binds its witnessed
-/// contributing sets to the children's names in-circuit, proves the product,
+/// The merging fuse: binds its witnessed inputs to the children's names,
+/// proves `c(z) = a(z)·b(z)` at a challenge derived from all three names,
 /// and outputs the merged set's name alone.
-///
-/// `C` occupies a polynomial slot because Pedersen commitments are not
-/// multiplicative — `commit(A·B)` cannot be derived from `commit(A)` and
-/// `commit(B)` — but the slot holds only the name; that `C` **is** the
-/// product is *proven*: the challenge `z` is derived from all three names,
-/// `A` and `B` are opened at `z`, and `C`'s claim carries the in-circuit
-/// `a(z)·b(z)` as its claimed evaluation, so a wrong `C` makes the claim
-/// false by Schwartz–Zippel over `z`.
 pub struct MergeSets<'params, C: Cycle, R> {
-    /// The cycle parameters — a step that derives challenges carries them
-    /// itself, for [`derive_challenge`](StepCtx::derive_challenge).
     params: &'params C::Params,
     _marker: PhantomData<R>,
 }
@@ -256,15 +210,11 @@ impl<C: Cycle, R: Rank> Step<C> for MergeSets<'_, C, R> {
             [&right_header[0], &right_header[1]],
         )?;
 
-        // Open the contributing sets at z, and claim the merged set's
-        // evaluation *is* their product.
         let y_a = open_at(ctx, allocator, &a, &z)?;
         let y_b = open_at(ctx, allocator, &b, &z)?;
         let y_c = y_a.mul(ctx.dr, &y_b)?;
         ctx.enforce_poly_query(&c, z, y_c)?;
 
-        // The output header is the merged set's name — the contributing
-        // sets do not appear.
         let output_data = set_data(&c, product_polynomial);
         let header = name_header(&c)?;
 
@@ -277,8 +227,7 @@ impl<C: Cycle, R: Rank> Step<C> for MergeSets<'_, C, R> {
 }
 
 /// Data carried by a [`SeqHeader`]: the sequence's name and its member list
-/// as unstructured PCD data. The header-carried length is derived from the
-/// member list, so the two cannot disagree.
+/// as unstructured PCD data.
 pub struct SeqData<F: Field> {
     pub coords: [F; 2],
     pub members: Vec<F>,
@@ -303,9 +252,8 @@ impl<F: PrimeField> SeqData<F> {
     }
 }
 
-/// Header carrying a sequence's **name** (two raw elements) and its
-/// **length** (one raw element), so a parent can bind its handle to the
-/// name and derive the concatenation offset from the length.
+/// Header carrying a sequence's name (two raw elements) and its length
+/// (one raw element).
 pub struct SeqHeader;
 
 impl<F: PrimeField> Header<F> for SeqHeader {
@@ -324,18 +272,16 @@ impl<F: PrimeField> Header<F> for SeqHeader {
     }
 }
 
-/// Witness for [`SeedSequence`]: the literal member and its one-member
-/// sequence `[member, 1]` — the member and the sentinel — as a committed
-/// polynomial.
+/// Witness for [`SeedSequence`]: the literal member and its committed
+/// one-member sequence `[member, 1]`.
 pub struct SeedSequenceWitness<C: Cycle> {
     pub sequence: PolyCommitment<C>,
     pub member: C::CircuitField,
 }
 
 /// A leaf establishing a one-member sequence: witnesses the committed
-/// polynomial `[member, 1]` and outputs its name in the header, with the
-/// length slot pinned to the **constant** `1` — a seed proof cannot claim
-/// any other length.
+/// polynomial `[member, 1]` and outputs its name, with the header length
+/// pinned to the constant `1`.
 pub struct SeedSequence<C, R> {
     _marker: PhantomData<(C, R)>,
 }
@@ -404,23 +350,19 @@ impl<C: Cycle, R: Rank> Step<C> for SeedSequence<C, R> {
     }
 }
 
-/// Witness for the [`ConcatSequences`] fuse: the contributing sequences
-/// (which must match the children's header-carried names) and the claimed
-/// concatenation.
+/// Witness for the [`ConcatSequences`] fuse: the contributing sequences and
+/// the claimed concatenation.
 pub struct ConcatSequencesWitness<C: Cycle> {
     pub a: PolyCommitment<C>,
     pub b: PolyCommitment<C>,
     pub output: PolyCommitment<C>,
 }
 
-/// The concatenation fuse: takes two [`SeqHeader`] children, binds its two
-/// witnessed inputs to the children's names in-circuit, derives the offset
-/// factor `z^{ℓa}` from the left child's header-carried length, proves
-/// `C = A + X^{ℓa}·(B − 1)`, and outputs `C`'s name with length
-/// `ℓc = ℓa + ℓb`.
+/// The concatenation fuse: binds its witnessed inputs to the children's
+/// names and proves the shifted addition `C = A + X^{ℓa}·(B − 1)` — the
+/// `− 1` removes `A`'s sentinel, which `B`'s lowest member overwrites —
+/// outputting `C`'s name with length `ℓc = ℓa + ℓb`.
 pub struct ConcatSequences<'params, C: Cycle, R> {
-    /// The cycle parameters — a step that derives challenges carries them
-    /// itself, for [`derive_challenge`](StepCtx::derive_challenge).
     params: &'params C::Params,
     _marker: PhantomData<R>,
 }
@@ -462,8 +404,6 @@ impl<C: Cycle, R: Rank> Step<C> for ConcatSequences<'_, C, R> {
     {
         let allocator = &mut Standard::new();
 
-        // Native lengths and the concatenated member list, captured before
-        // the encodings consume the children's data.
         let la = left.as_ref().map(|d| d.members.len());
         let lb = right.as_ref().map(|d| d.members.len());
         let members = D::try_just(|| {
@@ -490,11 +430,9 @@ impl<C: Cycle, R: Rank> Step<C> for ConcatSequences<'_, C, R> {
             )?
         };
 
-        // The offset factor z^{ℓa}, in fixed shape: allocate ℓa's bits,
-        // prove they pack to the left child's header-carried length, and
-        // square-and-multiply. The factor must not be a free witness — a
-        // prover choosing it after seeing z could prove any claimed
-        // "concatenation" — and the packing also proves ℓa < num_coeffs.
+        // The offset factor z^{ℓa} must not be a free witness (it could be
+        // chosen after z is known): pack ℓa's bits against the header length
+        // — which also proves ℓa < num_coeffs — and square-and-multiply.
         let log_coeffs = R::num_coeffs().trailing_zeros() as usize;
         let la_bits = (0..log_coeffs)
             .map(|i| Boolean::alloc(ctx.dr, allocator, la.as_ref().map(|l| (*l >> i) & 1 == 1)))
@@ -512,9 +450,6 @@ impl<C: Cycle, R: Rank> Step<C> for ConcatSequences<'_, C, R> {
             z_pow = z_pow.square(ctx.dr)?;
         }
 
-        // Open the contributing sequences at z, and claim the output's
-        // evaluation: c(z) = a(z) + z^{ℓa}·(b(z) − 1) — the `− 1` removes
-        // A's sentinel, which B's lowest member overwrites.
         let y_a = open_at(ctx, allocator, &a, &z)?;
         let y_b = open_at(ctx, allocator, &b, &z)?;
         let y_b_less_sentinel = y_b.sub(ctx.dr, &one);
@@ -522,8 +457,8 @@ impl<C: Cycle, R: Rank> Step<C> for ConcatSequences<'_, C, R> {
         let y_c = y_a.add(ctx.dr, &shifted);
         ctx.enforce_poly_query(&c, z, y_c)?;
 
-        // The output length ℓc = ℓa + ℓb, packed from fresh bits so it is
-        // also proven below the rank's capacity — the sum cannot wrap.
+        // ℓc = ℓa + ℓb, packed from fresh bits so the sum is proven below
+        // the rank's capacity and cannot wrap.
         let lc_value = la.as_ref().and_then(|l| lb.as_ref().map(|r| *l + *r));
         let lc_bits = (0..log_coeffs)
             .map(|i| {
@@ -539,8 +474,6 @@ impl<C: Cycle, R: Rank> Step<C> for ConcatSequences<'_, C, R> {
             lc.enforce_equal(ctx.dr, &sum)?;
         }
 
-        // The output header is C's name and length — nothing about the
-        // contributors.
         let output_data = seq_data(&c, members);
         let header: FixedVec<Element<'dr, D>, ConstLen<3>> = c
             .coords()
@@ -557,11 +490,8 @@ impl<C: Cycle, R: Rank> Step<C> for ConcatSequences<'_, C, R> {
     }
 }
 
-/// The shared opening of a collections fuse: takes the step's three handles
-/// (two contributors and the claimed output), binds each contributor's name
-/// to its child's header-carried name (plain field equality on wires — same
-/// canonical representation on both sides), and derives the challenge `z`
-/// binding all three names before any evaluation point is known.
+/// Binds each contributor's name to its child's header-carried name, then
+/// derives the challenge `z` from all three names.
 fn bind_and_challenge<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
     ctx: &mut StepCtx<'_, 'dr, D, C>,
     params: &C::Params,
@@ -578,8 +508,7 @@ fn bind_and_challenge<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
     Ok((handles, z))
 }
 
-/// Opens `handle` at `z`: allocates the evaluation natively and claims it
-/// with a poly query.
+/// Opens `handle` at `z` via a poly-query claim.
 fn open_at<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
     ctx: &mut StepCtx<'_, 'dr, D, C>,
     allocator: &mut impl Allocator<'dr, D>,
@@ -592,8 +521,7 @@ fn open_at<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
     Ok(y)
 }
 
-/// Assembles a [`SetData`] value from a handle's name and the
-/// witness-carried polynomial.
+/// Assembles a [`SetData`] value from a handle's name and the polynomial.
 fn set_data<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, R: Rank>(
     handle: &PolyHandle<'dr, D, C>,
     polynomial: DriverValue<D, sparse::Polynomial<D::F, R>>,
@@ -629,8 +557,7 @@ fn seq_data<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>>(
     })
 }
 
-/// The two header wires for a set's name — the handle's own coordinate
-/// wires, reused rather than re-allocated.
+/// The set-name header wires: the handle's own coordinate wires.
 fn name_header<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>>(
     handle: &PolyHandle<'dr, D, C>,
 ) -> Result<FixedVec<Element<'dr, D>, ConstLen<2>>> {

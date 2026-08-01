@@ -58,17 +58,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
             return Ok(false);
         }
 
-        // Validate the per-slot vectors up front. Without this, a length
-        // mismatch would surface from the `alloc_for_verify` pipeline below as
-        // `Err(MalformedEncoding)` rather than the `Ok(false)` this method
-        // promises for a malformed proof (mirroring the header check). Every
-        // slot-indexed check further down relies on these lengths.
-        //
-        // Note which count gates which vector: `application_claims` is indexed
-        // per *query*, while `claim_polys` and `claim_host_commitments` are
-        // indexed per *polynomial* — the loops below walk them over the poly
-        // capacity. The two counts need not be equal, so gating a poly-indexed
-        // vector on the query capacity would be a latent bug.
+        // Reject wrong per-slot vector lengths up front, so a malformed proof
+        // yields `Ok(false)` rather than `Err` from the pipeline below. Claims
+        // are indexed per query; polys and their commitments per polynomial.
         let capacity = self.hook_layout();
         if pcd.proof().application_claims().len() != capacity.claims
             || pcd.proof().application_poly_coords().len() != capacity.polys * 2
@@ -94,9 +86,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
                     Maybe::clone(&proof),
                     data,
                 )?;
-                // The challenge slots live in their own stage, so they are
-                // allocated through the same helper that stage uses — one
-                // definition of the region's order, not two.
+                // Allocated through the same helper the challenge stage uses.
                 let challenges =
                     crate::internal::native::stages::slots::alloc_challenges::<_, C, R, J>(
                         dr, proof,
@@ -143,11 +133,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
             let z_nested = C::ScalarField::random(&mut rng);
             let mut nested_builder =
                 claims::Builder::new(&self.nested_registry, y_nested, z_nested, capacity);
-            nested_claims::build(
-                &nested_source,
-                &mut nested_builder,
-                capacity.polys,
-            )?;
+            nested_claims::build(&nested_source, &mut nested_builder, capacity.polys)?;
 
             let ky_source = nested::SingleProofKySource::<C::ScalarField>::new();
             nested::ky_values(&ky_source, capacity.polys)
@@ -165,27 +151,17 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
             poly_eval == expected
         };
 
-        // Check the proof's own poly-query claims. Claims are enforced
-        // recursively one fuse level up (the parent folds them into f and the
-        // PCS accumulator), so the root proof's own claims have not been
-        // folded yet; the verifier checks them natively with the carried
-        // claim polynomials: the claimed evaluation, the host commitment
-        // binding, and the instance-bound embedded coordinates.
-        // First each polynomial: its carried coefficients must commit to the
-        // host commitment the proof records.
+        // A root proof's own claims are not yet folded; check them natively.
+        // Rejects a carried claim polynomial that does not commit to the
+        // recorded host commitment.
         let poly_commitments = (0..capacity.polys).all(|slot| {
             let poly = &pcd.proof().claim_polys[slot];
             let host = pcd.proof().claim_host_commitment(slot);
             poly.commit_to_affine::<C::HostCurve>(C::host_generators(self.params)) == host
         });
 
-        // And the coordinate instance region: every slot's two wires must be
-        // the recorded host's embedded affine coordinates. A fused child has
-        // this enforced in-circuit — `compute_v` re-derives the
-        // claim-coordinate polynomial's q(u) from these wires — but a root
-        // proof's own coordinates have not been folded yet, so the verifier
-        // recomputes them natively. Without this a root-only proof could name
-        // (and hash into its step) a commitment other than the recorded one.
+        // Rejects a coordinate instance slot that is not the recorded host's
+        // embedded affine coordinates.
         let poly_coords = poly_commitments
             && (0..capacity.polys).all(|slot| {
                 let host = pcd.proof().claim_host_commitment(slot);
@@ -194,10 +170,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
                 })
             });
 
-        // Then each query, against the polynomial its embedded coordinates
-        // identify. A name matching no polynomial slot fails the check rather
-        // than panicking: it is instance data, so a malformed proof can carry
-        // anything there.
+        // Rejects a query naming no polynomial slot or disagreeing with the
+        // named polynomial's evaluation.
         let poly_query_claims = poly_commitments
             && (0..capacity.claims).all(|slot| {
                 let crate::proof::ClaimOpening { coords, x, y } =
@@ -208,11 +182,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
                     .is_some_and(|i| pcd.proof().claim_polys[i].eval(x) == y)
             });
 
-        // Check the proof's own derived challenges. Like the claims above,
-        // these are bound recursively one fuse level up — by the
-        // `challenge_binding` circuit, which re-derives every child slot's
-        // challenge from its points — so a root proof's own challenges are
-        // still unbound and the verifier re-derives each one natively.
+        // Rejects a derived challenge that does not re-derive from its
+        // recorded inputs (a root proof's challenges are not yet bound).
         let derived_challenges = (0..capacity.challenge_calls).all(|slot| {
             let opening = &pcd.proof().application_challenges()[slot];
             crate::internal::challenge::padded_challenge::<C>(

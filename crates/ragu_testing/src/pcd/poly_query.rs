@@ -1,26 +1,9 @@
-//! Test fixtures for the polynomial-query oracle: steps that witness a
-//! polynomial, derive a challenge, evaluate at it, and enforce the evaluation
-//! via [`StepCtx::enforce_poly_query`].
-//!
-//! [`CommitAndOpen`] is a seedable leaf exercising the full oracle loop in one
-//! step: the prover witnesses a polynomial and its framework commitment (from
-//! [`Application::commit_polynomial`]), derives a Fiat–Shamir challenge bound
-//! to the commitment, evaluates the polynomial at the challenge, and raises a
-//! poly-query claim for the evaluation. [`OpenAndHash`] merges two such
-//! leaves, opening the left child's polynomial at a witnessed point and
-//! chaining the commitment into a Poseidon-hash digest.
-//!
-//! The polynomial lives in [`HashedOpening`]'s `Data`, so it travels with
-//! `Pcd<C, R, HashedOpening<R>>` and is reachable from `fuse(...)` via
-//! [`Pcd::data`](ragu_pcd::Pcd::data) on the input children and from the
-//! `application_data` produced for the resulting `Pcd`. It is **not**
-//! exposed to the circuit — `Header::encode` only allocates the hash
-//! digest. The commitment-and-opening claim view of the polynomial is
-//! enforced natively by fuse via the claims raised through
-//! [`StepCtx::enforce_poly_query`].
-//!
-//! [`Application::commit_polynomial`]: ragu_pcd::Application::commit_polynomial
-//! [`StepCtx::enforce_poly_query`]: ragu_pcd::step::StepCtx::enforce_poly_query
+//! Test fixtures for the polynomial-query oracle. [`CommitAndOpen`] is a
+//! seedable leaf that witnesses a committed polynomial, derives a challenge
+//! bound to the commitment, and enforces the evaluation via a poly query.
+//! [`OpenAndHash`] fuses two such leaves, opening a witnessed commitment at
+//! a witnessed point and chaining digests through a Poseidon hash. The
+//! polynomial rides in [`HashedOpening`]'s `Data`, never in the circuit.
 
 use core::marker::PhantomData;
 
@@ -44,11 +27,8 @@ use ragu_primitives::{
     poseidon::Sponge,
 };
 
-/// Data carried by a [`HashedOpening`] header.
-///
-/// `hash` is the only field exposed to the circuit (via
-/// [`Header::encode`]). `polynomial` is unstructured PCD data: it flows
-/// through the tree alongside the proof but the circuit never sees it.
+/// Data carried by a [`HashedOpening`] header: the digest (the only field
+/// the circuit sees) and the polynomial as unstructured PCD data.
 pub struct HashedOpeningData<F: Field, R: Rank> {
     pub hash: F,
     pub polynomial: sparse::Polynomial<F, R>,
@@ -63,6 +43,7 @@ impl<F: Field, R: Rank> Clone for HashedOpeningData<F, R> {
     }
 }
 
+/// Header exposing a Poseidon digest as a single element.
 pub struct HashedOpening<R>(PhantomData<R>);
 
 impl<F: Field, R: Rank> Header<F> for HashedOpening<R> {
@@ -80,36 +61,19 @@ impl<F: Field, R: Rank> Header<F> for HashedOpening<R> {
     }
 }
 
-/// Witness for [`CommitAndOpen`]: a committed-polynomial handle.
-///
-/// `commitment` comes from
-/// [`Application::commit_polynomial`](ragu_pcd::Application::commit_polynomial),
-/// derived from `polynomial` — which rides here because the step's output
-/// data carries it onward; the handle exposes only evaluation.
-/// `claimed_y` overrides the honestly-computed evaluation when set; it exists
-/// so tests can exercise the framework's rejection of dishonest evaluation
-/// claims.
+/// Witness for [`CommitAndOpen`]: a committed polynomial and, optionally, a
+/// dishonest evaluation (`claimed_y`) to claim in place of the honest one.
 pub struct CommitAndOpenWitness<C: Cycle, R: Rank> {
     pub commitment: PolyCommitment<C>,
     pub polynomial: sparse::Polynomial<C::CircuitField, R>,
     pub claimed_y: Option<C::CircuitField>,
 }
 
-/// A seedable leaf step exercising the full poly-query oracle loop:
-///
-/// 1. **witness a polynomial** (prover-only data) and its framework
-///    commitment (allocated in-circuit as a [`Point`](ragu_primitives::Point)),
-/// 2. **derive a challenge** `z` bound to the commitment via
-///    [`StepCtx::derive_challenge`],
-/// 3. **evaluate** the polynomial at `z`,
-/// 4. **enforce the evaluation** via [`StepCtx::enforce_poly_query`].
-///
-/// The output header carries a Poseidon digest binding the commitment, and
-/// the polynomial rides along as PCD data.
+/// A seedable leaf: witnesses a committed polynomial, derives a challenge
+/// bound to the commitment, evaluates at it, and enforces the evaluation as
+/// a poly query. The output header is a Poseidon digest of the commitment.
 pub struct CommitAndOpen<'params, C: Cycle, R> {
-    /// The cycle parameters: this step both derives a challenge (which
-    /// takes them) and runs its own Poseidon sponge (whose constants derive
-    /// from them).
+    /// Cycle parameters, for challenge derivation and the Poseidon sponge.
     pub params: &'params C::Params,
     _marker: PhantomData<R>,
 }
@@ -151,40 +115,29 @@ impl<C: Cycle, R: Rank> Step<C> for CommitAndOpen<'_, C, R> {
     {
         let allocator = &mut Standard::new();
 
-        // (1) Witness the committed polynomial: allocate its commitment
-        // in-circuit and retain the coefficients for the claim.
         let claimed_y = witness.as_ref().map(|w| w.claimed_y);
         let polynomial = witness.as_ref().map(|w| w.polynomial.clone());
         let commitment = witness.map(|w| w.commitment);
         let [handle] = ctx.witness_polynomial([commitment])?;
 
-        // (2) Derive a challenge bound to the commitment — the handle absorbs
-        // as its canonical embedded coordinates.
         let z = ctx.derive_challenge(self.params, &handle)?;
 
-        // (3) Evaluate the polynomial at the challenge (natively; the
-        // polynomial is not in-circuit). A dishonest override, if provided,
-        // takes the evaluation's place so fuse-time rejection can be tested.
+        // A dishonest override, if provided, takes the honest evaluation's
+        // place so fuse-time rejection can be tested.
         let y_value = handle
             .eval(z.value().map(|z| *z))
             .and_then(|honest| claimed_y.map(|claimed| claimed.unwrap_or(honest)));
         let y = Element::alloc(ctx.dr, allocator, y_value)?;
 
-        // (4) Enforce the evaluation as a poly-query claim.
         ctx.enforce_poly_query(&handle, z, y)?;
 
-        // (5) Open the *same* polynomial a second time, at x = 0. This is the
-        // cheap direction: a repeat opening spends one query slot and no
-        // polynomial slot — no second declared polynomial, so no second bridge
-        // stage, commitment, MSM or endoscaling point. Exercising it here means
-        // every test in this fixture's suite covers it end to end.
+        // A repeat opening of the same polynomial at x = 0: spends a query
+        // slot but no polynomial slot, covering that path in every test.
         let zero = Element::alloc(ctx.dr, allocator, D::just(|| C::CircuitField::ZERO))?;
         let at_zero_value = handle.eval(D::just(|| C::CircuitField::ZERO));
         let at_zero = Element::alloc(ctx.dr, allocator, at_zero_value)?;
         ctx.enforce_poly_query(&handle, zero, at_zero)?;
 
-        // Output digest binds the commitment, via its canonical embedded
-        // coordinates — the same identity the challenge absorbed.
         let mut sponge = Sponge::new(ctx.dr, C::circuit_poseidon(self.params));
         handle.write(ctx.dr, &mut sponge)?;
         let output = sponge.squeeze(ctx.dr)?;
@@ -209,16 +162,14 @@ impl<C: Cycle, R: Rank> Step<C> for CommitAndOpen<'_, C, R> {
 /// Witness for [`OpenAndHash`]: an opening `(x, y)` of a committed polynomial.
 pub struct OpenAndHashWitness<C: Cycle, R: Rank> {
     pub commitment: PolyCommitment<C>,
-    /// The committed polynomial itself — the step's output data carries it.
     pub polynomial: sparse::Polynomial<C::CircuitField, R>,
     pub x: C::CircuitField,
     pub y: C::CircuitField,
 }
 
-/// A step that merges two [`HashedOpening`] children: it opens a witnessed
-/// polynomial commitment at a witnessed point, chains the commitment and both
-/// children's digests into a Poseidon-hash digest, and threads the
-/// polynomial through the PCD tree as accompanying data.
+/// A fuse of two [`HashedOpening`] children: opens a witnessed commitment
+/// at a witnessed point and chains it with both children's digests into a
+/// new Poseidon digest.
 pub struct OpenAndHash<'params, C: Cycle, R> {
     pub poseidon_params: &'params C::CircuitPoseidon,
     _marker: PhantomData<R>,
@@ -308,12 +259,9 @@ pub fn poly<F: PrimeField, R: Rank>(coeffs: &[u64]) -> sparse::Polynomial<F, R> 
     sparse::Polynomial::from_coeffs(coeffs.iter().map(|c| F::from(*c)).collect())
 }
 
-/// Both fixtures registered, at the capacity above, ready to finalize.
-///
-/// Returned unfinalized so a caller can reach a builder-only knob —
-/// `skip_claim_precheck_for_testing`, which lives behind `unstable-fuzzing` in
-/// `ragu_pcd` and so cannot be named here. Callers that need none of those want
-/// [`open_app`].
+/// Both fixtures registered but not finalized, so callers can reach
+/// builder-only knobs (e.g. `skip_claim_precheck_for_testing`, which lives
+/// behind `unstable-fuzzing`). Callers needing none want [`open_app`].
 pub fn open_app_builder<C: Cycle, R: Rank>(params: &C::Params) -> Result<OpenAppBuilder<'_, C, R>> {
     OpenAppBuilder::<C, R>::new()
         .register(CommitAndOpen::<C, R>::new(params))?
@@ -326,14 +274,8 @@ pub fn open_app<C: Cycle, R: Rank>(params: &C::Params) -> Result<OpenApp<'_, C, 
     open_app_builder::<C, R>(params)?.finalize(params)
 }
 
-/// Seed a [`CommitAndOpen`] leaf over the polynomial with these coefficients.
-///
-/// The leaf's own commitment is derived from the polynomial and dropped, so this
-/// is for callers with nothing to say about it afterwards. A caller that needs
-/// the polynomial or its [`PolyCommitment`] later — to open it in a parent, or
-/// to check a claim against it — should call
-/// [`Application::commit_polynomial`](ragu_pcd::Application::commit_polynomial)
-/// and [`Application::seed`](ragu_pcd::Application::seed) itself.
+/// Seed a [`CommitAndOpen`] leaf over the polynomial with these
+/// coefficients; the commitment is derived internally and dropped.
 pub fn seed_leaf<C: Cycle, R: Rank, RNG: CryptoRngCore>(
     app: &OpenApp<'_, C, R>,
     params: &C::Params,

@@ -65,19 +65,12 @@ pub struct ChildEvaluationsWitness<F> {
     pub p_poly: F,
 
     /// The child proof's poly-query claim polynomials, each evaluated at $u$,
-    /// in slot order. These feed the parent's recursive enforcement of the
-    /// child's claims: the quotient $(p_i(u) - y_i)/(u - x_i)$ enters $f(u)$
-    /// and each $p_i(u)$ enters the $v$ Horner accumulation. Must contain
-    /// exactly the stage's poly-slot count; the stage body indexes it up to
-    /// that count.
+    /// in slot order; must contain exactly the stage's poly-slot count.
     pub claims: Vec<F>,
 
     /// The child proof's claim-coordinate polynomial $q$ evaluated at $u$ —
-    /// one value when the shape has polynomial slots, none otherwise. `q` is
-    /// deterministic from the child's recorded hosts
-    /// ([`claim_coord_poly`](crate::internal::challenge::claim_coord_poly)),
-    /// so this is computed, not carried; `compute_v` re-derives the same value
-    /// from the child's coordinate instance wires and enforces agreement.
+    /// one value when the shape has polynomial slots, none otherwise;
+    /// `compute_v` re-derives the same value and enforces agreement.
     pub q_poly: Vec<F>,
 }
 
@@ -107,13 +100,8 @@ impl<F: PrimeField> ChildEvaluationsWitness<F> {
 }
 
 /// The number of components the current fuse step contributes to an
-/// accumulation — one per field of [`CurrentStepWitness`]: the two `s_prime`
-/// registry restrictions, the `inner_error` restriction, $a$, $b$, and the
-/// `query` restriction.
-///
-/// Both this stage's width and the nested side's endoscaling-point count are
-/// built from it, so the two cannot drift. `_10_p` documents the canonical
-/// accumulation order.
+/// accumulation — one per field of [`CurrentStepWitness`]. Both this stage's
+/// width and the nested side's endoscaling-point count are built from it.
 pub const CURRENT_STEP_COMPONENTS: usize = 6;
 
 /// Pre-computed polynomial evaluations at $u$ for the current step.
@@ -182,19 +170,16 @@ pub struct ChildEvaluations<'dr, D: Driver<'dr>, J: HookConfig> {
     pub registry_xy_poly: Element<'dr, D>,
     #[ragu(gadget)]
     pub p_poly: Element<'dr, D>,
-    /// The child's claim polynomial evaluations at $u$, in slot order. Ordered
-    /// so the [`Write`] order (and hence the $v$ Horner weighting) matches the
-    /// `_10_p` accumulation order.
+    /// The child's claim polynomial evaluations at $u$, in slot order
+    /// (the [`Write`] order must match the `_10_p` accumulation order).
     #[ragu(gadget)]
     pub claims: FixedVec<Element<'dr, D>, J::PolyWitnesses>,
-    /// The child's claim-coordinate polynomial $q$ evaluated at $u$ — last, matching
-    /// its `_10_p` fold position after the claim polynomials. Empty at
-    /// `POLYS = 0`, where no `q` exists.
+    /// The child's $q(u)$ — last, matching its `_10_p` fold position; empty
+    /// at `POLYS = 0`.
     #[ragu(gadget)]
     pub q_eval: FixedVec<Element<'dr, D>, QEvalLen<J>>,
 }
 
-/// One `q` evaluation when the layout has polynomial slots, none otherwise —
 /// [`q_slots`](crate::internal::nested::q_slots) at the type level.
 pub struct QEvalLen<J: HookConfig>(PhantomData<J>);
 
@@ -205,8 +190,7 @@ impl<J: HookConfig> Len for QEvalLen<J> {
 }
 
 impl<'dr, D: Driver<'dr>, J: HookConfig> ChildEvaluations<'dr, D, J> {
-    /// Allocate child evaluations from pre-computed witness values. The
-    /// layout's poly-slot count sizes `claims`.
+    /// Allocate child evaluations from pre-computed witness values.
     pub fn alloc<A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
@@ -339,8 +323,6 @@ mod tests {
         internal::tests::{HEADER_SIZE, R, assert_stage_values},
     };
 
-    /// `values()` predicts the wire count at every slot count, not just one.
-    /// This is what lets the stage's position in the chain come off its type.
     #[test]
     fn stage_values_matches_wire_count() {
         fn check<const POLYS: usize>() {

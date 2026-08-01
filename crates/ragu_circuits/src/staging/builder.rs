@@ -80,14 +80,9 @@ pub struct StageBuilder<
 > {
     driver: &'a mut D,
     on_finish: fn(&mut D),
-    /// The next gate this builder will reserve at — advanced by every
-    /// [`reserve_slot`](StageBuilder::reserve_slot), the single place wires
-    /// are allocated ([`configure_stage`](StageBuilder::configure_stage)
-    /// delegates to it).
-    ///
-    /// This exists so [`configure_induced_sized`](StageBuilder::configure_induced_sized)
-    /// can check a run's layout against where the builder *actually is*, rather
-    /// than against a value the caller derived from that same layout.
+    /// The next gate this builder will reserve at, so
+    /// [`configure_induced_sized`](StageBuilder::configure_induced_sized) can
+    /// check a run's layout against where the builder actually is.
     gate: usize,
     _marker: PhantomData<(&'dr (), R, Current, Target)>,
 }
@@ -100,10 +95,8 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Target: Stage<D::F, R>>
         StageBuilder {
             driver,
             on_finish,
-            // Where the base stage `()` ends: it skips the SYSTEM gate and
-            // occupies nothing. Taken from the `Stage` impl rather than written
-            // as `1` so this cursor and `InducedStages::skip_gates`, which
-            // mirrors the same recursion, stay directly comparable.
+            // Where the base stage `()` ends — from the `Stage` impl, not a
+            // literal `1`, so this cursor and `InducedStages::skip_gates` match.
             gate: <() as Stage<D::F, R>>::skip_gates(),
             _marker: PhantomData,
         }
@@ -147,8 +140,7 @@ pub struct StageGuard<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R>> {
 }
 
 impl<'dr, D: Driver<'dr>, R: Rank, S: Stage<D::F, R>> StageGuard<'dr, D, R, S> {
-    /// Number of wires reserved for this stage, for tests that compare the
-    /// typed and induced reservation paths.
+    /// Number of wires reserved for this stage, for tests.
     #[cfg(test)]
     pub(crate) fn num_reserved(&self) -> usize {
         self.stage_wires.len()
@@ -259,8 +251,7 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
             StageBuilder {
                 driver: self.driver,
                 on_finish: self.on_finish,
-                // This stage's gates, so a run configured after it sees where
-                // the trace actually is. The only addition to this body.
+                // Advance past this stage's gates.
                 gate: self.gate + Next::num_gates(),
                 _marker: PhantomData,
             },
@@ -268,16 +259,9 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
     }
 
     /// As [`configure_stage`](Self::configure_stage), with the stage's slot
-    /// count supplied as a value instead of read from `Next::values()`.
-    ///
-    /// This is the typed door's value-width variant: the `Parent = Current`
-    /// typestate still orders the chain, but the *width* comes from the
-    /// caller — for circuits whose stage widths are a property of the
-    /// application (per-shape variants), `Next::values()` describes only one
-    /// of the widths in use. The caller owns the obligation that every
-    /// consumer of this trace (its mask, its rx, the stages that follow)
-    /// computes positions from the same value; the value-level layouts that
-    /// feed masks and rx are built from exactly these widths.
+    /// count supplied as a value instead of read from `Next::values()`. The
+    /// caller owns the obligation that every consumer of this trace (mask,
+    /// rx, following stages) computes positions from the same value.
     pub fn configure_stage_sized<Next: Stage<D::F, R, Parent = Current> + 'dr>(
         mut self,
         stage: Next,
@@ -300,32 +284,11 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
     }
 
     /// Reserves a **run** of stages whose slot boundaries come from a
-    /// value-level layout, while the run as a whole occupies one ordinary
-    /// typed stage `Next`.
-    ///
-    /// [`configure_stage`](Self::configure_stage) reads its geometry from
-    /// `Next::values()` and `Next::num_gates()`. That works when the stage
-    /// *count* is a property of a Rust type. When it is instead a property of
-    /// the application being built, the chain cannot be written down slot by
-    /// slot — but it can be written down as a whole: `Next` spans every slot,
-    /// and [`InducedStages`](super::InducedStages) says where inside that span
-    /// the boundaries fall. `Next` stays in the `Parent` chain like any other
-    /// stage, so typed stages may follow a run with no special handling.
-    ///
-    /// `stage` supplies only the witness body and is cloned per slot, so one
-    /// concrete type serves the whole family: each slot's width comes from the
-    /// layout, not from the type, and the type's own chain position is unused.
-    ///
-    /// When the stages before the run have value-level widths, the typed chain
-    /// no longer knows where the run begins — so the run's start is checked
-    /// against this builder's own gate cursor, which is where wires have
-    /// actually been reserved to. The caller still owns the obligation that
-    /// everything *after* the run computes positions from the same layout.
-    ///
-    /// A slot whose witness allocates an odd number of wires is padded to a
-    /// whole gate, exactly as [`configure_stage`](Self::configure_stage) pads a
-    /// typed stage; the layout must budget for that padding, since it is what
-    /// the slot's own mask will cover.
+    /// value-level [`InducedStages`](super::InducedStages) layout; the run as
+    /// a whole occupies one typed stage `Next`. `stage` supplies only the
+    /// witness body and is cloned per slot; odd-width slots are padded to a
+    /// whole gate, which the layout must budget for. The caller owns the
+    /// obligation that everything after the run uses the same layout.
     ///
     /// # Errors
     ///
@@ -355,10 +318,8 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
             guards.push(self.reserve_slot(stage.clone(), layout.width(slot))?);
         }
 
-        // No end-of-run check, deliberately: `reserve_slot` advances the
-        // cursor by `width.div_ceil(2)` per slot and `final_skip_gates` is
-        // `skip_gates(0)` plus that same sum — the two sides are the same
-        // computation. The start check is the one with two independent sides.
+        // No end-of-run check: the cursor and `final_skip_gates` are the same
+        // per-slot sum. The start check is the one with two independent sides.
 
         Ok((
             guards,
@@ -371,16 +332,10 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
         ))
     }
 
-    /// Reserves one stage's wires at a width supplied as a value: the
-    /// wire-allocation half of [`configure_stage`](Self::configure_stage),
-    /// with the geometry supplied rather than read off a type.
-    ///
-    /// The single reservation primitive behind both value-width doors —
-    /// [`configure_stage_sized`](Self::configure_stage_sized), where the width
-    /// is the whole stage's, and
-    /// [`configure_induced_sized`](Self::configure_induced_sized), where it is
-    /// one slot's. A run's slots are reserved exactly as an ordinary stage is;
-    /// only where the width came from differs.
+    /// Reserves one stage's wires at a width supplied as a value: the single
+    /// reservation primitive behind
+    /// [`configure_stage_sized`](Self::configure_stage_sized) and
+    /// [`configure_induced_sized`](Self::configure_induced_sized).
     fn reserve_slot<S: Stage<D::F, R> + 'dr>(
         &mut self,
         stage: S,
@@ -406,8 +361,7 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
             num_wires += 1;
         }
 
-        // The only place this builder reserves gates, so the only place the
-        // cursor has to move.
+        // The only place this builder reserves gates, so the cursor moves here.
         self.gate += num_gates;
 
         Ok(StageGuard {
@@ -444,8 +398,7 @@ impl<'a, 'dr, D: Driver<'dr>, R: Rank, Current: Stage<D::F, R>, Target: Stage<D:
     }
 
     /// As [`skip_stage`](Self::skip_stage), with the stage's slot count
-    /// supplied as a value — the skipping twin of
-    /// [`configure_stage_sized`](Self::configure_stage_sized).
+    /// supplied as a value.
     pub fn skip_stage_sized<Next: Stage<D::F, R, Parent = Current> + 'dr>(
         self,
         stage: Next,

@@ -140,11 +140,9 @@ where
                 processor.bonding_claim(id, source.rx(RxIndex::BridgeEval))?;
             }
             Loading => {
-                // **Every stage the circuit configures must be supplied here.**
-                // A bonding claim is checked against the *sum* of these rxs, so
-                // a configured stage that is left out contributes zero wires —
-                // and every constraint the circuit places over it is then
-                // satisfied vacuously.
+                // Every stage the circuit configures must be supplied here:
+                // the claim checks the *sum* of these rxs, so a missing stage
+                // makes its constraints vacuous over zero wires.
                 let loading_rxs = source
                     .rx(RxIndex::PointsStage)
                     .zip(source.rx(RxIndex::BridgePreamble))
@@ -159,8 +157,7 @@ where
                 processor.grouped_bonding_claim(id, loading_rxs)?;
             }
             Copying(side) => {
-                // As in `Loading`: every stage the circuit configures must be
-                // supplied, or its constraints hold vacuously over zero wires.
+                // As in `Loading`: every configured stage must be supplied.
                 let copying_rxs = source
                     .rx(RxIndex::ChildPointsStage(side))
                     .zip(source.rx(RxIndex::BridgePreamble))

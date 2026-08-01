@@ -12,35 +12,17 @@
 //!
 //! # Slot capacities are declared per application
 //!
-//! How many polynomials a step may witness, how many openings it may enforce,
-//! how many challenges it may derive and how wide each challenge is are **not**
-//! framework constants — consumers' needs vary too widely for that. They are
+//! How many polynomials a step may witness, how many openings it may
+//! enforce, and how many challenges it may derive (and how wide) are
 //! parameters of [`ApplicationBuilder`], so a step's cost falls on the
-//! application that registers it rather than on every application the framework
-//! will ever host.
-//!
-//! They are declared rather than folded from the registered steps because
-//! handing a circuit to the registry *measures* it: the registry synthesizes the
-//! circuit and freezes its shape. A shape derived from a maximum over steps is
-//! not settled until the last one arrives. Declared, an application's shape is
-//! known before the first step registers, so
-//! [`register`](ApplicationBuilder::register) hands each circuit over on the
-//! spot.
-//!
-//! A capacity is uniform within one application because the internal circuits
-//! read a child's instance as a fixed-width record and any step's proof may be
-//! any fuse's child. Steps that use fewer slots than declared are padded up to
-//! it, at a cost that does not grow with the capacity.
-//!
-//! What the capacities trade against is [`HEADER_SIZE`]: a claim slot adds
-//! three elements to the child's $k(Y)$ and a header element adds one, both
-//! absorbed by `outer_collapse` at roughly the same per-element rate. There is
-//! no capacity arithmetic anywhere — an application is simply built, and if a
-//! combination does not fit, `finalize` returns
-//! [`GateBoundExceeded`](ragu_core::Error::GateBoundExceeded) and the numbers
-//! come down.
-//!
-//! [`HEADER_SIZE`]: Application
+//! application that registers it. They are declared rather than folded from
+//! the registered steps because handing a circuit to the registry freezes
+//! its shape, which a maximum over steps would not settle until the last one
+//! arrives. A capacity is uniform within one application because the
+//! internal circuits read a child's instance as a fixed-width record;
+//! steps that use fewer slots are padded up, at a cost that does not grow
+//! with the capacity. If a combination does not fit, `finalize` returns
+//! [`GateBoundExceeded`](ragu_core::Error::GateBoundExceeded).
 
 #![no_std]
 #![allow(clippy::type_complexity, clippy::too_many_arguments)]
@@ -121,28 +103,15 @@ impl<const PW: usize, const PQ: usize, const CD: usize, const CW: usize> HookCon
 ///
 /// An application declares its capacity as two parameters: `HEADER_SIZE`,
 /// the width of one encoded header, and `J`, the hook capacities as one
-/// type — usually written inline as [`AppHooks`]:
-///
-/// ```text
-/// ApplicationBuilder<'params, Pasta, ProductionRank, 4, AppHooks<3, 3, 1, 6>>
-/// ```
-///
-/// See [`HookConfig`](framework_hooks::HookConfig) for what each hook number
-/// prices; together with `HEADER_SIZE` they are the whole of an application
-/// circuit's instance width, the hook regions priced by
-/// [`HookLayout::poly_query_instance_len`](framework_hooks::HookLayout::poly_query_instance_len)
-/// and
-/// [`HookLayout::challenge_instance_len`](framework_hooks::HookLayout::challenge_instance_len):
+/// type — usually written inline as [`AppHooks`]. Together they are the
+/// whole of an application circuit's instance width:
 ///
 /// ```text
 /// 3·HEADER_SIZE + 2·POLYS + 4·QUERIES + CHALLENGES·(CHALLENGE_WIDTH + 1)
 /// ```
 ///
-/// (the `2·POLYS` is each slot's name — the host commitment's affine
-/// coordinates, canonically embedded; the `4·QUERIES` is the opened
-/// polynomial's name and the $(x, y)$ opening). A combination that does not
-/// fit fails at [`finalize`](ApplicationBuilder::finalize); the crate docs
-/// say why capacity is declared and what it trades against.
+/// See [`framework_hooks::HookConfig`] for what each hook number prices;
+/// the crate docs say why capacity is declared.
 pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig> {
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
@@ -200,9 +169,11 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         // happens here, before `finalize` supplies them. Hand-over freezes
         // the circuit's shape, which is settled: every term of the instance
         // comes from a declared parameter.
-        self.native_registry = self.native_registry.register_circuit(MultiStage::new(
-            Adapter::<C, S, R, HEADER_SIZE, J>::new(step),
-        ))?;
+        self.native_registry =
+            self.native_registry
+                .register_circuit(MultiStage::new(Adapter::<C, S, R, HEADER_SIZE, J>::new(
+                    step,
+                )))?;
         self.num_application_steps += 1;
 
         Ok(self)
@@ -234,9 +205,8 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         mut self,
         params: &'params C::Params,
     ) -> Result<Application<'params, C, R, HEADER_SIZE, J>> {
-        // The internal steps are built at the same declared capacity as the
-        // application's own, so their circuits join the registry in
-        // circuit-index order: internal steps first, then application steps.
+        // The internal steps are built at the application's declared
+        // capacity, like its own.
         let rerandomize = Adapter::<C, _, R, HEADER_SIZE, J>::new(
             step::internal::rerandomize::Rerandomize::<()>::new(),
         );
@@ -246,22 +216,14 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         let (total_circuits, log2_circuits) =
             internal::native::total_circuit_counts(self.num_application_steps);
 
-        // Build the native registry:
-        // 1. Application circuits (registered just above)
-        // 2. Internal circuits and masks
-        // 3. Internal steps
-        //
-        // Internal circuits are built for the one settled capacity, since
-        // every application circuit exposes exactly it.
-        //
-        // First, register internal circuits and masks
+        // Native registry order: application circuits (registered above),
+        // then internal circuits and masks, then internal steps.
         self.native_registry = internal::native::register_all::<C, R, HEADER_SIZE, J>(
             self.native_registry,
             params,
             log2_circuits,
         )?;
 
-        // Then, register internal steps
         self.native_registry = self
             .native_registry
             .register_internal_step(MultiStage::new(rerandomize))?;
@@ -280,10 +242,8 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
             "final circuit count mismatch"
         );
 
-        // Register nested internal circuits (no application steps, no
-        // headers). The nested side needs exactly one number, the poly-slot
-        // count, taken both as a value (for the layouts) and as a `Len` (for
-        // the gadgets those layouts place).
+        // The nested side needs exactly one number, the poly-slot count —
+        // as a value for the layouts and as a `Len` for the gadgets.
         self.nested_registry = internal::nested::register_all::<C, R, J::PolyWitnesses>(
             self.nested_registry,
             J::PolyWitnesses::len(),
@@ -293,9 +253,6 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
             native_registry: self.native_registry.finalize()?,
             nested_registry: self.nested_registry.finalize()?,
             params,
-            // The padding constants every proof's unused hook slots take,
-            // computed here — where the parameters enter — and supplied to
-            // each trace as witness data.
             padding: internal::challenge::Padding::new(params, J::ChallengeWidth::len())?,
             num_application_steps: self.num_application_steps,
             seeded_trivial: OnceCell::new(),
@@ -306,12 +263,8 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
     }
 
     /// Disables the fuse-time poly-query pre-check, modelling a malicious
-    /// prover who simply does not run it.
-    ///
-    /// The pre-check in `fuse::_01_application` runs on the prover and
-    /// carries no soundness weight by design; disabling it lets tests
-    /// distinguish what the *circuits* enforce from what the honest prover
-    /// merely declines to do.
+    /// prover who simply does not run it — the pre-check carries no soundness
+    /// weight, so tests can see what the *circuits* enforce.
     #[cfg(feature = "unstable-fuzzing")]
     pub fn skip_claim_precheck_for_testing(mut self) -> Self {
         self.skip_claim_precheck = true;
@@ -341,10 +294,8 @@ pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: 
     native_registry: Registry<'params, C::CircuitField, R>,
     nested_registry: Registry<'params, C::ScalarField, R>,
     params: &'params C::Params,
-    /// The padding constants for unused hook slots — per-application witness
-    /// values, computed once at [`finalize`](ApplicationBuilder::finalize)
-    /// and supplied to every trace. See
-    /// [`Padding`](internal::challenge::Padding).
+    /// The padding constants for unused hook slots, computed once at
+    /// [`finalize`](ApplicationBuilder::finalize).
     padding: internal::challenge::Padding<C>,
     num_application_steps: usize,
     /// Cached seeded trivial proof for rerandomization.
@@ -359,25 +310,14 @@ pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
     Application<'_, C, R, HEADER_SIZE, J>
 {
-    /// The application's settled slot capacity — the shape every application
-    /// circuit's instance has, and every proof's slot lists.
-    ///
-    /// Read off this type's own layout parameter rather than stored, so it is
-    /// the same value every circuit was registered at and there is no second
-    /// representation to keep in step.
+    /// The application's settled slot capacity, read off the type parameter
+    /// so there is no second representation to keep in step.
     pub(crate) fn hook_layout(&self) -> framework_hooks::HookLayout {
         J::layout()
     }
 
     /// The nested bridge chain's value-level geometry at this application's
     /// capacity.
-    ///
-    /// Two things keep this value-level: the chain's three shape-carrying
-    /// stages state no width of their own (their `values()` is
-    /// [`shape_dependent_stage`](internal::shape_dependent_stage), keeping
-    /// the slot counts off the nested stage types), and the chain ends in
-    /// *runs* of per-slot bridge stages, which need span arithmetic to cut
-    /// one mask per slot from a single span.
     pub(crate) fn nested_chain_layout(&self) -> ragu_circuits::staging::InducedStages {
         internal::nested::NestedLayouts::chain_layout::<C::HostCurve, R>(J::PolyWitnesses::len())
     }
@@ -450,13 +390,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         &self.native_registry
     }
 
-    /// The cycle parameters this application was finalized against.
-    ///
-    /// Steps that call
-    /// [`derive_challenge`](step::StepCtx::derive_challenge) carry the
-    /// parameters themselves; this is where a caller constructing such a
-    /// step gets them without threading the reference beside the
-    /// application it came from.
+    /// The cycle parameters this application was finalized against — where a
+    /// caller constructing a
+    /// [`derive_challenge`](step::StepCtx::derive_challenge)-calling step
+    /// gets them.
     pub fn params(&self) -> &C::Params {
         self.params
     }
@@ -479,27 +416,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         }
     }
 
-    /// Commits to a `CircuitField` polynomial in the framework's poly-query
-    /// commitment scheme, returning a [`PolyCommitment`] that bundles the
-    /// polynomial with its commitment's representation.
-    ///
-    /// The commitment is an (unblinded) Pedersen commitment to the
-    /// coefficients on the host curve; its representation is the affine
-    /// coordinates canonically embedded in the circuit field
-    /// ([`PolyCommitment::coords`]). Thread the returned [`PolyCommitment`]
-    /// into a step's witness and turn it into an in-circuit [`PolyHandle`]
-    /// with [`StepCtx::witness_polynomial`](step::StepCtx::witness_polynomial);
-    /// [`StepCtx::enforce_poly_query`](step::StepCtx::enforce_poly_query) then
-    /// raises the opening claim. Because the representation is derived from
-    /// the polynomial here, the two cannot be mismatched by an honest caller.
+    /// Commits to a `CircuitField` polynomial — an unblinded Pedersen
+    /// commitment on the host curve, bundled with the polynomial and the
+    /// commitment's canonically embedded affine coordinates
+    /// ([`PolyCommitment::coords`]). Thread the result into a step's witness
+    /// for [`StepCtx::witness_polynomial`](step::StepCtx::witness_polynomial).
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidWitness`] if the polynomial's commitment is
-    /// the identity (e.g. the zero polynomial) or has a coordinate at or
-    /// above $2^{254}$ (a `~2^-129` fraction of the field) — neither has a
-    /// canonical representation. Both are answered by re-blinding the
-    /// polynomial.
+    /// Returns [`Error::InvalidWitness`] if the commitment is the identity
+    /// (e.g. the zero polynomial) or has a coordinate at or above $2^{254}$
+    /// — neither has a canonical representation; both are answered by
+    /// re-blinding the polynomial.
     pub fn commit_polynomial(
         &self,
         polynomial: &ragu_circuits::polynomials::sparse::Polynomial<C::CircuitField, R>,

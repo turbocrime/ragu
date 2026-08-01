@@ -276,11 +276,8 @@ pub struct Output<'dr, D: Driver<'dr>> {
     pub right: ChildEvaluations<'dr, D>,
 }
 
-/// The query stage of the fuse witness.
-///
-/// Shape-free: every child contributes the same wire count here (one
-/// evaluation per rx component plus five scalars), so nothing about this
-/// stage's geometry depends on a step's hook counts.
+/// The query stage of the fuse witness. Shape-free: its width does not depend
+/// on a step's hook counts.
 pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, J: HookConfig> {
     _marker: PhantomData<(C, R, J)>,
 }
@@ -293,17 +290,14 @@ impl<C: Cycle, R, const HEADER_SIZE: usize, J: HookConfig> Default for Stage<C, 
     }
 }
 
-/// One child's contribution to this stage's wire width: one rx evaluation per
-/// rx component, plus 5 scalars.
+/// One child's contribution to this stage's wire width: one evaluation per rx
+/// component, plus 5 scalars.
 pub fn child_num_values() -> usize {
     RxIndex::NUM + 5
 }
 
-/// This stage's wire width; the value-level source of the typed
-/// [`values()`](staging::Stage::values).
-///
-/// One fixed-registry evaluation per native internal circuit — a framework
-/// constant — plus `registry_wxy`, plus each child's contribution.
+/// This stage's wire width: one fixed-registry evaluation per native internal
+/// circuit, plus `registry_wxy`, plus each child's contribution.
 pub fn num_values() -> usize {
     InternalCircuitIndex::NUM + 1 + 2 * child_num_values()
 }

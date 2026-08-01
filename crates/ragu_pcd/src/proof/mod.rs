@@ -66,8 +66,7 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, R, H> {
         (self.proof, self.data)
     }
 
-    /// Mutable access to the underlying proof, for the corruption helpers in
-    /// [`fuzz_utils`](crate::fuzz_utils).
+    /// Mutable proof access for the [`fuzz_utils`](crate::fuzz_utils) corruption helpers.
     #[cfg(feature = "unstable-fuzzing")]
     pub(crate) fn proof_mut(&mut self) -> &mut Proof<C, R> {
         &mut self.proof
@@ -130,10 +129,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     }
 }
 
-/// A polynomial-opening claim: the opened polynomial satisfies $p(x) = y$,
-/// named by its commitment's embedded coordinates — the same values (in the
-/// step's own circuit, the same *wires*) the polynomial's slot carries, so
-/// a claim and its polynomial cannot disagree about identity.
+/// A polynomial-opening claim $p(x) = y$, naming the polynomial by its
+/// commitment's embedded coordinates.
 #[derive(Clone, Copy, Debug)]
 pub struct ClaimOpening<F> {
     /// The opened polynomial's embedded commitment coordinates.
@@ -144,14 +141,11 @@ pub struct ClaimOpening<F> {
     pub y: F,
 }
 
-/// A derived Fiat–Shamir challenge, as the application circuit's instance
-/// exposes it: the field elements it was hashed from, and the challenge
-/// itself.
+/// A derived Fiat–Shamir challenge as the application circuit's instance
+/// exposes it: the field elements it was hashed from, and the challenge.
 #[derive(Clone, Debug)]
 pub struct ChallengeOpening<F> {
-    /// The slot's input elements, exactly
-    /// [`HookLayout::challenge_width`](crate::framework_hooks::HookLayout::challenge_width)
-    /// of them — the step's, then the sentinel in each position it left empty.
+    /// The slot's input elements (`challenge_width` of them, sentinel-padded).
     pub inputs: alloc::vec::Vec<F>,
     /// The challenge, hashed from [`inputs`](Self::inputs).
     pub challenge: F,
@@ -262,37 +256,18 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) child_left_stage_rx: ChildStageRx<C::ScalarField, R>,
     pub(crate) child_right_stage_rx: ChildStageRx<C::ScalarField, R>,
 
-    /// Per-step polynomial-query claim **instances** — the
-    /// $(\bar{C}_i, x_i, y_i)$ tuples the prover declared via
-    /// [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query)
-    /// at the fuse that produced this proof, padded to exactly
-    /// the application's poly capacity. They
-    /// are bound to the application circuit's $k(Y)$ instance and recursively
-    /// enforced when this proof is fused as a child: the parent folds each
-    /// claim into $f(X)$ and the PCS accumulator, and its `compute_v` circuit
-    /// re-derives the matching terms.
+    /// Poly-query claim instances declared at the producing fuse, padded to the
+    /// application's poly capacity; bound to $k(Y)$.
     pub(crate) application_claims: alloc::vec::Vec<ClaimOpening<C::CircuitField>>,
-    /// The coordinate instance region's values: two per polynomial slot, in
-    /// slot order — the slot's host commitment affine coordinates, canonically
-    /// embedded in the circuit field. Bound to the application circuit's
-    /// $k(Y)$ like the other instance regions. A claim carries the same pair
-    /// for the polynomial it opens, so this list is what a claim's `coords`
-    /// are matched against.
+    /// Coordinate instance region: two coords per polynomial slot, in slot order.
     pub(crate) application_poly_coords: alloc::vec::Vec<C::CircuitField>,
-    /// The derived challenges the step's circuit exposes, one per
-    /// challenge slot the application's capacity provides, in slot order.
+    /// The derived challenges the step's circuit exposes, in slot order.
     pub(crate) application_challenges: alloc::vec::Vec<ChallengeOpening<C::CircuitField>>,
 
-    /// The claim polynomials, in slot order — carried for exactly one fuse
-    /// level so the parent can fold them into $f(X)$ and $p(X)$, and so the
-    /// top-level verifier can check a root proof's own (not-yet-folded)
-    /// claims natively.
+    /// The claim polynomials, in slot order — carried for one fuse level.
     pub(crate) claim_polys: alloc::vec::Vec<sparse::Polynomial<C::CircuitField, R>>,
 
-    /// The claims' host-curve commitments, in slot order — these are the
-    /// points the parent's endoscaling accumulation consumes; each embeds to
-    /// the corresponding `application_poly_coords` pair. [`Cached`]: each is
-    /// the commitment of the matching [`claim_polys`](Self::claim_polys) entry.
+    /// Commitments of [`claim_polys`](Self::claim_polys), in slot order.
     claim_host_commitments: alloc::vec::Vec<Cached<C::HostCurve>>,
 }
 
@@ -386,28 +361,13 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         &self.right_header
     }
 
-    /// Returns the per-step polynomial-query claim instances
-    /// $(\bar{C}_i, x_i, y_i)$ declared at the fuse step that produced this
-    /// proof, in slot order — always
-    /// the application's poly capacity, with
-    /// unused slots holding the canonical padding claim. The instances are
-    /// bound to the application circuit's $k(Y)$ and recursively enforced when
-    /// this proof is fused as a child.
-    ///
-    /// Crate-internal, with the two slot lists below it: a proof's slot lists
-    /// are the verifier's working data, and the consumer's contract is
-    /// [`Application::verify`](crate::Application::verify), which checks each
-    /// of these itself. The one legitimate outside read — a test establishing
-    /// what a proof claims so a rejection can be attributed — goes through
-    /// `Proof::claim_opening_for_testing`, behind `unstable-fuzzing`.
+    /// The poly-query claim instances declared at the producing fuse, in slot
+    /// order (padded to the application's poly capacity).
     pub(crate) fn application_claims(&self) -> &[ClaimOpening<C::CircuitField>] {
         &self.application_claims
     }
 
-    /// The coordinate instance region's values: two per polynomial slot, in
-    /// slot order — always the application's poly capacity, with unused slots
-    /// holding the canonical padding polynomial's. A claim names a polynomial
-    /// by carrying its pair.
+    /// Coordinate instance region: two coords per polynomial slot, in slot order.
     pub(crate) fn application_poly_coords(&self) -> &[C::CircuitField] {
         &self.application_poly_coords
     }
@@ -585,21 +545,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::Hoo
         points_alpha: C::ScalarField,
         builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<C::HostCurve> {
-        let num_points =
-            crate::internal::nested::num_endoscaling_points(self.hook_layout().polys);
+        let num_points = crate::internal::nested::num_endoscaling_points(self.hook_layout().polys);
         assert_eq!(points.len(), num_points);
 
-        // The assertion above checks the slice against the *value* formula; the
-        // conversion inside `new` checks it against the `Len` the stage is typed
-        // by. Two independent sides of the same obligation.
         let witness = PointsWitness::<
             C::HostCurve,
             crate::internal::nested::EndoPoints<J::PolyWitnesses>,
         >::new(beta_endo, points)?;
 
-        // Placed through the value-level chain, not `StageExt::rx`, whose
-        // `Default` is the typed placeholder: a stage's width and position
-        // follow the application's capacity.
+        // Via the value-level chain, not `StageExt::rx`: stage width and
+        // position follow the application's capacity.
         let chain = self.nested_chain_layout();
         let endoscalar_rx = chain.rx_configured(
             nested::ChainStage::Endoscalar.index(),
@@ -607,10 +562,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::Hoo
             &EndoscalarStage,
             beta_endo,
         )?;
-        // The points stage is an induced run, so its wires come from the slot
-        // list rather than from a stage body — `rx` over the flat values is
-        // the same rx a whole-stage body would produce, and the run is still
-        // one commitment.
+        // Induced run: wires come from the slot list, not a stage body.
         let points_rx = chain.rx(
             nested::ChainStage::Points.index(),
             points_alpha,
@@ -677,22 +629,17 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::Hoo
         builder.set_left_header(vec![C::CircuitField::ZERO; HEADER_SIZE]);
         builder.set_right_header(vec![C::CircuitField::ZERO; HEADER_SIZE]);
 
-        // Poly-query claim slots: a trivial proof raises no claims, so every
-        // slot holds the application's padding claim (mirroring the adapter).
-        // Every query opens polynomial slot 0, matching the adapter's padding —
-        // so it carries slot 0's embedded coordinates, the same values
-        // `application_poly_coords` records for that slot.
+        // A trivial proof raises no claims: every slot holds the application's
+        // padding claim, mirroring the adapter's padding (every query opens slot 0).
         let padding = &self.padding;
-        // The padding polynomial is the constant 1, so its commitment is the
-        // fixed generator g[0] — derived here rather than carried.
+        // The padding polynomial is the constant 1; its commitment is g[0].
         let padding_host = {
             use ragu_arithmetic::FixedGenerators;
             C::host_generators(self.params).g()[0]
         };
-        let padding_coords: alloc::vec::Vec<C::CircuitField> =
-            (0..self.hook_layout().polys)
-                .flat_map(|_| padding.poly.coords())
-                .collect();
+        let padding_coords: alloc::vec::Vec<C::CircuitField> = (0..self.hook_layout().polys)
+            .flat_map(|_| padding.poly.coords())
+            .collect();
         builder.set_application_polys(
             padding_coords,
             vec![
@@ -711,10 +658,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::Hoo
                 })
                 .collect(),
         );
-        // Challenge slots: a trivial proof derives no challenges, so every slot
-        // holds the all-sentinel inputs and their honest challenge — mirroring
-        // the adapter's padding, so the binding circuit can re-derive every
-        // slot uniformly.
+        // No challenges derived: every slot holds the all-sentinel inputs and
+        // their honest challenge, mirroring the adapter's padding.
         builder.set_application_challenges(
             (0..self.hook_layout().challenge_calls)
                 .map(|_| ChallengeOpening {
@@ -808,9 +753,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::Hoo
         // and delegate to `compute_endoscaling` so this trivial setup
         // cannot silently drift from the real prover path.
         let beta_endo = extract_endoscalar(C::CircuitField::ONE);
-        // The claim-coordinate q for a trivial proof's padding hosts — the
-        // same value a parent recomputes when it folds this proof, since q is
-        // deterministic from the recorded hosts. Empty at zero capacity.
+        // The claim-coordinate q for the padding hosts; empty at zero capacity.
         let padding_q: alloc::vec::Vec<C::HostCurve> = if self.hook_layout().polys == 0 {
             alloc::vec::Vec::new()
         } else {
@@ -897,10 +840,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::Hoo
                 stashed_claims: alloc::vec![padding_host; self.hook_layout().polys],
                 stashed_q: padding_q.clone(),
             };
-            // Placed through the value-level chain: the preamble sits after
-            // the points stage, whose width follows the capacity, so no type
-            // knows where it starts. Its wires come from the slot list, since
-            // the stage is an induced run rather than one gadget body.
+            // Induced run via the value-level chain: the preamble's position
+            // follows the capacity-sized points stage.
             let witness = nested::stages::preamble::Witness {
                 native_preamble: host_commitment,
                 left: trivial_child_witness.clone(),

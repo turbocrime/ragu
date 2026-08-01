@@ -55,12 +55,6 @@ pub(crate) const fn num_steps(num_points: usize) -> usize {
 
 /// Number of accumulation inputs for a point count `L`: every point after the
 /// first.
-///
-/// A [`Len`] computed from another `Len`, which is the whole reason the count
-/// travels as a type rather than a const: the point count is an expression in the
-/// application's poly count, and passing an expression as a const generic
-/// argument needs `generic_const_exprs`. [`Len::len`] is an ordinary function, so
-/// it may compute whatever it likes from generics.
 pub struct InputsLen<L: Len>(core::marker::PhantomData<L>);
 
 impl<L: Len> Len for InputsLen<L> {
@@ -69,9 +63,8 @@ impl<L: Len> Len for InputsLen<L> {
     }
 }
 
-/// Number of endoscaling steps — and so interstitials — for a point count `L`.
-///
-/// [`num_steps`] at the type level.
+/// Number of endoscaling steps — and so interstitials — for a point count
+/// `L`: [`num_steps`] at the type level.
 pub struct NumStepsLen<L: Len>(core::marker::PhantomData<L>);
 
 impl<L: Len> Len for NumStepsLen<L> {
@@ -81,12 +74,10 @@ impl<L: Len> Len for NumStepsLen<L> {
 }
 
 /// The points stage's wire width for `num_points` accumulated points; the
-/// value-level source of the typed
-/// [`values()`](ragu_circuits::staging::Stage::values) of
-/// [`PointsStage`].
+/// value-level source of [`PointsStage`]'s typed
+/// [`values()`](ragu_circuits::staging::Stage::values).
 pub fn points_stage_num_values(num_points: usize) -> usize {
-    // (x, y) coordinates for initial + inputs (num_points - 1)
-    // + interstitials (one per step).
+    // (x, y) coordinates for initial + inputs + interstitials.
     2 * (num_points + num_steps(num_points))
 }
 
@@ -117,9 +108,7 @@ impl<F: Field, R: Rank> Stage<F, R> for EndoscalarStage {
 }
 
 /// Witness for the points stage: initial, inputs, and interstitials.
-///
-/// Typed by the same [`Len`] as the [`Points`] gadget it witnesses, so the two
-/// sides of the stage cannot disagree about how many points there are.
+/// Typed by the same [`Len`] as the [`Points`] gadget it witnesses.
 pub struct PointsWitness<C: CurveAffine, L: Len> {
     /// Initial accumulator (base case for step 0).
     pub initial: C,
@@ -130,10 +119,6 @@ pub struct PointsWitness<C: CurveAffine, L: Len> {
 }
 
 impl<C: CurveAffine, L: Len> PointsWitness<C, L> {
-    /// The stage's points in slot order — the flat list the run places, the
-    /// list [`Points::from_slots`] reads back, and what the rx path feeds
-    /// [`InducedStages::rx`](ragu_circuits::staging::InducedStages::rx). All
-    /// three are one order; changing it in one place silently moves wires.
     /// The point in slot `i` of [`slot_points`](Self::slot_points), without
     /// building the whole list.
     ///
@@ -150,6 +135,8 @@ impl<C: CurveAffine, L: Len> PointsWitness<C, L> {
         }
     }
 
+    /// The stage's points in slot order — the order the run places, the order
+    /// [`Points::from_slots`] reads back, and the wire order the rx path commits.
     pub fn slot_points(&self) -> vec::Vec<C> {
         let mut points = vec::Vec::with_capacity(1 + self.inputs.len() + self.interstitials.len());
         points.push(self.initial);
@@ -171,8 +158,7 @@ where
     /// # Errors
     ///
     /// Returns [`MalformedEncoding`](ragu_core::Error::MalformedEncoding) if
-    /// `points` is not `L::len()` long — the one place the caller's slice and the
-    /// stage's declared width could part company.
+    /// `points` is not `L::len()` long.
     pub fn new(endoscalar: u128, points: &[C]) -> Result<Self> {
         let initial = points[0];
         let points = &points[1..];
@@ -231,15 +217,9 @@ impl<C: CurveAffine, R: Rank, L: Len> Clone for EndoscalingStep<C, R, L> {
 }
 
 /// The accumulated points, as the circuit body names them: initial, inputs,
-/// and interstitials. See [`PointsWitness`].
-///
-/// A gadget. The point count rides `L` because it is an expression in the
-/// application's poly count and a const generic cannot carry an expression on
-/// stable Rust — see [`InputsLen`]. The derive keeps all three fields in one
-/// statement of order.
-///
-/// Field order is the slot order [`PointsWitness::slot_points`] emits and
-/// [`from_slots`](Self::from_slots) consumes.
+/// and interstitials. Field order is the slot order
+/// [`PointsWitness::slot_points`] emits and [`from_slots`](Self::from_slots)
+/// consumes.
 #[derive(Gadget)]
 pub struct Points<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> {
     #[ragu(gadget)]
@@ -251,10 +231,7 @@ pub struct Points<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> {
 }
 
 impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> Points<'dr, D, C, L> {
-    /// Rebuild the named view from the run's slots.
-    ///
-    /// Takes no count: both widths come from `L`, which is what lets this be a
-    /// gadget. A run shorter than `L` describes is reported as
+    /// Rebuild the named view from the run's slots; a short run reports
     /// [`MalformedEncoding`](ragu_core::Error::MalformedEncoding).
     pub fn from_slots(slots: impl IntoIterator<Item = Point<'dr, D, C>>) -> Result<Self> {
         let slots = &mut slots.into_iter();
@@ -289,9 +266,8 @@ pub fn points_stage_num_slots(num_points: usize) -> usize {
 }
 
 /// The layout subdividing a [`PointsStage`] span into one slot per point,
-/// anchored where [`EndoscalarStage`] ends.
-/// The slot width comes from [`PointSlotStage`], the stage this layout tiles, so
-/// the two cannot disagree.
+/// anchored where [`EndoscalarStage`] ends; the slot width comes from
+/// [`PointSlotStage`].
 fn points_run_layout<C: CurveAffine, R: Rank>(
     num_points: usize,
 ) -> ragu_circuits::staging::InducedStages {
@@ -304,15 +280,8 @@ fn points_run_layout<C: CurveAffine, R: Rank>(
 }
 
 /// Stage for allocating all point witnesses (inputs and interstitials).
-///
-/// How many points are accumulated depends on the children's shapes, which is
-/// a property of the application, so the run's width is a value (see
-/// [`points_stage_num_values`]) and this type carries no point count. It holds
-/// the run's position in the `Parent` chain; the framework reaches the layout
-/// and [`PointSlotStage`] instead, never this stage's own geometry.
-///
-/// The whole run is masked and committed as **one** stage — the subdivision
-/// decides where wires land, not how many commitments there are.
+/// The run's width is a value ([`points_stage_num_values`]); the whole run is
+/// masked and committed as **one** stage.
 pub type PointsStage<C, R> = crate::internal::Run<C, R, EndoscalarStage>;
 
 /// One slot of a [`PointsStage`] run: a single curve point.
@@ -374,9 +343,7 @@ impl<C: CurveAffine, R: Rank> Stage<C::Base, R> for PointSlotStage<C, R> {
 ///
 /// The circuit constrains that `interstitials[step]` equals the Horner result.
 ///
-/// `L` is the accumulation's point count, carried as a [`Len`] so it can be an
-/// expression in the application's poly count — the same reason [`Points`] takes
-/// one.
+/// `L` is the accumulation's point count, carried as a [`Len`].
 pub struct EndoscalingStep<C: CurveAffine, R: Rank, L: Len> {
     step: usize,
     _marker: core::marker::PhantomData<(C, R, L)>,
@@ -673,7 +640,6 @@ mod tests {
         const NUM_POINTS: usize = 11;
         let num_steps = num_steps(NUM_POINTS);
 
-        // Verify computed counts match expectations
         // With 10 inputs, we need ceil(10/4) = 3 steps
         assert_eq!(num_steps, 3);
 
@@ -776,7 +742,6 @@ mod tests {
 
     #[test]
     fn test_input_range() {
-        // Helper to get input_range for a given point count and step
         fn range<const NUM_POINTS: usize>(step: usize) -> core::ops::Range<usize> {
             EndoscalingStep::<EpAffine, R, ConstLen<NUM_POINTS>>::new(step).input_range()
         }

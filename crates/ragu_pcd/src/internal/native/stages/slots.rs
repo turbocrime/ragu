@@ -1,20 +1,8 @@
 //! The challenge slots, as a stage of their own rather than a region of
-//! [`preamble`](super::preamble).
-//!
-//! `preamble` is the root of the native chain, so a const parameter there is
-//! named by every stage and circuit downstream, reader or not. Placed at the
-//! end of a branch instead, only the circuits that read the region name its
-//! counts — `hashes_1`, `hashes_2` and `inner_collapse` finish upstream and
-//! stay free of `CHALLENGES` and `CHALLENGE_WIDTH`.
-//!
-//! A region can leave the root only if every reader can end on one branch:
-//! sibling branches are separate commitments, and a circuit sees only its own
-//! branch plus the shared prefix. The challenge slots qualify
-//! (`outer_collapse` and `challenge_binding` are both on the error branch);
-//! the poly and claim slots do not (`application_ky` folds them on the error
-//! branch while `compute_v` and the eval stage read them on the query
-//! branch), so those stay in the shared prefix and `POLYS`/`CLAIMS` stay
-//! viral with them.
+//! [`preamble`](super::preamble): only their readers (`outer_collapse` and
+//! `challenge_binding`, both on the error branch) name the challenge counts.
+//! The poly and claim slots have readers on both branches, so they stay in
+//! the shared prefix.
 
 use core::marker::PhantomData;
 
@@ -37,9 +25,6 @@ use crate::{Proof, framework_hooks::HookConfig};
 
 /// The challenges both children derived, in slot order: the elements each was
 /// hashed from, and the challenge itself.
-///
-/// Both children present the application's layout, so one set of counts sizes
-/// both.
 #[derive(Gadget, Consistent)]
 pub struct ChallengesOutput<'dr, D: Driver<'dr>, J: HookConfig> {
     /// The left child's challenge slots.
@@ -52,32 +37,8 @@ pub struct ChallengesOutput<'dr, D: Driver<'dr>, J: HookConfig> {
 
 /// The challenge slots of both children.
 ///
-/// # Where this sits, and why
-///
-/// `Parent` is a *tree*, not a line: `query` and `outer_error` already both
-/// branch from `preamble`. This stage is a third branch, hanging off
-/// [`outer_error`](super::outer_error) as a sibling of
-/// [`inner_error`](super::inner_error).
-///
-/// That position is chosen for cost, not taste. A circuit's trace spans every
-/// gate up to its last stage, so a stage placed further down the chain charges
-/// every circuit that reaches it for the stages it skips on the way: placed
-/// after `inner_error`, `outer_collapse` — already the largest internal
-/// circuit — skips that stage's ~400 gates and exceeds the 2048-gate bound.
-/// As a sibling it starts where `inner_error` does, so the two circuits that
-/// reach it pay nothing extra.
-///
-/// The two circuits that read challenges are `outer_collapse`, which folds a
-/// child's whole instance into $k(Y)$, and `challenge_binding`, which
-/// re-derives each challenge from its points. Both take this as their
-/// [`Last`](ragu_circuits::staging::MultiStageCircuit::Last); `hashes_1`,
-/// `hashes_2` and `inner_collapse` finish on other branches and never name
-/// these counts.
-///
-/// `HEADER_SIZE` appears here only to name the parent stage; nothing in this
-/// stage reads it. It stays because its region stays in the shared prefix —
-/// see the module docs for why the header and slot regions cannot follow the
-/// challenges down here.
+/// Branches off [`outer_error`](super::outer_error) as a sibling of
+/// [`inner_error`](super::inner_error), so its readers pay nothing extra.
 pub struct ChallengesStage<C: Cycle, R, const HEADER_SIZE: usize, J: HookConfig, FP> {
     _marker: PhantomData<(C, R, J, FP)>,
 }
@@ -105,8 +66,7 @@ impl<
     type OutputKind = Kind![C::CircuitField; ChallengesOutput<'_, _, J>];
 
     fn values() -> usize {
-        // The challenge instance region, priced by the layout, once per
-        // child.
+        // One challenge instance region per child.
         2 * J::layout().challenge_instance_len()
     }
 
@@ -126,11 +86,7 @@ impl<
 }
 
 /// One child's challenge slots, in the order the application circuit's instance
-/// exposes them.
-///
-/// Shared with [`Application::verify`](crate::Application::verify), which folds
-/// a root proof's own $k(Y)$ natively and so needs the same slots this stage
-/// witnesses.
+/// exposes them. Shared with [`Application::verify`](crate::Application::verify).
 pub(crate) fn alloc_challenges<
     'dr,
     D: Driver<'dr, F = C::CircuitField>,
@@ -178,8 +134,6 @@ mod tests {
         internal::tests::{HEADER_SIZE, R, assert_stage_values},
     };
 
-    /// The stage is sized by its own two axes and nothing else — the property
-    /// that lets it be an ordinary typed stage rather than a value-level run.
     #[test]
     fn stage_values_matches_wire_count() {
         assert_stage_values(&ChallengesStage::<

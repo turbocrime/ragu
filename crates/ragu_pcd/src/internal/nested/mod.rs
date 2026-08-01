@@ -30,36 +30,24 @@ pub mod circuits {
 
 use crate::internal::{Side, endoscalar};
 
-/// One child's contribution to the `_10_p` commitment walk: one point per
-/// entry of its rx list, plus `a`, `b`, `registry_xy`, `p`, and its stashed
-/// poly-query claim commitments.
-///
-/// The single statement of the per-child block's decomposition: the 13 native rx
+/// One child's block in the `_10_p` commitment walk: its native rx
 /// commitments, four extras (`ab_a`, `ab_b`, `registry_xy`, `p`), one stashed
-/// claim per polynomial slot, and — whenever there are any slots — the child's
-/// `C_q`, the commitment to its claim-coordinate polynomial `q`. Shared between
-/// [`num_endoscaling_points`], the nested preamble's `num_points`, and the
-/// native eval stage's width — all three walk the same block, which is what
-/// keeps the accumulation order, the stash order, and the `v` fold order from
-/// drifting apart.
+/// claim per polynomial slot, plus `C_q` when any slots exist. Shared by
+/// [`num_endoscaling_points`], the nested preamble, and the native eval stage
+/// so the accumulation, stash, and `v` fold orders cannot drift apart.
 pub const fn child_endoscaling_points(polys: usize) -> usize {
     crate::internal::native::RxIndex::NUM + 4 + polys + q_slots(polys)
 }
 
-/// One `q` per child when the shape has any polynomial slots, none when it has
-/// none: the limb feature vanishes entirely at `POLYS = 0`, which is what
-/// keeps that shape's digests unmoved.
+/// One `q` per child when the shape has any polynomial slots, none at
+/// `polys == 0` so that shape's digests stay unmoved.
 pub const fn q_slots(polys: usize) -> usize {
     if polys == 0 { 0 } else { 1 }
 }
 
-/// Number of curve points accumulated during `compute_p` for nested-field
-/// endoscaling verification: the `f.commitment` base point, one block per
-/// child (see [`child_endoscaling_points`]), and the current step's six stage
-/// components. See `_10_p` for the canonical accumulation order.
-///
-/// The endoscaling circuits process these points across
-/// [`num_endoscaling_steps`] steps.
+/// Number of curve points accumulated during `compute_p`: the `f.commitment`
+/// base point, one block per child ([`child_endoscaling_points`]), and the
+/// current step's stage components. See `_10_p` for the accumulation order.
 pub const fn num_endoscaling_points(polys: usize) -> usize {
     const F_COMMITMENT_BASE_POINT: usize = 1;
 
@@ -68,22 +56,15 @@ pub const fn num_endoscaling_points(polys: usize) -> usize {
         + crate::internal::native::stages::eval::CURRENT_STEP_COMPONENTS
 }
 
-/// The number of endoscaling step circuits a fuse runs: what
-/// [`endoscalar::num_steps`] makes of [`num_endoscaling_points`].
+/// The number of endoscaling step circuits a fuse runs:
+/// [`endoscalar::num_steps`] of [`num_endoscaling_points`].
 pub const fn num_endoscaling_steps(polys: usize) -> usize {
     endoscalar::num_steps(num_endoscaling_points(polys))
 }
 
-/// [`num_endoscaling_points`] at the type level, for a poly count `L`.
-///
-/// The `Len` that [`endoscalar::Points`] and [`endoscalar::EndoscalingStep`] are
-/// parameterized by. It exists because the point count is an *expression* in the
-/// poly count, which a const generic cannot carry on stable Rust while
-/// [`Len::len`](ragu_primitives::vec::Len::len) — an ordinary function — can.
-///
-/// This delegates to [`num_endoscaling_points`] rather than restating it, so the
-/// value form and the type form are one formula: a gadget's width and the layout
-/// that places it cannot disagree.
+/// [`num_endoscaling_points`] at the type level, for a poly count `L`: the
+/// [`Len`](ragu_primitives::vec::Len) that [`endoscalar::Points`] and
+/// [`endoscalar::EndoscalingStep`] are parameterized by.
 pub struct EndoPoints<L: ragu_primitives::vec::Len>(core::marker::PhantomData<L>);
 
 impl<L: ragu_primitives::vec::Len> ragu_primitives::vec::Len for EndoPoints<L> {
@@ -92,12 +73,9 @@ impl<L: ragu_primitives::vec::Len> ragu_primitives::vec::Len for EndoPoints<L> {
     }
 }
 
-/// A stage's position in [`NestedLayouts::chain_layout`], so the runs and the mask
-/// registration name a stage instead of an integer.
-///
-/// The discriminants *are* the indices — [`NestedLayouts::chain_layout`] builds its widths in
-/// this order, and `nested_chain_positions_match_layout` pins that the two
-/// agree. Reordering the chain means reordering both together.
+/// A stage's position in [`NestedLayouts::chain_layout`]. The discriminants
+/// *are* the indices, pinned by `nested_chain_positions_match_layout`;
+/// reordering the chain means reordering both together.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(usize)]
 pub enum ChainStage {
@@ -136,17 +114,8 @@ impl ChainStage {
 }
 
 /// Subdivides one span of [`NestedLayouts::chain_layout`] into `slots`
-/// one-point slots.
-///
-/// The three shape-carrying nested stages — points, preamble, eval — are each
-/// a flat list of curve points whose length follows the application's shape.
-/// Each is placed as an induced run of one-point slots inside the span
-/// the chain already gives it, so the stage keeps its single mask and
-/// single commitment: the subdivision decides where wires land, not how many
-/// commitments there are.
-///
-/// The slot width comes from `Slot` itself, so the layout and the stage it
-/// tiles agree by construction.
+/// one-point slots. The stage keeps its single mask and commitment: the
+/// subdivision decides where wires land, and the slot width comes from `Slot`.
 fn run_layout<F, R, Slot>(
     chain: &ragu_circuits::staging::InducedStages,
     stage: ChainStage,
@@ -163,18 +132,11 @@ where
     )
 }
 
-/// Every layout needed to walk a nested trace, built together.
-///
-/// [`loading`](circuits::loading) and [`copying`](circuits::copying) traverse
-/// the same chain — the current step's and a child's respectively — and must
-/// place every stage at the same gate or their wire positions diverge. A stage's
-/// position depends on how wide the stages before it are, so one of them
-/// disagreeing about a single width misplaces everything after it. Building both
-/// walks from one value is what makes that agreement structural rather than a
-/// convention two files have to keep.
+/// Every layout needed to walk a nested trace, built together:
+/// [`loading`](circuits::loading) and [`copying`](circuits::copying) must
+/// place every stage at the same gate, so both walks come from one value.
 pub struct NestedLayouts {
-    /// The chain itself, in [`ChainStage`] order — the source of every stage's
-    /// position, including the shape-free ones.
+    /// The chain itself, in [`ChainStage`] order.
     pub chain: ragu_circuits::staging::InducedStages,
     /// [`ChainStage::Points`], subdivided into one-point slots.
     pub points: ragu_circuits::staging::InducedStages,
@@ -185,27 +147,14 @@ pub struct NestedLayouts {
 }
 
 impl NestedLayouts {
-    /// The nested stage chain's value-level geometry at the application's
-    /// declared capacity — the source [`new`](Self::new) subdivides.
-    ///
-    /// The chain is linear, in [`ChainStage`] order: endoscalar → points →
-    /// preamble → s_prime → inner_error → outer_error → ab → query → f → eval.
-    /// The points and preamble stages carry the *children's* blocks, the eval
-    /// stage the current step's own slots — but every step in an application
-    /// exposes the same shape, so one capacity sizes all three. The widths
-    /// come from each stage's `num_values` (capacity-dependent stages) or its
-    /// typed `values()` (the stages whose width really is a property of their
-    /// type).
+    /// The nested stage chain's widths at the application's declared capacity,
+    /// in [`ChainStage`] order — the source [`new`](Self::new) subdivides.
+    /// Every step exposes the same shape, so one capacity sizes all stages.
     pub fn chain_layout<HC: ragu_arithmetic::CurveAffine, R: Rank>(
         polys: usize,
     ) -> ragu_circuits::staging::InducedStages {
         use ragu_circuits::staging::{InducedStages, Stage};
 
-        // The three shape-carrying stages (points, preamble, eval) take their
-        // widths from the capacity; each is subdivided into one-point slots by
-        // `run_layout`. The seven between them are shape-free, so their widths
-        // come from their own types.
-        //
         // This vector's order is `ChainStage::ALL`.
         InducedStages::new(alloc::vec![
             <endoscalar::EndoscalarStage as Stage<HC::Base, R>>::values(),
@@ -222,15 +171,8 @@ impl NestedLayouts {
     }
 
     /// The number of nested internal circuits and bondings [`register_all`]
-    /// registers at `capacity`.
-    ///
-    /// Layout (circuits before bondings, matching
-    /// `RegistryBuilder::finalize()`): the endoscaling step circuits, then one
-    /// bonding block — the eleven fixed entries of [`BLOCK_FIXED`], the
-    /// loading circuit, and the two copying circuits.
-    ///
-    /// Every one of these is built at the capacity, children included, which
-    /// is why there is a single block rather than a family keyed by shape.
+    /// registers: the endoscaling steps, then [`BLOCK_FIXED`], the loading
+    /// circuit, and the two copying circuits — circuits before bondings.
     pub(crate) fn num_internal(polys: usize) -> usize {
         num_endoscaling_steps(polys) + BLOCK_FIXED.len() + 3
     }
@@ -323,10 +265,6 @@ impl InternalCircuitIndex {
     /// in [`RegistryBuilder::finalize()`](ragu_circuits::registry::RegistryBuilder::finalize)
     /// (circuits before masks), since [`circuit_index()`](Self::circuit_index)
     /// derives indices from position in this list.
-    ///
-    /// A runtime `Vec`: the length depends on the polynomial-slot count, an
-    /// application parameter, and a length computed from a generic cannot
-    /// size an array on stable Rust.
     pub fn all(polys: usize) -> Vec<Self> {
         let mut all = Vec::new();
         all.extend(
@@ -441,10 +379,7 @@ impl RxIndex {
     /// capacity.
     ///
     /// Must maintain the same ordering convention as
-    /// [`native::RxIndex::ALL`](super::native::RxIndex::ALL) — which stays a
-    /// `const` array, since the native side's count does not depend on the
-    /// polynomial-slot count. See [`InternalCircuitIndex::all`] for why this
-    /// one cannot.
+    /// [`native::RxIndex::ALL`](super::native::RxIndex::ALL).
     pub fn all(polys: usize) -> Vec<Self> {
         let mut all = Vec::new();
         all.extend(
@@ -490,9 +425,8 @@ pub mod stages {
     pub mod s_prime;
 }
 
-/// Registers internal nested circuits into the provided registry: the
-/// endoscaling step circuits, then the bonding block — in exactly the order
-/// [`NestedLayouts::num_internal`] documents.
+/// Registers internal nested circuits into the provided registry, in the
+/// order [`NestedLayouts::num_internal`] documents.
 ///
 /// Circuits are registered as internal to ensure they occupy prefix indices
 /// before application steps.
@@ -515,8 +449,7 @@ pub fn register_all<'params, C: Cycle, R: Rank, L: ragu_primitives::vec::Len>(
     {
         let chain = NestedLayouts::chain_layout::<C::HostCurve, R>(polys);
 
-        // The fixed block, in BLOCK_FIXED order: endoscalar, points, points
-        // final, then the eight bridge masks in chain order.
+        // The fixed block, in BLOCK_FIXED order.
         registry = registry
             .register_bonding(chain.mask::<C::ScalarField, R>(ChainStage::Endoscalar.index())?);
         registry =
@@ -532,9 +465,8 @@ pub fn register_all<'params, C: Cycle, R: Rank, L: ragu_primitives::vec::Len>(
         registry = registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?);
 
         for side in [Side::Left, Side::Right] {
-            // A copying circuit walks a CHILD of the proof being fused, but
-            // every step in the application exposes the capacity — children
-            // included — so the same value serves here.
+            // A copying circuit walks a child, but children expose the same
+            // capacity, so the same `L` serves here.
             let circuit = circuits::copying::Circuit::<C::HostCurve, R, L>::new(side);
             registry = registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?);
         }

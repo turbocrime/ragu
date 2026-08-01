@@ -1,30 +1,8 @@
-//! Characterization tests for the polynomial collections, in the real PCD
-//! shape: every collection starts as a **singleton seed** — one literal
-//! member — and grows only by **fusing** two proven collections, so a
-//! collection of `N` members is a tree of `N` seeds and `N − 1` fuses.
-//!
-//! What the proofs establish:
-//!
-//! * A **multiset** is the monic polynomial whose roots are its members
-//!   (with multiplicity); fusing is polynomial multiplication, proven by
-//!   one opened claim.
-//! * A **sequence** is the polynomial whose coefficients are its members,
-//!   with a **sentinel** coefficient `1` above the last member; its header
-//!   carries the member count next to the name, and fusing is the shifted
-//!   addition `C = A + X^{ℓa}·(B − 1)`, the offset factor `z^{ℓa}` computed
-//!   in fixed shape from the header-carried length rather than witnessed.
-//! * Cross-proof identity is plain field equality on names: a fuse
-//!   re-witnesses the children's polynomials and enforces its handles'
-//!   coordinates equal the header wires.
-//!
-//! Both fuse circuits are `O(1)` in collection size; every size-dependent
-//! cost is native. The ceiling at `ProductionRank` is **8,191 members** for
-//! either collection: the rank provides `2^13 = 8192` coefficients, and one
-//! sits above the last member (the multiset's leading coefficient, the
-//! sequence's sentinel).
-//!
-//! Run the ignored `print_*_characterization` tests (ideally with
-//! `--release`) for wall-clock numbers.
+//! Characterization tests for the polynomial collections: multisets (members
+//! as roots, fused by multiplication) and sequences (members as coefficients
+//! under a sentinel, fused by shifted addition), grown by fusing singleton
+//! seeds. Both fuse circuits are `O(1)` in collection size. Run the ignored
+//! `print_*_characterization` tests with `--release` for wall-clock numbers.
 
 use ragu_arithmetic::{
     ff::Field,
@@ -42,10 +20,8 @@ use ragu_testing::pcd::collections::{
 
 type R = ProductionRank;
 
-/// Two singleton seeds fuse into a two-member set, which fuses with a third
-/// singleton — a repeated member — into `{3, 5, 5}`; the parent verifies,
-/// and the merged polynomial is exactly the expected set polynomial, root
-/// by root and by name.
+/// Singleton seeds fuse into `{3, 5, 5}`; the parent verifies and the merged
+/// polynomial is the expected set polynomial, root by root and by name.
 #[test]
 fn seeded_singletons_fuse_into_their_merge() -> Result<()> {
     let pasta = Pasta::baked();
@@ -75,9 +51,8 @@ fn seeded_singletons_fuse_into_their_merge() -> Result<()> {
         Fp::ZERO,
         "a non-member is not a root"
     );
-    // Multiplicity: 5 was seeded twice, so it is a repeated root of the
-    // merge — its derivative also vanishes there. Derivative computed
-    // longhand from the coefficients.
+    // 5 was seeded twice, so it is a double root: its derivative (computed
+    // longhand) also vanishes there.
     let coeffs: Vec<Fp> = product.iter_coeffs().collect();
     let mut derivative_at_5 = Fp::ZERO;
     let mut power = Fp::ONE; // 5^(i-1)
@@ -87,8 +62,6 @@ fn seeded_singletons_fuse_into_their_merge() -> Result<()> {
     }
     assert_eq!(derivative_at_5, Fp::ZERO, "5 is a double root of the merge");
 
-    // And the header-named polynomial is exactly the expected set: any
-    // consumer recomputing `{3, 5, 5}`'s commitment gets the merge's name.
     let expected = set_polynomial::<Fp, R>(&[3u64, 5, 5].map(Fp::from));
     assert_eq!(
         merged.data().coords,
@@ -99,15 +72,11 @@ fn seeded_singletons_fuse_into_their_merge() -> Result<()> {
     Ok(())
 }
 
-/// The cross-proof identity check fires: a parent whose witnessed
-/// contributing set is not the child's header-named set cannot produce a
-/// verifying proof. Assembly does not check trace satisfaction, so the
-/// violated in-circuit equality may only surface at [`verify`] — rejection
-/// at either layer is the contract.
-///
-/// [`verify`]: ragu_pcd::Application::verify
+/// A parent whose witnessed contributing set is not the child's header-named
+/// set cannot produce a verifying proof. Assembly does not check trace
+/// satisfaction, so rejection at fuse or at verify are both in-contract.
 #[test]
-fn a_parent_cannot_merge_a_set_that_is_not_the_childs() -> Result<()> {
+fn a_parent_cannot_merge_a_substituted_set() -> Result<()> {
     let pasta = Pasta::baked();
     let app = collections_app::<Pasta, R>(pasta)?;
     let mut rng = StdRng::seed_from_u64(2718);
@@ -115,9 +84,8 @@ fn a_parent_cannot_merge_a_set_that_is_not_the_childs() -> Result<()> {
     let left = seed_set(&app, &mut rng, Fp::from(3u64))?;
     let right = seed_set(&app, &mut rng, Fp::from(7u64))?;
 
-    // The parent swaps in a different left set, product computed honestly
-    // *for the substitute* — every claim is internally consistent; only the
-    // header tie can reject it.
+    // Product computed honestly *for the substitute*: every claim is
+    // internally consistent, so only the header tie can reject it.
     let substitute = set_polynomial::<Fp, R>(&[Fp::from(11u64)]);
     let b = set_polynomial::<Fp, R>(&[Fp::from(7u64)]);
     let result = app.fuse(
@@ -177,10 +145,8 @@ fn a_wrong_merge_is_rejected() -> Result<()> {
     Ok(())
 }
 
-/// Four singleton seeds fuse pairwise, then the pairs fuse into
-/// `[3, 5, 5, 7]` — order and duplicates preserved; the parent verifies,
-/// the carried members match position by position, and the header-named
-/// polynomial is the expected monic encoding.
+/// Four singleton seeds fuse pairwise into `[3, 5, 5, 7]` — order and
+/// duplicates preserved; the carried members and header-named polynomial match.
 #[test]
 fn seeded_singletons_fuse_into_their_concatenation() -> Result<()> {
     let pasta = Pasta::baked();
@@ -198,17 +164,13 @@ fn seeded_singletons_fuse_into_their_concatenation() -> Result<()> {
     let out = fuse_concat(&app, &mut rng, left, right)?; // [3, 5, 5, 7]
     assert!(app.verify(&out, &mut rng)?, "the concatenation verifies");
 
-    // Longhand: the carried members are the concatenated list, position by
-    // position.
     let expected = [3u64, 5, 5, 7].map(Fp::from);
     assert_eq!(out.data().members.len(), expected.len());
     for (i, want) in expected.iter().enumerate() {
         assert_eq!(out.data().members[i], *want, "member {i} in order");
     }
 
-    // And the header-named polynomial is exactly the expected monic
-    // encoding `[3, 5, 5, 7, 1]`: any consumer recomputing the expected
-    // sequence's commitment gets the output's name.
+    // The expected monic encoding is `[3, 5, 5, 7, 1]`.
     let expected_poly = sequence_polynomial::<Fp, R>(&expected);
     let coeffs: Vec<Fp> = expected_poly.iter_coeffs().collect();
     assert_eq!(
@@ -243,10 +205,8 @@ fn a_zero_member_is_a_valid_sequence() -> Result<()> {
     Ok(())
 }
 
-/// The shared size ceiling, pinned by arithmetic: the rank provides
-/// `2^13 = 8192` coefficients and one sits above the last member, so either
-/// collection holds at most `8191` members. Constructing at the ceiling
-/// works.
+/// The rank provides `2^13 = 8192` coefficients and one sits above the last
+/// member, so either collection holds at most `8191` members.
 #[test]
 fn the_collection_ceiling_is_8191_members() {
     assert_eq!(
@@ -324,12 +284,9 @@ where
     Ok(nodes.pop().expect("n >= 1"))
 }
 
-/// Wall-clock characterization: a balanced merge tree over 32 singleton
-/// seeds. The fuse circuit shape is identical at every level — the per-fuse
-/// time stays flat as the sets double.
+/// Wall-clock characterization: a balanced merge tree over 32 singleton seeds.
 ///
-/// Ignored by default; run explicitly, ideally in release mode:
-/// `cargo test -p ragu_pcd --release print_merge_characterization -- --ignored --nocapture`
+/// Run: `cargo test -p ragu_pcd --release print_merge_characterization -- --ignored --nocapture`
 #[test]
 #[ignore = "characterization; run explicitly with --release --nocapture"]
 fn print_merge_characterization() -> Result<()> {
@@ -355,8 +312,7 @@ fn print_merge_characterization() -> Result<()> {
 /// Wall-clock characterization: a balanced concat tree over 32 singleton
 /// seeds, ending in the sequence `[1, 2, .., 32]`.
 ///
-/// Ignored by default; run explicitly, ideally in release mode:
-/// `cargo test -p ragu_pcd --release print_concat_characterization -- --ignored --nocapture`
+/// Run: `cargo test -p ragu_pcd --release print_concat_characterization -- --ignored --nocapture`
 #[test]
 #[ignore = "characterization; run explicitly with --release --nocapture"]
 fn print_concat_characterization() -> Result<()> {
