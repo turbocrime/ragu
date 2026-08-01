@@ -130,9 +130,9 @@ impl<const PW: usize, const PQ: usize, const CD: usize, const CW: usize> HookCon
 /// See [`HookConfig`](framework_hooks::HookConfig) for what each hook number
 /// prices; together with `HEADER_SIZE` they are the whole of an application
 /// circuit's instance width, the hook regions priced by
-/// [`PolyQueryLayout::instance_len`](framework_hooks::PolyQueryLayout::instance_len)
+/// [`HookLayout::poly_query_instance_len`](framework_hooks::HookLayout::poly_query_instance_len)
 /// and
-/// [`ChallengeLayout::instance_len`](framework_hooks::ChallengeLayout::instance_len):
+/// [`HookLayout::challenge_instance_len`](framework_hooks::HookLayout::challenge_instance_len):
 ///
 /// ```text
 /// 3·HEADER_SIZE + 2·POLYS + 4·QUERIES + CHALLENGES·(CHALLENGE_WIDTH + 1)
@@ -140,15 +140,9 @@ impl<const PW: usize, const PQ: usize, const CD: usize, const CW: usize> HookCon
 ///
 /// (the `2·POLYS` is each slot's name — the host commitment's affine
 /// coordinates, canonically embedded; the `4·QUERIES` is the opened
-/// polynomial's name and the $(x, y)$ opening).
-///
-/// Claim slots trade against `HEADER_SIZE`, both being terms in the same
-/// $k(Y)$ Horner loop; an application that asks for more than its circuits
-/// can hold fails at [`finalize`](ApplicationBuilder::finalize) with
-/// [`GateBoundExceeded`](ragu_core::Error::GateBoundExceeded).
-///
-/// Every term is declared, so a step's circuit shape is final the moment it
-/// registers — see the crate docs.
+/// polynomial's name and the $(x, y)$ opening). A combination that does not
+/// fit fails at [`finalize`](ApplicationBuilder::finalize); the crate docs
+/// say why capacity is declared and what it trades against.
 pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig> {
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,

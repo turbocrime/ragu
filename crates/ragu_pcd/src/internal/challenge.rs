@@ -48,7 +48,7 @@ pub(crate) fn claim_coord_commitment<C: Cycle, R: Rank>(
 /// the point it comes from.
 ///
 /// A challenge slot's sponge absorbs a full complement of
-/// [`ChallengeLayout::width`](crate::framework_hooks::ChallengeLayout::width)
+/// [`HookLayout::challenge_width`](crate::framework_hooks::HookLayout::challenge_width)
 /// whether or not the caller supplied them all, so the prover, the root
 /// verifier, and the `challenge_binding` circuit agree on the sponge's shape
 /// by construction.
@@ -95,34 +95,23 @@ pub(crate) fn padded_challenge<C: Cycle>(
     Ok((padded, *challenge.value().take()))
 }
 
-/// The values that pad a step's unused hook slots, computed once at
-/// [`finalize`](crate::ApplicationBuilder::finalize) — where the cycle
-/// parameters enter — and supplied to every proof as ordinary witness data.
-///
-/// Every field is a per-application constant: the padding claim's committed
-/// polynomial (the constant $1$, whose commitment is `g[0]`), the sentinel
-/// element filling an empty challenge-input position, and the challenge a
-/// slot of all-sentinel inputs hashes to. They are witness *values* — the
-/// wires they fill are locally unconstrained instance wires whose
-/// correctness the parent's circuits enforce — so they ride the witness
-/// channel into [`Step::witness`](crate::step::Step), absent on
-/// structure-only drivers like every other witness value. This is the same
-/// padding the trivial proof puts in its slot lists; computing it once keeps
-/// the two in one place.
+/// The per-application constants that pad a step's unused hook slots,
+/// computed once at [`finalize`](crate::ApplicationBuilder::finalize) —
+/// where the cycle parameters enter — and supplied to every proof as
+/// ordinary witness data (the wires they fill are locally unconstrained
+/// instance wires whose correctness the parent's circuits enforce). The
+/// trivial proof's slot lists use the same values.
 ///
 /// A poly slot cannot be padded with zeros — `commit(0)` is the identity,
-/// which no [`Point`](ragu_primitives::Point) can witness — so the padding is
-/// a *real* claim that happens to be trivially true: the constant polynomial
-/// $1$, whose commitment is exactly `g[0]` and whose value at any $x$ is $1$.
-/// It travels the same path as a claim the step raised.
+/// which cannot be witnessed — so the padding is a *real* claim that happens
+/// to be trivially true: the constant polynomial $1$, commitment `g[0]`,
+/// value $1$ everywhere. It travels the same path as a claim the step
+/// raised.
 pub(crate) struct Padding<C: Cycle> {
     /// The padding claim's committed polynomial: the constant $1$ with its
-    /// canonical commitment representation.
+    /// canonical commitment representation. Its host commitment is `g[0]`,
+    /// derived from params wherever the point itself is needed.
     pub poly: crate::PolyCommitment<C>,
-    /// The padding claim's commitment as the host point itself, `g[0]` —
-    /// [`PolyCommitment`](crate::PolyCommitment) keeps only the embedded
-    /// coordinates, and a proof's slot lists need the point.
-    pub host: C::HostCurve,
     /// The fixed element filling an unfilled challenge-input position.
     pub sentinel: C::CircuitField,
     /// The challenge an all-sentinel slot derives:
@@ -137,7 +126,6 @@ impl<C: Cycle> Clone for Padding<C> {
     fn clone(&self) -> Self {
         Self {
             poly: self.poly.clone(),
-            host: self.host,
             sentinel: self.sentinel,
             challenge: self.challenge,
         }
@@ -153,7 +141,6 @@ impl<C: Cycle> Padding<C> {
         let host = C::host_generators(params).g()[0];
         Ok(Self {
             poly: crate::PolyCommitment::new(vec![C::CircuitField::ONE], host)?,
-            host,
             sentinel: sentinel_element::<C>(params),
             challenge: if width == 0 {
                 None

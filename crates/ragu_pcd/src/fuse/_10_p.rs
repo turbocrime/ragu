@@ -145,7 +145,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         // sets `nested_endoscalar_rx`, `nested_points_rx`, and
         // `nested_endoscaling_step_rxs` on the builder.
         let mut points = Vec::with_capacity(crate::internal::nested::num_endoscaling_points(
-            self.hook_layout().poly_query.polys,
+            self.hook_layout().polys,
         ));
         points.push(f.commitment);
         points.extend_from_slice(&commitments);

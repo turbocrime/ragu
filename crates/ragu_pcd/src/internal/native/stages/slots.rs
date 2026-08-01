@@ -1,41 +1,20 @@
 //! The challenge slots, as a stage of their own rather than a region of
 //! [`preamble`](super::preamble).
 //!
-//! ## Why a separate stage
+//! `preamble` is the root of the native chain, so a const parameter there is
+//! named by every stage and circuit downstream, reader or not. Placed at the
+//! end of a branch instead, only the circuits that read the region name its
+//! counts — `hashes_1`, `hashes_2` and `inner_collapse` finish upstream and
+//! stay free of `CHALLENGES` and `CHALLENGE_WIDTH`.
 //!
-//! `preamble` is the *root* of the native chain, and
-//! [`Parent`](ragu_circuits::staging::Stage::Parent) is a path: every stage is
-//! downstream of the root, so a const parameter on `preamble` is named by every
-//! stage below it and by every circuit naming one of those as
-//! [`Last`](ragu_circuits::staging::MultiStageCircuit::Last) — whether or not it
-//! reads a single slot. Holding a slot region in `preamble` therefore makes its
-//! declared counts viral to the entire native side.
-//!
-//! Placed at the *end* of a branch instead, only the circuits that actually read
-//! the region name its counts. `hashes_1`, `hashes_2` and `inner_collapse`
-//! finish upstream and stay free of `CHALLENGES` and `CHALLENGE_WIDTH`.
-//!
-//! ## Why the poly and claim slots are not here too
-//!
-//! A region can leave the root only if every circuit that reads it can end on
-//! one branch, because [`Last`](ragu_circuits::staging::MultiStageCircuit::Last)
-//! is a single stage and sibling branches are separate commitments — a circuit
-//! sees its own branch and the shared prefix above it, never a sibling's wires.
-//!
-//! The challenge slots qualify: `outer_collapse` and `challenge_binding` are
-//! both on the error branch. The poly and claim slots do not. `application_ky`
-//! folds them on the error branch, while `compute_v` reads the claim triples and
-//! the eval stage reads the poly count on the query branch — so those two
-//! regions have to stay in the shared prefix, and `POLYS` and `CLAIMS` stay
+//! A region can leave the root only if every reader can end on one branch:
+//! sibling branches are separate commitments, and a circuit sees only its own
+//! branch plus the shared prefix. The challenge slots qualify
+//! (`outer_collapse` and `challenge_binding` are both on the error branch);
+//! the poly and claim slots do not (`application_ky` folds them on the error
+//! branch while `compute_v` and the eval stage read them on the query
+//! branch), so those stay in the shared prefix and `POLYS`/`CLAIMS` stay
 //! viral with them.
-//!
-//! ## Why the widths are ordinary type-level constants
-//!
-//! Every count here is declared on
-//! [`ApplicationBuilder`](crate::ApplicationBuilder), so the stage's width is a
-//! compile-time expression in its own consts and
-//! [`values()`](ragu_circuits::staging::Stage::values) is an ordinary number.
-//! Nothing here needs a value-level layout — this is ordinary typed staging.
 
 use core::marker::PhantomData;
 
@@ -128,7 +107,7 @@ impl<
     fn values() -> usize {
         // The challenge instance region, priced by the layout, once per
         // child.
-        2 * J::layout().challenge.instance_len()
+        2 * J::layout().challenge_instance_len()
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

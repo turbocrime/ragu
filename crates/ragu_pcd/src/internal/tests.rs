@@ -594,7 +594,7 @@ mod capacity_is_per_application {
 
     use super::*;
     use crate::{
-        framework_hooks::{ChallengeLayout, HookLayout, PolyQueryLayout},
+        framework_hooks::HookLayout,
         header::{Header, Suffix},
         step::{Encoded, Index, Step, StepCtx},
     };
@@ -719,21 +719,19 @@ mod capacity_is_per_application {
         assert_eq!(
             light.hook_layout(),
             HookLayout {
-                challenge: ChallengeLayout { calls: 0, width: 0 },
-                poly_query: PolyQueryLayout {
-                    polys: 0,
-                    claims: 0
-                },
+                challenge_calls: 0,
+                challenge_width: 0,
+                polys: 0,
+                claims: 0,
             }
         );
         assert_eq!(
             heavy.hook_layout(),
             HookLayout {
-                challenge: ChallengeLayout { calls: 1, width: 2 },
-                poly_query: PolyQueryLayout {
-                    polys: 2,
-                    claims: 3
-                },
+                challenge_calls: 1,
+                challenge_width: 2,
+                polys: 2,
+                claims: 3,
             }
         );
 

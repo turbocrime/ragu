@@ -70,16 +70,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         // capacity. The two counts need not be equal, so gating a poly-indexed
         // vector on the query capacity would be a latent bug.
         let capacity = self.hook_layout();
-        if pcd.proof().application_claims().len() != capacity.poly_query.claims
-            || pcd.proof().application_poly_coords().len() != capacity.poly_query.polys * 2
-            || pcd.proof().claim_polys.len() != capacity.poly_query.polys
-            || pcd.proof().claim_host_commitments().len() != capacity.poly_query.polys
-            || pcd.proof().application_challenges().len() != capacity.challenge.calls
+        if pcd.proof().application_claims().len() != capacity.claims
+            || pcd.proof().application_poly_coords().len() != capacity.polys * 2
+            || pcd.proof().claim_polys.len() != capacity.polys
+            || pcd.proof().claim_host_commitments().len() != capacity.polys
+            || pcd.proof().application_challenges().len() != capacity.challenge_calls
             || pcd
                 .proof()
                 .application_challenges()
                 .iter()
-                .any(|c| c.inputs.len() != capacity.challenge.width)
+                .any(|c| c.inputs.len() != capacity.challenge_width)
         {
             return Ok(false);
         }
@@ -146,11 +146,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
             nested_claims::build(
                 &nested_source,
                 &mut nested_builder,
-                capacity.poly_query.polys,
+                capacity.polys,
             )?;
 
             let ky_source = nested::SingleProofKySource::<C::ScalarField>::new();
-            nested::ky_values(&ky_source, capacity.poly_query.polys)
+            nested::ky_values(&ky_source, capacity.polys)
                 .zip(nested_builder.a.iter().zip(nested_builder.b.iter()))
                 .all(|(ky, (a, b))| a.revdot(b) == ky)
         };
@@ -173,7 +173,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         // binding, and the instance-bound embedded coordinates.
         // First each polynomial: its carried coefficients must commit to the
         // host commitment the proof records.
-        let poly_commitments = (0..capacity.poly_query.polys).all(|slot| {
+        let poly_commitments = (0..capacity.polys).all(|slot| {
             let poly = &pcd.proof().claim_polys[slot];
             let host = pcd.proof().claim_host_commitment(slot);
             poly.commit_to_affine::<C::HostCurve>(C::host_generators(self.params)) == host
@@ -187,7 +187,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         // recomputes them natively. Without this a root-only proof could name
         // (and hash into its step) a commitment other than the recorded one.
         let poly_coords = poly_commitments
-            && (0..capacity.poly_query.polys).all(|slot| {
+            && (0..capacity.polys).all(|slot| {
                 let host = pcd.proof().claim_host_commitment(slot);
                 crate::PolyCommitment::<C>::host_coords(host).is_ok_and(|coords| {
                     (0..2).all(|k| pcd.proof().application_poly_coords()[2 * slot + k] == coords[k])
@@ -199,11 +199,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         // than panicking: it is instance data, so a malformed proof can carry
         // anything there.
         let poly_query_claims = poly_commitments
-            && (0..capacity.poly_query.claims).all(|slot| {
+            && (0..capacity.claims).all(|slot| {
                 let crate::proof::ClaimOpening { coords, x, y } =
                     pcd.proof().application_claims()[slot];
 
-                (0..capacity.poly_query.polys)
+                (0..capacity.polys)
                     .position(|i| pcd.proof().application_poly_coords()[2 * i..2 * i + 2] == coords)
                     .is_some_and(|i| pcd.proof().claim_polys[i].eval(x) == y)
             });
@@ -213,7 +213,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         // `challenge_binding` circuit, which re-derives every child slot's
         // challenge from its points — so a root proof's own challenges are
         // still unbound and the verifier re-derives each one natively.
-        let derived_challenges = (0..capacity.challenge.calls).all(|slot| {
+        let derived_challenges = (0..capacity.challenge_calls).all(|slot| {
             let opening = &pcd.proof().application_challenges()[slot];
             crate::internal::challenge::padded_challenge::<C>(
                 self.params,

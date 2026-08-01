@@ -130,18 +130,10 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     }
 }
 
-/// A polynomial-opening claim carried on a [`Proof`]: the polynomial's
-/// embedded commitment coordinates, the opening point `x`, and the claimed
-/// evaluation `y` (the opened polynomial satisfies $p(x) = y$).
-///
-/// The claim names its polynomial by commitment: `coords` are the same values
-/// the proof's
-/// [`application_poly_coords`](Proof::application_poly_coords) carries for
-/// that polynomial — in the step's own circuit the same *wires*, allocated
-/// once per polynomial slot and written into both the polynomial region
-/// and every claim that opens it. The pair is the host commitment's affine
-/// coordinates, canonically embedded in the circuit field: canonical for the
-/// polynomial, the same in every proof that commits it.
+/// A polynomial-opening claim: the opened polynomial satisfies $p(x) = y$,
+/// named by its commitment's embedded coordinates — the same values (in the
+/// step's own circuit, the same *wires*) the polynomial's slot carries, so
+/// a claim and its polynomial cannot disagree about identity.
 #[derive(Clone, Copy, Debug)]
 pub struct ClaimOpening<F> {
     /// The opened polynomial's embedded commitment coordinates.
@@ -158,7 +150,7 @@ pub struct ClaimOpening<F> {
 #[derive(Clone, Debug)]
 pub struct ChallengeOpening<F> {
     /// The slot's input elements, exactly
-    /// [`ChallengeLayout::width`](crate::framework_hooks::ChallengeLayout::width)
+    /// [`HookLayout::challenge_width`](crate::framework_hooks::HookLayout::challenge_width)
     /// of them — the step's, then the sentinel in each position it left empty.
     pub inputs: alloc::vec::Vec<F>,
     /// The challenge, hashed from [`inputs`](Self::inputs).
@@ -594,7 +586,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::Hoo
         builder: &mut ProofBuilder<'_, C, R>,
     ) -> Result<C::HostCurve> {
         let num_points =
-            crate::internal::nested::num_endoscaling_points(self.hook_layout().poly_query.polys);
+            crate::internal::nested::num_endoscaling_points(self.hook_layout().polys);
         assert_eq!(points.len(), num_points);
 
         // The assertion above checks the slice against the *value* formula; the
@@ -643,7 +635,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::Hoo
             let step_rx = self.nested_registry.assemble(
                 &step_trace,
                 nested::InternalCircuitIndex::EndoscalingStep(step as u32)
-                    .circuit_index(self.hook_layout().poly_query.polys),
+                    .circuit_index(self.hook_layout().polys),
                 rng,
             )?;
             step_rxs.push(step_rx);
@@ -691,20 +683,26 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::Hoo
         // so it carries slot 0's embedded coordinates, the same values
         // `application_poly_coords` records for that slot.
         let padding = &self.padding;
+        // The padding polynomial is the constant 1, so its commitment is the
+        // fixed generator g[0] — derived here rather than carried.
+        let padding_host = {
+            use ragu_arithmetic::FixedGenerators;
+            C::host_generators(self.params).g()[0]
+        };
         let padding_coords: alloc::vec::Vec<C::CircuitField> =
-            (0..self.hook_layout().poly_query.polys)
+            (0..self.hook_layout().polys)
                 .flat_map(|_| padding.poly.coords())
                 .collect();
         builder.set_application_polys(
             padding_coords,
             vec![
                 sparse::Polynomial::from_coeffs(padding.poly.coefficients().to_vec());
-                self.hook_layout().poly_query.polys
+                self.hook_layout().polys
             ],
-            vec![padding.host; self.hook_layout().poly_query.polys],
+            vec![padding_host; self.hook_layout().polys],
         );
         builder.set_application_claims(
-            (0..self.hook_layout().poly_query.claims)
+            (0..self.hook_layout().claims)
                 .map(|_| ClaimOpening {
                     coords: padding.poly.coords(),
                     // The constant polynomial 1 evaluates to 1 everywhere.
@@ -718,9 +716,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::Hoo
         // the adapter's padding, so the binding circuit can re-derive every
         // slot uniformly.
         builder.set_application_challenges(
-            (0..self.hook_layout().challenge.calls)
+            (0..self.hook_layout().challenge_calls)
                 .map(|_| ChallengeOpening {
-                    inputs: vec![padding.sentinel; self.hook_layout().challenge.width],
+                    inputs: vec![padding.sentinel; self.hook_layout().challenge_width],
                     challenge: padding
                         .challenge
                         .expect("a challenge slot implies a nonzero challenge width"),
@@ -813,20 +811,20 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::Hoo
         // The claim-coordinate q for a trivial proof's padding hosts — the
         // same value a parent recomputes when it folds this proof, since q is
         // deterministic from the recorded hosts. Empty at zero capacity.
-        let padding_q: alloc::vec::Vec<C::HostCurve> = if self.hook_layout().poly_query.polys == 0 {
+        let padding_q: alloc::vec::Vec<C::HostCurve> = if self.hook_layout().polys == 0 {
             alloc::vec::Vec::new()
         } else {
             alloc::vec![
                 crate::internal::challenge::claim_coord_commitment::<C, R>(
                     self.params,
-                    core::iter::repeat_n(padding.host, self.hook_layout().poly_query.polys),
+                    core::iter::repeat_n(padding_host, self.hook_layout().polys),
                 )
                 .expect("the padding host has canonical coordinates")
             ]
         };
         let p_commitment = {
             let mut points = Vec::with_capacity(crate::internal::nested::num_endoscaling_points(
-                self.hook_layout().poly_query.polys,
+                self.hook_layout().polys,
             ));
 
             // Initial: native_f commitment.
@@ -845,8 +843,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::Hoo
                 points.push(host_commitment); // AbB
                 points.push(registry_xy_commitment); // RegistryXY
                 points.push(host_commitment); // P placeholder
-                for _ in 0..self.hook_layout().poly_query.polys {
-                    points.push(padding.host); // claim slots
+                for _ in 0..self.hook_layout().polys {
+                    points.push(padding_host); // claim slots
                 }
                 points.extend_from_slice(&padding_q); // claim-coordinate q, when polys > 0
             }
@@ -896,7 +894,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::Hoo
                 stashed_ab_b: host_commitment,
                 stashed_registry_xy: registry_xy_commitment,
                 stashed_p: p_commitment,
-                stashed_claims: alloc::vec![padding.host; self.hook_layout().poly_query.polys],
+                stashed_claims: alloc::vec![padding_host; self.hook_layout().polys],
                 stashed_q: padding_q.clone(),
             };
             // Placed through the value-level chain: the preamble sits after

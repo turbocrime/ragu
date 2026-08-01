@@ -1,97 +1,38 @@
 //! Framework-side state surfaced to [`Step::witness`](crate::step::Step::witness) impls.
 //!
-//! [`FrameworkHooks`] bundles the framework's hook-specific state that a step
-//! body interacts with through [`StepCtx`](crate::step::StepCtx). It carries
-//! three hooks, one per `Vec` of wires it accumulates:
+//! [`FrameworkHooks`] accumulates the wires behind the hooks a step reaches
+//! through [`StepCtx`](crate::step::StepCtx): the polynomial slots
+//! ([`StepCtx::polys`](crate::step::StepCtx::polys)), the claim sink
+//! ([`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query))
+//! and the challenge slots
+//! ([`StepCtx::derive_challenge`](crate::step::StepCtx::derive_challenge)) —
+//! each documented where the step calls it. Every slot is part of the
+//! application circuit's public instance, padded to the application's
+//! declared capacity ([`HookLayout`]; the crate docs say why capacity is
+//! declared), so every step of an application exposes one instance shape.
+//! New framework hooks (e.g. transcript threading) belong here too.
 //!
-//! * the polynomial slots — filled by the framework before the step body
-//!   runs, from the commitments
-//!   [`Step::polynomials`](crate::step::Step::polynomials) declares, and
-//!   handed to the body via [`StepCtx::polys`](crate::step::StepCtx::polys).
-//!   Witnessing a polynomial allocates its two coordinate instance wires (the
-//!   host commitment's embedded affine coordinates — its name), and retains
-//!   the coefficients as a value; the polynomial itself never enters the
-//!   circuit. This is the expensive axis — one MSM and one endoscaling point
-//!   per slot — and it is what a claim then names.
+//! ## The binding chain
 //!
-//! * [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query) —
-//!   a polynomial-query claim sink: steps that need to verify a
-//!   polynomial-commitment opening — i.e. that the polynomial the claim names
-//!   evaluates to `y` at point `x` — reach it there, and it delegates
-//!   here. Each claim carries the opened polynomial's
-//!   coefficients so the framework can fold it into the [PCS aggregation].
-//!   Every application circuit exposes exactly
-//!   the application's claim capacity in slot form as part
-//!   of its public instance (unused slots hold the canonical padding claim),
-//!   binding the claim wires — the commitment point and the $(x, y)$ opening —
-//!   to the circuit's $k(Y)$ polynomial. The claims a proof raises are then
-//!   *recursively enforced at the next fuse*: the parent folds the quotient
-//!   $(p(X) - y)/(X - x)$ into $f(X)$, beta-accumulates $p(X)$ into the PCS
-//!   $(P, u, v)$ accumulator, and the `compute_v` circuit re-derives the
-//!   matching terms from the instance-bound claim data. The fuse that raises a
-//!   claim additionally pre-checks it natively so an honest prover with a bad
-//!   witness fails early with [`Error::InvalidWitness`] instead of producing a
-//!   proof its parent cannot fuse.
+//! A claim or challenge is enforced by the **parent**, from the instance:
 //!
-//! * challenge slots — the bookkeeping behind
-//!   [`StepCtx::derive_challenge`](crate::step::StepCtx::derive_challenge):
-//!   the slot cap, the determinism guard, and the `(inputs, challenge)` records
-//!   the adapter writes into the application circuit's public instance. Every
-//!   application circuit gets the application's challenge capacity in slots, each
-//!   absorbing exactly [`ChallengeLayout::width`] elements.
-//!
-//! ## Slot counts are declared
-//!
-//! How many times a step body may call each hook is a property of the
-//! application, declared on [`ApplicationBuilder`](crate::ApplicationBuilder)
-//! and carried here as [`HookLayout`]. Each hook refuses a call past the
-//! capacity, at the call that exceeds it, with [`Error::InvalidWitness`] —
-//! see the crate docs for why capacity is declared rather than folded from
-//! the registered steps.
-//!
-//! A call's input count is witness data, not structure: every slot's instance
-//! region holds [`ChallengeLayout::width`] elements, with the positions a call
-//! leaves empty filled by a fixed sentinel.
-//!
-//! ## Challenge soundness
-//!
-//! A challenge is the hash of the points it was derived from — computed
-//! natively, witnessed, and re-derived by the parent from the same
-//! instance-bound points. On a value-carrying driver the returned `Element`
-//! holds the real value immediately, so the step body can use it at once.
-//!
-//! The binding is enforced, in two links:
-//!
-//! 1. The slot's points and its challenge are written into the child's
-//!    application $k(Y)$ (by the internal `preamble` stage's `application_ky`),
-//!    binding them to its committed application rx.
-//! 2. `challenge = Hash(points)` is re-derived per `(child, slot)` by the
-//!    internal `challenge_binding` circuit, and natively by
-//!    [`Application::verify`](crate::Application::verify) for a root proof's own
-//!    slots, which no parent has bound yet.
-//!
-//! Together: the prover cannot choose a challenge independently of the points
-//! it passed. **What those points bind is the caller's responsibility** — the
-//! framework binds the challenge to the points, not the points to any
-//! particular data. A step passing a freely witnessed point can grind its
-//! challenge by varying it, so every point must be one this step has pinned
-//! (a poly-query commitment, a header-carried point, or a point otherwise
-//! constrained). This is the same discipline the framework applies to itself:
-//! compress data into a binding commitment, then derive from that.
+//! 1. Every slot's wires are written into the child's application $k(Y)$
+//!    (the internal `preamble` stage's `application_ky`), binding them to
+//!    its committed application rx.
+//! 2. A claim is folded — the parent takes the quotient $(p(X) - y)/(X - x)$
+//!    into $f(X)$, beta-accumulates $p(X)$ into the PCS $(P, u, v)$
+//!    accumulator, and `compute_v` re-derives the matching terms from the
+//!    instance-bound claim data. A challenge is re-derived —
+//!    `challenge = Hash(inputs)` is enforced per `(child, slot)` by the
+//!    internal `challenge_binding` circuit. A root proof's own slots, which
+//!    no parent has bound, are checked natively by
+//!    [`Application::verify`](crate::Application::verify).
 //!
 //! What remains beyond that is the framework-wide deferred PCS opening — the
 //! commitment-to-carried-polynomial link that **no** commitment in the system
-//! has yet, `bridge_f` and the endoscaling commitments included — so the chain
-//! reaches exactly the same parity as the framework's own bridges and no
-//! further. `Application::verify` closes it for a root proof's own claims and
-//! challenges.
-//!
-//! The framework collects the resulting outputs through the adapter's `Aux` for
-//! later fuse-time processing. New framework hooks (e.g. transcript threading)
-//! belong on this type as well.
-//!
-//! [PCS aggregation]: https://tachyon.z.cash/ragu/protocol/core/accumulation/pcs.html#pcs-aggregation
-//! [`Error::InvalidWitness`]: ragu_core::Error::InvalidWitness
+//! has yet, `bridge_f` and the endoscaling commitments included — so the
+//! chain reaches exactly the parity of the framework's own bridges and no
+//! further.
 
 use alloc::vec::Vec;
 
@@ -113,8 +54,8 @@ use crate::{
 /// circuit's public instance so the parent can re-derive the challenge from
 /// the inputs.
 pub struct ChallengeWires<'dr, D: Driver<'dr>> {
-    /// The slot's input elements, exactly [`ChallengeLayout::width`] of them:
-    /// the caller's, then the sentinel in each position left empty.
+    /// The slot's input elements, exactly [`HookLayout::challenge_width`] of
+    /// them: the caller's, then the sentinel in each position left empty.
     pub inputs: Vec<Element<'dr, D>>,
     /// The challenge, hashed from [`inputs`](Self::inputs).
     pub challenge: Element<'dr, D>,
@@ -249,14 +190,10 @@ pub trait HookConfig: Send + Sync + 'static {
     /// the [`framework_hooks`](crate::framework_hooks) form of this layout.
     fn layout() -> HookLayout {
         HookLayout {
-            challenge: ChallengeLayout {
-                calls: Self::ChallengeDerivations::len(),
-                width: Self::ChallengeWidth::len(),
-            },
-            poly_query: PolyQueryLayout {
-                polys: Self::PolyWitnesses::len(),
-                claims: Self::PolyQueries::len(),
-            },
+            challenge_calls: Self::ChallengeDerivations::len(),
+            challenge_width: Self::ChallengeWidth::len(),
+            polys: Self::PolyWitnesses::len(),
+            claims: Self::PolyQueries::len(),
         }
     }
 }
@@ -270,59 +207,32 @@ pub trait HookConfig: Send + Sync + 'static {
 /// refused at the call that exceeds it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct HookLayout {
-    /// What [`derive_challenge`](crate::step::StepCtx::derive_challenge)
-    /// requires.
-    pub challenge: ChallengeLayout,
-    /// What [`enforce_poly_query`](crate::step::StepCtx::enforce_poly_query)
-    /// requires.
-    pub poly_query: PolyQueryLayout,
-}
-
-/// What the challenge-derivation hook requires of a step's circuit.
-///
-/// Kept apart from [`PolyQueryLayout`]: the two hooks are independent
-/// features, sharing only the [`HookLayout`] that carries them.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct ChallengeLayout {
     /// [`derive_challenge`](crate::step::StepCtx::derive_challenge) calls.
-    pub calls: usize,
-    /// The challenge width: how many input field elements one call absorbs.
-    /// Every call's instance region holds exactly this many, with the
-    /// positions a caller leaves empty taking a fixed sentinel. A
-    /// [`PolyHandle::coords`](crate::poly_commitment::PolyHandle::coords)
-    /// pair is two; a pinned point's coordinates are two. Its cost is
-    /// `⌈width / rate⌉` sponge permutations in `challenge_binding`.
-    pub width: usize,
-}
-
-impl ChallengeLayout {
-    /// Instance elements the challenge slots occupy, per proof: each call's
-    /// input elements, then the challenge itself.
-    pub const fn instance_len(&self) -> usize {
-        self.calls * (self.width + 1)
-    }
-}
-
-/// What the poly-query hook requires of a step's circuit.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct PolyQueryLayout {
+    pub challenge_calls: usize,
+    /// Input field elements one challenge derivation absorbs. Every call's
+    /// instance region holds exactly this many, with the positions a caller
+    /// leaves empty taking a fixed sentinel.
+    pub challenge_width: usize,
     /// Polynomial slots ([`Step::polynomials`](crate::step::Step::polynomials)
-    /// declarations) — the expensive count. Each costs a bridge stage with
-    /// its own commitment, plus two endoscaling points (one per child) in
-    /// the next fuse.
+    /// declarations) — the expensive count.
     pub polys: usize,
-    /// [`enforce_poly_query`](crate::step::StepCtx::enforce_poly_query) claims —
-    /// the cheap count: four instance elements, one quotient in `_08_f`, one
-    /// term in `compute_v`. A separate flat pool, so several claims can open
-    /// one polynomial at the claim rate.
+    /// [`enforce_poly_query`](crate::step::StepCtx::enforce_poly_query)
+    /// claims — the cheap count; a flat pool, so several claims can open one
+    /// polynomial at the claim rate.
     pub claims: usize,
 }
 
-impl PolyQueryLayout {
+impl HookLayout {
+    /// Instance elements the challenge slots occupy, per proof: each call's
+    /// input elements, then the challenge itself.
+    pub const fn challenge_instance_len(&self) -> usize {
+        self.challenge_calls * (self.challenge_width + 1)
+    }
+
     /// Instance elements the poly and claim slots occupy, per proof: the
     /// name pair per polynomial slot, and the name pair plus the $(x, y)$
     /// opening per claim slot.
-    pub const fn instance_len(&self) -> usize {
+    pub const fn poly_query_instance_len(&self) -> usize {
         self.polys * 2 + self.claims * 4
     }
 }
@@ -397,17 +307,9 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
 }
 
 impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, C> {
-    /// Creates a hook container at the application's declared `capacity`.
-    ///
-    /// There is one constructor because there is one pass. The capacity is
-    /// declared, so nothing has to be learned from the step body first — each
-    /// hook simply refuses a call past the capacity, at the call that exceeds
-    /// it. Nothing else is needed: the hooks accumulate wires, and the two
-    /// values the framework computes for them arrive from outside — the
-    /// challenge hash through
-    /// [`derive_challenge`](crate::step::StepCtx::derive_challenge)'s
-    /// parameters argument, the padding constants through the witness
-    /// channel.
+    /// Creates a hook container at the application's declared capacities;
+    /// each hook refuses a call past its capacity, at the call that exceeds
+    /// it.
     pub(crate) fn new(hook_layout: HookLayout) -> Self {
         Self {
             poly_queries: Vec::new(),
@@ -433,7 +335,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
         declared: DriverValue<D, Vec<PolyCommitment<C>>>,
         padding: &DriverValue<D, Padding<C>>,
     ) -> Result<()> {
-        let capacity = self.hook_layout.poly_query.polys;
+        let capacity = self.hook_layout.polys;
         D::try_just(|| {
             if declared.as_ref().take().len() > capacity {
                 return Err(Error::InvalidWitness(
@@ -462,7 +364,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
         dr: &mut D,
         commitment: DriverValue<D, PolyCommitment<C>>,
     ) -> Result<PolyHandle<'dr, D, C>> {
-        if self.witnessed_polys.len() >= self.hook_layout.poly_query.polys {
+        if self.witnessed_polys.len() >= self.hook_layout.polys {
             return Err(Error::InvalidWitness(
                 "step witnessed more polynomials than there are polynomial slots".into(),
             ));
@@ -498,7 +400,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
         x: Element<'dr, D>,
         y: Element<'dr, D>,
     ) -> Result<()> {
-        if self.poly_queries.len() >= self.hook_layout.poly_query.claims {
+        if self.poly_queries.len() >= self.hook_layout.claims {
             return Err(Error::InvalidWitness(
                 "step enforced more poly-queries than there are query slots".into(),
             ));
@@ -521,13 +423,13 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
         params: &C::Params,
         inputs: &[Element<'dr, D>],
     ) -> Result<Element<'dr, D>> {
-        let width = self.hook_layout.challenge.width;
+        let width = self.hook_layout.challenge_width;
         if inputs.len() > width {
             return Err(Error::InvalidWitness(
                 "derive_challenge received more elements than a challenge slot absorbs".into(),
             ));
         }
-        if self.challenge_pairs.len() >= self.hook_layout.challenge.calls {
+        if self.challenge_pairs.len() >= self.hook_layout.challenge_calls {
             return Err(Error::InvalidWitness(
                 "step derived more challenges than there are challenge slots".into(),
             ));
@@ -604,7 +506,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
         // independent of the claim capacity.
         let allocator = &mut Standard::new();
         let mut padding_query: Option<(Element<'dr, D>, Element<'dr, D>)> = None;
-        while self.poly_queries.len() < self.hook_layout.poly_query.claims {
+        while self.poly_queries.len() < self.hook_layout.claims {
             let slot_zero = self.witnessed_polys.first().ok_or_else(|| {
                 Error::InvalidWitness("a padding claim requires a polynomial slot to name".into())
             })?;
@@ -631,10 +533,10 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
         // pattern matches a `derive_challenge` call exactly (a fresh
         // allocator per slot, the inputs, then the challenge), so the circuit
         // is the same one the body would have produced.
-        while self.challenge_pairs.len() < self.hook_layout.challenge.calls {
+        while self.challenge_pairs.len() < self.hook_layout.challenge_calls {
             let allocator = &mut Standard::new();
-            let mut witnessed = Vec::with_capacity(self.hook_layout.challenge.width);
-            for _ in 0..self.hook_layout.challenge.width {
+            let mut witnessed = Vec::with_capacity(self.hook_layout.challenge_width);
+            for _ in 0..self.hook_layout.challenge_width {
                 witnessed.push(Element::alloc(
                     dr,
                     allocator,
@@ -677,8 +579,9 @@ mod tests {
     fn challenge_slots_are_capped() {
         let with_capacity = |calls| {
             FrameworkHooks::<Dr<'_>, Pasta>::new(HookLayout {
-                challenge: ChallengeLayout { calls, width: 2 },
-                poly_query: PolyQueryLayout::default(),
+                challenge_calls: calls,
+                challenge_width: 2,
+                ..HookLayout::default()
             })
         };
         let params = Pasta::baked();

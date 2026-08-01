@@ -16,7 +16,7 @@
 //! - Enforce that the squeezed value equals the recorded challenge.
 //!
 //! With the application's challenge slots, two children, and
-//! [`ChallengeLayout::width`](crate::framework_hooks::ChallengeLayout::width)
+//! [`HookLayout::challenge_width`](crate::framework_hooks::HookLayout::challenge_width)
 //! per slot, that is
 //! $2 \cdot \text{slots} \cdot \lceil \text{width} / \text{RATE} \rceil$
 //! permutations.

@@ -80,16 +80,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
                 },
         } = aux;
 
-        // Pre-check every poly-query claim natively before committing to the
-        // proof: the claimed evaluation must hold, and the claimed commitment
-        // must bind the claimed polynomial. This check carries no soundness
-        // weight — it runs on the prover, and a malicious prover who skips it
-        // gains nothing, because the parent fuse enforces the same claims
-        // through the PCS accumulator and `compute_v`, and the verifier
-        // checks a root proof's claims itself. It exists so an honest prover
-        // with a dishonest witness fails here, with a useful error, instead
-        // of at verification. Along the way, collect the claim polynomials
-        // and host commitments the parent's PCS folding will consume.
+        // Pre-check every claim natively so an honest prover with a dishonest
+        // witness fails here with a useful error; no soundness weight (the
+        // parent fuse and the root verifier enforce the same claims). Along
+        // the way, collect the claim polynomials and host commitments the
+        // parent's PCS folding will consume.
         let precheck = self.claim_precheck_enabled();
         let mut claim_polys = alloc::vec::Vec::with_capacity(polys.len());
         let mut claim_host_commitments = alloc::vec::Vec::with_capacity(polys.len());

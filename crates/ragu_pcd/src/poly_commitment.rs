@@ -230,30 +230,20 @@ impl<C: Cycle> PolyCommitment<C> {
 }
 
 /// The in-circuit form of a [`PolyCommitment`]: the commitment's
-/// representation as two coordinate wires, plus the retained polynomial for
-/// the claim.
+/// representation as two coordinate wires, plus the retained coefficients
+/// (prover-only) for the claim.
 ///
 /// Witnessed by the framework and reached via
-/// [`StepCtx::polys`](crate::step::StepCtx::polys).
-/// Use [`coords`](Self::coords) wherever the commitment is needed (deriving a
-/// challenge, hashing into a header, comparing across proofs), and pass the
-/// handle to
-/// [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query)
-/// to raise the claim.
+/// [`StepCtx::polys`](crate::step::StepCtx::polys); opened via
+/// [`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query).
 ///
-/// A host-curve point is unrepresentable as a
-/// [`Point`](ragu_primitives::Point) in a step — `Point` requires the curve's
-/// base field to be the circuit's field, and `HostCurve::Base` is the *scalar*
-/// field — but its affine coordinates, canonically bounded below $2^{254}$,
-/// each fit one circuit-field element. The embedding is injective, so the
-/// pair *is* the commitment, in the only form a step can hold.
-///
-/// The handle is a gadget, and plays for the cross-field commitment the role
-/// [`Point`](ragu_primitives::Point) plays for a same-field one: its
-/// [`Write`] emits exactly the two coordinate wires, so absorbing the handle —
-/// into [`derive_challenge`](crate::step::StepCtx::derive_challenge), a
-/// header sponge, or any other buffer — absorbs the commitment. The retained
-/// polynomial is prover-only data and is never written.
+/// A host-curve point cannot be a [`Point`](ragu_primitives::Point) in a step
+/// (`Point` requires `Base = D::F`, and `HostCurve::Base` is the *scalar*
+/// field), but its affine coordinates — canonically bounded below $2^{254}$ —
+/// each fit one circuit-field element, injectively. So the pair *is* the
+/// commitment, and the handle plays `Point`'s role for it: a writable gadget
+/// whose [`Write`] emits exactly the two coordinate wires. Absorbing the
+/// handle absorbs the commitment; the coefficients are never written.
 #[derive(Gadget, Write)]
 pub struct PolyHandle<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     #[ragu(skip)]

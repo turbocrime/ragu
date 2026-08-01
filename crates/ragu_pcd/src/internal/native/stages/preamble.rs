@@ -462,7 +462,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig> staging::Stage<
         // wires. The challenge slots are their own stage — see
         // [`slots`](super::slots) for why the chain's root does not hold
         // them.
-        2 * (3 * HEADER_SIZE + J::layout().poly_query.instance_len() + 1 + unified::NUM_WIRES)
+        2 * (3 * HEADER_SIZE + J::layout().poly_query_instance_len() + 1 + unified::NUM_WIRES)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

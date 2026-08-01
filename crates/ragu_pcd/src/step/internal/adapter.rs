@@ -30,8 +30,8 @@ pub struct AdapterLen<const HEADER_SIZE: usize, J: HookConfig>(PhantomData<J>);
 impl<const HEADER_SIZE: usize, J: HookConfig> Len for AdapterLen<HEADER_SIZE, J> {
     fn len() -> usize {
         HEADER_SIZE * 3
-            + J::layout().poly_query.instance_len()
-            + J::layout().challenge.instance_len()
+            + J::layout().poly_query_instance_len()
+            + J::layout().challenge_instance_len()
     }
 }
 
@@ -139,8 +139,8 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize, J: H
 
         let mut elements = Vec::with_capacity(
             HEADER_SIZE * 3
-                + J::layout().poly_query.instance_len()
-                + J::layout().challenge.instance_len(),
+                + J::layout().poly_query_instance_len()
+                + J::layout().challenge_instance_len(),
         );
         left.write(dr, &mut elements)?;
         right.write(dr, &mut elements)?;
@@ -368,8 +368,8 @@ mod tests {
         assert_eq!(
             output.len(),
             3 * HEADER_SIZE
-                + NoHooks::layout().poly_query.instance_len()
-                + NoHooks::layout().challenge.instance_len()
+                + NoHooks::layout().poly_query_instance_len()
+                + NoHooks::layout().challenge_instance_len()
         );
     }
 
@@ -492,8 +492,8 @@ mod tests {
         assert_eq!(
             output.len(),
             3 * HEADER_SIZE
-                + AppHooks::<0, 0, 1, 2>::layout().poly_query.instance_len()
-                + AppHooks::<0, 0, 1, 2>::layout().challenge.instance_len()
+                + AppHooks::<0, 0, 1, 2>::layout().poly_query_instance_len()
+                + AppHooks::<0, 0, 1, 2>::layout().challenge_instance_len()
         );
     }
 }

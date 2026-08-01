@@ -253,28 +253,14 @@ impl<C: Cycle, R: Rank> Step<C> for MergeSets<'_, C, R> {
         let right_encoded = Encoded::new(ctx.dr, allocator, right)?;
 
         let product_polynomial = witness.as_ref().map(|w| w.product_polynomial.clone());
-        let handles: [_; 3] = ctx.polys().try_into().map_err(|_| {
-            ragu_core::Error::InvalidWitness(
-                "the collections application declares exactly three polynomial slots".into(),
-            )
-        })?;
-
-        // The cross-proof identity check: the contributing sets this step
-        // witnessed are exactly the sets the children's headers name. Same
-        // canonical representation on both sides, so the check is plain
-        // field equality on wires.
-        for (handle, child) in [(&handles[0], &left_encoded), (&handles[1], &right_encoded)] {
-            let name = handle.coords();
-            let header: &FixedVec<Element<'dr, D>, ConstLen<2>> = child.as_gadget();
-            name[0].enforce_equal(ctx.dr, &header[0])?;
-            name[1].enforce_equal(ctx.dr, &header[1])?;
-        }
-
-        // z binds all three names: the merged set's commitment is fixed
-        // before the evaluation point is known. Each handle absorbs as its
-        // name's coordinate pair.
-        let z = ctx.derive_challenge(self.params, &handles)?;
-        let [a, b, c] = handles;
+        let left_header: &FixedVec<Element<'dr, D>, ConstLen<2>> = left_encoded.as_gadget();
+        let right_header: &FixedVec<Element<'dr, D>, ConstLen<2>> = right_encoded.as_gadget();
+        let ([a, b, c], z) = bind_and_challenge(
+            ctx,
+            self.params,
+            [&left_header[0], &left_header[1]],
+            [&right_header[0], &right_header[1]],
+        )?;
 
         // Open the contributing sets at z, and claim the merged set's
         // evaluation *is* their product.
@@ -507,26 +493,16 @@ impl<C: Cycle, R: Rank> Step<C> for ConcatSequences<'_, C, R> {
         let left_encoded = Encoded::new(ctx.dr, allocator, left)?;
         let right_encoded = Encoded::new(ctx.dr, allocator, right)?;
 
-        let handles: [_; 3] = ctx.polys().try_into().map_err(|_| {
-            ragu_core::Error::InvalidWitness(
-                "the collections application declares exactly three polynomial slots".into(),
-            )
-        })?;
-
-        // The cross-proof identity checks: each witnessed input's name
-        // equals the corresponding child's header wires.
-        for (handle, child) in [(&handles[0], &left_encoded), (&handles[1], &right_encoded)] {
-            let name = handle.coords();
-            let header: &FixedVec<Element<'dr, D>, ConstLen<3>> = child.as_gadget();
-            name[0].enforce_equal(ctx.dr, &header[0])?;
-            name[1].enforce_equal(ctx.dr, &header[1])?;
-        }
-
-        // z binds all three names: the output's commitment is fixed before
-        // the evaluation point is known. Each handle absorbs as its name's
-        // coordinate pair.
-        let z = ctx.derive_challenge(self.params, &handles)?;
-        let [a, b, c] = handles;
+        let ([a, b, c], z) = {
+            let left_header: &FixedVec<Element<'dr, D>, ConstLen<3>> = left_encoded.as_gadget();
+            let right_header: &FixedVec<Element<'dr, D>, ConstLen<3>> = right_encoded.as_gadget();
+            bind_and_challenge(
+                ctx,
+                self.params,
+                [&left_header[0], &left_header[1]],
+                [&right_header[0], &right_header[1]],
+            )?
+        };
 
         // The offset factor z^{ℓa}, in fixed shape: allocate ℓa's bits,
         // prove they pack to the left child's header-carried length, and
@@ -593,6 +569,31 @@ impl<C: Cycle, R: Rank> Step<C> for ConcatSequences<'_, C, R> {
             D::unit(),
         ))
     }
+}
+
+/// The shared opening of a collections fuse: takes the step's three handles
+/// (two contributors and the claimed output), binds each contributor's name
+/// to its child's header-carried name (plain field equality on wires — same
+/// canonical representation on both sides), and derives the challenge `z`
+/// binding all three names before any evaluation point is known.
+fn bind_and_challenge<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
+    ctx: &mut StepCtx<'_, 'dr, D, C>,
+    params: &C::Params,
+    left_name: [&Element<'dr, D>; 2],
+    right_name: [&Element<'dr, D>; 2],
+) -> Result<([PolyHandle<'dr, D, C>; 3], Element<'dr, D>)> {
+    let handles: [_; 3] = ctx.polys().try_into().map_err(|_| {
+        ragu_core::Error::InvalidWitness(
+            "the collections application declares exactly three polynomial slots".into(),
+        )
+    })?;
+    for (handle, header_name) in [(&handles[0], left_name), (&handles[1], right_name)] {
+        let name = handle.coords();
+        name[0].enforce_equal(ctx.dr, header_name[0])?;
+        name[1].enforce_equal(ctx.dr, header_name[1])?;
+    }
+    let z = ctx.derive_challenge(params, &handles)?;
+    Ok((handles, z))
 }
 
 /// Opens `handle` at `z`: allocates the evaluation natively and claims it

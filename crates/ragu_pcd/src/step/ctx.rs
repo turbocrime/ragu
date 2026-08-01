@@ -57,44 +57,19 @@ where
         self.hooks.witnessed_polys().to_vec()
     }
 
-    /// Records a poly-query claim: the polynomial behind `commitment` evaluates
-    /// to `y` at the point `x`.
+    /// Records a poly-query claim: the polynomial behind `commitment` (a
+    /// [`PolyHandle`] from [`polys`](Self::polys)) evaluates to `y` at `x`.
     ///
-    /// `commitment` is a [`PolyHandle`] from [`polys`](Self::polys); it
-    /// carries both the in-circuit commitment and the polynomial, so the two
-    /// cannot drift apart.
+    /// The polynomial stays out of the circuit: the claim occupies one of the
+    /// circuit's claim instance slots, and the **parent** fuse enforces it
+    /// through the PCS accumulator — a root proof's own claims are checked
+    /// natively by [`Application::verify`](crate::Application::verify). See
+    /// [`framework_hooks`](crate::framework_hooks) for the binding chain.
+    /// The fuse raising the claim pre-checks it natively, so a dishonest
+    /// witness fails early rather than producing an unfusable proof.
     ///
-    /// This is the *succinct* claim path: the polynomial stays out of the
-    /// circuit, and enforcement is **recursive**. The claim wires occupy one
-    /// of the circuit's claim instance slots, binding them to the circuit's $k(Y)$; when the
-    /// resulting proof is fused as a child, the parent folds the quotient
-    /// $(p(X) - y)/(X - x)$ into $f(X)$ and the polynomial (with its host
-    /// commitment) into the PCS $(P, u, v)$ accumulator, and its `compute_v`
-    /// circuit re-derives the matching terms from the instance-bound claim
-    /// data. A root proof's own claims — not yet folded by a parent — are
-    /// checked natively by [`Application::verify`](crate::Application::verify)
-    /// against the carried claim polynomials.
-    ///
-    /// The fuse raising the claim also pre-checks it natively, so an honest
-    /// prover with a dishonest witness fails early with `InvalidWitness`;
-    /// that pre-check runs on the prover and carries no soundness weight.
-    ///
-    /// Claims may be raised in any order, and the **same handle may be used
-    /// more than once**: a claim names the polynomial it opens by the
-    /// polynomial's embedded host coordinates — the very wires the handle
-    /// holds — so a repeat opening costs one claim slot and no polynomial
-    /// slot.
-    ///
-    /// # Soundness status
-    ///
-    /// A claim's name is bound through the accumulator: the coordinate wires
-    /// are folded into the circuit's $k(Y)$, the parent's `compute_v`
-    /// re-derives the claim-coordinate polynomial's $q(u)$ from them, and
-    /// `(q, C_q)` rides the PCS accumulator — so a claim inherits exactly the
-    /// framework's own guarantees, including the framework-wide deferred PCS
-    /// opening; a **root** proof's own claims are checked natively by
-    /// [`Application::verify`](crate::Application::verify). See
-    /// [`framework_hooks`](crate::framework_hooks) for the chain.
+    /// The same handle may be opened more than once: a repeat opening costs
+    /// one claim slot and no polynomial slot.
     pub fn enforce_poly_query(
         &mut self,
         commitment: &PolyHandle<'dr, D, C>,
@@ -104,43 +79,22 @@ where
         self.hooks.enforce_poly_query(commitment.coords(), x, y)
     }
 
-    /// Derives a sound Fiat–Shamir challenge from `input`.
+    /// Derives a sound Fiat–Shamir challenge from `input` — any writable
+    /// gadget, absorbed as the elements its [`Write`] emits, in write order.
     ///
-    /// `input` is any writable gadget, absorbed as the elements its
-    /// [`Write`] emits, in write order: a [`PolyHandle`] is its commitment's
-    /// two coordinate wires, a pinned [`Point`](ragu_primitives::Point) its
-    /// two coordinates, and tuples and arrays absorb their parts in
-    /// declaration order.
+    /// The challenge is `Hash(inputs)`, hashed natively (which is why this
+    /// hook takes the cycle parameters) and re-derived by the parent's
+    /// `challenge_binding` circuit from the instance — the step itself spends
+    /// no Poseidon permutation. At most
+    /// [`HookLayout::challenge_width`](crate::framework_hooks::HookLayout::challenge_width)
+    /// elements; empty positions take a fixed sentinel. On a value-carrying
+    /// driver the returned `Element` holds the real value immediately.
     ///
-    /// The challenge is `Hash(inputs)`, hashed natively and witnessed here;
-    /// the inputs and the challenge go into the circuit's instance, and the
-    /// parent's `challenge_binding` circuit re-derives the challenge from the
-    /// inputs. **The step spends no Poseidon permutation and no committed
-    /// stage** — the derivation is paid out of the framework's own budget,
-    /// once per `(child, slot)`.
-    ///
-    /// At most
-    /// [`ChallengeLayout::width`](crate::framework_hooks::ChallengeLayout::width)
-    /// elements; the remaining positions are filled with a fixed sentinel so
-    /// the sponge's shape is the same for every slot.
-    ///
-    /// # The caller's obligation
-    ///
-    /// The framework guarantees only that the challenge is the hash of *these
-    /// elements*. Every element the gadget writes must be one this step has
-    /// pinned — a [`PolyHandle`] (the polynomial's commitment, so the
-    /// standard poly-query Fiat–Shamir shape), header-carried data, or a
-    /// wire otherwise constrained — since a freely witnessed input lets the
-    /// prover grind the challenge by varying it.
-    ///
-    /// On a value-carrying driver the returned `Element` holds the real
-    /// challenge immediately, so the step body can evaluate polynomials at it
-    /// right away. Computing that value is why this hook — alone among the
-    /// three — takes the cycle parameters: the hash needs the Poseidon
-    /// constants at the moment the body wants the challenge. A step that
-    /// derives challenges carries the parameters itself (its constructor
-    /// already receives them for its own transcript work in practice); steps
-    /// that don't never touch them.
+    /// **The caller's obligation**: the framework binds the challenge to
+    /// these elements, not the elements to anything. Every element the gadget
+    /// writes must be one this step has pinned — a [`PolyHandle`],
+    /// header-carried data, a wire otherwise constrained — since a freely
+    /// witnessed input lets the prover grind the challenge by varying it.
     pub fn derive_challenge<G>(
         &mut self,
         params: &C::Params,

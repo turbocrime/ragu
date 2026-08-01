@@ -630,7 +630,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
     /// capacity. Every bridge rx is placed through it.
     fn nested_chain(&self) -> &ragu_circuits::staging::InducedStages {
         self.nested_chain.get_or_init(|| {
-            nested::NestedLayouts::chain_layout::<C::HostCurve, R>(self.hook_layout.poly_query.polys)
+            nested::NestedLayouts::chain_layout::<C::HostCurve, R>(self.hook_layout.polys)
         })
     }
 
@@ -738,7 +738,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             self.application_challenges.is_empty(),
             "double-set: application_challenges"
         );
-        assert_eq!(challenges.len(), self.hook_layout.challenge.calls);
+        assert_eq!(challenges.len(), self.hook_layout.challenge_calls);
         self.application_challenges = challenges;
     }
 
@@ -756,11 +756,11 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             self.application_poly_coords.is_empty(),
             "double-set: application_polys"
         );
-        assert_eq!(coords.len(), self.hook_layout.poly_query.polys * 2);
-        assert_eq!(claim_polys.len(), self.hook_layout.poly_query.polys);
+        assert_eq!(coords.len(), self.hook_layout.polys * 2);
+        assert_eq!(claim_polys.len(), self.hook_layout.polys);
         assert_eq!(
             claim_host_commitments.len(),
-            self.hook_layout.poly_query.polys
+            self.hook_layout.polys
         );
         self.application_poly_coords = coords;
         self.claim_polys = claim_polys;
@@ -775,7 +775,7 @@ impl<'params, C: Cycle, R: Rank> ProofBuilder<'params, C, R> {
             self.application_claims.is_empty(),
             "double-set: application_claims"
         );
-        assert_eq!(claims.len(), self.hook_layout.poly_query.claims);
+        assert_eq!(claims.len(), self.hook_layout.claims);
         self.application_claims = claims;
     }
 
