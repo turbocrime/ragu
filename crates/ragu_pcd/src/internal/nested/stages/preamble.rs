@@ -371,10 +371,6 @@ pub const fn num_slots(polys: usize) -> usize {
     num_points(polys)
 }
 
-/// The witness body for one slot of the run: a single host-curve point.
-/// Its chain position is unused — the layout decides where wires land.
-pub type Slot<C, R> = super::host_bridge::Stage<C, R, ()>;
-
 /// The preamble bridge, spanning one run of one-point slots. The run's width
 /// is a value ([`num_values`]), and the whole run is masked and committed as
 /// **one** stage — the subdivision only decides where wires land.
@@ -397,7 +393,7 @@ impl<C: CurveAffine> Witness<C> {
 mod tests {
     use ragu_pasta::EqAffine;
 
-    use super::*;
+    use super::{super::host_bridge::Slot, *};
     use crate::internal::tests::{R, stage_wire_count};
 
     /// The stage's chain span must be exactly what the subdivision tiles.

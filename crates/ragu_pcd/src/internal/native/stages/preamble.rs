@@ -27,12 +27,6 @@ use crate::{
 
 type HeaderVec<'dr, D, const HEADER_SIZE: usize> = FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>>;
 
-/// One child's polynomial slots, in slot order.
-pub type PolyVec<'dr, D, J> = FixedVec<PolyInstance<'dr, D>, <J as HookConfig>::PolyWitnesses>;
-
-/// One child's poly-query claim slots, in slot order.
-pub type ClaimVec<'dr, D, J> = FixedVec<ClaimInstance<'dr, D>, <J as HookConfig>::PolyQueries>;
-
 /// One child's challenge slots, in slot order.
 pub type ChallengeVec<'dr, D, J> =
     FixedVec<ChallengeInstance<'dr, D, J>, <J as HookConfig>::ChallengeDerivations>;
@@ -139,11 +133,11 @@ pub struct ProofInputs<
     /// The poly-query claim instances this child proof raised, in slot order;
     /// unused slots hold the canonical padding claim.
     #[ragu(gadget)]
-    pub claims: ClaimVec<'dr, D, J>,
+    pub claims: FixedVec<ClaimInstance<'dr, D>, J::PolyQueries>,
     /// The polynomials this child proof witnessed, in slot order; unused slots
     /// hold the canonical padding polynomial.
     #[ragu(gadget)]
-    pub polys: PolyVec<'dr, D, J>,
+    pub polys: FixedVec<PolyInstance<'dr, D>, J::PolyWitnesses>,
     #[ragu(gadget)]
     pub circuit_id: Element<'dr, D>,
     #[ragu(gadget)]

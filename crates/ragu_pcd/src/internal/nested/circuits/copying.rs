@@ -85,7 +85,7 @@ impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> MultiStageCircuit<C:
         )?;
         let (preamble_guards, dr) = dr
             .configure_induced_sized::<stages::preamble::Stage<C, R>, _>(
-                stages::preamble::Slot::<C, R>::default(),
+                stages::host_bridge::Slot::<C, R>::default(),
                 &layouts.preamble,
             )?;
         let (s_prime_guard, dr) = dr.configure_stage_sized(
@@ -113,7 +113,7 @@ impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> MultiStageCircuit<C:
             layouts.width(ChainStage::F),
         )?;
         let (eval_guards, dr) = dr.configure_induced_sized::<stages::eval::Stage<C, R>, _>(
-            stages::eval::Slot::<C, R>::default(),
+            stages::host_bridge::Slot::<C, R>::default(),
             &layouts.eval,
         )?;
         let dr = dr.finish();

@@ -187,12 +187,12 @@ impl NestedLayouts {
                 ChainStage::Points,
                 endoscalar::points_stage_num_slots(num_points),
             ),
-            preamble: run_layout::<HC::Base, R, stages::preamble::Slot<HC, R>>(
+            preamble: run_layout::<HC::Base, R, stages::host_bridge::Slot<HC, R>>(
                 &chain,
                 ChainStage::Preamble,
                 stages::preamble::num_slots(polys),
             ),
-            eval: run_layout::<HC::Base, R, stages::eval::Slot<HC, R>>(
+            eval: run_layout::<HC::Base, R, stages::host_bridge::Slot<HC, R>>(
                 &chain,
                 ChainStage::Eval,
                 stages::eval::num_slots(polys),

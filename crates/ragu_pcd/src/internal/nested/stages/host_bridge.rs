@@ -40,6 +40,10 @@ pub struct Stage<C, R, P> {
     _marker: PhantomData<(C, R, P)>,
 }
 
+/// One slot of a bridge run: a bridge stage with no chain position of its
+/// own — the run's layout supplies the position.
+pub type Slot<C, R> = Stage<C, R, ()>;
+
 impl<C, R, P> Clone for Stage<C, R, P> {
     fn clone(&self) -> Self {
         Self::default()

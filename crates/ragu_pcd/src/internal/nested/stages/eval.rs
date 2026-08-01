@@ -78,9 +78,6 @@ pub const fn num_slots(polys: usize) -> usize {
     1 + polys
 }
 
-/// The witness body for one slot of the run: a single host-curve point.
-pub type Slot<C, R> = super::host_bridge::Stage<C, R, ()>;
-
 /// The eval bridge, spanning one run of one-point slots. The run's width is a
 /// value ([`num_values`]), and the whole run is masked and committed as
 /// **one** stage — a single stashed copy the parent's copying circuit checks.
@@ -90,7 +87,7 @@ pub type Stage<C, R> = crate::internal::Run<C, R, super::f::Stage<C, R>>;
 mod tests {
     use ragu_pasta::EqAffine;
 
-    use super::*;
+    use super::{super::host_bridge::Slot, *};
     use crate::internal::tests::{R, stage_wire_count};
 
     /// The stage's chain span must be exactly what the subdivision tiles.
