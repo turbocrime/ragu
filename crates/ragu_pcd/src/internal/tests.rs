@@ -352,9 +352,17 @@ fn test_slotted_registry_digests() {
     // and `compute_v` re-derives it from the coordinate instance wires. The
     // `POLYS = 0` digests holding alongside is the isolation check:
     // `q_slots(0) = 0`, so the feature vanishes at that shape.
+    //
+    // Re-pinned when the framework began witnessing every polynomial slot
+    // before the step body runs (`Step::polynomials` + `StepCtx::polys`):
+    // the slot wires moved ahead of the body's allocations, reordering the
+    // application circuits' wiring. Constraint counts and both `POLYS = 0`
+    // digests held, and the nested digest below held — the application
+    // trace lives only in the native registry — which is the
+    // pure-reordering signature.
     assert_eq!(
         app.native_registry.digest(),
-        fp!(0x325fdfbe3950edd8fcddb1fcc2f2993378ff5a13f36b2be2d48babc94f48d05f),
+        fp!(0x05824ba5babed4a4c1b1f210744e7e9a73ee3a3cc605e90be49660aacd8606bf),
         "Native registry digest changed unexpectedly at a slotted shape!"
     );
     // Covers the nested side of the claim machinery: the stashed claim host
@@ -667,22 +675,17 @@ mod capacity_is_per_application {
 
     step!(Heavy, |ctx| {
         // This step is only ever registered, never proved, so what matters here
-        // is that the hook calls happen — not the values they carry.
-        let commitment = D::try_just(|| {
-            Err::<crate::poly_commitment::PolyCommitment<Pasta>, _>(Error::InvalidWitness(
-                "the capacity test never builds a proof".into(),
-            ))
-        })?;
-        // Both polynomials in one call: slot 0 is `handle`, slot 1 is `other`.
-        let [handle, other] =
-            ctx.witness_polynomial::<2>([Maybe::clone(&commitment), commitment])?;
+        // is that the hook calls happen — not the values they carry. The two
+        // polynomial slots were witnessed by the framework before this body
+        // ran (padding, since the step declares none).
+        let handles = ctx.polys();
         let zero = Element::alloc(ctx.dr, &mut Standard::new(), D::just(|| Fp::ZERO))?;
         // One polynomial opened twice, the other once: three claims over two
         // polynomials.
-        ctx.enforce_poly_query(&handle, zero.clone(), zero.clone())?;
-        ctx.enforce_poly_query(&handle, zero.clone(), zero.clone())?;
-        ctx.enforce_poly_query(&other, zero.clone(), zero)?;
-        ctx.derive_challenge(Pasta::baked(), &handle)?;
+        ctx.enforce_poly_query(&handles[0], zero.clone(), zero.clone())?;
+        ctx.enforce_poly_query(&handles[0], zero.clone(), zero.clone())?;
+        ctx.enforce_poly_query(&handles[1], zero.clone(), zero)?;
+        ctx.derive_challenge(Pasta::baked(), &handles[0])?;
     });
 
     fn gates<J: crate::framework_hooks::HookConfig>(

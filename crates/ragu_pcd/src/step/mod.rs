@@ -159,7 +159,11 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
     const INDEX: Index;
 
     /// The witness data needed to construct a proof for this step.
-    type Witness<'source>: Send;
+    ///
+    /// `Sync` because the framework reads it in place (e.g.
+    /// [`polynomials`](Self::polynomials)) before handing it to
+    /// [`witness`](Self::witness); witness data is inert prover-side values.
+    type Witness<'source>: Send + Sync;
 
     /// The "left" header expected during this step.
     type Left: Header<C::CircuitField>;
@@ -174,18 +178,35 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
     /// used to pipeline witness data to future steps.
     type Aux<'source>: Send;
 
+    /// The polynomials this step commits, in slot order — each a
+    /// [`PolyCommitment`](crate::PolyCommitment) from
+    /// [`Application::commit_polynomial`](crate::Application::commit_polynomial),
+    /// extracted from the step's witness. The framework witnesses them
+    /// before [`witness`](Self::witness) runs; the body reaches the handles
+    /// through [`StepCtx::polys`]. Declaring more than the application's
+    /// polynomial capacity fails the proof with
+    /// [`Error::InvalidWitness`](ragu_core::Error::InvalidWitness).
+    ///
+    /// The default declares none — only steps that use the poly-query hook
+    /// override this. Runs only where witness values exist (proving), never
+    /// on structure-only drivers, so it must not influence circuit shape.
+    fn polynomials<'source>(
+        &self,
+        witness: &Self::Witness<'source>,
+    ) -> alloc::vec::Vec<crate::PolyCommitment<C>> {
+        let _ = witness;
+        alloc::vec::Vec::new()
+    }
+
     /// The main synthesis method that checks the validity of this merging step.
     ///
     /// Returns the encoded headers (left, right, output), the data to be
     /// carried in the resulting PCD, and any auxiliary witness data.
     ///
-    /// `ctx` bundles the underlying [`Driver`] with the framework hooks — the
-    /// three [`FrameworkHooks`] entry points, reached via
-    /// [`StepCtx::witness_polynomial`], [`StepCtx::enforce_poly_query`] and
+    /// `ctx` bundles the underlying [`Driver`] with the framework hooks,
+    /// reached via [`StepCtx::polys`], [`StepCtx::enforce_poly_query`] and
     /// [`StepCtx::derive_challenge`]. Steps that don't need any framework hooks
     /// simply use `ctx.dr` and ignore the rest.
-    ///
-    /// [`FrameworkHooks`]: crate::framework_hooks::FrameworkHooks
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         ctx: &mut StepCtx<'_, 'dr, D, C>,

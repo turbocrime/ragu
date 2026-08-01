@@ -132,6 +132,13 @@ impl<C: Cycle, R: Rank> Step<C> for SeedSet<C, R> {
     type Right = ();
     type Output = SetHeader<R>;
 
+    fn polynomials<'source>(
+        &self,
+        witness: &Self::Witness<'source>,
+    ) -> Vec<PolyCommitment<C>> {
+        vec![witness.set.clone()]
+    }
+
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         ctx: &mut StepCtx<'_, 'dr, D, C>,
@@ -151,8 +158,7 @@ impl<C: Cycle, R: Rank> Step<C> for SeedSet<C, R> {
         Self: 'dr,
     {
         let polynomial = witness.as_ref().map(|w| w.polynomial.clone());
-        let set = witness.map(|w| w.set.clone());
-        let [handle] = ctx.witness_polynomial::<1>([set])?;
+        let handle = ctx.polys().remove(0);
 
         let output_data = set_data(&handle, polynomial);
         let header = name_header(&handle)?;
@@ -216,6 +222,13 @@ impl<C: Cycle, R: Rank> Step<C> for MergeSets<'_, C, R> {
     type Right = SetHeader<R>;
     type Output = SetHeader<R>;
 
+    fn polynomials<'source>(
+        &self,
+        witness: &Self::Witness<'source>,
+    ) -> Vec<PolyCommitment<C>> {
+        vec![witness.a.clone(), witness.b.clone(), witness.product.clone()]
+    }
+
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         ctx: &mut StepCtx<'_, 'dr, D, C>,
@@ -239,11 +252,12 @@ impl<C: Cycle, R: Rank> Step<C> for MergeSets<'_, C, R> {
         let left_encoded = Encoded::new(ctx.dr, allocator, left)?;
         let right_encoded = Encoded::new(ctx.dr, allocator, right)?;
 
-        let a_com = witness.as_ref().map(|w| w.a.clone());
-        let b_com = witness.as_ref().map(|w| w.b.clone());
         let product_polynomial = witness.as_ref().map(|w| w.product_polynomial.clone());
-        let c_com = witness.map(|w| w.product.clone());
-        let handles = ctx.witness_polynomial::<3>([a_com, b_com, c_com])?;
+        let handles: [_; 3] = ctx.polys().try_into().map_err(|_| {
+            ragu_core::Error::InvalidWitness(
+                "the collections application declares exactly three polynomial slots".into(),
+            )
+        })?;
 
         // The cross-proof identity check: the contributing sets this step
         // witnessed are exactly the sets the children's headers name. Same
@@ -368,6 +382,13 @@ impl<C: Cycle, R: Rank> Step<C> for SeedSequence<C, R> {
     type Right = ();
     type Output = SeqHeader;
 
+    fn polynomials<'source>(
+        &self,
+        witness: &Self::Witness<'source>,
+    ) -> Vec<PolyCommitment<C>> {
+        vec![witness.sequence.clone()]
+    }
+
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         ctx: &mut StepCtx<'_, 'dr, D, C>,
@@ -387,8 +408,7 @@ impl<C: Cycle, R: Rank> Step<C> for SeedSequence<C, R> {
         Self: 'dr,
     {
         let member = witness.as_ref().map(|w| w.member);
-        let seq_com = witness.map(|w| w.sequence.clone());
-        let [seq] = ctx.witness_polynomial::<1>([seq_com])?;
+        let seq = ctx.polys().remove(0);
 
         let output_data = seq_data(&seq, member.map(|m| vec![m]));
         let header: FixedVec<Element<'dr, D>, ConstLen<3>> = seq
@@ -448,10 +468,17 @@ impl<C: Cycle, R: Rank> Step<C> for ConcatSequences<'_, C, R> {
     type Right = SeqHeader;
     type Output = SeqHeader;
 
+    fn polynomials<'source>(
+        &self,
+        witness: &Self::Witness<'source>,
+    ) -> Vec<PolyCommitment<C>> {
+        vec![witness.a.clone(), witness.b.clone(), witness.output.clone()]
+    }
+
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         ctx: &mut StepCtx<'_, 'dr, D, C>,
-        witness: DriverValue<D, Self::Witness<'source>>,
+        _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, SeqData<C::CircuitField>>,
         right: DriverValue<D, SeqData<C::CircuitField>>,
     ) -> Result<(
@@ -480,10 +507,11 @@ impl<C: Cycle, R: Rank> Step<C> for ConcatSequences<'_, C, R> {
         let left_encoded = Encoded::new(ctx.dr, allocator, left)?;
         let right_encoded = Encoded::new(ctx.dr, allocator, right)?;
 
-        let a_com = witness.as_ref().map(|w| w.a.clone());
-        let b_com = witness.as_ref().map(|w| w.b.clone());
-        let c_com = witness.map(|w| w.output.clone());
-        let handles = ctx.witness_polynomial::<3>([a_com, b_com, c_com])?;
+        let handles: [_; 3] = ctx.polys().try_into().map_err(|_| {
+            ragu_core::Error::InvalidWitness(
+                "the collections application declares exactly three polynomial slots".into(),
+            )
+        })?;
 
         // The cross-proof identity checks: each witnessed input's name
         // equals the corresponding child's header wires.

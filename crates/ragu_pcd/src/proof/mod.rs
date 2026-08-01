@@ -138,7 +138,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 /// the proof's
 /// [`application_poly_coords`](Proof::application_poly_coords) carries for
 /// that polynomial — in the step's own circuit the same *wires*, allocated
-/// once by `witness_polynomial` and written into both the polynomial region
+/// once per polynomial slot and written into both the polynomial region
 /// and every claim that opens it. The pair is the host commitment's affine
 /// coordinates, canonically embedded in the circuit field: canonical for the
 /// polynomial, the same in every proof that commits it.

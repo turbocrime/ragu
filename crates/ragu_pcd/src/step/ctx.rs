@@ -3,8 +3,7 @@
 //! Bundles the framework-side state — the [`Driver`] and the
 //! [`FrameworkHooks`] container — so that reusable sub-components called from a
 //! step body can take a single `&mut StepCtx` rather than juggling individual
-//! arguments. The three hooks are exposed as
-//! [`witness_polynomial`](StepCtx::witness_polynomial),
+//! arguments. The hooks are exposed as [`polys`](StepCtx::polys),
 //! [`enforce_poly_query`](StepCtx::enforce_poly_query) and
 //! [`derive_challenge`](StepCtx::derive_challenge). New framework hooks added in
 //! the future (e.g. transcript threading) belong on [`FrameworkHooks`] as well.
@@ -12,17 +11,10 @@
 use alloc::vec::Vec;
 
 use ragu_arithmetic::Cycle;
-use ragu_core::{
-    Result,
-    drivers::{Driver, DriverValue},
-    gadgets::Gadget,
-};
+use ragu_core::{Result, drivers::Driver, gadgets::Gadget};
 use ragu_primitives::{Element, GadgetExt as _, io::Write};
 
-use crate::{
-    framework_hooks::FrameworkHooks,
-    poly_commitment::{PolyCommitment, PolyHandle},
-};
+use crate::{framework_hooks::FrameworkHooks, poly_commitment::PolyHandle};
 
 /// Framework-side state threaded through [`Step::witness`](super::Step::witness).
 /// The poly-query claim sink is exposed via
@@ -48,47 +40,29 @@ where
         Self { dr, hooks }
     }
 
-    /// Witnesses this step's polynomials in-circuit, producing one
-    /// [`PolyHandle`] per [`PolyCommitment`].
+    /// The step's polynomial handles, one per slot in the application's
+    /// declared capacity: the commitments
+    /// [`Step::polynomials`](super::Step::polynomials) declared, in
+    /// declaration order, then the padding polynomial in each remaining
+    /// slot. All were witnessed by the framework before the body ran.
     ///
-    /// The polynomial is handled **abstractly, by its commitment**: what is
-    /// allocated is the two coordinate instance wires — the host commitment's
-    /// affine coordinates, canonically embedded — and the coefficients ride
-    /// along as a [`DriverValue`] — prover-side data, absent on a verifying
-    /// driver — so witnessing costs two allocations regardless of the
-    /// polynomial's size. Anything added here must preserve that: allocate
-    /// the commitment's coordinates, retain the coefficients as a value.
-    ///
-    /// The handle is itself a writable gadget whose elements are the
-    /// commitment's coordinates — absorb it directly for challenges, hashing
-    /// and the like, or reach the raw pair via [`PolyHandle::coords`]; the
-    /// retained polynomial is what a later
-    /// [`enforce_poly_query`](Self::enforce_poly_query) opens. A
-    /// [`PolyCommitment`] can only come from
-    /// [`Application::commit_polynomial`](crate::Application::commit_polynomial),
-    /// which derives the commitment from the polynomial.
-    ///
-    /// A step witnesses *all* its polynomials in a single call, and the
-    /// handles come back in the same order: slot `i` is index `i`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::InvalidWitness`](ragu_core::Error::InvalidWitness) if
-    /// called more than once, or if `N` exceeds the application's polynomial
-    /// capacity.
-    pub fn witness_polynomial<const N: usize>(
-        &mut self,
-        commitments: [DriverValue<D, PolyCommitment<C>>; N],
-    ) -> Result<[PolyHandle<'dr, D, C>; N]> {
-        self.hooks.witness_polynomials(self.dr, commitments)
+    /// The polynomial is handled **abstractly, by its commitment**: each
+    /// handle is two coordinate instance wires — the host commitment's
+    /// affine coordinates, canonically embedded — and the handle is itself a
+    /// writable gadget over exactly those wires. Absorb it for challenges
+    /// and hashing, compare via [`PolyHandle::coords`], evaluate via
+    /// [`PolyHandle::eval`], and open it with
+    /// [`enforce_poly_query`](Self::enforce_poly_query).
+    pub fn polys(&self) -> Vec<PolyHandle<'dr, D, C>> {
+        self.hooks.witnessed_polys().to_vec()
     }
 
     /// Records a poly-query claim: the polynomial behind `commitment` evaluates
     /// to `y` at the point `x`.
     ///
-    /// `commitment` is a [`PolyHandle`] from
-    /// [`witness_polynomial`](Self::witness_polynomial); it carries both the
-    /// in-circuit commitment and the polynomial, so the two cannot drift apart.
+    /// `commitment` is a [`PolyHandle`] from [`polys`](Self::polys); it
+    /// carries both the in-circuit commitment and the polynomial, so the two
+    /// cannot drift apart.
     ///
     /// This is the *succinct* claim path: the polynomial stays out of the
     /// circuit, and enforcement is **recursive**. The claim wires occupy one

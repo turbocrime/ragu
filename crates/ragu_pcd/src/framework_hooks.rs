@@ -4,8 +4,10 @@
 //! body interacts with through [`StepCtx`](crate::step::StepCtx). It carries
 //! three hooks, one per `Vec` of wires it accumulates:
 //!
-//! * [`StepCtx::witness_polynomial`](crate::step::StepCtx::witness_polynomial) —
-//!   the polynomial slots.
+//! * the polynomial slots — filled by the framework before the step body
+//!   runs, from the commitments
+//!   [`Step::polynomials`](crate::step::Step::polynomials) declares, and
+//!   handed to the body via [`StepCtx::polys`](crate::step::StepCtx::polys).
 //!   Witnessing a polynomial allocates its two coordinate instance wires (the
 //!   host commitment's embedded affine coordinates — its name), and retains
 //!   the coefficients as a value; the polynomial itself never enters the
@@ -151,11 +153,9 @@ pub struct FrameworkHooks<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
     /// One entry per [`enforce_poly_query`](crate::step::StepCtx::enforce_poly_query)
     /// call, in call order.
     poly_queries: Vec<QueryWires<'dr, D>>,
-    /// One entry per
-    /// [`witness_polynomial`](crate::step::StepCtx::witness_polynomial) call,
-    /// in call order — a clone of the very handle the step body holds, so the
-    /// instance names the caller's wires. A polynomial's position here is its
-    /// slot.
+    /// One entry per polynomial slot, in slot order — the very handles the
+    /// step body reads via [`StepCtx::polys`](crate::step::StepCtx::polys),
+    /// so the instance names the body's wires.
     witnessed_polys: Vec<PolyHandle<'dr, D, C>>,
     /// The `(inputs, challenge)` record each
     /// [`derive_challenge`](crate::step::StepCtx::derive_challenge) call
@@ -213,10 +213,11 @@ fn collect_values<'dr, D: Driver<'dr>, T: Send>(
 /// framework sizes with it; the plain numbers are read back through
 /// [`layout`](Self::layout).
 ///
-/// [`PolyWitnesses`](Self::PolyWitnesses) is how many
-/// [`witness_polynomial`](crate::step::StepCtx::witness_polynomial) slots
-/// any one step may fill — the expensive axis: a bridge stage, a
-/// commitment, an MSM, and an endoscaling point per child, each.
+/// [`PolyWitnesses`](Self::PolyWitnesses) is how many polynomial slots
+/// any one step may declare via
+/// [`Step::polynomials`](crate::step::Step::polynomials) — the expensive
+/// axis: a bridge stage, a commitment, an MSM, and an endoscaling point
+/// per child, each.
 /// [`PolyQueries`](Self::PolyQueries) is how many
 /// [`enforce_poly_query`](crate::step::StepCtx::enforce_poly_query) claims
 /// it may raise — the cheap axis: one instance triple, one `_08_f`
@@ -305,9 +306,10 @@ impl ChallengeLayout {
 /// What the poly-query hook requires of a step's circuit.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PolyQueryLayout {
-    /// [`witness_polynomial`](crate::step::StepCtx::witness_polynomial) calls —
-    /// the expensive count. Each costs a bridge stage with its own commitment,
-    /// plus two endoscaling points (one per child) in the next fuse.
+    /// Polynomial slots ([`Step::polynomials`](crate::step::Step::polynomials)
+    /// declarations) — the expensive count. Each costs a bridge stage with
+    /// its own commitment, plus two endoscaling points (one per child) in
+    /// the next fuse.
     pub polys: usize,
     /// [`enforce_poly_query`](crate::step::StepCtx::enforce_poly_query) claims —
     /// the cheap count: four instance elements, one quotient in `_08_f`, one
@@ -416,34 +418,42 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
         }
     }
 
-    /// Witnesses the step's polynomials — the work behind
-    /// [`StepCtx::witness_polynomial`](crate::step::StepCtx::witness_polynomial),
-    /// which documents the step-facing contract.
-    pub(crate) fn witness_polynomials<const N: usize>(
+    /// Witnesses every polynomial slot, before the step body runs: the
+    /// step's declared commitments in declaration order, then the padding
+    /// polynomial in each remaining slot. The body reaches the handles
+    /// through [`StepCtx::polys`](crate::step::StepCtx::polys).
+    ///
+    /// The slot count is always the declared capacity, whatever the step
+    /// supplies — the circuit shape must not depend on witness values.
+    /// Declaring more than the capacity is a value-level error, caught
+    /// while proving.
+    pub(crate) fn witness_declared_polynomials(
         &mut self,
         dr: &mut D,
-        commitments: [DriverValue<D, PolyCommitment<C>>; N],
-    ) -> Result<[PolyHandle<'dr, D, C>; N]> {
-        if !self.witnessed_polys.is_empty() {
-            return Err(Error::InvalidWitness(
-                "witness_polynomial may only be called once per step".into(),
-            ));
+        declared: DriverValue<D, Vec<PolyCommitment<C>>>,
+        padding: &DriverValue<D, Padding<C>>,
+    ) -> Result<()> {
+        let capacity = self.hook_layout.poly_query.polys;
+        D::try_just(|| {
+            if declared.as_ref().take().len() > capacity {
+                return Err(Error::InvalidWitness(
+                    "step declared more polynomials than there are polynomial slots".into(),
+                ));
+            }
+            Ok(())
+        })?;
+        for index in 0..capacity {
+            let commitment = declared.as_ref().and_then(|list| {
+                padding
+                    .as_ref()
+                    .map(|p| list.get(index).cloned().unwrap_or_else(|| p.poly.clone()))
+            });
+            self.witness_one_polynomial(dr, commitment)?;
         }
-
-        let mut handles = Vec::with_capacity(N);
-        for commitment in commitments {
-            handles.push(self.witness_one_polynomial(dr, commitment)?);
-        }
-
-        // `N` handles were pushed, one per element of a `[_; N]`.
-        Ok(handles
-            .try_into()
-            .map_err(|_| ())
-            .expect("one handle per commitment"))
+        Ok(())
     }
 
-    /// Witnesses one polynomial into the next free slot — also the per-slot
-    /// door padding uses, past the step-facing array call's once-only rule.
+    /// Witnesses one polynomial into the next free slot.
     ///
     /// The call sequence is circuit structure — it must not depend on witness
     /// values — so the slot assignment is deterministic: call order.
@@ -585,15 +595,9 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
         dr: &mut D,
         padding: DriverValue<D, Padding<C>>,
     ) -> Result<()> {
-        // Polynomials first, so every query slot has something to name. The
-        // handle is discarded — the slot is recorded, and every padding query
-        // names slot 0.
-        while self.witnessed_polys.len() < self.hook_layout.poly_query.polys {
-            let commitment = padding.as_ref().map(|p| p.poly.clone());
-            self.witness_one_polynomial(dr, commitment)?;
-        }
-
-        // Then queries. Every padding query is the *same* query — slot 0
+        // The polynomial slots were all witnessed before the body ran
+        // (`witness_declared_polynomials`), so only queries and challenges
+        // remain. Queries first. Every padding query is the *same* query — slot 0
         // opened at $x = 0$, where the value is the constant term, true
         // whatever the slot holds — so it is witnessed once and its wires are
         // reused for every unused slot, keeping the step's circuit

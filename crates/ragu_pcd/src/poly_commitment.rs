@@ -13,11 +13,12 @@
 //!   [`Application::commit_polynomial`](crate::Application::commit_polynomial):
 //!   the representation is *derived from* the polynomial, so an honest caller
 //!   cannot mismatch them.
-//! * [`PolyHandle`] is the in-circuit form, created by
-//!   [`StepCtx::witness_polynomial`](crate::step::StepCtx::witness_polynomial):
-//!   it witnesses the representation as two coordinate wires (usable for
-//!   challenges, hashing, cross-proof comparison) while retaining the
-//!   polynomial, and is consumed by
+//! * [`PolyHandle`] is the in-circuit form, witnessed by the framework from
+//!   the commitments a [`Step::polynomials`](crate::step::Step::polynomials)
+//!   declares and handed to the body via
+//!   [`StepCtx::polys`](crate::step::StepCtx::polys): the representation as
+//!   two coordinate wires (usable for challenges, hashing, cross-proof
+//!   comparison), consumed by
 //!   [`enforce_poly_query`](crate::step::StepCtx::enforce_poly_query).
 //!
 //! [`PolyCommitment::coords`] and [`PolyHandle::coords`] produce **identical
@@ -41,9 +42,9 @@ use ragu_primitives::{Element, io::Write};
 /// Produced by
 /// [`Application::commit_polynomial`](crate::Application::commit_polynomial),
 /// which derives the representation from the polynomial. Thread this into a
-/// [`Step`](crate::step::Step)'s witness and turn it into an in-circuit
-/// [`PolyHandle`] with
-/// [`StepCtx::witness_polynomial`](crate::step::StepCtx::witness_polynomial).
+/// [`Step`](crate::step::Step)'s witness, declare it from
+/// [`Step::polynomials`](crate::step::Step::polynomials), and the framework
+/// witnesses it into an in-circuit [`PolyHandle`].
 ///
 /// Coefficients are held rank-erased (little-endian `Vec`); the framework
 /// re-ranks them where its rank is in scope.
@@ -131,8 +132,8 @@ impl<C: Cycle> PolyCommitment<C> {
 /// representation as two coordinate wires, plus the retained polynomial for
 /// the claim.
 ///
-/// Created by
-/// [`StepCtx::witness_polynomial`](crate::step::StepCtx::witness_polynomial).
+/// Witnessed by the framework and reached via
+/// [`StepCtx::polys`](crate::step::StepCtx::polys).
 /// Use [`coords`](Self::coords) wherever the commitment is needed (deriving a
 /// challenge, hashing into a header, comparing across proofs), and pass the
 /// handle to
