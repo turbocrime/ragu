@@ -150,23 +150,22 @@ impl NestedLayouts {
     /// The nested stage chain's widths at the application's declared capacity,
     /// in [`ChainStage`] order — the source [`new`](Self::new) subdivides.
     /// Every step exposes the same shape, so one capacity sizes all stages.
-    pub fn chain_layout<HC: ragu_arithmetic::CurveAffine, R: Rank>(
-        polys: usize,
-    ) -> ragu_circuits::staging::InducedStages {
+    pub fn chain_layout<HC: ragu_arithmetic::CurveAffine, R: Rank, L: ragu_primitives::vec::Len>()
+    -> ragu_circuits::staging::InducedStages {
         use ragu_circuits::staging::{InducedStages, Stage};
 
         // This vector's order is `ChainStage::ALL`.
         InducedStages::new(alloc::vec![
             <endoscalar::EndoscalarStage as Stage<HC::Base, R>>::values(),
-            endoscalar::points_stage_num_values(num_endoscaling_points(polys)),
-            stages::preamble::num_values(polys),
-            <stages::s_prime::Stage<HC, R> as Stage<HC::Base, R>>::values(),
-            <stages::inner_error::Stage<HC, R> as Stage<HC::Base, R>>::values(),
-            <stages::outer_error::Stage<HC, R> as Stage<HC::Base, R>>::values(),
-            <stages::ab::Stage<HC, R> as Stage<HC::Base, R>>::values(),
-            <stages::query::Stage<HC, R> as Stage<HC::Base, R>>::values(),
-            <stages::f::Stage<HC, R> as Stage<HC::Base, R>>::values(),
-            stages::eval::num_values(polys),
+            <endoscalar::PointsStage<HC, EndoPoints<L>> as Stage<HC::Base, R>>::values(),
+            <stages::preamble::Stage<HC, R, L> as Stage<HC::Base, R>>::values(),
+            <stages::s_prime::Stage<HC, R, L> as Stage<HC::Base, R>>::values(),
+            <stages::inner_error::Stage<HC, R, L> as Stage<HC::Base, R>>::values(),
+            <stages::outer_error::Stage<HC, R, L> as Stage<HC::Base, R>>::values(),
+            <stages::ab::Stage<HC, R, L> as Stage<HC::Base, R>>::values(),
+            <stages::query::Stage<HC, R, L> as Stage<HC::Base, R>>::values(),
+            <stages::f::Stage<HC, R, L> as Stage<HC::Base, R>>::values(),
+            <stages::eval::Stage<HC, R, L> as Stage<HC::Base, R>>::values(),
         ])
     }
 
@@ -178,24 +177,25 @@ impl NestedLayouts {
     }
 
     /// Builds every layout for an application of the given capacity.
-    pub fn new<HC: ragu_arithmetic::CurveAffine, R: Rank>(polys: usize) -> Self {
-        let chain = Self::chain_layout::<HC, R>(polys);
-        let num_points = num_endoscaling_points(polys);
+    pub fn new<HC: ragu_arithmetic::CurveAffine, R: Rank, L: ragu_primitives::vec::Len>() -> Self {
+        use ragu_primitives::vec::Len as _;
+
+        let chain = Self::chain_layout::<HC, R, L>();
         Self {
             points: run_layout::<HC::Base, R, endoscalar::PointSlotStage<HC, R>>(
                 &chain,
                 ChainStage::Points,
-                endoscalar::points_stage_num_slots(num_points),
+                endoscalar::points_stage_num_slots(EndoPoints::<L>::len()),
             ),
             preamble: run_layout::<HC::Base, R, stages::host_bridge::Slot<HC, R>>(
                 &chain,
                 ChainStage::Preamble,
-                stages::preamble::num_slots(polys),
+                stages::preamble::num_slots(L::len()),
             ),
             eval: run_layout::<HC::Base, R, stages::host_bridge::Slot<HC, R>>(
                 &chain,
                 ChainStage::Eval,
-                stages::eval::num_slots(polys),
+                stages::eval::num_slots(L::len()),
             ),
             chain,
         }
@@ -447,7 +447,7 @@ pub fn register_all<'params, C: Cycle, R: Rank, L: ragu_primitives::vec::Len>(
     }
 
     {
-        let chain = NestedLayouts::chain_layout::<C::HostCurve, R>(polys);
+        let chain = NestedLayouts::chain_layout::<C::HostCurve, R, L>();
 
         // The fixed block, in BLOCK_FIXED order.
         registry = registry

@@ -53,7 +53,7 @@ impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> Circuit<C, R, L> {
 impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> MultiStageCircuit<C::Base, R>
     for Circuit<C, R, L>
 {
-    type Last = stages::eval::Stage<C, R>;
+    type Last = stages::eval::Stage<C, R, L>;
     type Instance<'source> = ();
     type Witness<'source> = ();
     type Output = ();
@@ -76,43 +76,43 @@ impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> MultiStageCircuit<C:
         // included: one misplaced width misplaces every stage after it.
         use crate::internal::nested::{ChainStage, NestedLayouts};
 
-        let layouts = NestedLayouts::new::<C, R>(L::len());
+        let layouts = NestedLayouts::new::<C, R, L>();
 
         let dr = dr.skip_stage_sized(EndoscalarStage, layouts.width(ChainStage::Endoscalar))?;
-        let (point_guards, dr) = dr.configure_induced_sized::<PointsStage<C, R>, _>(
+        let (point_guards, dr) = dr.configure_induced_sized::<PointsStage<C, EndoPoints<L>>, _>(
             PointSlotStage::<C, R>::default(),
             &layouts.points,
         )?;
         let (preamble_guards, dr) = dr
-            .configure_induced_sized::<stages::preamble::Stage<C, R>, _>(
+            .configure_induced_sized::<stages::preamble::Stage<C, R, L>, _>(
                 stages::host_bridge::Slot::<C, R>::default(),
                 &layouts.preamble,
             )?;
         let (s_prime_guard, dr) = dr.configure_stage_sized(
-            stages::s_prime::Stage::<C, R>::default(),
+            stages::s_prime::Stage::<C, R, L>::default(),
             layouts.width(ChainStage::SPrime),
         )?;
         let (inner_error_guard, dr) = dr.configure_stage_sized(
-            stages::inner_error::Stage::<C, R>::default(),
+            stages::inner_error::Stage::<C, R, L>::default(),
             layouts.width(ChainStage::InnerError),
         )?;
         let (outer_error_guard, dr) = dr.configure_stage_sized(
-            stages::outer_error::Stage::<C, R>::default(),
+            stages::outer_error::Stage::<C, R, L>::default(),
             layouts.width(ChainStage::OuterError),
         )?;
         let (ab_guard, dr) = dr.configure_stage_sized(
-            stages::ab::Stage::<C, R>::default(),
+            stages::ab::Stage::<C, R, L>::default(),
             layouts.width(ChainStage::Ab),
         )?;
         let (query_guard, dr) = dr.configure_stage_sized(
-            stages::query::Stage::<C, R>::default(),
+            stages::query::Stage::<C, R, L>::default(),
             layouts.width(ChainStage::Query),
         )?;
         let dr = dr.skip_stage_sized(
-            stages::f::Stage::<C, R>::default(),
+            stages::f::Stage::<C, R, L>::default(),
             layouts.width(ChainStage::F),
         )?;
-        let (eval_guards, dr) = dr.configure_induced_sized::<stages::eval::Stage<C, R>, _>(
+        let (eval_guards, dr) = dr.configure_induced_sized::<stages::eval::Stage<C, R, L>, _>(
             stages::host_bridge::Slot::<C, R>::default(),
             &layouts.eval,
         )?;

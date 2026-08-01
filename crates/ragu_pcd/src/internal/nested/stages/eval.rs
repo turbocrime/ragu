@@ -3,19 +3,18 @@
 use alloc::vec::Vec;
 
 use ragu_arithmetic::CurveAffine;
-use ragu_core::{Result, drivers::Driver, gadgets::Gadget};
+use ragu_circuits::polynomials::Rank;
+use ragu_core::{
+    Result,
+    drivers::{Driver, DriverValue},
+    gadgets::{Bound, Gadget, Kind},
+    maybe::Maybe,
+};
 use ragu_primitives::{
     Point,
     io::Write,
     vec::{FixedVec, Len},
 };
-
-/// This stage's wire width at the application's declared capacity; the
-/// value-level source of the typed
-/// [`values()`](ragu_circuits::staging::Stage::values).
-pub const fn num_values(polys: usize) -> usize {
-    2 * (1 + polys)
-}
 
 /// Witness data for this bridge stage.
 pub struct Witness<C: CurveAffine> {
@@ -78,27 +77,45 @@ pub const fn num_slots(polys: usize) -> usize {
     1 + polys
 }
 
-/// The eval bridge, spanning one run of one-point slots. The run's width is a
-/// value ([`num_values`]), and the whole run is masked and committed as
-/// **one** stage — a single stashed copy the parent's copying circuit checks.
-pub type Stage<C, R> = crate::internal::Run<C, R, super::f::Stage<C, R>>;
+/// The eval bridge stage: `native_eval`, then one slot per poly-query claim —
+/// a single stashed copy the parent's copying circuit checks.
+pub struct Stage<C: CurveAffine, R, L> {
+    _marker: core::marker::PhantomData<(C, R, L)>,
+}
 
-#[cfg(test)]
-mod tests {
-    use ragu_pasta::EqAffine;
-
-    use super::{super::host_bridge::Slot, *};
-    use crate::internal::tests::{R, stage_wire_count};
-
-    /// The stage's chain span must be exactly what the subdivision tiles.
-    #[test]
-    fn num_values_matches_slots() {
-        for polys in [0, 1, 4, 8] {
-            assert_eq!(
-                num_values(polys),
-                num_slots(polys) * stage_wire_count(&Slot::<EqAffine, R>::default()),
-                "polys={polys}"
-            );
+impl<C: CurveAffine, R, L> Default for Stage<C, R, L> {
+    fn default() -> Self {
+        Self {
+            _marker: core::marker::PhantomData,
         }
     }
 }
+
+impl<C: CurveAffine, R: Rank, L: Len> ragu_circuits::staging::Stage<C::Base, R>
+    for Stage<C, R, L>
+{
+    type Parent = super::f::Stage<C, R, L>;
+    type Witness<'source> = &'source Witness<C>;
+    type OutputKind = Kind![C::Base; Output<'_, _, C, L>];
+
+    fn values() -> usize {
+        2 * (1 + L::len())
+    }
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'source>>,
+    ) -> Result<Bound<'dr, D, Self::OutputKind>>
+    where
+        Self: 'dr,
+    {
+        Ok(Output {
+            native_eval: Point::alloc(dr, witness.as_ref().map(|w| w.native_eval))?,
+            claims: FixedVec::try_from_fn(|i| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.claims[i]))
+            })?,
+        })
+    }
+}
+

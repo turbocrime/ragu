@@ -706,7 +706,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::Hoo
                 .rx_configured(
                     nested::ChainStage::SPrime.index(),
                     C::ScalarField::ONE,
-                    &nested::stages::s_prime::Stage::<C::HostCurve, R>::default(),
+                    &nested::stages::s_prime::Stage::<C::HostCurve, R, J::PolyWitnesses>::default(),
                     &nested::stages::s_prime::Witness {
                         registry_wx0: host_commitment,
                         registry_wx1: host_commitment,
@@ -723,7 +723,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::Hoo
                 .rx_configured(
                     nested::ChainStage::InnerError.index(),
                     C::ScalarField::ONE,
-                    &nested::stages::inner_error::Stage::<C::HostCurve, R>::default(),
+                    &nested::stages::inner_error::Stage::<C::HostCurve, R, J::PolyWitnesses>::default(),
                     &nested::stages::inner_error::Witness {
                         native_inner_error: host_commitment,
                         registry_wy: host_commitment,
@@ -739,7 +739,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::Hoo
                 .rx_configured(
                     nested::ChainStage::F.index(),
                     C::ScalarField::ONE,
-                    &nested::stages::f::Stage::<C::HostCurve, R>::default(),
+                    &nested::stages::f::Stage::<C::HostCurve, R, J::PolyWitnesses>::default(),
                     &nested::stages::f::Witness {
                         native_f: host_commitment,
                     },

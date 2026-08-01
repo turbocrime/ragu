@@ -33,9 +33,7 @@ pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>> {
     pub host: Point<'dr, D, C>,
 }
 
-/// A bridge stage carrying one host-curve point, chained after `P`. A
-/// type-fixed family chains aliases over this; an application-shaped family
-/// uses [`Run`](crate::internal::Run) with this as the per-slot body.
+/// A bridge stage carrying one host-curve point, chained after `P`.
 pub struct Stage<C, R, P> {
     _marker: PhantomData<(C, R, P)>,
 }

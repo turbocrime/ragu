@@ -76,7 +76,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         let bridge_rx = self.nested_chain_layout().rx_configured(
             nested::ChainStage::F.index(),
             C::ScalarField::random(&mut *rng),
-            &nested::stages::f::Stage::<C::HostCurve, R>::default(),
+            &nested::stages::f::Stage::<C::HostCurve, R, J::PolyWitnesses>::default(),
             &nested::stages::f::Witness {
                 native_f: native.commitment,
             },

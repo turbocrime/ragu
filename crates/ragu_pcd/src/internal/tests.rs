@@ -416,7 +416,7 @@ fn nested_chain_positions_match_layout() {
 
     type Host = <Pasta as ragu_arithmetic::Cycle>::HostCurve;
 
-    let chain = crate::internal::nested::NestedLayouts::chain_layout::<Host, R>(4);
+    let chain = crate::internal::nested::NestedLayouts::chain_layout::<Host, R, ConstLen<4>>();
 
     assert_eq!(
         chain.len(),

@@ -73,14 +73,6 @@ impl<L: Len> Len for NumStepsLen<L> {
     }
 }
 
-/// The points stage's wire width for `num_points` accumulated points; the
-/// value-level source of [`PointsStage`]'s typed
-/// [`values()`](ragu_circuits::staging::Stage::values).
-pub fn points_stage_num_values(num_points: usize) -> usize {
-    // (x, y) coordinates for initial + inputs + interstitials.
-    2 * (num_points + num_steps(num_points))
-}
-
 /// Stage for allocating the endoscalar witness.
 #[derive(Default)]
 pub struct EndoscalarStage;
@@ -266,9 +258,50 @@ pub fn points_stage_num_slots(num_points: usize) -> usize {
 }
 
 /// Stage for allocating all point witnesses (inputs and interstitials).
-/// The run's width is a value ([`points_stage_num_values`]); the whole run is
-/// masked and committed as **one** stage.
-pub type PointsStage<C, R> = crate::internal::Run<C, R, EndoscalarStage>;
+pub struct PointsStage<C: CurveAffine, L: Len> {
+    _marker: core::marker::PhantomData<(C, L)>,
+}
+
+impl<C: CurveAffine, L: Len> Default for PointsStage<C, L> {
+    fn default() -> Self {
+        Self {
+            _marker: core::marker::PhantomData,
+        }
+    }
+}
+
+impl<C: CurveAffine, R: Rank, L: Len> Stage<C::Base, R> for PointsStage<C, L> {
+    type Parent = EndoscalarStage;
+
+    fn values() -> usize {
+        // (x, y) coordinates for initial + inputs + interstitials.
+        2 * (1 + InputsLen::<L>::len() + NumStepsLen::<L>::len())
+    }
+
+    type Witness<'source> = &'source PointsWitness<C, L>;
+    type OutputKind = Kind![C::Base; Points<'_, _, C, L>];
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'source>>,
+    ) -> Result<Bound<'dr, D, Self::OutputKind>>
+    where
+        Self: 'dr,
+    {
+        let initial = Point::alloc(dr, witness.as_ref().map(|w| w.initial))?;
+        let inputs =
+            FixedVec::try_from_fn(|i| Point::alloc(dr, witness.as_ref().map(|w| w.inputs[i])))?;
+        let interstitials = FixedVec::try_from_fn(|i| {
+            Point::alloc(dr, witness.as_ref().map(|w| w.interstitials[i]))
+        })?;
+        Ok(Points {
+            initial,
+            inputs,
+            interstitials,
+        })
+    }
+}
 
 /// One slot of a [`PointsStage`] run: a single curve point.
 #[derive(Gadget)]
@@ -370,7 +403,7 @@ pub struct EndoscalingStepWitness<'source, C: CurveAffine, L: Len> {
 }
 
 impl<C: CurveAffine, R: Rank, L: Len> MultiStageCircuit<C::Base, R> for EndoscalingStep<C, R, L> {
-    type Last = PointsStage<C, R>;
+    type Last = PointsStage<C, L>;
     type Instance<'source> = ();
     type Witness<'source> = EndoscalingStepWitness<'source, C, L>;
     type Output = Kind![C::Base; ()];
@@ -397,7 +430,7 @@ impl<C: CurveAffine, R: Rank, L: Len> MultiStageCircuit<C::Base, R> for Endoscal
                 alloc::vec![PointSlotStage::<C, R>::values(); points_stage_num_slots(L::len())],
             )
         };
-        let (point_guards, dr) = dr.configure_induced_sized::<PointsStage<C, R>, _>(
+        let (point_guards, dr) = dr.configure_induced_sized::<PointsStage<C, L>, _>(
             PointSlotStage::<C, R>::default(),
             &layout,
         )?;
@@ -477,15 +510,15 @@ mod tests {
 
     use super::{
         ENDOSCALINGS_PER_STEP, EndoscalarStage, EndoscalingStep, EndoscalingStepWitness,
-        PointsWitness, num_steps, points_stage_num_values,
+        PointsStage, PointsWitness, num_steps,
     };
 
     /// The value-level layout of an endoscaling step circuit's two stages:
     /// the endoscalar, then the points at the given count.
-    fn test_layout(num_points: usize) -> InducedStages {
+    fn test_layout<const NUM_POINTS: usize>() -> InducedStages {
         InducedStages::new(alloc::vec![
             <EndoscalarStage as Stage<Fp, R>>::values(),
-            points_stage_num_values(num_points),
+            <PointsStage<EpAffine, ConstLen<NUM_POINTS>> as Stage<Fp, R>>::values(),
         ])
     }
 
@@ -580,7 +613,7 @@ mod tests {
         assert_eq!(points.interstitials[num_steps - 1], expected);
 
         // Run each step through the multi-stage circuit and verify correctness.
-        let layout = test_layout(NUM_POINTS);
+        let layout = test_layout::<NUM_POINTS>();
         for step in 0..num_steps {
             let step_circuit = EndoscalingStep::<EpAffine, R, ConstLen<NUM_POINTS>>::new(step);
             let mut builder = TestRegistryBuilder::new();
@@ -653,7 +686,7 @@ mod tests {
         assert_eq!(points.interstitials[num_steps - 1], expected);
 
         // Run each step through the multi-stage circuit.
-        let layout = test_layout(NUM_POINTS);
+        let layout = test_layout::<NUM_POINTS>();
         for step in 0..num_steps {
             let step_circuit = EndoscalingStep::<EpAffine, R, ConstLen<NUM_POINTS>>::new(step);
             let mut builder = TestRegistryBuilder::new();

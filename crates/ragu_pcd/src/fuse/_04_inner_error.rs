@@ -57,7 +57,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         let bridge_rx = self.nested_chain_layout().rx_configured(
             nested::ChainStage::InnerError.index(),
             C::ScalarField::random(&mut *rng),
-            &nested::stages::inner_error::Stage::<C::HostCurve, R>::default(),
+            &nested::stages::inner_error::Stage::<C::HostCurve, R, J::PolyWitnesses>::default(),
             &nested::stages::inner_error::Witness {
                 native_inner_error: builder.native_inner_error_commitment(),
                 registry_wy: registry_wy.commitment,

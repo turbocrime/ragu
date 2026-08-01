@@ -188,7 +188,7 @@ macro_rules! cached_bridge {
             let rx = self.nested_chain().rx_configured(
                 $pos.index(),
                 self.bridge_alpha_power($idx),
-                &nested::stages::$stage::Stage::<C::HostCurve, R>::default(),
+                &nested::stages::$stage::Stage::<C::HostCurve, R, J::PolyWitnesses>::default(),
                 &nested::stages::$stage::Witness {
                     $($wit_field: self.$getter()),*
                 },
@@ -607,7 +607,7 @@ impl<'params, C: Cycle, R: Rank, J: HookConfig> ProofBuilder<'params, C, R, J> {
     /// The nested bridge chain's value-level geometry at this proof's capacity.
     fn nested_chain(&self) -> &ragu_circuits::staging::InducedStages {
         self.nested_chain.get_or_init(|| {
-            nested::NestedLayouts::chain_layout::<C::HostCurve, R>(J::PolyWitnesses::len())
+            nested::NestedLayouts::chain_layout::<C::HostCurve, R, J::PolyWitnesses>()
         })
     }
 

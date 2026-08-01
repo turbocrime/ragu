@@ -319,7 +319,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
     /// The nested bridge chain's value-level geometry at this application's
     /// capacity.
     pub(crate) fn nested_chain_layout(&self) -> ragu_circuits::staging::InducedStages {
-        internal::nested::NestedLayouts::chain_layout::<C::HostCurve, R>(J::PolyWitnesses::len())
+        internal::nested::NestedLayouts::chain_layout::<C::HostCurve, R, J::PolyWitnesses>()
     }
 
     /// Seed a new computation by running a step with trivial inputs.

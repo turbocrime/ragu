@@ -6,7 +6,12 @@ use alloc::vec::Vec;
 
 use ragu_arithmetic::{CurveAffine, Cycle};
 use ragu_circuits::polynomials::Rank;
-use ragu_core::{Result, drivers::Driver, gadgets::Gadget};
+use ragu_core::{
+    Result,
+    drivers::{Driver, DriverValue},
+    gadgets::{Bound, Gadget, Kind},
+    maybe::Maybe,
+};
 use ragu_primitives::{
     Point,
     io::Write,
@@ -15,7 +20,7 @@ use ragu_primitives::{
 
 use crate::{
     Proof,
-    internal::{endoscalar::PointsStage, native::RxIndex},
+    internal::{endoscalar::PointsStage, native::RxIndex, nested::EndoPoints},
 };
 
 /// Number of curve points in this stage: the native preamble commitment plus
@@ -29,12 +34,6 @@ pub const fn num_points(polys: usize) -> usize {
     const NATIVE_PREAMBLE_SLOT: usize = 1;
 
     NATIVE_PREAMBLE_SLOT + 2 * child_endoscaling_points(polys)
-}
-
-/// This stage's wire width; the value-level source of the typed
-/// [`values()`](ragu_circuits::staging::Stage::values).
-pub const fn num_values(polys: usize) -> usize {
-    num_points(polys) * 2
 }
 
 /// Witness data for a single child proof in the preamble bridge stage.
@@ -285,6 +284,35 @@ fn next_slot<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>>(
 }
 
 impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> ChildOutput<'dr, D, C, L> {
+    /// Allocates one child's block, in field order.
+    fn alloc(dr: &mut D, witness: DriverValue<D, &ChildWitness<C>>) -> Result<Self> {
+        Ok(ChildOutput {
+            application: Point::alloc(dr, witness.as_ref().map(|w| w.application))?,
+            hashes_1: Point::alloc(dr, witness.as_ref().map(|w| w.hashes_1))?,
+            hashes_2: Point::alloc(dr, witness.as_ref().map(|w| w.hashes_2))?,
+            inner_collapse: Point::alloc(dr, witness.as_ref().map(|w| w.inner_collapse))?,
+            outer_collapse: Point::alloc(dr, witness.as_ref().map(|w| w.outer_collapse))?,
+            compute_v: Point::alloc(dr, witness.as_ref().map(|w| w.compute_v))?,
+            challenge_binding: Point::alloc(dr, witness.as_ref().map(|w| w.challenge_binding))?,
+            stashed_preamble: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_preamble))?,
+            stashed_inner_error: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_inner_error))?,
+            stashed_outer_error: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_outer_error))?,
+            stashed_query: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_query))?,
+            stashed_eval: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_eval))?,
+            stashed_challenges: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_challenges))?,
+            stashed_ab_a: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_ab_a))?,
+            stashed_ab_b: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_ab_b))?,
+            stashed_registry_xy: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_registry_xy))?,
+            stashed_p: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_p))?,
+            stashed_claims: FixedVec::try_from_fn(|i| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.stashed_claims[i]))
+            })?,
+            stashed_q: FixedVec::try_from_fn(|i| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.stashed_q[i]))
+            })?,
+        })
+    }
+
     /// Rebuild one child's block from the run's slots, in the order
     /// [`ChildWitness::slot_points`] emitted it. A short run reports
     /// [`MalformedEncoding`](ragu_core::Error::MalformedEncoding).
@@ -371,10 +399,45 @@ pub const fn num_slots(polys: usize) -> usize {
     num_points(polys)
 }
 
-/// The preamble bridge, spanning one run of one-point slots. The run's width
-/// is a value ([`num_values`]), and the whole run is masked and committed as
-/// **one** stage — the subdivision only decides where wires land.
-pub type Stage<C, R> = crate::internal::Run<C, R, PointsStage<C, R>>;
+/// The preamble bridge stage: `native_preamble`, then each child's block.
+pub struct Stage<C: CurveAffine, R, L> {
+    _marker: core::marker::PhantomData<(C, R, L)>,
+}
+
+impl<C: CurveAffine, R, L> Default for Stage<C, R, L> {
+    fn default() -> Self {
+        Self {
+            _marker: core::marker::PhantomData,
+        }
+    }
+}
+
+impl<C: CurveAffine, R: Rank, L: Len> ragu_circuits::staging::Stage<C::Base, R>
+    for Stage<C, R, L>
+{
+    type Parent = PointsStage<C, EndoPoints<L>>;
+    type Witness<'source> = &'source Witness<C>;
+    type OutputKind = Kind![C::Base; Output<'_, _, C, L>];
+
+    fn values() -> usize {
+        num_points(L::len()) * 2
+    }
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'source>>,
+    ) -> Result<Bound<'dr, D, Self::OutputKind>>
+    where
+        Self: 'dr,
+    {
+        Ok(Output {
+            native_preamble: Point::alloc(dr, witness.as_ref().map(|w| w.native_preamble))?,
+            left: ChildOutput::alloc(dr, witness.as_ref().map(|w| &w.left))?,
+            right: ChildOutput::alloc(dr, witness.as_ref().map(|w| &w.right))?,
+        })
+    }
+}
 
 impl<C: CurveAffine> Witness<C> {
     /// This stage's points in slot order — the list [`Output::from_slots`]
@@ -393,20 +456,7 @@ impl<C: CurveAffine> Witness<C> {
 mod tests {
     use ragu_pasta::EqAffine;
 
-    use super::{super::host_bridge::Slot, *};
-    use crate::internal::tests::{R, stage_wire_count};
-
-    /// The stage's chain span must be exactly what the subdivision tiles.
-    #[test]
-    fn num_values_matches_slots() {
-        for polys in [0, 1, 4, 8] {
-            assert_eq!(
-                num_values(polys),
-                num_slots(polys) * stage_wire_count(&Slot::<EqAffine, R>::default()),
-                "polys={polys}"
-            );
-        }
-    }
+    use super::*;
 
     /// The witness emits exactly the slots the layout sizes.
     #[test]
