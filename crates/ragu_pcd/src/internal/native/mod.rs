@@ -29,30 +29,6 @@ pub mod stages {
     pub mod slots;
 }
 
-/// The native fuse's stage chain, named once so the registration list and the
-/// fuse steps that write each stage agree by construction. A tree rooted at
-/// [`chain::Preamble`]: preamble → outer_error → {inner_error, challenges}
-/// on the error branch, preamble → query → eval on the query branch.
-pub mod chain {
-    use super::{RevdotParameters, stages};
-
-    pub type Preamble<C, R, const HEADER_SIZE: usize, J> =
-        stages::preamble::Stage<C, R, HEADER_SIZE, J>;
-
-    pub type OuterError<C, R, const HEADER_SIZE: usize, J> =
-        stages::outer_error::Stage<C, R, HEADER_SIZE, J, RevdotParameters>;
-
-    pub type InnerError<C, R, const HEADER_SIZE: usize, J> =
-        stages::inner_error::Stage<C, R, HEADER_SIZE, J, RevdotParameters>;
-
-    pub type Challenges<C, R, const HEADER_SIZE: usize, J> =
-        stages::slots::ChallengesStage<C, R, HEADER_SIZE, J, RevdotParameters>;
-
-    pub type Query<C, R, const HEADER_SIZE: usize, J> = stages::query::Stage<C, R, HEADER_SIZE, J>;
-
-    pub type Eval<C, R, const HEADER_SIZE: usize, J> = stages::eval::Stage<C, R, HEADER_SIZE, J>;
-}
-
 pub mod circuits {
     pub mod challenge_binding;
     pub mod compute_v;
@@ -383,20 +359,20 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: Hoo
     params: &'params C::Params,
     log2_circuits: u32,
 ) -> Result<RegistryBuilder<'params, C::CircuitField, R>> {
-    use chain::{Challenges, Eval, InnerError, OuterError, Preamble, Query};
-
     let initial_internal_circuits = registry.num_internal_circuits();
 
     for &id in &InternalCircuitIndex::ALL {
         use InternalCircuitIndex::*;
         registry = match id {
-            Hashes1Circuit => registry.register_internal_circuit(circuits::hashes_1::Circuit::<
-                C,
-                R,
-                HEADER_SIZE,
-                J,
-                RevdotParameters,
-            >::new(params, log2_circuits))?,
+            Hashes1Circuit => {
+                registry.register_internal_circuit(circuits::hashes_1::Circuit::<
+                    C,
+                    R,
+                    HEADER_SIZE,
+                    J,
+                    RevdotParameters,
+                >::new(params, log2_circuits))?
+            }
             Hashes2Circuit => registry.register_internal_circuit(circuits::hashes_2::Circuit::<
                 C,
                 R,
@@ -422,12 +398,14 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: Hoo
                     RevdotParameters,
                 >::new())?
             }
-            ComputeVCircuit => registry.register_internal_circuit(circuits::compute_v::Circuit::<
-                C,
-                R,
-                HEADER_SIZE,
-                J,
-            >::new())?,
+            ComputeVCircuit => {
+                registry.register_internal_circuit(circuits::compute_v::Circuit::<
+                    C,
+                    R,
+                    HEADER_SIZE,
+                    J,
+                >::new())?
+            }
             ChallengeBindingCircuit => {
                 registry.register_internal_circuit(circuits::challenge_binding::Circuit::<
                     C,
@@ -436,30 +414,59 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: Hoo
                     J,
                 >::new(params))?
             }
-            PreambleStage => registry.register_bonding(Preamble::<C, R, HEADER_SIZE, J>::mask()?),
-            InnerErrorStage => {
-                registry.register_bonding(InnerError::<C, R, HEADER_SIZE, J>::mask()?)
+            PreambleStage => {
+                registry.register_bonding(stages::preamble::Stage::<C, R, HEADER_SIZE, J>::mask()?)
             }
-            OuterErrorStage => {
-                registry.register_bonding(OuterError::<C, R, HEADER_SIZE, J>::mask()?)
+            InnerErrorStage => registry.register_bonding(stages::inner_error::Stage::<
+                C,
+                R,
+                HEADER_SIZE,
+                J,
+                RevdotParameters,
+            >::mask()?),
+            OuterErrorStage => registry.register_bonding(stages::outer_error::Stage::<
+                C,
+                R,
+                HEADER_SIZE,
+                J,
+                RevdotParameters,
+            >::mask()?),
+            QueryStage => {
+                registry.register_bonding(stages::query::Stage::<C, R, HEADER_SIZE, J>::mask()?)
             }
-            QueryStage => registry.register_bonding(Query::<C, R, HEADER_SIZE, J>::mask()?),
-            EvalStage => registry.register_bonding(Eval::<C, R, HEADER_SIZE, J>::mask()?),
-            ChallengesStage => {
-                registry.register_bonding(Challenges::<C, R, HEADER_SIZE, J>::mask()?)
+            EvalStage => {
+                registry.register_bonding(stages::eval::Stage::<C, R, HEADER_SIZE, J>::mask()?)
             }
-            InnerErrorFinalStaged => {
-                registry.register_bonding(InnerError::<C, R, HEADER_SIZE, J>::final_mask()?)
-            }
-            OuterErrorFinalStaged => {
-                registry.register_bonding(OuterError::<C, R, HEADER_SIZE, J>::final_mask()?)
-            }
-            EvalFinalStaged => {
-                registry.register_bonding(Eval::<C, R, HEADER_SIZE, J>::final_mask()?)
-            }
-            ChallengesFinalStaged => {
-                registry.register_bonding(Challenges::<C, R, HEADER_SIZE, J>::final_mask()?)
-            }
+            ChallengesStage => registry.register_bonding(stages::slots::ChallengesStage::<
+                C,
+                R,
+                HEADER_SIZE,
+                J,
+                RevdotParameters,
+            >::mask()?),
+            InnerErrorFinalStaged => registry.register_bonding(stages::inner_error::Stage::<
+                C,
+                R,
+                HEADER_SIZE,
+                J,
+                RevdotParameters,
+            >::final_mask()?),
+            OuterErrorFinalStaged => registry.register_bonding(stages::outer_error::Stage::<
+                C,
+                R,
+                HEADER_SIZE,
+                J,
+                RevdotParameters,
+            >::final_mask()?),
+            EvalFinalStaged => registry
+                .register_bonding(stages::eval::Stage::<C, R, HEADER_SIZE, J>::final_mask()?),
+            ChallengesFinalStaged => registry.register_bonding(stages::slots::ChallengesStage::<
+                C,
+                R,
+                HEADER_SIZE,
+                J,
+                RevdotParameters,
+            >::final_mask()?),
         };
     }
 

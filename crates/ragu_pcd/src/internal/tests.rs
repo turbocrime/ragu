@@ -182,18 +182,23 @@ fn print_internal_circuit_constraint_counts() {
 /// The stage types `test_internal_stage_parameters` pins, at eight polynomial
 /// slots.
 mod pinned_chain {
-    use super::{HEADER_SIZE, R};
-    use crate::{AppHooks, internal::native::chain};
+    use ragu_pasta::Pasta;
 
-    pub type Preamble = chain::Preamble<ragu_pasta::Pasta, R, HEADER_SIZE, AppHooks<8, 1, 1, 2>>;
-    pub type OuterError =
-        chain::OuterError<ragu_pasta::Pasta, R, HEADER_SIZE, AppHooks<8, 1, 1, 2>>;
-    pub type InnerError =
-        chain::InnerError<ragu_pasta::Pasta, R, HEADER_SIZE, AppHooks<8, 1, 1, 2>>;
-    pub type Query = chain::Query<ragu_pasta::Pasta, R, HEADER_SIZE, AppHooks<8, 1, 1, 2>>;
-    pub type Eval = chain::Eval<ragu_pasta::Pasta, R, HEADER_SIZE, AppHooks<8, 1, 1, 2>>;
+    use super::{HEADER_SIZE, R};
+    use crate::{
+        AppHooks,
+        internal::native::{RevdotParameters, stages},
+    };
+
+    type J = AppHooks<8, 1, 1, 2>;
+
+    pub type Preamble = stages::preamble::Stage<Pasta, R, HEADER_SIZE, J>;
+    pub type OuterError = stages::outer_error::Stage<Pasta, R, HEADER_SIZE, J, RevdotParameters>;
+    pub type InnerError = stages::inner_error::Stage<Pasta, R, HEADER_SIZE, J, RevdotParameters>;
+    pub type Query = stages::query::Stage<Pasta, R, HEADER_SIZE, J>;
+    pub type Eval = stages::eval::Stage<Pasta, R, HEADER_SIZE, J>;
     pub type Challenges =
-        chain::Challenges<ragu_pasta::Pasta, R, HEADER_SIZE, AppHooks<8, 1, 1, 2>>;
+        stages::slots::ChallengesStage<Pasta, R, HEADER_SIZE, J, RevdotParameters>;
 }
 
 #[rustfmt::skip]

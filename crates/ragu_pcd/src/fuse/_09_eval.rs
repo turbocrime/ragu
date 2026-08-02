@@ -48,7 +48,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
                 registry_xy: builder.native_registry_xy_poly().eval(u),
             },
         };
-        let rx = native::chain::Eval::<C, R, HEADER_SIZE, J>::rx(
+        let rx = native::stages::eval::Stage::<C, R, HEADER_SIZE, J>::rx(
             C::CircuitField::random(&mut *rng),
             &eval_witness,
         )?;

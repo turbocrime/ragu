@@ -43,7 +43,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
             builder.right_header(),
         )?;
 
-        let rx = native::chain::Preamble::<C, R, HEADER_SIZE, J>::rx(
+        let rx = native::stages::preamble::Stage::<C, R, HEADER_SIZE, J>::rx(
             C::CircuitField::random(&mut *rng),
             &preamble_witness,
         )?;
@@ -53,7 +53,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         // The challenge slots are their own stage, last on the error branch,
         // and take the same witness the preamble does — they are a different
         // region of the same children's instances, not different data.
-        let challenges_rx = native::chain::Challenges::<C, R, HEADER_SIZE, J>::rx(
+        let challenges_rx = native::stages::slots::ChallengesStage::<
+            C,
+            R,
+            HEADER_SIZE,
+            J,
+            native::RevdotParameters,
+        >::rx(
             C::CircuitField::random(&mut *rng),
             &preamble_witness,
         )?;

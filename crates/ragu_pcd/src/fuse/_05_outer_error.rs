@@ -170,7 +170,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         outer_error_witness: &native::stages::outer_error::Witness<C, native::RevdotParameters>,
         builder: &mut ProofBuilder<'_, C, R, J>,
     ) -> Result<()> {
-        let rx = native::chain::OuterError::<C, R, HEADER_SIZE, J>::rx(
+        let rx = native::stages::outer_error::Stage::<
+            C,
+            R,
+            HEADER_SIZE,
+            J,
+            native::RevdotParameters,
+        >::rx(
             C::CircuitField::random(&mut *rng),
             outer_error_witness,
         )?;

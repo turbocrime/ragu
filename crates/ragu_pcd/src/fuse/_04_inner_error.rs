@@ -97,7 +97,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
                     &claims_builder.b,
                 ),
             };
-        let native_rx = native::chain::InnerError::<C, R, HEADER_SIZE, J>::rx(
+        let native_rx = native::stages::inner_error::Stage::<
+            C,
+            R,
+            HEADER_SIZE,
+            J,
+            native::RevdotParameters,
+        >::rx(
             C::CircuitField::random(&mut *rng),
             &inner_error_witness,
         )?;

@@ -68,7 +68,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
             ),
         };
 
-        let rx = native::chain::Query::<C, R, HEADER_SIZE, J>::rx(
+        let rx = native::stages::query::Stage::<C, R, HEADER_SIZE, J>::rx(
             C::CircuitField::random(&mut *rng),
             &query_witness,
         )?;
