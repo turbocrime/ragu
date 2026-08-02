@@ -527,72 +527,104 @@ mod capacity_is_per_application {
     /// derives a challenge.
     struct Heavy;
 
-    macro_rules! step {
-        ($ty:ty, |$ctx:ident| $hooks:block) => {
-            impl Step<Pasta> for $ty {
-                const INDEX: Index = Index::new(0);
-                type Witness<'source> = ();
-                type Aux<'source> = ();
-                type Left = H;
-                type Right = H;
-                type Output = H;
+    impl Step<Pasta> for Light {
+        const INDEX: Index = Index::new(0);
+        type Witness<'source> = ();
+        type Aux<'source> = ();
+        type Left = H;
+        type Right = H;
+        type Output = H;
 
-                fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const N: usize>(
-                    &self,
-                    $ctx: &mut StepCtx<'_, 'dr, D, Pasta>,
-                    _: DriverValue<D, ()>,
-                    left: DriverValue<D, Fp>,
-                    right: DriverValue<D, Fp>,
-                ) -> Result<(
-                    (
-                        Encoded<'dr, D, Self::Left, N>,
-                        Encoded<'dr, D, Self::Right, N>,
-                        Encoded<'dr, D, Self::Output, N>,
-                    ),
-                    DriverValue<D, Fp>,
-                    DriverValue<D, ()>,
-                )> {
-                    let allocator = &mut Standard::new();
-                    let l = Element::alloc($ctx.dr, allocator, left)?;
-                    let r = Element::alloc($ctx.dr, allocator, right)?;
-                    $hooks
-                    let out = l.add($ctx.dr, &r);
-                    let out_val = Maybe::map(out.value(), |v| *v);
-                    Ok((
-                        (
-                            Encoded::from_gadget(l),
-                            Encoded::from_gadget(r),
-                            Encoded::from_gadget(out),
-                        ),
-                        out_val,
-                        D::unit(),
-                    ))
-                }
-            }
-        };
+        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const N: usize>(
+            &self,
+            ctx: &mut StepCtx<'_, 'dr, D, Pasta>,
+            _: DriverValue<D, ()>,
+            left: DriverValue<D, Fp>,
+            right: DriverValue<D, Fp>,
+        ) -> Result<(
+            (
+                Encoded<'dr, D, Self::Left, N>,
+                Encoded<'dr, D, Self::Right, N>,
+                Encoded<'dr, D, Self::Output, N>,
+            ),
+            DriverValue<D, Fp>,
+            DriverValue<D, ()>,
+        )> {
+            let allocator = &mut Standard::new();
+            let l = Element::alloc(ctx.dr, allocator, left)?;
+            let r = Element::alloc(ctx.dr, allocator, right)?;
+
+            let out = l.add(ctx.dr, &r);
+            let out_val = Maybe::map(out.value(), |v| *v);
+            Ok((
+                (
+                    Encoded::from_gadget(l),
+                    Encoded::from_gadget(r),
+                    Encoded::from_gadget(out),
+                ),
+                out_val,
+                D::unit(),
+            ))
+        }
     }
 
-    step!(Light, |ctx| {
-        let _ = &ctx;
-    });
+    impl Step<Pasta> for Heavy {
+        const INDEX: Index = Index::new(0);
+        type Witness<'source> = ();
+        type Aux<'source> = ();
+        type Left = H;
+        type Right = H;
+        type Output = H;
 
-    step!(Heavy, |ctx| {
-        // Only ever registered, never proved: the hook calls matter, not the
-        // values they carry.
-        let commitment = D::try_just(|| {
-            Err::<crate::poly_commitment::PolyCommitment<Pasta>, _>(Error::InvalidWitness(
-                "the capacity test never builds a proof".into(),
+        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const N: usize>(
+            &self,
+            ctx: &mut StepCtx<'_, 'dr, D, Pasta>,
+            _: DriverValue<D, ()>,
+            left: DriverValue<D, Fp>,
+            right: DriverValue<D, Fp>,
+        ) -> Result<(
+            (
+                Encoded<'dr, D, Self::Left, N>,
+                Encoded<'dr, D, Self::Right, N>,
+                Encoded<'dr, D, Self::Output, N>,
+            ),
+            DriverValue<D, Fp>,
+            DriverValue<D, ()>,
+        )> {
+            let allocator = &mut Standard::new();
+            let l = Element::alloc(ctx.dr, allocator, left)?;
+            let r = Element::alloc(ctx.dr, allocator, right)?;
+
+            // Only ever registered, never proved: the hook calls matter, not
+            // the values they carry.
+            let commitment = D::try_just(|| {
+                Err::<crate::poly_commitment::PolyCommitment<Pasta>, _>(Error::InvalidWitness(
+                    "the capacity test never builds a proof".into(),
+                ))
+            })?;
+            // Both polynomials in one call: slot 0 is `handle`, slot 1 is `other`.
+            let [handle, other] =
+                ctx.witness_polynomial([Maybe::clone(&commitment), commitment])?;
+            let zero = Element::alloc(ctx.dr, &mut Standard::new(), D::just(|| Fp::ZERO))?;
+            // Three claims over two polynomials.
+            ctx.enforce_poly_query(&handle, zero.clone(), zero.clone())?;
+            ctx.enforce_poly_query(&handle, zero.clone(), zero.clone())?;
+            ctx.enforce_poly_query(&other, zero.clone(), zero)?;
+            ctx.derive_challenge(Pasta::baked(), &handle)?;
+
+            let out = l.add(ctx.dr, &r);
+            let out_val = Maybe::map(out.value(), |v| *v);
+            Ok((
+                (
+                    Encoded::from_gadget(l),
+                    Encoded::from_gadget(r),
+                    Encoded::from_gadget(out),
+                ),
+                out_val,
+                D::unit(),
             ))
-        })?;
-        // Both polynomials in one call: slot 0 is `handle`, slot 1 is `other`.
-        let [handle, other] = ctx.witness_polynomial([Maybe::clone(&commitment), commitment])?;
-        let zero = Element::alloc(ctx.dr, &mut Standard::new(), D::just(|| Fp::ZERO))?;
-        // Three claims over two polynomials.
-        ctx.enforce_poly_query(&handle, zero.clone(), zero.clone())?;
-        ctx.enforce_poly_query(&handle, zero.clone(), zero.clone())?;
-        ctx.enforce_poly_query(&other, zero.clone(), zero)?;
-        ctx.derive_challenge(Pasta::baked(), &handle)?;
-    });
+        }
+    }
 
     fn gates<J: crate::framework_hooks::HookConfig>(
         app: &Application<'_, Pasta, R, HS, J>,

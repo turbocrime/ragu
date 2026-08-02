@@ -6,7 +6,7 @@ use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::{Error, Result};
 use ragu_pasta::{Fp, Pasta};
 use ragu_testing::pcd::poly_query::{
-    CommitAndOpen, CommitAndOpenWitness, OpenAndHash, OpenAndHashWitness, open_app, poly, seed_leaf,
+    CommitAndOpen, CommitAndOpenWitness, OpenAndHash, OpenAndHashWitness, open_app, poly,
 };
 use rand::{SeedableRng, rngs::StdRng};
 
@@ -34,7 +34,16 @@ fn oracle_end_to_end() -> Result<()> {
     )?;
     assert!(app.verify(&leaf1, &mut rng)?);
 
-    let leaf2 = seed_leaf(&app, pasta, &mut rng, &[2, 7, 1, 8, 2, 8])?;
+    let p2 = poly(&[2, 7, 1, 8, 2, 8]);
+    let (leaf2, ()) = app.seed(
+        &mut rng,
+        CommitAndOpen::new(pasta),
+        CommitAndOpenWitness {
+            commitment: app.commit_polynomial(&p2)?,
+            polynomial: p2,
+            claimed_y: None,
+        },
+    )?;
 
     // `com1` is the same handle the leaf witnessed: a cross-step opening.
     let x = Fp::from(9u64);

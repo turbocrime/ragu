@@ -12,9 +12,11 @@ use ragu_core::Result;
 use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::Pcd;
 use ragu_testing::pcd::collections::{
-    collections_app, fuse_concat, fuse_merge, merged_polynomial, seed_sequence, seed_set,
-    sequence_polynomial, set_polynomial,
-    step::{MergeSets, MergeSetsWitness, SeqHeader, SetHeader},
+    collections_app, merged_polynomial, sequence_polynomial, set_polynomial,
+    step::{
+        ConcatSequences, ConcatSequencesWitness, MergeSets, MergeSetsWitness, SeedSequence,
+        SeedSequenceWitness, SeedSet, SeedSetWitness, SeqHeader, SetHeader,
+    },
 };
 
 type R = ProductionRank;
@@ -27,13 +29,61 @@ fn seeded_singletons_fuse_into_their_merge() -> Result<()> {
     let app = collections_app::<Pasta, R>(pasta)?;
     let mut rng = StdRng::seed_from_u64(31415);
 
-    let three = seed_set(&app, &mut rng, Fp::from(3u64))?;
-    let five_a = seed_set(&app, &mut rng, Fp::from(5u64))?;
-    let five_b = seed_set(&app, &mut rng, Fp::from(5u64))?;
+    let three_poly = set_polynomial(&[Fp::from(3u64)]);
+    let (three, ()) = app.seed(
+        &mut rng,
+        SeedSet::new(),
+        SeedSetWitness {
+            set: app.commit_polynomial(&three_poly)?,
+            polynomial: three_poly,
+        },
+    )?;
+    let five_a_poly = set_polynomial(&[Fp::from(5u64)]);
+    let (five_a, ()) = app.seed(
+        &mut rng,
+        SeedSet::new(),
+        SeedSetWitness {
+            set: app.commit_polynomial(&five_a_poly)?,
+            polynomial: five_a_poly,
+        },
+    )?;
+    let five_b_poly = set_polynomial(&[Fp::from(5u64)]);
+    let (five_b, ()) = app.seed(
+        &mut rng,
+        SeedSet::new(),
+        SeedSetWitness {
+            set: app.commit_polynomial(&five_b_poly)?,
+            polynomial: five_b_poly,
+        },
+    )?;
     assert!(app.verify(&three, &mut rng)?, "a singleton seed verifies");
 
-    let pair = fuse_merge(&app, &mut rng, three, five_a)?;
-    let merged = fuse_merge(&app, &mut rng, pair, five_b)?;
+    let pair_product = merged_polynomial(&three.data().polynomial, &five_a.data().polynomial);
+    let (pair, ()) = app.fuse(
+        &mut rng,
+        MergeSets::new(pasta),
+        MergeSetsWitness {
+            a: app.commit_polynomial(&three.data().polynomial)?,
+            b: app.commit_polynomial(&five_a.data().polynomial)?,
+            product: app.commit_polynomial(&pair_product)?,
+            product_polynomial: pair_product,
+        },
+        three,
+        five_a,
+    )?;
+    let merged_product = merged_polynomial(&pair.data().polynomial, &five_b.data().polynomial);
+    let (merged, ()) = app.fuse(
+        &mut rng,
+        MergeSets::new(pasta),
+        MergeSetsWitness {
+            a: app.commit_polynomial(&pair.data().polynomial)?,
+            b: app.commit_polynomial(&five_b.data().polynomial)?,
+            product: app.commit_polynomial(&merged_product)?,
+            product_polynomial: merged_product,
+        },
+        pair,
+        five_b,
+    )?;
     assert!(app.verify(&merged, &mut rng)?, "the merge tree verifies");
 
     // Longhand root checks on the carried product.
@@ -80,8 +130,24 @@ fn a_parent_cannot_merge_a_substituted_set() -> Result<()> {
     let app = collections_app::<Pasta, R>(pasta)?;
     let mut rng = StdRng::seed_from_u64(2718);
 
-    let left = seed_set(&app, &mut rng, Fp::from(3u64))?;
-    let right = seed_set(&app, &mut rng, Fp::from(7u64))?;
+    let left_poly = set_polynomial(&[Fp::from(3u64)]);
+    let (left, ()) = app.seed(
+        &mut rng,
+        SeedSet::new(),
+        SeedSetWitness {
+            set: app.commit_polynomial(&left_poly)?,
+            polynomial: left_poly,
+        },
+    )?;
+    let right_poly = set_polynomial(&[Fp::from(7u64)]);
+    let (right, ()) = app.seed(
+        &mut rng,
+        SeedSet::new(),
+        SeedSetWitness {
+            set: app.commit_polynomial(&right_poly)?,
+            polynomial: right_poly,
+        },
+    )?;
 
     // Product computed honestly *for the substitute*: every claim is
     // internally consistent, so only the header tie can reject it.
@@ -120,8 +186,24 @@ fn a_wrong_merge_is_rejected() -> Result<()> {
     let app = collections_app::<Pasta, R>(pasta)?;
     let mut rng = StdRng::seed_from_u64(1618);
 
-    let left = seed_set(&app, &mut rng, Fp::from(3u64))?;
-    let right = seed_set(&app, &mut rng, Fp::from(7u64))?;
+    let left_poly = set_polynomial(&[Fp::from(3u64)]);
+    let (left, ()) = app.seed(
+        &mut rng,
+        SeedSet::new(),
+        SeedSetWitness {
+            set: app.commit_polynomial(&left_poly)?,
+            polynomial: left_poly,
+        },
+    )?;
+    let right_poly = set_polynomial(&[Fp::from(7u64)]);
+    let (right, ()) = app.seed(
+        &mut rng,
+        SeedSet::new(),
+        SeedSetWitness {
+            set: app.commit_polynomial(&right_poly)?,
+            polynomial: right_poly,
+        },
+    )?;
 
     // The claimed merge drops member 7.
     let result = app.fuse(
@@ -152,15 +234,79 @@ fn seeded_singletons_fuse_into_their_concatenation() -> Result<()> {
     let app = collections_app::<Pasta, R>(pasta)?;
     let mut rng = StdRng::seed_from_u64(1729);
 
-    let three = seed_sequence(&app, &mut rng, Fp::from(3u64))?;
-    let five_a = seed_sequence(&app, &mut rng, Fp::from(5u64))?;
-    let five_b = seed_sequence(&app, &mut rng, Fp::from(5u64))?;
-    let seven = seed_sequence(&app, &mut rng, Fp::from(7u64))?;
+    let (three, ()) = app.seed(
+        &mut rng,
+        SeedSequence::<Pasta, R>::new(),
+        SeedSequenceWitness {
+            sequence: app.commit_polynomial(&sequence_polynomial(&[Fp::from(3u64)]))?,
+            member: Fp::from(3u64),
+        },
+    )?;
+    let (five_a, ()) = app.seed(
+        &mut rng,
+        SeedSequence::<Pasta, R>::new(),
+        SeedSequenceWitness {
+            sequence: app.commit_polynomial(&sequence_polynomial(&[Fp::from(5u64)]))?,
+            member: Fp::from(5u64),
+        },
+    )?;
+    let (five_b, ()) = app.seed(
+        &mut rng,
+        SeedSequence::<Pasta, R>::new(),
+        SeedSequenceWitness {
+            sequence: app.commit_polynomial(&sequence_polynomial(&[Fp::from(5u64)]))?,
+            member: Fp::from(5u64),
+        },
+    )?;
+    let (seven, ()) = app.seed(
+        &mut rng,
+        SeedSequence::<Pasta, R>::new(),
+        SeedSequenceWitness {
+            sequence: app.commit_polynomial(&sequence_polynomial(&[Fp::from(7u64)]))?,
+            member: Fp::from(7u64),
+        },
+    )?;
     assert!(app.verify(&three, &mut rng)?, "a singleton seed verifies");
 
-    let left = fuse_concat(&app, &mut rng, three, five_a)?; // [3, 5]
-    let right = fuse_concat(&app, &mut rng, five_b, seven)?; // [5, 7]
-    let out = fuse_concat(&app, &mut rng, left, right)?; // [3, 5, 5, 7]
+    // [3, 5]
+    let left_members: Vec<Fp> = [three.data().members.as_slice(), &five_a.data().members].concat();
+    let (left, ()) = app.fuse(
+        &mut rng,
+        ConcatSequences::<Pasta, R>::new(pasta),
+        ConcatSequencesWitness {
+            a: app.commit_polynomial(&sequence_polynomial(&three.data().members))?,
+            b: app.commit_polynomial(&sequence_polynomial(&five_a.data().members))?,
+            output: app.commit_polynomial(&sequence_polynomial(&left_members))?,
+        },
+        three,
+        five_a,
+    )?;
+    // [5, 7]
+    let right_members: Vec<Fp> = [five_b.data().members.as_slice(), &seven.data().members].concat();
+    let (right, ()) = app.fuse(
+        &mut rng,
+        ConcatSequences::<Pasta, R>::new(pasta),
+        ConcatSequencesWitness {
+            a: app.commit_polynomial(&sequence_polynomial(&five_b.data().members))?,
+            b: app.commit_polynomial(&sequence_polynomial(&seven.data().members))?,
+            output: app.commit_polynomial(&sequence_polynomial(&right_members))?,
+        },
+        five_b,
+        seven,
+    )?;
+    // [3, 5, 5, 7]
+    let out_members: Vec<Fp> = [left.data().members.as_slice(), &right.data().members].concat();
+    let (out, ()) = app.fuse(
+        &mut rng,
+        ConcatSequences::<Pasta, R>::new(pasta),
+        ConcatSequencesWitness {
+            a: app.commit_polynomial(&sequence_polynomial(&left.data().members))?,
+            b: app.commit_polynomial(&sequence_polynomial(&right.data().members))?,
+            output: app.commit_polynomial(&sequence_polynomial(&out_members))?,
+        },
+        left,
+        right,
+    )?;
     assert!(app.verify(&out, &mut rng)?, "the concatenation verifies");
 
     let expected = [3u64, 5, 5, 7].map(Fp::from);
@@ -195,9 +341,34 @@ fn a_zero_member_is_a_valid_sequence() -> Result<()> {
     let app = collections_app::<Pasta, R>(pasta)?;
     let mut rng = StdRng::seed_from_u64(4104);
 
-    let zero = seed_sequence(&app, &mut rng, Fp::ZERO)?;
-    let three = seed_sequence(&app, &mut rng, Fp::from(3u64))?;
-    let out = fuse_concat(&app, &mut rng, zero, three)?;
+    let (zero, ()) = app.seed(
+        &mut rng,
+        SeedSequence::<Pasta, R>::new(),
+        SeedSequenceWitness {
+            sequence: app.commit_polynomial(&sequence_polynomial(&[Fp::ZERO]))?,
+            member: Fp::ZERO,
+        },
+    )?;
+    let (three, ()) = app.seed(
+        &mut rng,
+        SeedSequence::<Pasta, R>::new(),
+        SeedSequenceWitness {
+            sequence: app.commit_polynomial(&sequence_polynomial(&[Fp::from(3u64)]))?,
+            member: Fp::from(3u64),
+        },
+    )?;
+    let out_members: Vec<Fp> = [zero.data().members.as_slice(), &three.data().members].concat();
+    let (out, ()) = app.fuse(
+        &mut rng,
+        ConcatSequences::<Pasta, R>::new(pasta),
+        ConcatSequencesWitness {
+            a: app.commit_polynomial(&sequence_polynomial(&zero.data().members))?,
+            b: app.commit_polynomial(&sequence_polynomial(&three.data().members))?,
+            output: app.commit_polynomial(&sequence_polynomial(&out_members))?,
+        },
+        zero,
+        three,
+    )?;
     assert!(app.verify(&out, &mut rng)?, "[0, 3] verifies");
     assert_eq!(out.data().members, vec![Fp::ZERO, Fp::from(3u64)]);
 
@@ -297,8 +468,34 @@ fn print_merge_characterization() -> Result<()> {
     println!("merge tree over 32 singletons");
     let merged: Pcd<Pasta, R, SetHeader<R>> = characterize(
         32,
-        |m| seed_set(&app, &mut *rng.borrow_mut(), Fp::from(m)),
-        |a, b| fuse_merge(&app, &mut *rng.borrow_mut(), a, b),
+        |m| {
+            let polynomial = set_polynomial(&[Fp::from(m)]);
+            let (pcd, ()) = app.seed(
+                &mut *rng.borrow_mut(),
+                SeedSet::new(),
+                SeedSetWitness {
+                    set: app.commit_polynomial(&polynomial)?,
+                    polynomial,
+                },
+            )?;
+            Ok(pcd)
+        },
+        |a, b| {
+            let product = merged_polynomial(&a.data().polynomial, &b.data().polynomial);
+            let (pcd, ()) = app.fuse(
+                &mut *rng.borrow_mut(),
+                MergeSets::new(pasta),
+                MergeSetsWitness {
+                    a: app.commit_polynomial(&a.data().polynomial)?,
+                    b: app.commit_polynomial(&b.data().polynomial)?,
+                    product: app.commit_polynomial(&product)?,
+                    product_polynomial: product,
+                },
+                a,
+                b,
+            )?;
+            Ok(pcd)
+        },
     )?;
 
     let t = std::time::Instant::now();
@@ -323,8 +520,33 @@ fn print_concat_characterization() -> Result<()> {
     println!("concat tree over 32 singletons");
     let out: Pcd<Pasta, R, SeqHeader> = characterize(
         32,
-        |m| seed_sequence(&app, &mut *rng.borrow_mut(), Fp::from(m)),
-        |a, b| fuse_concat(&app, &mut *rng.borrow_mut(), a, b),
+        |m| {
+            let member = Fp::from(m);
+            let (pcd, ()) = app.seed(
+                &mut *rng.borrow_mut(),
+                SeedSequence::<Pasta, R>::new(),
+                SeedSequenceWitness {
+                    sequence: app.commit_polynomial(&sequence_polynomial(&[member]))?,
+                    member,
+                },
+            )?;
+            Ok(pcd)
+        },
+        |a, b| {
+            let members: Vec<Fp> = [a.data().members.as_slice(), &b.data().members].concat();
+            let (pcd, ()) = app.fuse(
+                &mut *rng.borrow_mut(),
+                ConcatSequences::<Pasta, R>::new(pasta),
+                ConcatSequencesWitness {
+                    a: app.commit_polynomial(&sequence_polynomial(&a.data().members))?,
+                    b: app.commit_polynomial(&sequence_polynomial(&b.data().members))?,
+                    output: app.commit_polynomial(&sequence_polynomial(&members))?,
+                },
+                a,
+                b,
+            )?;
+            Ok(pcd)
+        },
     )?;
 
     let t = std::time::Instant::now();

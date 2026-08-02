@@ -12,7 +12,7 @@ use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::fuzz_utils::Corruption;
 use ragu_testing::pcd::poly_query::{
     CommitAndOpen, CommitAndOpenWitness, OpenAndHash, OpenAndHashWitness, open_app,
-    open_app_builder, poly, seed_leaf,
+    open_app_builder, poly,
 };
 use rand::{SeedableRng, rngs::StdRng};
 
@@ -24,7 +24,16 @@ fn corrupted_claim_is_rejected_directly_and_recursively() -> Result<()> {
     let app = open_app::<Pasta, R>(pasta)?;
     let mut rng = StdRng::seed_from_u64(1234);
 
-    let leaf1 = seed_leaf(&app, pasta, &mut rng, &[3, 1, 4, 1, 5])?;
+    let polynomial = poly(&[3, 1, 4, 1, 5]);
+    let (leaf1, ()) = app.seed(
+        &mut rng,
+        CommitAndOpen::new(pasta),
+        CommitAndOpenWitness {
+            commitment: app.commit_polynomial(&polynomial)?,
+            polynomial,
+            claimed_y: None,
+        },
+    )?;
     assert!(app.verify(&leaf1, &mut rng)?);
 
     // Corrupt the claimed evaluation in slot 0.
@@ -35,7 +44,16 @@ fn corrupted_claim_is_rejected_directly_and_recursively() -> Result<()> {
         "root verify must reject a corrupted claim instance"
     );
 
-    let leaf2 = seed_leaf(&app, pasta, &mut rng, &[2, 7, 1, 8, 2, 8])?;
+    let polynomial = poly(&[2, 7, 1, 8, 2, 8]);
+    let (leaf2, ()) = app.seed(
+        &mut rng,
+        CommitAndOpen::new(pasta),
+        CommitAndOpenWitness {
+            commitment: app.commit_polynomial(&polynomial)?,
+            polynomial,
+            claimed_y: None,
+        },
+    )?;
     let p1 = poly(&[3, 1, 4, 1, 5]);
     let com1 = app.commit_polynomial(&p1)?;
     let x = Fp::from(9u64);
@@ -77,7 +95,16 @@ fn forged_challenge_is_rejected_directly_and_recursively() -> Result<()> {
     let app = open_app::<Pasta, R>(pasta)?;
     let mut rng = StdRng::seed_from_u64(99);
 
-    let honest = seed_leaf(&app, pasta, &mut rng, &[3, 1, 4, 1, 5])?;
+    let polynomial = poly(&[3, 1, 4, 1, 5]);
+    let (honest, ()) = app.seed(
+        &mut rng,
+        CommitAndOpen::new(pasta),
+        CommitAndOpenWitness {
+            commitment: app.commit_polynomial(&polynomial)?,
+            polynomial,
+            claimed_y: None,
+        },
+    )?;
     assert!(app.verify(&honest, &mut rng)?);
 
     // Keep the point, change the challenge.
@@ -88,7 +115,16 @@ fn forged_challenge_is_rejected_directly_and_recursively() -> Result<()> {
         "root verify must reject a challenge that is not its point's hash"
     );
 
-    let leaf2 = seed_leaf(&app, pasta, &mut rng, &[2, 7, 1, 8])?;
+    let polynomial = poly(&[2, 7, 1, 8]);
+    let (leaf2, ()) = app.seed(
+        &mut rng,
+        CommitAndOpen::new(pasta),
+        CommitAndOpenWitness {
+            commitment: app.commit_polynomial(&polynomial)?,
+            polynomial,
+            claimed_y: None,
+        },
+    )?;
     let p3 = poly(&[5, 5, 5]);
     let com3 = app.commit_polynomial(&p3)?;
     let x = Fp::from(11u64);
@@ -129,7 +165,16 @@ fn a_claim_naming_no_slot_is_rejected() -> Result<()> {
     let app = open_app::<Pasta, R>(pasta)?;
     let mut rng = StdRng::seed_from_u64(4242);
 
-    let honest = seed_leaf(&app, pasta, &mut rng, &[3, 1, 4, 1, 5])?;
+    let polynomial = poly(&[3, 1, 4, 1, 5]);
+    let (honest, ()) = app.seed(
+        &mut rng,
+        CommitAndOpen::new(pasta),
+        CommitAndOpenWitness {
+            commitment: app.commit_polynomial(&polynomial)?,
+            polynomial,
+            claimed_y: None,
+        },
+    )?;
     assert!(
         app.verify(&honest, &mut rng)?,
         "the honest leaf must verify"
@@ -143,7 +188,16 @@ fn a_claim_naming_no_slot_is_rejected() -> Result<()> {
         "root verify must reject a claim whose name matches no polynomial slot"
     );
 
-    let leaf2 = seed_leaf(&app, pasta, &mut rng, &[2, 7, 1, 8])?;
+    let polynomial = poly(&[2, 7, 1, 8]);
+    let (leaf2, ()) = app.seed(
+        &mut rng,
+        CommitAndOpen::new(pasta),
+        CommitAndOpenWitness {
+            commitment: app.commit_polynomial(&polynomial)?,
+            polynomial,
+            claimed_y: None,
+        },
+    )?;
     let p3 = poly(&[5, 5, 5]);
     let com3 = app.commit_polynomial(&p3)?;
     let x = Fp::from(11u64);
@@ -222,7 +276,16 @@ fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
         "root verify must reject a claim whose name is not the folded polynomial's commitment"
     );
 
-    let leaf2 = seed_leaf(&app, pasta, &mut rng, &[2, 7, 1, 8])?;
+    let polynomial = poly(&[2, 7, 1, 8]);
+    let (leaf2, ()) = app.seed(
+        &mut rng,
+        CommitAndOpen::new(pasta),
+        CommitAndOpenWitness {
+            commitment: app.commit_polynomial(&polynomial)?,
+            polynomial,
+            claimed_y: None,
+        },
+    )?;
 
     let p3 = poly(&[5, 5, 5]);
     let com3 = app.commit_polynomial(&p3)?;
@@ -273,10 +336,28 @@ fn forged_coordinate_wires_are_rejected_directly_and_recursively() -> Result<()>
     let app = open_app::<Pasta, R>(pasta)?;
     let mut rng = StdRng::seed_from_u64(2027);
 
-    let honest = seed_leaf(&app, pasta, &mut rng, &[3, 1, 4, 1, 5])?;
+    let polynomial = poly(&[3, 1, 4, 1, 5]);
+    let (honest, ()) = app.seed(
+        &mut rng,
+        CommitAndOpen::new(pasta),
+        CommitAndOpenWitness {
+            commitment: app.commit_polynomial(&polynomial)?,
+            polynomial,
+            claimed_y: None,
+        },
+    )?;
     assert!(app.verify(&honest, &mut rng)?, "the honest leaf verifies");
 
-    let mut tampered = seed_leaf(&app, pasta, &mut rng, &[3, 1, 4, 1, 5])?;
+    let polynomial = poly(&[3, 1, 4, 1, 5]);
+    let (mut tampered, ()) = app.seed(
+        &mut rng,
+        CommitAndOpen::new(pasta),
+        CommitAndOpenWitness {
+            commitment: app.commit_polynomial(&polynomial)?,
+            polynomial,
+            claimed_y: None,
+        },
+    )?;
     tampered.corrupt_application_coord(0, Fp::from(0xbad));
 
     assert!(
@@ -285,7 +366,16 @@ fn forged_coordinate_wires_are_rejected_directly_and_recursively() -> Result<()>
          hosts and reject a forged wire"
     );
 
-    let leaf2 = seed_leaf(&app, pasta, &mut rng, &[2, 7, 1, 8])?;
+    let polynomial = poly(&[2, 7, 1, 8]);
+    let (leaf2, ()) = app.seed(
+        &mut rng,
+        CommitAndOpen::new(pasta),
+        CommitAndOpenWitness {
+            commitment: app.commit_polynomial(&polynomial)?,
+            polynomial,
+            claimed_y: None,
+        },
+    )?;
     let p3 = poly(&[5, 5, 5]);
     let com3 = app.commit_polynomial(&p3)?;
     let x = Fp::from(11u64);

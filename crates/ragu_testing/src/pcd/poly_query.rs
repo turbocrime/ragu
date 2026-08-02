@@ -8,7 +8,7 @@
 use core::marker::PhantomData;
 
 use ff::{Field, PrimeField};
-use ragu_arithmetic::{CryptoRngCore, Cycle};
+use ragu_arithmetic::Cycle;
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{
     Result,
@@ -17,7 +17,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_pcd::{
-    AppHooks, Application, ApplicationBuilder, Pcd, PolyCommitment,
+    AppHooks, Application, ApplicationBuilder, PolyCommitment,
     header::{Header, Suffix},
     step::{Encoded, Index, Step, StepCtx},
 };
@@ -272,26 +272,4 @@ pub fn open_app_builder<C: Cycle, R: Rank>(params: &C::Params) -> Result<OpenApp
 /// test proves through.
 pub fn open_app<C: Cycle, R: Rank>(params: &C::Params) -> Result<OpenApp<'_, C, R>> {
     open_app_builder::<C, R>(params)?.finalize(params)
-}
-
-/// Seed a [`CommitAndOpen`] leaf over the polynomial with these
-/// coefficients; the commitment is derived internally and dropped.
-pub fn seed_leaf<C: Cycle, R: Rank, RNG: CryptoRngCore>(
-    app: &OpenApp<'_, C, R>,
-    params: &C::Params,
-    rng: &mut RNG,
-    coeffs: &[u64],
-) -> Result<Pcd<C, R, HashedOpening<R>>> {
-    let polynomial = poly(coeffs);
-    let commitment = app.commit_polynomial(&polynomial)?;
-    let (leaf, ()) = app.seed(
-        rng,
-        CommitAndOpen::new(params),
-        CommitAndOpenWitness {
-            commitment,
-            polynomial,
-            claimed_y: None,
-        },
-    )?;
-    Ok(leaf)
 }
