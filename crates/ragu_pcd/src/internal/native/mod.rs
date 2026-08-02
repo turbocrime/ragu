@@ -4,6 +4,7 @@ use ragu_arithmetic::Cycle;
 use ragu_circuits::{
     polynomials::Rank,
     registry::{CircuitIndex, RegistryBuilder},
+    staging::StageExt,
 };
 use ragu_core::Result;
 use ragu_primitives::vec::ConstLen;
@@ -373,8 +374,7 @@ pub enum RxComponent {
     Rx(RxIndex),
 }
 
-/// Registers internal native circuits and masks into the provided registry,
-/// in exactly [`InternalCircuitIndex::ALL`] order.
+/// Registers internal native circuits and masks into the provided registry.
 ///
 /// Does not register internal steps (rerandomize, trivial); those are
 /// registered by the caller after this function returns.
@@ -383,67 +383,84 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: Hoo
     params: &'params C::Params,
     log2_circuits: u32,
 ) -> Result<RegistryBuilder<'params, C::CircuitField, R>> {
+    use chain::{Challenges, Eval, InnerError, OuterError, Preamble, Query};
+
     let initial_internal_circuits = registry.num_internal_circuits();
 
-    // Circuits first, then masks.
-    {
-        registry = registry.register_internal_circuit(circuits::hashes_1::Circuit::<
-            C,
-            R,
-            HEADER_SIZE,
-            J,
-            RevdotParameters,
-        >::new(params, log2_circuits))?;
-        registry = registry.register_internal_circuit(circuits::hashes_2::Circuit::<
-            C,
-            R,
-            HEADER_SIZE,
-            J,
-            RevdotParameters,
-        >::new(params))?;
-        registry = registry.register_internal_circuit(circuits::inner_collapse::Circuit::<
-            C,
-            R,
-            HEADER_SIZE,
-            J,
-            RevdotParameters,
-        >::new())?;
-        registry = registry.register_internal_circuit(circuits::outer_collapse::Circuit::<
-            C,
-            R,
-            HEADER_SIZE,
-            J,
-            RevdotParameters,
-        >::new())?;
-        registry = registry.register_internal_circuit(circuits::compute_v::Circuit::<
-            C,
-            R,
-            HEADER_SIZE,
-            J,
-        >::new())?;
-        registry = registry.register_internal_circuit(circuits::challenge_binding::Circuit::<
-            C,
-            R,
-            HEADER_SIZE,
-            J,
-        >::new(params))?;
-    }
-
-    {
-        use chain::{Challenges, Eval, InnerError, OuterError, Preamble, Query};
-        use ragu_circuits::staging::StageExt as _;
-
-        // Stage masks, then final-trace masks.
-        registry = registry.register_bonding(Preamble::<C, R, HEADER_SIZE, J>::mask()?);
-        registry = registry.register_bonding(InnerError::<C, R, HEADER_SIZE, J>::mask()?);
-        registry = registry.register_bonding(OuterError::<C, R, HEADER_SIZE, J>::mask()?);
-        registry = registry.register_bonding(Query::<C, R, HEADER_SIZE, J>::mask()?);
-        registry = registry.register_bonding(Eval::<C, R, HEADER_SIZE, J>::mask()?);
-        registry = registry.register_bonding(Challenges::<C, R, HEADER_SIZE, J>::mask()?);
-        registry = registry.register_bonding(InnerError::<C, R, HEADER_SIZE, J>::final_mask()?);
-        registry = registry.register_bonding(OuterError::<C, R, HEADER_SIZE, J>::final_mask()?);
-        registry = registry.register_bonding(Eval::<C, R, HEADER_SIZE, J>::final_mask()?);
-        registry = registry.register_bonding(Challenges::<C, R, HEADER_SIZE, J>::final_mask()?);
+    for &id in &InternalCircuitIndex::ALL {
+        use InternalCircuitIndex::*;
+        registry = match id {
+            Hashes1Circuit => registry.register_internal_circuit(circuits::hashes_1::Circuit::<
+                C,
+                R,
+                HEADER_SIZE,
+                J,
+                RevdotParameters,
+            >::new(params, log2_circuits))?,
+            Hashes2Circuit => registry.register_internal_circuit(circuits::hashes_2::Circuit::<
+                C,
+                R,
+                HEADER_SIZE,
+                J,
+                RevdotParameters,
+            >::new(params))?,
+            InnerCollapseCircuit => {
+                registry.register_internal_circuit(circuits::inner_collapse::Circuit::<
+                    C,
+                    R,
+                    HEADER_SIZE,
+                    J,
+                    RevdotParameters,
+                >::new())?
+            }
+            OuterCollapseCircuit => {
+                registry.register_internal_circuit(circuits::outer_collapse::Circuit::<
+                    C,
+                    R,
+                    HEADER_SIZE,
+                    J,
+                    RevdotParameters,
+                >::new())?
+            }
+            ComputeVCircuit => registry.register_internal_circuit(circuits::compute_v::Circuit::<
+                C,
+                R,
+                HEADER_SIZE,
+                J,
+            >::new())?,
+            ChallengeBindingCircuit => {
+                registry.register_internal_circuit(circuits::challenge_binding::Circuit::<
+                    C,
+                    R,
+                    HEADER_SIZE,
+                    J,
+                >::new(params))?
+            }
+            PreambleStage => registry.register_bonding(Preamble::<C, R, HEADER_SIZE, J>::mask()?),
+            InnerErrorStage => {
+                registry.register_bonding(InnerError::<C, R, HEADER_SIZE, J>::mask()?)
+            }
+            OuterErrorStage => {
+                registry.register_bonding(OuterError::<C, R, HEADER_SIZE, J>::mask()?)
+            }
+            QueryStage => registry.register_bonding(Query::<C, R, HEADER_SIZE, J>::mask()?),
+            EvalStage => registry.register_bonding(Eval::<C, R, HEADER_SIZE, J>::mask()?),
+            ChallengesStage => {
+                registry.register_bonding(Challenges::<C, R, HEADER_SIZE, J>::mask()?)
+            }
+            InnerErrorFinalStaged => {
+                registry.register_bonding(InnerError::<C, R, HEADER_SIZE, J>::final_mask()?)
+            }
+            OuterErrorFinalStaged => {
+                registry.register_bonding(OuterError::<C, R, HEADER_SIZE, J>::final_mask()?)
+            }
+            EvalFinalStaged => {
+                registry.register_bonding(Eval::<C, R, HEADER_SIZE, J>::final_mask()?)
+            }
+            ChallengesFinalStaged => {
+                registry.register_bonding(Challenges::<C, R, HEADER_SIZE, J>::final_mask()?)
+            }
+        };
     }
 
     assert_eq!(
