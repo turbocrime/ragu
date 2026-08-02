@@ -70,26 +70,6 @@ fn dummy_app<
         .unwrap()
 }
 
-/// Pins one stage's gate geometry. The field type is explicit because the
-/// native chain is over `Fp` and the nested chain over `Fq`.
-macro_rules! check_stage {
-    ($field:ty; $stage:ty, skip = $skip:expr, num = $num:expr) => {{
-        use ragu_circuits::staging::{Stage, StageExt};
-        assert_eq!(
-            <$stage as Stage<$field, R>>::skip_gates(),
-            $skip,
-            "{}: skip",
-            stringify!($stage)
-        );
-        assert_eq!(
-            <$stage as StageExt<$field, R>>::num_gates(),
-            $num,
-            "{}: num",
-            stringify!($stage)
-        );
-    }};
-}
-
 macro_rules! check_constraints {
     ($app:expr, $variant:ident, mul = $mul:expr, lin = $lin:expr) => {{
         let circuit_index = InternalCircuitIndex::$variant.circuit_index();
@@ -219,17 +199,24 @@ mod pinned_chain {
 #[rustfmt::skip]
 #[test]
 fn test_internal_stage_parameters() {
-    use ragu_pasta::Fp;
+    use ragu_circuits::staging::{Stage as _, StageExt as _};
 
-    check_stage!(Fp; pinned_chain::Preamble,    skip =   1, num = 320);
-    check_stage!(Fp; pinned_chain::OuterError,  skip = 321, num = 186);
-    check_stage!(Fp; pinned_chain::InnerError,  skip = 507, num = 399);
-    check_stage!(Fp; pinned_chain::Query,       skip = 321, num =  27);
-    check_stage!(Fp; pinned_chain::Eval,        skip = 348, num =  29);
+    macro_rules! check_stage {
+        ($stage:ty, skip = $skip:expr, num = $num:expr) => {{
+            assert_eq!(<$stage>::skip_gates(), $skip, "{}: skip", stringify!($stage));
+            assert_eq!(<$stage>::num_gates(), $num, "{}: num", stringify!($stage));
+        }};
+    }
+
+    check_stage!(pinned_chain::Preamble,    skip =   1, num = 320);
+    check_stage!(pinned_chain::OuterError,  skip = 321, num = 186);
+    check_stage!(pinned_chain::InnerError,  skip = 507, num = 399);
+    check_stage!(pinned_chain::Query,       skip = 321, num =  27);
+    check_stage!(pinned_chain::Eval,        skip = 348, num =  29);
     // A sibling of InnerError, not a successor: both start where OuterError
     // ends, so a circuit reaching the challenge slots is not charged for
     // InnerError's gates.
-    check_stage!(Fp; pinned_chain::Challenges,  skip = 507, num =   3);
+    check_stage!(pinned_chain::Challenges,  skip = 507, num =   3);
 }
 
 /// Helper test to print current stage parameters in copy-pasteable format.
@@ -242,7 +229,7 @@ fn print_internal_stage_parameters() {
 
     fn line<S: ragu_circuits::staging::Stage<ragu_pasta::Fp, R>>(name: &str) {
         println!(
-            "    check_stage!(Fp; pinned_chain::{:<12} skip = {:>3}, num = {:>3});",
+            "    check_stage!(pinned_chain::{:<12} skip = {:>3}, num = {:>3});",
             alloc::format!("{name},"),
             S::skip_gates(),
             S::num_gates()
@@ -287,18 +274,32 @@ mod pinned_nested_chain {
 #[rustfmt::skip]
 #[test]
 fn test_nested_stage_parameters() {
+    use ragu_circuits::staging::{Stage, StageExt};
     use ragu_pasta::Fq;
 
-    check_stage!(Fq; pinned_nested_chain::Endoscalar,  skip =   1, num =  64);
-    check_stage!(Fq; pinned_nested_chain::Points,      skip =  65, num =  74);
-    check_stage!(Fq; pinned_nested_chain::Preamble,    skip = 139, num =  53);
-    check_stage!(Fq; pinned_nested_chain::SPrime,      skip = 192, num =   3);
-    check_stage!(Fq; pinned_nested_chain::InnerError,  skip = 195, num =   2);
-    check_stage!(Fq; pinned_nested_chain::OuterError,  skip = 197, num =   1);
-    check_stage!(Fq; pinned_nested_chain::Ab,          skip = 198, num =   2);
-    check_stage!(Fq; pinned_nested_chain::Query,       skip = 200, num =   2);
-    check_stage!(Fq; pinned_nested_chain::F,           skip = 202, num =   1);
-    check_stage!(Fq; pinned_nested_chain::Eval,        skip = 203, num =   9);
+    // Explicit field: `EndoscalarStage` implements `Stage` over both fields,
+    // so an unqualified call is ambiguous.
+    macro_rules! check_stage {
+        ($stage:ty, skip = $skip:expr, num = $num:expr) => {{
+            assert_eq!(
+                <$stage as Stage<Fq, R>>::skip_gates(), $skip, "{}: skip", stringify!($stage)
+            );
+            assert_eq!(
+                <$stage as StageExt<Fq, R>>::num_gates(), $num, "{}: num", stringify!($stage)
+            );
+        }};
+    }
+
+    check_stage!(pinned_nested_chain::Endoscalar,  skip =   1, num =  64);
+    check_stage!(pinned_nested_chain::Points,      skip =  65, num =  74);
+    check_stage!(pinned_nested_chain::Preamble,    skip = 139, num =  53);
+    check_stage!(pinned_nested_chain::SPrime,      skip = 192, num =   3);
+    check_stage!(pinned_nested_chain::InnerError,  skip = 195, num =   2);
+    check_stage!(pinned_nested_chain::OuterError,  skip = 197, num =   1);
+    check_stage!(pinned_nested_chain::Ab,          skip = 198, num =   2);
+    check_stage!(pinned_nested_chain::Query,       skip = 200, num =   2);
+    check_stage!(pinned_nested_chain::F,           skip = 202, num =   1);
+    check_stage!(pinned_nested_chain::Eval,        skip = 203, num =   9);
 }
 
 /// Run with: `cargo test -p ragu_pcd --release print_nested_stage -- --nocapture`
@@ -310,7 +311,7 @@ fn print_nested_stage_parameters() {
 
     fn line<S: ragu_circuits::staging::Stage<ragu_pasta::Fq, R>>(name: &str) {
         println!(
-            "    check_stage!(Fq; pinned_nested_chain::{:<12} skip = {:>3}, num = {:>3});",
+            "    check_stage!(pinned_nested_chain::{:<12} skip = {:>3}, num = {:>3});",
             alloc::format!("{name},"),
             S::skip_gates(),
             S::num_gates()
