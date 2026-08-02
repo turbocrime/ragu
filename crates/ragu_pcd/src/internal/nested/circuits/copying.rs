@@ -140,7 +140,7 @@ impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> MultiStageCircuit<C:
         let last_interstitial = points
             .interstitials
             .last()
-            .expect("NUM_ENDOSCALING_POINTS guarantees >= 1 interstitial");
+            .expect("`num_steps` floors at 1, so there is always an interstitial");
         child.stashed_p.enforce_equal(dr, last_interstitial)?;
 
         Ok(WithAux::new((), D::unit()))

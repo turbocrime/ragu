@@ -84,12 +84,6 @@ impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> Circuit<C, R, L> {
     }
 }
 
-impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> Default for Circuit<C, R, L> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl<C: CurveAffine, R: Rank, L: ragu_primitives::vec::Len> MultiStageCircuit<C::Base, R>
     for Circuit<C, R, L>
 {

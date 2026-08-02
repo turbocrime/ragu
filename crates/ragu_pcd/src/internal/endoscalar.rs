@@ -117,19 +117,20 @@ where
     /// The first point becomes `initial`, remaining points become `inputs`,
     /// and `interstitials` are computed by simulating the Horner evaluation.
     ///
-    /// # Errors
+    /// # Panics
     ///
-    /// Returns [`MalformedEncoding`](ragu_core::Error::MalformedEncoding) if
-    /// `points` is not `L::len()` long.
-    pub fn new(endoscalar: u128, points: &[C]) -> Result<Self> {
+    /// Panics if `points` is not `L::len()` long.
+    pub fn new(endoscalar: u128, points: &[C]) -> Self {
+        assert_eq!(points.len(), L::len(), "expected {} points", L::len());
+
         let initial = points[0];
         let points = &points[1..];
-        let inputs = points.to_vec();
+        let inputs = FixedVec::from_fn(|i| points[i]);
 
         let endoscalar: C::Scalar = ragu_primitives::lift_endoscalar(endoscalar);
 
         // Compute interstitials using chunked Horner iteration
-        let mut interstitials = vec::Vec::with_capacity(num_steps(points.len() + 1));
+        let mut interstitials = vec::Vec::with_capacity(NumStepsLen::<L>::len());
         let mut acc = initial.to_curve();
 
         if points.is_empty() {
@@ -148,14 +149,14 @@ where
             // Batch normalize projective points to affine
             let mut tmp = vec![C::identity(); interstitials.len()];
             C::Curve::batch_normalize(&interstitials, &mut tmp);
-            tmp
+            FixedVec::new(tmp).expect("correct length")
         };
 
-        Ok(Self {
+        Self {
             initial,
-            inputs: inputs.try_into()?,
-            interstitials: interstitials.try_into()?,
-        })
+            inputs,
+            interstitials,
+        }
     }
 }
 
@@ -471,8 +472,7 @@ mod tests {
         let expected = compute_horner_native(endoscalar, &base_inputs);
 
         // Construct witness using the constructor
-        let points =
-            PointsWitness::<EpAffine, ConstLen<NUM_POINTS>>::new(endoscalar, &base_inputs)?;
+        let points = PointsWitness::<EpAffine, ConstLen<NUM_POINTS>>::new(endoscalar, &base_inputs);
 
         // Verify final interstitial matches expected
         assert_eq!(points.interstitials[num_steps - 1], expected);
@@ -542,8 +542,7 @@ mod tests {
         let expected = compute_horner_native(endoscalar, &base_inputs);
 
         // Construct witness using the constructor
-        let points =
-            PointsWitness::<EpAffine, ConstLen<NUM_POINTS>>::new(endoscalar, &base_inputs)?;
+        let points = PointsWitness::<EpAffine, ConstLen<NUM_POINTS>>::new(endoscalar, &base_inputs);
 
         // Verify final interstitial matches expected
         assert_eq!(points.interstitials[num_steps - 1], expected);
@@ -685,8 +684,7 @@ mod tests {
 
             // Compute via PointsWitness::new
             let from_new =
-                PointsWitness::<EpAffine, ConstLen<NUM_POINTS>>::new(endoscalar, &base_inputs)
-                    .expect("the slice is NUM_POINTS long by construction");
+                PointsWitness::<EpAffine, ConstLen<NUM_POINTS>>::new(endoscalar, &base_inputs);
 
             // Compute manually using test helper
             let initial = base_inputs[0];

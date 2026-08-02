@@ -541,13 +541,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::Hoo
         points_alpha: C::ScalarField,
         builder: &mut ProofBuilder<'_, C, R, J>,
     ) -> Result<C::HostCurve> {
-        let num_points = crate::internal::nested::num_endoscaling_points(self.hook_layout().polys);
-        assert_eq!(points.len(), num_points);
-
         let witness = PointsWitness::<
             C::HostCurve,
             crate::internal::nested::EndoPoints<J::PolyWitnesses>,
-        >::new(beta_endo, points)?;
+        >::new(beta_endo, points);
 
         let endoscalar_rx =
             <EndoscalarStage as StageExt<C::ScalarField, R>>::rx(endoscalar_alpha, beta_endo)?;
@@ -556,7 +553,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::Hoo
             crate::internal::nested::EndoPoints<J::PolyWitnesses>,
         > as StageExt<C::ScalarField, R>>::rx(points_alpha, &witness)?;
 
-        let num_steps = crate::internal::endoscalar::num_steps(num_points);
+        let num_steps = crate::internal::endoscalar::num_steps(points.len());
         let mut step_rxs = Vec::with_capacity(num_steps);
         for step in 0..num_steps {
             let step_circuit = EndoscalingStep::<

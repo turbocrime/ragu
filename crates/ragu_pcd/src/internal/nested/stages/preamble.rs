@@ -29,10 +29,8 @@ use crate::{
 pub const fn num_points(polys: usize) -> usize {
     use crate::internal::nested::child_endoscaling_points;
 
-    /// The leading slot before either child's block (not `f.commitment`).
-    const NATIVE_PREAMBLE_SLOT: usize = 1;
-
-    NATIVE_PREAMBLE_SLOT + 2 * child_endoscaling_points(polys)
+    // The leading slot is the native preamble commitment, not `f.commitment`.
+    1 + 2 * child_endoscaling_points(polys)
 }
 
 /// Witness data for a single child proof in the preamble bridge stage.

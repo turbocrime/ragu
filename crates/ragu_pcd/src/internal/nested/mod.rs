@@ -49,10 +49,8 @@ pub const fn q_slots(polys: usize) -> usize {
 /// base point, one block per child ([`child_endoscaling_points`]), and the
 /// current step's stage components. See `_10_p` for the accumulation order.
 pub const fn num_endoscaling_points(polys: usize) -> usize {
-    const F_COMMITMENT_BASE_POINT: usize = 1;
-
-    F_COMMITMENT_BASE_POINT
-        + 2 * child_endoscaling_points(polys)
+    // The leading point is `f.commitment`'s base point.
+    1 + 2 * child_endoscaling_points(polys)
         + crate::internal::native::stages::eval::CURRENT_STEP_COMPONENTS
 }
 
