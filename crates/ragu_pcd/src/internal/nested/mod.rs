@@ -74,28 +74,10 @@ impl<L: ragu_primitives::vec::Len> ragu_primitives::vec::Len for EndoPoints<L> {
 }
 
 /// The number of nested internal circuits and bondings [`register_all`]
-/// registers: the endoscaling steps, then [`BLOCK_FIXED`], the loading
-/// circuit, and the two copying circuits — circuits before bondings.
+/// registers — the cardinality of [`InternalCircuitIndex::all`].
 pub(crate) fn num_internal<L: ragu_primitives::vec::Len>() -> usize {
-    use ragu_primitives::vec::Len as _;
-
-    endoscalar::NumStepsLen::<EndoPoints<L>>::len() + BLOCK_FIXED.len() + 3
+    InternalCircuitIndex::all(L::len()).len()
 }
-
-/// Positions inside the bonding block, before the per-slot masks.
-const BLOCK_FIXED: [InternalCircuitIndex; 11] = [
-    InternalCircuitIndex::EndoscalarStage,
-    InternalCircuitIndex::PointsStage,
-    InternalCircuitIndex::PointsFinalStaged,
-    InternalCircuitIndex::BridgePreamble,
-    InternalCircuitIndex::BridgeSPrime,
-    InternalCircuitIndex::BridgeInnerError,
-    InternalCircuitIndex::BridgeOuterError,
-    InternalCircuitIndex::BridgeAB,
-    InternalCircuitIndex::BridgeQuery,
-    InternalCircuitIndex::BridgeF,
-    InternalCircuitIndex::BridgeEval,
-];
 
 /// Index of internal nested circuits registered into the registry.
 ///
@@ -325,7 +307,7 @@ pub fn register_all<'params, C: Cycle, R: Rank, L: ragu_primitives::vec::Len>(
     }
 
     {
-        // The fixed block, in BLOCK_FIXED order.
+        // The fixed block, in `InternalCircuitIndex` order.
         registry = registry
             .register_bonding(<EndoscalarStage as StageExt<ScalarOf<C>, R>>::mask()?)
             .register_bonding(<PointsStage<C::HostCurve, EndoPoints<L>> as StageExt<
