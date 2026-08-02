@@ -19,7 +19,7 @@ use ragu_arithmetic::Cycle;
 use ragu_circuits::{
     polynomials::Rank,
     registry::{CircuitIndex, RegistryBuilder},
-    staging::MultiStage,
+    staging::{MultiStage, StageExt},
 };
 use ragu_core::Result;
 
@@ -287,86 +287,67 @@ pub mod stages {
     pub mod s_prime;
 }
 
-/// Registers internal nested circuits into the provided registry, in
-/// [`InternalCircuitIndex::all`] order.
+/// Registers internal nested circuits into the provided registry.
 ///
 /// Circuits are registered as internal to ensure they occupy prefix indices
 /// before application steps.
 pub fn register_all<'params, C: Cycle, R: Rank, L: ragu_primitives::vec::Len>(
     mut registry: RegistryBuilder<'params, C::ScalarField, R>,
 ) -> Result<RegistryBuilder<'params, C::ScalarField, R>> {
-    use ragu_circuits::staging::StageExt;
-    use ragu_primitives::vec::Len as _;
-
-    use crate::internal::endoscalar::{EndoscalarStage, NumStepsLen, PointsStage};
-
-    type ScalarOf<C> = <C as Cycle>::ScalarField;
-
     let initial_internal_circuits = registry.num_internal_circuits();
 
-    // Circuits first, then bondings.
-    {
-        for step in 0..NumStepsLen::<EndoPoints<L>>::len() {
-            let step_circuit =
-                endoscalar::EndoscalingStep::<C::HostCurve, R, EndoPoints<L>>::new(step);
-            registry = registry.register_internal_circuit(MultiStage::new(step_circuit))?;
-        }
-    }
-
-    {
-        // The fixed block, in `InternalCircuitIndex` order.
-        registry = registry
-            .register_bonding(<EndoscalarStage as StageExt<ScalarOf<C>, R>>::mask()?)
-            .register_bonding(<PointsStage<C::HostCurve, EndoPoints<L>> as StageExt<
-                ScalarOf<C>,
-                R,
-            >>::mask()?)
-            .register_bonding(<PointsStage<C::HostCurve, EndoPoints<L>> as StageExt<
-                ScalarOf<C>,
-                R,
-            >>::final_mask()?)
-            .register_bonding(<stages::preamble::Stage<C::HostCurve, R, L> as StageExt<
-                ScalarOf<C>,
-                R,
-            >>::mask()?)
-            .register_bonding(<stages::s_prime::Stage<C::HostCurve, R, L> as StageExt<
-                ScalarOf<C>,
-                R,
-            >>::mask()?)
-            .register_bonding(
-                <stages::inner_error::Stage<C::HostCurve, R, L> as StageExt<ScalarOf<C>, R>>::mask(
-                )?,
-            )
-            .register_bonding(
-                <stages::outer_error::Stage<C::HostCurve, R, L> as StageExt<ScalarOf<C>, R>>::mask(
-                )?,
-            )
-            .register_bonding(<stages::ab::Stage<C::HostCurve, R, L> as StageExt<
-                ScalarOf<C>,
-                R,
-            >>::mask()?)
-            .register_bonding(<stages::query::Stage<C::HostCurve, R, L> as StageExt<
-                ScalarOf<C>,
-                R,
-            >>::mask()?)
-            .register_bonding(<stages::f::Stage<C::HostCurve, R, L> as StageExt<
-                ScalarOf<C>,
-                R,
-            >>::mask()?)
-            .register_bonding(<stages::eval::Stage<C::HostCurve, R, L> as StageExt<
-                ScalarOf<C>,
-                R,
-            >>::mask()?);
-
-        let circuit = circuits::loading::Circuit::<C::HostCurve, R, L>::new();
-        registry = registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?);
-
-        for side in [Side::Left, Side::Right] {
+    // Circuits first, then masks — matching RegistryBuilder::finalize()
+    // concatenation order and InternalCircuitIndex::circuit_index().
+    for id in InternalCircuitIndex::all(L::len()) {
+        use InternalCircuitIndex::*;
+        registry = match id {
+            EndoscalingStep(step) => {
+                let step_circuit =
+                    endoscalar::EndoscalingStep::<C::HostCurve, R, EndoPoints<L>>::new(
+                        step as usize,
+                    );
+                registry.register_internal_circuit(MultiStage::new(step_circuit))?
+            }
+            EndoscalarStage => registry.register_bonding(endoscalar::EndoscalarStage::mask()?),
+            PointsStage => registry.register_bonding(endoscalar::PointsStage::<
+                C::HostCurve,
+                EndoPoints<L>,
+            >::mask()?),
+            PointsFinalStaged => registry.register_bonding(endoscalar::PointsStage::<
+                C::HostCurve,
+                EndoPoints<L>,
+            >::final_mask()?),
+            BridgePreamble => {
+                registry.register_bonding(stages::preamble::Stage::<C::HostCurve, R, L>::mask()?)
+            }
+            BridgeSPrime => {
+                registry.register_bonding(stages::s_prime::Stage::<C::HostCurve, R, L>::mask()?)
+            }
+            BridgeInnerError => {
+                registry.register_bonding(stages::inner_error::Stage::<C::HostCurve, R, L>::mask()?)
+            }
+            BridgeOuterError => {
+                registry.register_bonding(stages::outer_error::Stage::<C::HostCurve, R, L>::mask()?)
+            }
+            BridgeAB => registry.register_bonding(stages::ab::Stage::<C::HostCurve, R, L>::mask()?),
+            BridgeQuery => {
+                registry.register_bonding(stages::query::Stage::<C::HostCurve, R, L>::mask()?)
+            }
+            BridgeF => registry.register_bonding(stages::f::Stage::<C::HostCurve, R, L>::mask()?),
+            BridgeEval => {
+                registry.register_bonding(stages::eval::Stage::<C::HostCurve, R, L>::mask()?)
+            }
+            Loading => {
+                let circuit = circuits::loading::Circuit::<C::HostCurve, R, L>::new();
+                registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?)
+            }
             // A copying circuit walks a child, but children expose the same
             // capacity, so the same `L` serves here.
-            let circuit = circuits::copying::Circuit::<C::HostCurve, R, L>::new(side);
-            registry = registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?);
-        }
+            Copying(side) => {
+                let circuit = circuits::copying::Circuit::<C::HostCurve, R, L>::new(side);
+                registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?)
+            }
+        };
     }
 
     assert_eq!(

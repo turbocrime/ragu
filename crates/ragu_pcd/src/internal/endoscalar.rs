@@ -368,12 +368,15 @@ mod tests {
         maybe::Maybe,
     };
     use ragu_pasta::{Ep, EpAffine, Fp, Fq};
-    use ragu_primitives::{Endoscalar, vec::ConstLen};
+    use ragu_primitives::{
+        Endoscalar,
+        vec::{ConstLen, Len},
+    };
     use ragu_testing::registry::TestRegistryBuilder;
 
     use super::{
-        ENDOSCALINGS_PER_STEP, EndoscalarStage, EndoscalingStep, EndoscalingStepWitness,
-        PointsStage, PointsWitness, num_steps,
+        ENDOSCALINGS_PER_STEP, EndoscalarStage, EndoscalingStep, EndoscalingStepWitness, InputsLen,
+        NumStepsLen, PointsStage, PointsWitness, num_steps,
     };
 
     type R = polynomials::ProductionRank;
@@ -483,11 +486,11 @@ mod tests {
             let mut builder = TestRegistryBuilder::new();
             let staged_h = builder.register_circuit(MultiStage::new(step_circuit.clone()))?;
             let endo_mask_h =
-                builder.register_bonding(<EndoscalarStage as StageExt<Fp, R>>::mask()?);
+                builder.register_bonding(EndoscalarStage::mask()?);
             let pts_mask_h =
-                builder.register_bonding(<Points<NUM_POINTS> as StageExt<Fp, R>>::mask()?);
+                builder.register_bonding(Points::<NUM_POINTS>::mask()?);
             let final_mask_h =
-                builder.register_bonding(<Points<NUM_POINTS> as StageExt<Fp, R>>::final_mask()?);
+                builder.register_bonding(Points::<NUM_POINTS>::final_mask()?);
             let registry = builder.finalize()?;
 
             let staged = MultiStage::new(step_circuit);
@@ -528,8 +531,11 @@ mod tests {
         const NUM_POINTS: usize = 11;
         let num_steps = num_steps(NUM_POINTS);
 
+        // Verify computed lengths match expectations
         // With 10 inputs, we need ceil(10/4) = 3 steps
         assert_eq!(num_steps, 3);
+        assert_eq!(NumStepsLen::<ConstLen<NUM_POINTS>>::len(), 3);
+        assert_eq!(InputsLen::<ConstLen<NUM_POINTS>>::len(), 10);
 
         // Generate random endoscalar and base input points.
         let endoscalar: u128 = ragu_arithmetic::rand::rng().random();
@@ -552,9 +558,9 @@ mod tests {
             let step_circuit = EndoscalingStep::<EpAffine, R, ConstLen<NUM_POINTS>>::new(step);
             let mut builder = TestRegistryBuilder::new();
             let staged_h = builder.register_circuit(MultiStage::new(step_circuit.clone()))?;
-            builder.register_bonding(<EndoscalarStage as StageExt<Fp, R>>::mask()?);
-            builder.register_bonding(<Points<NUM_POINTS> as StageExt<Fp, R>>::mask()?);
-            builder.register_bonding(<Points<NUM_POINTS> as StageExt<Fp, R>>::final_mask()?);
+            builder.register_bonding(EndoscalarStage::mask()?);
+            builder.register_bonding(Points::<NUM_POINTS>::mask()?);
+            builder.register_bonding(Points::<NUM_POINTS>::final_mask()?);
             let registry = builder.finalize()?;
 
             let staged = MultiStage::new(step_circuit);
@@ -674,13 +680,10 @@ mod tests {
         /// Verifies PointsWitness::new produces identical results to manual construction.
         fn check<const NUM_POINTS: usize>() {
             let endoscalar: u128 = ragu_arithmetic::rand::rng().random();
-            let base_inputs: Vec<EpAffine> = (0..NUM_POINTS)
-                .map(|_| {
-                    (Ep::generator()
-                        * <Ep as Group>::Scalar::random(&mut ragu_arithmetic::rand::rng()))
+            let base_inputs: [EpAffine; NUM_POINTS] = core::array::from_fn(|_| {
+                (Ep::generator() * <Ep as Group>::Scalar::random(&mut ragu_arithmetic::rand::rng()))
                     .to_affine()
-                })
-                .collect();
+            });
 
             // Compute via PointsWitness::new
             let from_new =

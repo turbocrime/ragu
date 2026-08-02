@@ -2,6 +2,7 @@
 //!
 //! Collects child proof commitments for cross-curve accumulation.
 
+use crate::internal::nested::child_endoscaling_points;
 use ragu_arithmetic::{CurveAffine, Cycle};
 use ragu_circuits::polynomials::Rank;
 use ragu_core::{
@@ -29,8 +30,6 @@ use crate::{
 /// one block per child. Both children present the application's capacity, so
 /// one value sizes both.
 pub const fn num_points(polys: usize) -> usize {
-    use crate::internal::nested::child_endoscaling_points;
-
     // The leading slot is the native preamble commitment, not `f.commitment`.
     1 + 2 * child_endoscaling_points(polys)
 }
