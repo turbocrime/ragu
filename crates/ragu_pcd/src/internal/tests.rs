@@ -53,7 +53,6 @@ const SLOTTED_HEADER_SIZE: usize = 4;
 /// Small step count for the slotted shape, to keep this file's runtime down.
 const NUM_SLOTTED_APP_STEPS: usize = 6;
 
-/// Builds a dummy application at a stated shape.
 fn dummy_app<
     'params,
     const HDR: usize,
@@ -71,7 +70,6 @@ fn dummy_app<
         .unwrap()
 }
 
-/// Pins one internal circuit's gate and constraint counts in `app`.
 macro_rules! check_constraints {
     ($app:expr, $variant:ident, mul = $mul:expr, lin = $lin:expr) => {{
         let circuit_index = InternalCircuitIndex::$variant.circuit_index();
@@ -300,9 +298,7 @@ fn test_nested_stage_parameters() {
     check_stage!(pinned_nested_chain::Eval,       "Eval",       skip = 203, num =   9);
 }
 
-/// Helper test to print current nested stage parameters in copy-pasteable
-/// format. Run with:
-/// `cargo test -p ragu_pcd --release print_nested_stage -- --nocapture`
+/// Run with: `cargo test -p ragu_pcd --release print_nested_stage -- --nocapture`
 #[test]
 fn print_nested_stage_parameters() {
     use std::println;
