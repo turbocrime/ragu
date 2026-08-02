@@ -62,7 +62,7 @@ use ragu_core::{
 use ragu_primitives::{
     Element, Endoscalar, GadgetExt,
     allocator::Standard,
-    vec::{ConstLen, FixedVec},
+    vec::{ConstLen, FixedVec, Len},
 };
 
 use super::super::{
@@ -110,7 +110,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig> Circuit<C, R, H
 /// - Evaluation component polynomials from eval stage
 ///
 /// [$v$]: unified::Output::v
-pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
+pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, L: Len> {
     /// The unified instance containing challenges and accumulated coverage.
     pub unified: unified::Instance<C>,
     /// Witness for the preamble stage (provides child proof data).
@@ -118,7 +118,7 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     /// Witness for the query stage (provides registry and polynomial evaluations).
     pub query_witness: &'a native_query::Witness<C>,
     /// Witness for the eval stage (provides evaluation component polynomials).
-    pub eval_witness: &'a native_eval::Witness<C::CircuitField>,
+    pub eval_witness: &'a native_eval::Witness<C::CircuitField, L>,
 }
 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
@@ -127,7 +127,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
     type Last = native_eval::Stage<C, R, HEADER_SIZE, J>;
 
     type Instance<'source> = &'source unified::Instance<C>;
-    type Witness<'source> = Witness<'source, C, R, HEADER_SIZE>;
+    type Witness<'source> = Witness<'source, C, R, HEADER_SIZE, J::PolyWitnesses>;
     type Output = unified::InternalOutputKind<C>;
     type Aux<'source> = unified::Instance<C>;
 

@@ -15,7 +15,7 @@ use ragu_circuits::{
     staging::StageExt,
 };
 use ragu_core::Result;
-use ragu_primitives::vec::Len as _;
+use ragu_primitives::vec::{CollectFixed as _, Len as _};
 
 use super::{Cached, ClaimOpening, Proof};
 use crate::{framework_hooks::HookConfig, internal::nested};
@@ -599,7 +599,7 @@ impl<'params, C: Cycle, R: Rank, J: HookConfig> ProofBuilder<'params, C, R, J> {
         }
         let witness = nested::stages::eval::Witness {
             native_eval: self.native_eval_commitment(),
-            claims: self.claim_host_commitments().to_vec(),
+            claims: self.claim_host_commitments().iter().copied().collect_fixed()?,
         };
         let rx = nested::stages::eval::Stage::<C::HostCurve, R, J::PolyWitnesses>::rx(
             self.bridge_alpha_power(nested::RxIndex::BridgeEval),

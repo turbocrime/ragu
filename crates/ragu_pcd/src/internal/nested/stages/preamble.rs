@@ -2,8 +2,6 @@
 //!
 //! Collects child proof commitments for cross-curve accumulation.
 
-use alloc::vec::Vec;
-
 use ragu_arithmetic::{CurveAffine, Cycle};
 use ragu_circuits::polynomials::Rank;
 use ragu_core::{
@@ -15,12 +13,16 @@ use ragu_core::{
 use ragu_primitives::{
     Point,
     io::Write,
-    vec::{FixedVec, Len},
+    vec::{CollectFixed, FixedVec, Len},
 };
 
 use crate::{
     Proof,
-    internal::{endoscalar::PointsStage, native::RxIndex, nested::EndoPoints},
+    internal::{
+        endoscalar::PointsStage,
+        native::RxIndex,
+        nested::{EndoPoints, QSlots},
+    },
 };
 
 /// Number of curve points in this stage: the native preamble commitment plus
@@ -41,8 +43,7 @@ pub const fn num_points(polys: usize) -> usize {
 /// exist in the child's unified instance or bridge stages, placed here
 /// so that loading can enforce them against [`PointsStage`] and copying
 /// can verify them against the child's bridge stage content.
-#[derive(Clone)]
-pub struct ChildWitness<C: CurveAffine> {
+pub struct ChildWitness<C: CurveAffine, L: Len> {
     // Field order matches the `_10_p` accumulation order.
     /// Commitment from the child's application circuit.
     pub application: C,
@@ -79,15 +80,40 @@ pub struct ChildWitness<C: CurveAffine> {
     pub stashed_registry_xy: C,
     /// Stashed accumulated P commitment from the child.
     pub stashed_p: C,
-    /// Stashed poly-query claim host commitments from the child, in slot
-    /// order; must contain exactly the stage's poly-slot count.
-    pub stashed_claims: Vec<C>,
-    /// Stashed commitment to the child's claim-coordinate polynomial `q` —
-    /// one entry when the shape has polynomial slots, none otherwise.
-    pub stashed_q: Vec<C>,
+    /// Stashed poly-query claim host commitments from the child, in slot order.
+    pub stashed_claims: FixedVec<C, L>,
+    /// Stashed commitment to the child's claim-coordinate polynomial `q`.
+    pub stashed_q: FixedVec<C, QSlots<L>>,
 }
 
-impl<C: CurveAffine> ChildWitness<C> {
+// A derive would demand `L: Clone`, which a `Len` marker never is.
+impl<C: CurveAffine, L: Len> Clone for ChildWitness<C, L> {
+    fn clone(&self) -> Self {
+        Self {
+            application: self.application,
+            hashes_1: self.hashes_1,
+            hashes_2: self.hashes_2,
+            inner_collapse: self.inner_collapse,
+            outer_collapse: self.outer_collapse,
+            compute_v: self.compute_v,
+            challenge_binding: self.challenge_binding,
+            stashed_preamble: self.stashed_preamble,
+            stashed_inner_error: self.stashed_inner_error,
+            stashed_outer_error: self.stashed_outer_error,
+            stashed_query: self.stashed_query,
+            stashed_eval: self.stashed_eval,
+            stashed_challenges: self.stashed_challenges,
+            stashed_ab_a: self.stashed_ab_a,
+            stashed_ab_b: self.stashed_ab_b,
+            stashed_registry_xy: self.stashed_registry_xy,
+            stashed_p: self.stashed_p,
+            stashed_claims: self.stashed_claims.clone(),
+            stashed_q: self.stashed_q.clone(),
+        }
+    }
+}
+
+impl<C: CurveAffine, L: Len> ChildWitness<C, L> {
     /// Construct from a child proof's commitments.
     pub fn from_proof<CC: Cycle<HostCurve = C>, R: Rank>(
         params: &CC::Params,
@@ -112,29 +138,25 @@ impl<C: CurveAffine> ChildWitness<C> {
             stashed_ab_b: proof.native_commitment(RxComponent::AbB),
             stashed_registry_xy: proof.native_registry_xy_commitment(),
             stashed_p: proof.native_p_commitment(),
-            stashed_claims: (0..proof.claim_host_commitments().len())
-                .map(|i| proof.claim_host_commitment(i))
-                .collect(),
-            stashed_q: if proof.claim_host_commitments().len() == 0 {
-                Vec::new()
-            } else {
-                alloc::vec![crate::internal::challenge::claim_coord_commitment::<CC, R>(
+            stashed_claims: proof.claim_host_commitments().collect_fixed()?,
+            stashed_q: FixedVec::try_from_fn(|_| {
+                crate::internal::challenge::claim_coord_commitment::<CC, R>(
                     params,
                     proof.claim_host_commitments(),
-                )?]
-            },
+                )
+            })?,
         })
     }
 }
 
 /// Witness data for the preamble bridge stage.
-pub struct Witness<C: CurveAffine> {
+pub struct Witness<C: CurveAffine, L: Len> {
     /// Commitment from the native preamble stage.
     pub native_preamble: C,
     /// Witness data from the left child proof.
-    pub left: ChildWitness<C>,
+    pub left: ChildWitness<C, L>,
     /// Witness data from the right child proof.
-    pub right: ChildWitness<C>,
+    pub right: ChildWitness<C, L>,
 }
 
 /// One child proof's points in the preamble bridge stage, as the circuit body
@@ -201,17 +223,7 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len>
     /// Stashed `C_q` — one point when the shape has polynomial slots, none
     /// otherwise, at its `_10_p` fold position after the claims.
     #[ragu(gadget)]
-    pub stashed_q: FixedVec<Point<'dr, D, C>, QStashLen<L>>,
-}
-
-/// One stashed `C_q` when the shape has polynomial slots, none otherwise —
-/// [`q_slots`](crate::internal::nested::q_slots) at the type level.
-pub struct QStashLen<L: Len>(core::marker::PhantomData<L>);
-
-impl<L: Len> Len for QStashLen<L> {
-    fn len() -> usize {
-        crate::internal::nested::q_slots(L::len())
-    }
+    pub stashed_q: FixedVec<Point<'dr, D, C>, QSlots<L>>,
 }
 
 impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> core::ops::Index<RxIndex>
@@ -241,7 +253,7 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> core::ops::Index<
 
 impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> ChildOutput<'dr, D, C, L> {
     /// Allocates one child's block, in field order.
-    fn alloc(dr: &mut D, witness: DriverValue<D, &ChildWitness<C>>) -> Result<Self> {
+    fn alloc(dr: &mut D, witness: DriverValue<D, &ChildWitness<C, L>>) -> Result<Self> {
         Ok(ChildOutput {
             application: Point::alloc(dr, witness.as_ref().map(|w| w.application))?,
             hashes_1: Point::alloc(dr, witness.as_ref().map(|w| w.hashes_1))?,
@@ -301,7 +313,7 @@ impl<C: CurveAffine, R, L> Default for Stage<C, R, L> {
 
 impl<C: CurveAffine, R: Rank, L: Len> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R, L> {
     type Parent = PointsStage<C, EndoPoints<L>>;
-    type Witness<'source> = &'source Witness<C>;
+    type Witness<'source> = &'source Witness<C, L>;
     type OutputKind = Kind![C::Base; Output<'_, _, C, L>];
 
     fn values() -> usize {

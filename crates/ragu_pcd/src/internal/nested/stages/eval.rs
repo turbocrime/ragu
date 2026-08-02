@@ -1,7 +1,5 @@
 //! Eval stage for nested fuse operations.
 
-use alloc::vec::Vec;
-
 use ragu_arithmetic::CurveAffine;
 use ragu_circuits::polynomials::Rank;
 use ragu_core::{
@@ -17,11 +15,10 @@ use ragu_primitives::{
 };
 
 /// Witness data for this bridge stage.
-pub struct Witness<C: CurveAffine> {
+pub struct Witness<C: CurveAffine, L: Len> {
     pub native_eval: C,
-    /// The current step's poly-query claim host commitments, in slot order;
-    /// must contain exactly the stage's poly-slot count.
-    pub claims: Vec<C>,
+    /// The current step's poly-query claim host commitments, in slot order.
+    pub claims: FixedVec<C, L>,
 }
 
 /// This stage's points.
@@ -49,7 +46,7 @@ impl<C: CurveAffine, R, L> Default for Stage<C, R, L> {
 
 impl<C: CurveAffine, R: Rank, L: Len> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R, L> {
     type Parent = super::f::Stage<C, R, L>;
-    type Witness<'source> = &'source Witness<C>;
+    type Witness<'source> = &'source Witness<C, L>;
     type OutputKind = Kind![C::Base; Output<'_, _, C, L>];
 
     fn values() -> usize {

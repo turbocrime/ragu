@@ -26,15 +26,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         s_prime: &NativeSPrime<C, R>,
         registry_wy: &RegistryWy<C, R>,
         builder: &mut ProofBuilder<'_, C, R, J>,
-    ) -> Result<native::stages::eval::Witness<C::CircuitField>>
+    ) -> Result<native::stages::eval::Witness<C::CircuitField, J::PolyWitnesses>>
     where
         D: Driver<'dr, F = C::CircuitField>,
     {
         let u = *u.value().take();
 
         let eval_witness = native::stages::eval::Witness {
-            left: native::stages::eval::ChildEvaluationsWitness::from_proof(left, u),
-            right: native::stages::eval::ChildEvaluationsWitness::from_proof(right, u),
+            left: native::stages::eval::ChildEvaluationsWitness::from_proof(left, u)?,
+            right: native::stages::eval::ChildEvaluationsWitness::from_proof(right, u)?,
             current: native::stages::eval::CurrentStepWitness {
                 // TODO: the registry evaluations here could _theoretically_ be more
                 // efficient if they're computed simultaneously with assistance

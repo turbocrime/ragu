@@ -16,7 +16,6 @@
 //! This stage contains the committed claims of all evaluations (other than
 //! $f(X)$) at $u$ for all the queried polynomials.
 
-use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use ragu_arithmetic::{Cycle, ff::PrimeField};
@@ -37,12 +36,15 @@ use ragu_primitives::{
 use crate::{
     Proof,
     framework_hooks::HookConfig,
-    internal::native::{RxComponent, RxValues},
+    internal::{
+        native::{RxComponent, RxValues},
+        nested::QSlots,
+    },
 };
 
 /// Polynomial evaluations at $u$ (from the parent fuse operation) for a child
 /// proof. Supplied by the prover to construct the `eval` stage witness.
-pub struct ChildEvaluationsWitness<F> {
+pub struct ChildEvaluationsWitness<F, L: Len> {
     /// All of the child proof's Rx components are evaluated at $u$.
     pub rx: RxValues<F>,
 
@@ -65,37 +67,33 @@ pub struct ChildEvaluationsWitness<F> {
     pub p_poly: F,
 
     /// The child proof's poly-query claim polynomials, each evaluated at $u$,
-    /// in slot order; must contain exactly the stage's poly-slot count.
-    pub claims: Vec<F>,
+    /// in slot order.
+    pub claims: FixedVec<F, L>,
 
-    /// The child proof's claim-coordinate polynomial $q$ evaluated at $u$ —
-    /// one value when the shape has polynomial slots, none otherwise;
+    /// The child proof's claim-coordinate polynomial $q$ evaluated at $u$;
     /// `compute_v` re-derives the same value and enforces agreement.
-    pub q_poly: Vec<F>,
+    pub q_poly: FixedVec<F, QSlots<L>>,
 }
 
-impl<F: PrimeField> ChildEvaluationsWitness<F> {
+impl<F: PrimeField, L: Len> ChildEvaluationsWitness<F, L> {
     /// Create child evaluations witness from a proof evaluated at point u.
-    pub fn from_proof<C: Cycle<CircuitField = F>, R: Rank>(proof: &Proof<C, R>, u: F) -> Self {
-        ChildEvaluationsWitness {
+    pub fn from_proof<C: Cycle<CircuitField = F>, R: Rank>(
+        proof: &Proof<C, R>,
+        u: F,
+    ) -> Result<Self> {
+        Ok(ChildEvaluationsWitness {
             rx: RxValues::from_fn(|id| proof[id].eval(u)),
             a_poly: proof[RxComponent::AbA].eval(u),
             b_poly: proof[RxComponent::AbB].eval(u),
             registry_xy_poly: proof.native_registry_xy_poly().eval(u),
             p_poly: proof.native_p_poly().eval(u),
-            claims: proof.claim_polys.iter().map(|p| p.eval(u)).collect(),
-            q_poly: if proof.claim_host_commitments().len() == 0 {
-                Vec::new()
-            } else {
-                alloc::vec![
-                    crate::internal::challenge::claim_coord_poly::<C, R>(
-                        proof.claim_host_commitments(),
-                    )
-                    .expect("recorded hosts were decomposed once already, at witnessing",)
+            claims: proof.claim_polys.iter().map(|p| p.eval(u)).collect_fixed()?,
+            q_poly: FixedVec::from_fn(|_| {
+                crate::internal::challenge::claim_coord_poly::<C, R>(proof.claim_host_commitments())
+                    .expect("recorded hosts were decomposed once already, at witnessing")
                     .eval(u)
-                ]
-            },
-        }
+            }),
+        })
     }
 }
 
@@ -140,12 +138,12 @@ pub struct CurrentStepWitness<F> {
 }
 
 /// Witness for the eval stage.
-pub struct Witness<F> {
+pub struct Witness<F, L: Len> {
     /// Left proof's evaluations at $u$.
-    pub left: ChildEvaluationsWitness<F>,
+    pub left: ChildEvaluationsWitness<F, L>,
 
     /// Right proof's evaluations at $u$.
-    pub right: ChildEvaluationsWitness<F>,
+    pub right: ChildEvaluationsWitness<F, L>,
 
     /// Current fuse step's evaluations at $u$.
     pub current: CurrentStepWitness<F>,
@@ -177,16 +175,7 @@ pub struct ChildEvaluations<'dr, D: Driver<'dr>, J: HookConfig> {
     /// The child's $q(u)$ — last, matching its `_10_p` fold position; empty
     /// at `POLYS = 0`.
     #[ragu(gadget)]
-    pub q_eval: FixedVec<Element<'dr, D>, QEvalLen<J>>,
-}
-
-/// [`q_slots`](crate::internal::nested::q_slots) at the type level.
-pub struct QEvalLen<J: HookConfig>(PhantomData<J>);
-
-impl<J: HookConfig> Len for QEvalLen<J> {
-    fn len() -> usize {
-        crate::internal::nested::q_slots(J::PolyWitnesses::len())
-    }
+    pub q_eval: FixedVec<Element<'dr, D>, QSlots<J::PolyWitnesses>>,
 }
 
 impl<'dr, D: Driver<'dr>, J: HookConfig> ChildEvaluations<'dr, D, J> {
@@ -194,7 +183,7 @@ impl<'dr, D: Driver<'dr>, J: HookConfig> ChildEvaluations<'dr, D, J> {
     pub fn alloc<A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
-        witness: DriverValue<D, &ChildEvaluationsWitness<D::F>>,
+        witness: DriverValue<D, &ChildEvaluationsWitness<D::F, J::PolyWitnesses>>,
     ) -> Result<Self> {
         let rx = RxValues::try_from_fn(|id| {
             Element::alloc(dr, allocator, witness.as_ref().map(|w| *w.rx.get(id)))
@@ -212,7 +201,7 @@ impl<'dr, D: Driver<'dr>, J: HookConfig> ChildEvaluations<'dr, D, J> {
             claims: J::PolyWitnesses::range()
                 .map(|i| Element::alloc(dr, allocator, witness.as_ref().map(|w| w.claims[i])))
                 .try_collect_fixed()?,
-            q_eval: QEvalLen::<J>::range()
+            q_eval: QSlots::<J::PolyWitnesses>::range()
                 .map(|i| Element::alloc(dr, allocator, witness.as_ref().map(|w| w.q_poly[i])))
                 .try_collect_fixed()?,
         })
@@ -259,7 +248,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig> staging::Stage<
     for Stage<C, R, HEADER_SIZE, J>
 {
     type Parent = super::query::Stage<C, R, HEADER_SIZE, J>;
-    type Witness<'source> = &'source Witness<C::CircuitField>;
+    type Witness<'source> = &'source Witness<C::CircuitField, J::PolyWitnesses>;
     type OutputKind = Kind![C::CircuitField; Output<'_, _, J>];
 
     fn values() -> usize {

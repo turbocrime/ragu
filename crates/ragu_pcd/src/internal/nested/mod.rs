@@ -45,6 +45,15 @@ pub const fn q_slots(polys: usize) -> usize {
     if polys == 0 { 0 } else { 1 }
 }
 
+/// [`q_slots`] at the type level, for a poly count `L`.
+pub struct QSlots<L: ragu_primitives::vec::Len>(core::marker::PhantomData<L>);
+
+impl<L: ragu_primitives::vec::Len> ragu_primitives::vec::Len for QSlots<L> {
+    fn len() -> usize {
+        q_slots(L::len())
+    }
+}
+
 /// Number of curve points accumulated during `compute_p`: the `f.commitment`
 /// base point, one block per child ([`child_endoscaling_points`]), and the
 /// current step's stage components. See `_10_p` for the accumulation order.

@@ -22,7 +22,7 @@ use ragu_circuits::{
     staging::{MultiStage, StageExt},
 };
 use ragu_core::Result;
-use ragu_primitives::extract_endoscalar;
+use ragu_primitives::{extract_endoscalar, vec::FixedVec};
 
 use crate::{
     header::Header,
@@ -725,18 +725,17 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::Hoo
         // and delegate to `compute_endoscaling` so this trivial setup
         // cannot silently drift from the real prover path.
         let beta_endo = extract_endoscalar(C::CircuitField::ONE);
-        // The claim-coordinate q for the padding hosts; empty at zero capacity.
-        let padding_q: alloc::vec::Vec<C::HostCurve> = if self.hook_layout().polys == 0 {
-            alloc::vec::Vec::new()
-        } else {
-            alloc::vec![
-                crate::internal::challenge::claim_coord_commitment::<C, R>(
-                    self.params,
-                    core::iter::repeat_n(padding_host, self.hook_layout().polys),
-                )
-                .expect("the padding host has canonical coordinates")
-            ]
-        };
+        // The claim-coordinate q for the padding hosts.
+        let padding_q: FixedVec<
+            C::HostCurve,
+            crate::internal::nested::QSlots<J::PolyWitnesses>,
+        > = FixedVec::from_fn(|_| {
+            crate::internal::challenge::claim_coord_commitment::<C, R>(
+                self.params,
+                core::iter::repeat_n(padding_host, self.hook_layout().polys),
+            )
+            .expect("the padding host has canonical coordinates")
+        });
         let p_commitment = {
             let mut points = Vec::with_capacity(crate::internal::nested::num_endoscaling_points(
                 self.hook_layout().polys,
@@ -809,7 +808,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::Hoo
                 stashed_ab_b: host_commitment,
                 stashed_registry_xy: registry_xy_commitment,
                 stashed_p: p_commitment,
-                stashed_claims: alloc::vec![padding_host; self.hook_layout().polys],
+                stashed_claims: FixedVec::from_fn(|_| padding_host),
                 stashed_q: padding_q.clone(),
             };
             let witness = nested::stages::preamble::Witness {

@@ -19,7 +19,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         outer_error_witness: &native::stages::outer_error::Witness<C, native::RevdotParameters>,
         inner_error_witness: &native::stages::inner_error::Witness<C, native::RevdotParameters>,
         query_witness: &native::stages::query::Witness<C>,
-        eval_witness: &native::stages::eval::Witness<C::CircuitField>,
+        eval_witness: &native::stages::eval::Witness<C::CircuitField, J::PolyWitnesses>,
         builder: &mut ProofBuilder<'_, C, R, J>,
     ) -> Result<()> {
         let unified = native::unified::Instance {
