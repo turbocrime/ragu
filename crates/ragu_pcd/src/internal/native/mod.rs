@@ -89,7 +89,7 @@ pub enum InternalCircuitIndex {
 
 /// Compute the total circuit count and log2 domain size from the number of
 /// application-defined steps.
-pub fn total_circuit_counts(num_application_steps: usize) -> (usize, u32) {
+pub const fn total_circuit_counts(num_application_steps: usize) -> (usize, u32) {
     let total_circuits =
         num_application_steps + step::NUM_INTERNAL_STEPS + InternalCircuitIndex::NUM;
     let log2_circuits = total_circuits.next_power_of_two().trailing_zeros();
@@ -193,8 +193,8 @@ impl<T> InternalCircuitValues<T> {
         }
     }
 
-    /// Construct from a closure called once per variant, in
-    /// [`ALL`](InternalCircuitIndex::ALL) order.
+    /// Construct from a closure called once per variant in [`ALL`](InternalCircuitIndex::ALL)
+    /// order.
     pub fn from_fn(mut f: impl FnMut(InternalCircuitIndex) -> T) -> Self {
         match Self::try_from_fn(|id| Ok::<_, core::convert::Infallible>(f(id))) {
             Ok(v) => v,
@@ -202,7 +202,9 @@ impl<T> InternalCircuitValues<T> {
         }
     }
 
-    /// Fallible [`from_fn`](Self::from_fn).
+    /// Fallible construction from a closure called once per variant.
+    ///
+    /// The closure is called in [`ALL`](InternalCircuitIndex::ALL) order.
     pub fn try_from_fn<E>(
         mut f: impl FnMut(InternalCircuitIndex) -> core::result::Result<T, E>,
     ) -> core::result::Result<Self, E> {
@@ -325,8 +327,7 @@ impl<T> RxValues<T> {
         }
     }
 
-    /// Construct from a closure called once per variant, in
-    /// [`ALL`](RxIndex::ALL) order.
+    /// Construct from a closure called once per variant in [`ALL`](RxIndex::ALL) order.
     pub fn from_fn(mut f: impl FnMut(RxIndex) -> T) -> Self {
         match Self::try_from_fn(|id| Ok::<_, core::convert::Infallible>(f(id))) {
             Ok(v) => v,
@@ -334,7 +335,9 @@ impl<T> RxValues<T> {
         }
     }
 
-    /// Fallible [`from_fn`](Self::from_fn).
+    /// Fallible construction from a closure called once per variant.
+    ///
+    /// The closure is called in [`ALL`](RxIndex::ALL) order.
     pub fn try_from_fn<E>(
         mut f: impl FnMut(RxIndex) -> core::result::Result<T, E>,
     ) -> core::result::Result<Self, E> {
