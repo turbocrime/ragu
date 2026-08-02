@@ -144,8 +144,7 @@ impl<C: Cycle, R: Rank> Step<C> for SeedSet<C, R> {
         let [handle] = ctx.witness_polynomial([set])?;
 
         let output_data = SetData::from_handle(&handle, polynomial);
-        let header: FixedVec<_, ConstLen<2>> =
-            handle.coords().into_iter().collect::<Vec<_>>().try_into()?;
+        let header: FixedVec<_, ConstLen<2>> = handle.coords().into_iter().collect_fixed()?;
 
         Ok((
             (
@@ -221,15 +220,17 @@ impl<C: Cycle, R: Rank> Step<C> for MergeSets<'_, C, R> {
         let product_polynomial = witness.as_ref().map(|w| w.product_polynomial.clone());
         let c_com = witness.map(|w| w.product.clone());
         let handles = ctx.witness_polynomial([a_com, b_com, c_com])?;
+        // Each contributor's name is bound to its child's header-carried name
+        // before `z` is derived, so `z` cannot be steered by a swap.
         let left_header: &FixedVec<Element<'dr, D>, ConstLen<2>> = left_encoded.as_gadget();
         let right_header: &FixedVec<Element<'dr, D>, ConstLen<2>> = right_encoded.as_gadget();
-        let ([a, b, c], z) = bind_and_challenge(
-            ctx,
-            self.params,
-            handles,
-            [&left_header[0], &left_header[1]],
-            [&right_header[0], &right_header[1]],
-        )?;
+        for (handle, header) in [(&handles[0], left_header), (&handles[1], right_header)] {
+            let name = handle.coords();
+            name[0].enforce_equal(ctx.dr, &header[0])?;
+            name[1].enforce_equal(ctx.dr, &header[1])?;
+        }
+        let z = ctx.derive_challenge(self.params, &handles)?;
+        let [a, b, c] = handles;
 
         let y_a = open_at(ctx, allocator, &a, &z)?;
         let y_b = open_at(ctx, allocator, &b, &z)?;
@@ -237,8 +238,7 @@ impl<C: Cycle, R: Rank> Step<C> for MergeSets<'_, C, R> {
         ctx.enforce_poly_query(&c, z, y_c)?;
 
         let output_data = SetData::from_handle(&c, product_polynomial);
-        let header: FixedVec<_, ConstLen<2>> =
-            c.coords().into_iter().collect::<Vec<_>>().try_into()?;
+        let header: FixedVec<_, ConstLen<2>> = c.coords().into_iter().collect_fixed()?;
 
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(header)),
@@ -377,8 +377,7 @@ impl<C: Cycle, R: Rank> Step<C> for SeedSequence<C, R> {
             .coords()
             .into_iter()
             .chain([Element::one()])
-            .collect::<Vec<_>>()
-            .try_into()?;
+            .collect_fixed()?;
 
         Ok((
             (
@@ -460,17 +459,19 @@ impl<C: Cycle, R: Rank> Step<C> for ConcatSequences<'_, C, R> {
         let b_com = witness.as_ref().map(|w| w.b.clone());
         let c_com = witness.map(|w| w.output.clone());
         let handles = ctx.witness_polynomial([a_com, b_com, c_com])?;
-        let ([a, b, c], z) = {
+        // Each contributor's name is bound to its child's header-carried name
+        // before `z` is derived, so `z` cannot be steered by a swap.
+        {
             let left_header: &FixedVec<Element<'dr, D>, ConstLen<3>> = left_encoded.as_gadget();
             let right_header: &FixedVec<Element<'dr, D>, ConstLen<3>> = right_encoded.as_gadget();
-            bind_and_challenge(
-                ctx,
-                self.params,
-                handles,
-                [&left_header[0], &left_header[1]],
-                [&right_header[0], &right_header[1]],
-            )?
-        };
+            for (handle, header) in [(&handles[0], left_header), (&handles[1], right_header)] {
+                let name = handle.coords();
+                name[0].enforce_equal(ctx.dr, &header[0])?;
+                name[1].enforce_equal(ctx.dr, &header[1])?;
+            }
+        }
+        let z = ctx.derive_challenge(self.params, &handles)?;
+        let [a, b, c] = handles;
 
         // The offset factor z^{ℓa} must not be a free witness (it could be
         // chosen after z is known): pack ℓa's bits against the header length
@@ -517,12 +518,8 @@ impl<C: Cycle, R: Rank> Step<C> for ConcatSequences<'_, C, R> {
         }
 
         let output_data = SeqData::from_handle(&c, members);
-        let header: FixedVec<Element<'dr, D>, ConstLen<3>> = c
-            .coords()
-            .into_iter()
-            .chain([lc])
-            .collect::<Vec<_>>()
-            .try_into()?;
+        let header: FixedVec<Element<'dr, D>, ConstLen<3>> =
+            c.coords().into_iter().chain([lc]).collect_fixed()?;
 
         Ok((
             (left_encoded, right_encoded, Encoded::from_gadget(header)),
@@ -530,24 +527,6 @@ impl<C: Cycle, R: Rank> Step<C> for ConcatSequences<'_, C, R> {
             D::unit(),
         ))
     }
-}
-
-/// Binds each contributor's name to its child's header-carried name, then
-/// derives the challenge `z` from all three names.
-fn bind_and_challenge<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle>(
-    ctx: &mut StepCtx<'_, 'dr, D, C>,
-    params: &C::Params,
-    handles: [PolyHandle<'dr, D, C>; 3],
-    left_name: [&Element<'dr, D>; 2],
-    right_name: [&Element<'dr, D>; 2],
-) -> Result<([PolyHandle<'dr, D, C>; 3], Element<'dr, D>)> {
-    for (handle, header_name) in [(&handles[0], left_name), (&handles[1], right_name)] {
-        let name = handle.coords();
-        name[0].enforce_equal(ctx.dr, header_name[0])?;
-        name[1].enforce_equal(ctx.dr, header_name[1])?;
-    }
-    let z = ctx.derive_challenge(params, &handles)?;
-    Ok((handles, z))
 }
 
 /// Opens `handle` at `z` via a poly-query claim.

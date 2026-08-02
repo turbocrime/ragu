@@ -23,13 +23,9 @@ pub const HEADER_SIZE: usize = 4;
 pub type CollectionsApp<'params, C, R> =
     Application<'params, C, R, HEADER_SIZE, AppHooks<3, 3, 1, 6>>;
 
-/// An [`ApplicationBuilder`] at the shared capacity.
-pub type CollectionsAppBuilder<'params, C, R> =
-    ApplicationBuilder<'params, C, R, HEADER_SIZE, AppHooks<3, 3, 1, 6>>;
-
 /// All four collection steps registered and finalized.
 pub fn collections_app<C: Cycle, R: Rank>(params: &C::Params) -> Result<CollectionsApp<'_, C, R>> {
-    CollectionsAppBuilder::<C, R>::new()
+    ApplicationBuilder::<C, R, HEADER_SIZE, AppHooks<3, 3, 1, 6>>::new()
         .register(SeedSet::<C, R>::new())?
         .register(SeedSequence::<C, R>::new())?
         .register(MergeSets::<C, R>::new(params))?
