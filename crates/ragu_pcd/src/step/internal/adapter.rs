@@ -342,7 +342,6 @@ mod tests {
         assert_eq!(output_data, Fp::from(30u64));
     }
 
-    /// A step deriving more challenges than declared is rejected at the call.
     #[test]
     fn a_step_that_exceeds_the_declared_capacity_is_rejected() {
         struct TooManyChallenges;
@@ -410,8 +409,6 @@ mod tests {
         );
     }
 
-    /// Adapter synthesis completes on a structure-only driver for a step
-    /// that derives a challenge.
     #[test]
     fn adapter_witness_synthesizes_challenge_structure() {
         // A counting driver: no witness values, so deferred closures never run.

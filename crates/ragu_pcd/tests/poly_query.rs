@@ -1,6 +1,5 @@
-//! End-to-end tests for the polynomial-query oracle: witnessing a polynomial
-//! in a step, deriving challenges, evaluating, and enforcing evaluations —
-//! through seed/fuse/verify on the real pipeline.
+//! End-to-end tests for the polynomial-query oracle, through seed/fuse/verify
+//! on the real pipeline.
 
 use ragu_arithmetic::Cycle;
 use ragu_circuits::polynomials::ProductionRank;

@@ -446,7 +446,6 @@ mod tests {
 
     type Dr<'dr> = Emulator<Wireless<Empty, Fp>>;
 
-    /// The framework caps a step body at the application's challenge capacity.
     #[test]
     fn challenge_slots_are_capped() {
         let with_capacity = |calls| {

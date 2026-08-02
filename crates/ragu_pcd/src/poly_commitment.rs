@@ -251,8 +251,8 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> PolyHandle<'dr, D, C> {
 mod tests {
     use super::*;
 
-    /// The limbs recompose to the coordinate itself; longhand on purpose, so
-    /// the expected value never calls the code under test.
+    /// Longhand on purpose, so the expected value never calls the code under
+    /// test.
     #[test]
     fn limbs_recompose_to_the_coordinates() {
         use ragu_arithmetic::{group::Group as _, pasta_curves::group::Curve};

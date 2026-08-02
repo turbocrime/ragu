@@ -196,7 +196,6 @@ mod pinned_chain {
         chain::Challenges<ragu_pasta::Pasta, R, HEADER_SIZE, AppHooks<8, 1, 1, 2>>;
 }
 
-/// Pins the native stages' gate geometry at a stated slot count.
 #[rustfmt::skip]
 #[test]
 fn test_internal_stage_parameters() {
@@ -273,7 +272,6 @@ mod pinned_nested_chain {
     pub type Eval = stages::eval::Stage<Host, R, L>;
 }
 
-/// Pins the nested chain's gate geometry at a stated slot count.
 #[rustfmt::skip]
 #[test]
 fn test_nested_stage_parameters() {
@@ -432,8 +430,7 @@ fn print_registry_digests() {
     );
 }
 
-/// [`EndoPoints`] matches the accumulation walk. The expected side is spelled
-/// out longhand so this is not `x == x`.
+/// The expected side is spelled out longhand so this is not `x == x`.
 #[test]
 fn endoscaling_points_len_matches_the_accumulation_walk() {
     use ragu_primitives::vec::{ConstLen, Len};

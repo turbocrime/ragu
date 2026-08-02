@@ -1,5 +1,4 @@
-//! Recursive enforcement of poly-query claims: a corrupted claim instance is
-//! rejected directly at root verify and recursively when fused as a child.
+//! Recursive enforcement of poly-query claims.
 //!
 //! Requires the `unstable-fuzzing` feature for the proof-corruption helpers:
 //! `cargo test -p ragu_pcd --features unstable-fuzzing --test recursive_claims`
@@ -19,8 +18,6 @@ use rand::{SeedableRng, rngs::StdRng};
 
 type R = ProductionRank;
 
-/// A corrupted claim instance fails root verification, and any parent fuse of
-/// it fails to produce a verifying proof.
 #[test]
 fn corrupted_claim_is_rejected_directly_and_recursively() -> Result<()> {
     let pasta = Pasta::baked();
