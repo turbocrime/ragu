@@ -2,9 +2,8 @@
 //!
 //! Polynomial setters store values immediately. Native commitment caches are
 //! computed lazily on first access via [`OnceCell`]-based interior mutability.
-//! The four "simple" bridge commitments (outer_error, ab, query, eval) are also
-//! lazily computed from the builder's `bridge_alpha` source and the native
-//! commitments already on the builder.
+//! So are the bridge commitments (outer_error, ab, query, eval), from the
+//! builder's `bridge_alpha` source and the native commitments already on it.
 
 use alloc::vec::Vec;
 use core::cell::OnceCell;
@@ -175,7 +174,6 @@ macro_rules! explicit_commitment_getter {
 /// Witness fields are specified as `field: getter()` pairs — the macro
 /// prepends `self.` to each getter call so that the generated function's own
 /// `self` is used (avoiding macro hygiene issues with `self` in token trees).
-///
 macro_rules! cached_bridge {
     ($rx:ident, $commitment:ident,
      $idx:expr, $stage:ident, { $($wit_field:ident : $getter:ident()),* }) => {
@@ -617,7 +615,6 @@ impl<'params, C: Cycle, R: Rank, J: HookConfig> ProofBuilder<'params, C, R, J> {
             .get_or_init(|| rx.commit_to_affine(C::nested_generators(self.params))))
     }
 
-    /// The claim host commitments; requires `set_application_polys` first.
     fn claim_host_commitments(&self) -> &[C::HostCurve] {
         self.claim_host_commitments
             .as_deref()

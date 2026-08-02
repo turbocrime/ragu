@@ -166,9 +166,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         self.prevent_duplicate_suffixes::<S::Right>()?;
 
         // Building the adapter needs no cycle parameters, so registration
-        // happens here, before `finalize` supplies them. Hand-over freezes
-        // the circuit's shape, which is settled: every term of the instance
-        // comes from a declared parameter.
+        // happens here, before `finalize` supplies them.
         self.native_registry =
             self.native_registry
                 .register_circuit(MultiStage::new(Adapter::<C, S, R, HEADER_SIZE, J>::new(
@@ -205,8 +203,6 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
         mut self,
         params: &'params C::Params,
     ) -> Result<Application<'params, C, R, HEADER_SIZE, J>> {
-        // The internal steps are built at the application's declared
-        // capacity, like its own.
         let rerandomize = Adapter::<C, _, R, HEADER_SIZE, J>::new(
             step::internal::rerandomize::Rerandomize::<()>::new(),
         );
@@ -242,7 +238,6 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
             "final circuit count mismatch"
         );
 
-        // The nested side needs exactly one shape, the poly-slot count.
         self.nested_registry =
             internal::nested::register_all::<C, R, J::PolyWitnesses>(self.nested_registry)?;
 
@@ -307,8 +302,7 @@ pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: 
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
     Application<'_, C, R, HEADER_SIZE, J>
 {
-    /// The application's settled slot capacity, read off the type parameter
-    /// so there is no second representation to keep in step.
+    /// The application's settled slot capacity.
     pub(crate) fn hook_layout(&self) -> framework_hooks::HookLayout {
         J::layout()
     }

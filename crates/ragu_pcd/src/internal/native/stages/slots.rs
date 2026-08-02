@@ -36,9 +36,6 @@ pub struct ChallengesOutput<'dr, D: Driver<'dr>, J: HookConfig> {
 }
 
 /// The challenge slots of both children.
-///
-/// Branches off [`outer_error`](super::outer_error) as a sibling of
-/// [`inner_error`](super::inner_error), so its readers pay nothing extra.
 pub struct ChallengesStage<C: Cycle, R, const HEADER_SIZE: usize, J: HookConfig, FP> {
     _marker: PhantomData<(C, R, J, FP)>,
 }

@@ -35,26 +35,20 @@ pub mod stages {
 pub mod chain {
     use super::{RevdotParameters, stages};
 
-    /// preamble — the shared root of every branch.
     pub type Preamble<C, R, const HEADER_SIZE: usize, J> =
         stages::preamble::Stage<C, R, HEADER_SIZE, J>;
 
-    /// outer_error — the error branch's first stage.
     pub type OuterError<C, R, const HEADER_SIZE: usize, J> =
         stages::outer_error::Stage<C, R, HEADER_SIZE, J, RevdotParameters>;
 
-    /// inner_error — an error-branch leaf.
     pub type InnerError<C, R, const HEADER_SIZE: usize, J> =
         stages::inner_error::Stage<C, R, HEADER_SIZE, J, RevdotParameters>;
 
-    /// The challenge slots — the other error-branch leaf.
     pub type Challenges<C, R, const HEADER_SIZE: usize, J> =
         stages::slots::ChallengesStage<C, R, HEADER_SIZE, J, RevdotParameters>;
 
-    /// query — the query branch's first stage.
     pub type Query<C, R, const HEADER_SIZE: usize, J> = stages::query::Stage<C, R, HEADER_SIZE, J>;
 
-    /// eval — the query branch's leaf.
     pub type Eval<C, R, const HEADER_SIZE: usize, J> = stages::eval::Stage<C, R, HEADER_SIZE, J>;
 }
 
@@ -208,9 +202,7 @@ impl<T> InternalCircuitValues<T> {
         }
     }
 
-    /// Fallible construction from a closure called once per variant.
-    ///
-    /// The closure is called in [`ALL`](InternalCircuitIndex::ALL) order.
+    /// Fallible [`from_fn`](Self::from_fn).
     pub fn try_from_fn<E>(
         mut f: impl FnMut(InternalCircuitIndex) -> core::result::Result<T, E>,
     ) -> core::result::Result<Self, E> {
@@ -342,9 +334,7 @@ impl<T> RxValues<T> {
         }
     }
 
-    /// Fallible construction from a closure called once per variant.
-    ///
-    /// The closure is called in [`ALL`](RxIndex::ALL) order.
+    /// Fallible [`from_fn`](Self::from_fn).
     pub fn try_from_fn<E>(
         mut f: impl FnMut(RxIndex) -> core::result::Result<T, E>,
     ) -> core::result::Result<Self, E> {
@@ -392,8 +382,7 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: Hoo
 ) -> Result<RegistryBuilder<'params, C::CircuitField, R>> {
     let initial_internal_circuits = registry.num_internal_circuits();
 
-    // Circuits first, then masks - matching RegistryBuilder::finalize()'s
-    // concatenation order and `InternalCircuitIndex::ALL`.
+    // Circuits first, then masks.
     {
         registry = registry.register_internal_circuit(circuits::hashes_1::Circuit::<
             C,
@@ -441,8 +430,7 @@ pub fn register_all<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: Hoo
         use chain::{Challenges, Eval, InnerError, OuterError, Preamble, Query};
         use ragu_circuits::staging::StageExt as _;
 
-        // Stage masks, then final-trace masks, in `InternalCircuitIndex::ALL`
-        // order.
+        // Stage masks, then final-trace masks.
         registry = registry.register_bonding(Preamble::<C, R, HEADER_SIZE, J>::mask()?);
         registry = registry.register_bonding(InnerError::<C, R, HEADER_SIZE, J>::mask()?);
         registry = registry.register_bonding(OuterError::<C, R, HEADER_SIZE, J>::mask()?);

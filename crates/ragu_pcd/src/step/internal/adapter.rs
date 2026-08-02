@@ -24,7 +24,7 @@ use crate::{
     framework_hooks::{FrameworkAux, FrameworkHooks, HookConfig},
 };
 
-/// Represents a triple header length plus the configurable stage lengths.
+/// Three headers plus the hook slot regions.
 pub struct AdapterLen<const HEADER_SIZE: usize, J: HookConfig>(PhantomData<J>);
 
 impl<const HEADER_SIZE: usize, J: HookConfig> Len for AdapterLen<HEADER_SIZE, J> {
@@ -128,12 +128,7 @@ impl<C: Cycle, S: Step<C> + Send + Sync, R: Rank, const HEADER_SIZE: usize, J: H
         left.write(dr, &mut elements)?;
         right.write(dr, &mut elements)?;
         output.write(dr, &mut elements)?;
-        // The k(Y) instance layout, which must match
-        // `ProofInputs::application_ky`: after the three headers come the
-        // polynomial slots (two embedded commitment coordinates each), then
-        // the query slots (the opened polynomial's coordinate pair, the point
-        // x, the evaluation y), then the challenge slots (the input elements,
-        // then the challenge).
+        // This order is k(Y)'s, and must match `ProofInputs::application_ky`.
         for poly in hooks.witnessed_polys() {
             for coord in &poly.coords() {
                 coord.write(dr, &mut elements)?;
@@ -203,7 +198,6 @@ mod tests {
     type TestR = ragu_circuits::polynomials::ProductionRank;
     const HEADER_SIZE: usize = 4;
 
-    /// The padding constants a value-carrying witness tuple leads with.
     fn test_padding() -> crate::internal::challenge::Padding<Pasta> {
         crate::internal::challenge::Padding::new(Pasta::baked(), 0)
             .expect("padding constants exist for baked parameters")

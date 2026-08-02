@@ -1,7 +1,6 @@
-//! Characterization tests for the polynomial collections: multisets (members
-//! as roots, fused by multiplication) and sequences (members as coefficients
-//! under a sentinel, fused by shifted addition), grown by fusing singleton
-//! seeds. Both fuse circuits are `O(1)` in collection size. Run the ignored
+//! Characterization tests for the polynomial collections
+//! ([`ragu_testing::pcd::collections`]), grown by fusing singleton seeds.
+//! Both fuse circuits are `O(1)` in collection size. Run the ignored
 //! `print_*_characterization` tests with `--release` for wall-clock numbers.
 
 use ragu_arithmetic::{

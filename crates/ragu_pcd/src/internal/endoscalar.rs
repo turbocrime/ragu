@@ -104,9 +104,7 @@ impl<F: Field, R: Rank> Stage<F, R> for EndoscalarStage {
 pub struct PointsWitness<C: CurveAffine, L: Len> {
     /// Initial accumulator (base case for step 0).
     pub initial: C,
-    /// Inputs (length = `L::len() - 1`).
     pub inputs: FixedVec<C, InputsLen<L>>,
-    /// Interstitial outputs, one per step.
     pub interstitials: FixedVec<C, NumStepsLen<L>>,
 }
 
@@ -180,8 +178,7 @@ impl<C: CurveAffine, R: Rank, L: Len> Clone for EndoscalingStep<C, R, L> {
     }
 }
 
-/// The accumulated points, as the circuit body names them: initial, inputs,
-/// and interstitials. See [`PointsWitness`].
+/// The accumulated points; see [`PointsWitness`].
 #[derive(Gadget)]
 pub struct Points<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> {
     #[ragu(gadget)]

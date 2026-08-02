@@ -1,9 +1,6 @@
 //! Polynomial-collection fixtures, registered as the four steps of one
-//! application ([`step`]). Multisets are monic root polynomials (merge =
-//! multiply); sequences are coefficient-list polynomials with a monic
-//! sentinel (concat = shifted addition). A seed proves a one-member
-//! collection from a literal element; a fuse combines two proven children,
-//! binding its witnessed inputs to the names their headers carry.
+//! application; see [`step`] for the two collection types and how a seed and
+//! a fuse build them.
 
 pub mod step;
 

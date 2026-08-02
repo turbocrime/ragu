@@ -398,8 +398,10 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usiz
     }
 }
 
-/// Both children present the application's shape, so one set of slot counts
-/// sizes both.
+/// The root of the native stage chain. Per child: three headers, the poly
+/// and claim slot regions, the circuit id, and the unified wires — both
+/// children present the application's shape, so one set of slot counts
+/// sizes both. Challenge slots are their own stage ([`slots`](super::slots)).
 pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize, J: HookConfig> {
     _marker: PhantomData<(C, R, J)>,
 }
@@ -423,9 +425,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig> staging::Stage<
     ];
 
     fn values() -> usize {
-        // Per child: three headers, the poly and claim slot regions, the
-        // circuit id, and the unified wires. Challenge slots are their own
-        // stage ([`slots`](super::slots)).
         2 * (3 * HEADER_SIZE + J::layout().poly_query_instance_len() + 1 + unified::NUM_WIRES)
     }
 

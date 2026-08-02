@@ -46,8 +46,7 @@ pub struct ChallengeWires<'dr, D: Driver<'dr>> {
     pub challenge: Element<'dr, D>,
 }
 
-/// The in-circuit wires of one opening claim; several may carry the same
-/// `coords`, which is why a repeat opening costs only these four elements.
+/// The in-circuit wires of one opening claim.
 pub struct QueryWires<'dr, D: Driver<'dr>> {
     /// The opened polynomial's embedded commitment coordinates — the same
     /// wires the polynomial's own slot holds.
@@ -138,10 +137,9 @@ pub struct HookLayout {
     /// Input elements one challenge derivation absorbs; positions a caller
     /// leaves empty take a fixed sentinel.
     pub challenge_width: usize,
-    /// Polynomial slots — the expensive count.
+    /// Polynomial slots.
     pub polys: usize,
-    /// Opening claims — the cheap count; a flat pool, so several claims can
-    /// open one polynomial.
+    /// Opening claims.
     pub claims: usize,
 }
 
@@ -158,17 +156,14 @@ impl HookLayout {
 }
 
 impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, C> {
-    /// The witnessed polynomials' handles, in slot order.
     pub(crate) fn witnessed_polys(&self) -> &[PolyHandle<'dr, D, C>] {
         &self.witnessed_polys
     }
 
-    /// The raised claims' wires, in call order.
     pub(crate) fn poly_queries(&self) -> &[QueryWires<'dr, D>] {
         &self.poly_queries
     }
 
-    /// The `(inputs, challenge)` wires per challenge slot, in slot order.
     pub(crate) fn challenge_pairs(&self) -> &[ChallengeWires<'dr, D>] {
         &self.challenge_pairs
     }
@@ -227,7 +222,6 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
 }
 
 impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, C> {
-    /// Creates a hook container at the application's declared capacities.
     pub(crate) fn new(hook_layout: HookLayout) -> Self {
         Self {
             poly_queries: Vec::new(),

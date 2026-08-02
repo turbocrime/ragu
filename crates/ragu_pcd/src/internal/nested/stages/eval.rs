@@ -24,13 +24,11 @@ pub struct Witness<C: CurveAffine> {
     pub claims: Vec<C>,
 }
 
-/// This stage's points, as the circuit body names them: `native_eval`, then
-/// one slot per claim.
+/// This stage's points.
 #[derive(Gadget, Write)]
 pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> {
     #[ragu(gadget)]
     pub native_eval: Point<'dr, D, C>,
-    /// The current step's poly-query claim host commitments, in slot order.
     #[ragu(gadget)]
     pub claims: FixedVec<Point<'dr, D, C>, L>,
 }

@@ -107,11 +107,11 @@ fn test_internal_circuit_constraint_counts() {
     check_constraints!(app, Hashes2Circuit,          mul = 1954, lin = 2951);
     check_constraints!(app, InnerCollapseCircuit,    mul = 1831, lin = 1918);
     check_constraints!(app, OuterCollapseCircuit,    mul = 1848, lin = 2742);
+    check_constraints!(app, ComputeVCircuit,         mul = 1239, lin = 1819);
     // `ChallengeBinding`'s count includes `OuterError`'s 186 gates: it
     // reaches the challenge slots on the branch below `OuterError`, and a
     // circuit's trace spans every gate up to its last stage, so it pays for
     // the stage it skips on the way.
-    check_constraints!(app, ComputeVCircuit,         mul = 1239, lin = 1819);
     check_constraints!(app, ChallengeBindingCircuit, mul =  518, lin =   71);
 }
 
@@ -135,8 +135,8 @@ fn test_slotted_internal_circuit_constraint_counts() {
     // The two that read the slot regions, and the reason this shape is pinned
     // at all. `ComputeV` carries the per-claim one-hot resolution and the
     // per-child q(u) re-derivation from the coordinate instance wires, so it
-    // moves whenever those do. `ChallengeBinding` is 855 here against 518
-    // with no slots: an application that derives a challenge has one to bind.
+    // moves whenever those do; an application that derives a challenge gives
+    // `ChallengeBinding` one to bind.
     check_constraints!(app, ComputeVCircuit,         mul = 1078, lin = 2007);
     check_constraints!(app, ChallengeBindingCircuit, mul =  855, lin = 1225);
 }
@@ -344,7 +344,7 @@ fn test_native_registry_digest() {
     let app = dummy_app::<HEADER_SIZE, 0, 0, 0>(pasta, NUM_APP_STEPS);
 
     // At `POLYS = 0, CLAIMS = 0, CHALLENGES = 0` every slot-dependent width
-    // collapses; [`test_slotted_registry_digests`] covers the slot regions.
+    // collapses.
     let expected = fp!(0x2bb64a4adaa9e869d9187bec77ae9f8c8788703ca013ff9bae02b6fdbc02dec0);
 
     assert_eq!(
@@ -356,8 +356,7 @@ fn test_native_registry_digest() {
 
 /// Pins both registry digests for an application that *has* slots (two
 /// polynomials, three claims, one challenge). The no-slot digest pins cannot
-/// see a change confined to the slot regions — an omission in the challenge
-/// stage slipped past them earlier on this branch.
+/// see a change confined to the slot regions.
 #[test]
 fn test_slotted_registry_digests() {
     let pasta = Pasta::baked();
@@ -380,18 +379,13 @@ fn test_slotted_registry_digests() {
     );
 }
 
-/// Verifies the nested registry digest matches the expected value.
-///
-/// This test ensures the wiring polynomial structure is mathematically
-/// equivalent to the reference implementation by comparing cryptographic
-/// digests.
+/// Pins the nested registry digest at the no-slot shape.
 #[test]
 fn test_nested_registry_digest() {
     let pasta = Pasta::baked();
 
     let app = dummy_app::<HEADER_SIZE, 0, 0, 0>(pasta, NUM_APP_STEPS);
 
-    // No-slot shape; [`test_slotted_registry_digests`] covers the slot regions.
     let expected = fq!(0x06bb3145242fd72534249a81cf321e7e4608d2610f745aa4eafa42887528f9d9);
 
     assert_eq!(

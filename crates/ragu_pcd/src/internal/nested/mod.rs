@@ -298,8 +298,8 @@ pub mod stages {
     pub mod s_prime;
 }
 
-/// Registers internal nested circuits into the provided registry, in the
-/// order [`num_internal`] documents.
+/// Registers internal nested circuits into the provided registry, in
+/// [`InternalCircuitIndex::all`] order.
 ///
 /// Circuits are registered as internal to ensure they occupy prefix indices
 /// before application steps.
@@ -315,8 +315,7 @@ pub fn register_all<'params, C: Cycle, R: Rank, L: ragu_primitives::vec::Len>(
 
     let initial_internal_circuits = registry.num_internal_circuits();
 
-    // Circuits first, then bondings - matching RegistryBuilder::finalize()'s
-    // concatenation order and the layout `num_internal` documents.
+    // Circuits first, then bondings.
     {
         for step in 0..NumStepsLen::<EndoPoints<L>>::len() {
             let step_circuit =

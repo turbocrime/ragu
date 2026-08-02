@@ -31,7 +31,6 @@ use super::super::{
 };
 use crate::framework_hooks::HookConfig;
 
-/// Circuit that re-derives every child challenge from its slot inputs.
 /// See the [module-level documentation](self).
 pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, J: HookConfig> {
     params: &'params C::Params,
@@ -41,7 +40,6 @@ pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, J: HookConfig
 impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
     Circuit<'params, C, R, HEADER_SIZE, J>
 {
-    /// Creates a new multi-stage circuit.
     pub fn new(params: &'params C::Params) -> MultiStage<C::CircuitField, R, Self> {
         MultiStage::new(Circuit {
             params,
@@ -96,9 +94,6 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
 
         let challenges = challenges.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;
 
-        // Per (child, slot): fresh sponge, absorb inputs in slot order, squeeze
-        // once, enforce equality with the recorded challenge; must match
-        // `padded_challenge` exactly.
         for child in [&challenges.left, &challenges.right] {
             for pair in child.iter() {
                 let mut sponge = Sponge::new(dr, C::circuit_poseidon(self.params));

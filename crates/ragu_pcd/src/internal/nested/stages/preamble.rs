@@ -272,7 +272,7 @@ impl<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> ChildOutput<'dr, 
     }
 }
 
-/// The preamble bridge stage's points, as the circuit body names them.
+/// The preamble bridge stage's points.
 #[derive(Gadget, Write)]
 pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> {
     /// Point commitment from the native preamble stage.
@@ -287,6 +287,8 @@ pub struct Output<'dr, D: Driver<'dr>, C: CurveAffine<Base = D::F>, L: Len> {
 }
 
 /// The preamble bridge stage: `native_preamble`, then each child's block.
+/// The bridge chain hangs off the points stage —
+/// `Parent = PointsStage<C, EndoPoints<L>>`.
 pub struct Stage<C: CurveAffine, R, L> {
     _marker: core::marker::PhantomData<(C, R, L)>,
 }

@@ -361,18 +361,14 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         &self.right_header
     }
 
-    /// The poly-query claim instances declared at the producing fuse, in slot
-    /// order (padded to the application's poly capacity).
     pub(crate) fn application_claims(&self) -> &[ClaimOpening<C::CircuitField>] {
         &self.application_claims
     }
 
-    /// Coordinate instance region: two coords per polynomial slot, in slot order.
     pub(crate) fn application_poly_coords(&self) -> &[C::CircuitField] {
         &self.application_poly_coords
     }
 
-    /// The derived challenges this proof's circuit exposes, in slot order.
     pub(crate) fn application_challenges(&self) -> &[ChallengeOpening<C::CircuitField>] {
         &self.application_challenges
     }
@@ -650,7 +646,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::Hoo
                 .collect(),
         );
         // No challenges derived: every slot holds the all-sentinel inputs and
-        // their honest challenge, mirroring the adapter's padding.
+        // their honest challenge.
         builder.set_application_challenges(
             (0..self.hook_layout().challenge_calls)
                 .map(|_| ChallengeOpening {

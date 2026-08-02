@@ -131,11 +131,8 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_rev
 impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig, FP: fold_revdot::Parameters>
     MultiStageCircuit<C::CircuitField, R> for Circuit<C, R, HEADER_SIZE, J, FP>
 {
-    /// The challenge slots are the last stage of the error chain, and this
-    /// circuit folds a child's *whole* instance into $k(Y)$ — challenge slots
-    /// included — so it reaches all the way down. `hashes_1`, `hashes_2` and
-    /// `inner_collapse` stop at the error stages above and never name the
-    /// challenge capacities.
+    /// This circuit folds a child's *whole* instance into $k(Y)$ — challenge
+    /// slots included — so it reaches the chain's last stage.
     type Last = slots::ChallengesStage<C, R, HEADER_SIZE, J, FP>;
 
     type Instance<'source> = &'source unified::Instance<C>;

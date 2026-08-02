@@ -244,7 +244,7 @@ impl<C: Cycle, R: Rank> Step<C> for OpenAndHash<'_, C, R> {
     }
 }
 
-/// The header size the two fixtures above are exercised at.
+/// The header size [`CommitAndOpen`] and [`OpenAndHash`] are exercised at.
 pub const HEADER_SIZE: usize = 4;
 
 /// An [`Application`] at the fixtures' declared capacity.
