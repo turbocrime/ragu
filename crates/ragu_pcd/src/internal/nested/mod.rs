@@ -13,8 +13,6 @@
 //! [`ChildWitness`]: stages::preamble::ChildWitness
 //! [`PointsStage`]: crate::internal::endoscalar::PointsStage
 
-use alloc::vec::Vec;
-
 use ragu_arithmetic::Cycle;
 use ragu_circuits::{
     polynomials::Rank,
@@ -83,7 +81,7 @@ impl<L: ragu_primitives::vec::Len> ragu_primitives::vec::Len for EndoPoints<L> {
 /// The number of nested internal circuits and bondings [`register_all`]
 /// registers — the cardinality of [`InternalCircuitIndex::all`].
 pub(crate) fn num_internal<L: ragu_primitives::vec::Len>() -> usize {
-    InternalCircuitIndex::all(L::len()).len()
+    InternalCircuitIndex::all(L::len()).count()
 }
 
 /// Index of internal nested circuits registered into the registry.
@@ -128,30 +126,27 @@ impl InternalCircuitIndex {
     /// in [`RegistryBuilder::finalize()`](ragu_circuits::registry::RegistryBuilder::finalize)
     /// (circuits before masks), since [`circuit_index()`](Self::circuit_index)
     /// derives indices from position in this list.
-    pub fn all(polys: usize) -> Vec<Self> {
-        let mut all = Vec::new();
-        all.extend(
-            (0..num_endoscaling_steps(polys)).map(|step| Self::EndoscalingStep(step as u32)),
-        );
-        all.extend([
-            Self::EndoscalarStage,
-            Self::PointsStage,
-            Self::PointsFinalStaged,
-            Self::BridgePreamble,
-            Self::BridgeSPrime,
-            Self::BridgeInnerError,
-            Self::BridgeOuterError,
-            Self::BridgeAB,
-            Self::BridgeQuery,
-            Self::BridgeF,
-            Self::BridgeEval,
-        ]);
-        all.extend([
-            Self::Loading,
-            Self::Copying(Side::Left),
-            Self::Copying(Side::Right),
-        ]);
-        all
+    pub fn all(polys: usize) -> impl Iterator<Item = Self> {
+        (0..num_endoscaling_steps(polys))
+            .map(|step| Self::EndoscalingStep(step as u32))
+            .chain([
+                Self::EndoscalarStage,
+                Self::PointsStage,
+                Self::PointsFinalStaged,
+                Self::BridgePreamble,
+                Self::BridgeSPrime,
+                Self::BridgeInnerError,
+                Self::BridgeOuterError,
+                Self::BridgeAB,
+                Self::BridgeQuery,
+                Self::BridgeF,
+                Self::BridgeEval,
+            ])
+            .chain([
+                Self::Loading,
+                Self::Copying(Side::Left),
+                Self::Copying(Side::Right),
+            ])
     }
 
     /// Convert to a [`CircuitIndex`] for registry lookup.
@@ -160,8 +155,7 @@ impl InternalCircuitIndex {
     /// order: internal circuits first, then internal masks.
     pub fn circuit_index(self, polys: usize) -> CircuitIndex {
         let pos = Self::all(polys)
-            .iter()
-            .position(|&v| v == self)
+            .position(|v| v == self)
             .expect("every variant appears in `all`");
         CircuitIndex::new(pos)
     }
@@ -243,34 +237,31 @@ impl RxIndex {
     ///
     /// Must maintain the same ordering convention as
     /// [`native::RxIndex::ALL`](super::native::RxIndex::ALL).
-    pub fn all(polys: usize) -> Vec<Self> {
-        let mut all = Vec::new();
-        all.extend(
-            (0..num_endoscaling_steps(polys)).map(|step| Self::EndoscalingStep(step as u32)),
-        );
-        all.extend([
-            Self::EndoscalarStage,
-            Self::PointsStage,
-            Self::BridgePreamble,
-            Self::BridgeSPrime,
-            Self::BridgeInnerError,
-            Self::BridgeOuterError,
-            Self::BridgeAB,
-            Self::BridgeQuery,
-            Self::BridgeF,
-            Self::BridgeEval,
-        ]);
-        all.extend([
-            Self::ChildPointsStage(Side::Left),
-            Self::ChildPointsStage(Side::Right),
-        ]);
-        for kind in ChildBridgeKind::ALL {
-            all.extend([
-                Self::ChildBridge(kind, Side::Left),
-                Self::ChildBridge(kind, Side::Right),
-            ]);
-        }
-        all
+    pub fn all(polys: usize) -> impl Iterator<Item = Self> {
+        (0..num_endoscaling_steps(polys))
+            .map(|step| Self::EndoscalingStep(step as u32))
+            .chain([
+                Self::EndoscalarStage,
+                Self::PointsStage,
+                Self::BridgePreamble,
+                Self::BridgeSPrime,
+                Self::BridgeInnerError,
+                Self::BridgeOuterError,
+                Self::BridgeAB,
+                Self::BridgeQuery,
+                Self::BridgeF,
+                Self::BridgeEval,
+            ])
+            .chain([
+                Self::ChildPointsStage(Side::Left),
+                Self::ChildPointsStage(Side::Right),
+            ])
+            .chain(ChildBridgeKind::ALL.into_iter().flat_map(|kind| {
+                [
+                    Self::ChildBridge(kind, Side::Left),
+                    Self::ChildBridge(kind, Side::Right),
+                ]
+            }))
     }
 }
 
