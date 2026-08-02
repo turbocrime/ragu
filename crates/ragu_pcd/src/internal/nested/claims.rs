@@ -59,7 +59,7 @@ impl<'m, 'rx, F: PrimeField, R: Rank> Processor<&'rx sparse::Polynomial<F, R>>
         id: InternalCircuitIndex,
         rxs: impl Iterator<Item = &'rx sparse::Polynomial<F, R>>,
     ) {
-        let circuit_id = id.circuit_index(self.capacity.polys);
+        let circuit_id = id.circuit_index(self.hook_layout.polys);
         let rx = sum_polynomials(rxs);
         self.circuit_impl(circuit_id, rx);
     }
@@ -69,7 +69,7 @@ impl<'m, 'rx, F: PrimeField, R: Rank> Processor<&'rx sparse::Polynomial<F, R>>
         id: InternalCircuitIndex,
         groups: impl Iterator<Item = impl Iterator<Item = &'rx sparse::Polynomial<F, R>>>,
     ) -> Result<()> {
-        let circuit_id = id.circuit_index(self.capacity.polys);
+        let circuit_id = id.circuit_index(self.hook_layout.polys);
         let folded = self.fold_bonding_groups(groups);
         self.bonding_impl(circuit_id, folded);
         Ok(())

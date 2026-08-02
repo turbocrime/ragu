@@ -65,12 +65,6 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, R, H> {
     pub(crate) fn into_parts(self) -> (Proof<C, R>, H::Data) {
         (self.proof, self.data)
     }
-
-    /// Mutable proof access for the [`fuzz_utils`](crate::fuzz_utils) corruption helpers.
-    #[cfg(feature = "unstable-fuzzing")]
-    pub(crate) fn proof_mut(&mut self) -> &mut Proof<C, R> {
-        &mut self.proof
-    }
 }
 
 impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Clone for Pcd<C, R, H> {

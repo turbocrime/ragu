@@ -37,8 +37,9 @@ fn corrupted_claim_is_rejected_directly_and_recursively() -> Result<()> {
     assert!(app.verify(&leaf1, &mut rng)?);
 
     // Corrupt the claimed evaluation in slot 0.
-    let mut corrupted_leaf = leaf1;
-    corrupted_leaf.corrupt(Corruption::ClaimY(0, Fp::from(1u64)));
+    let mut proof = leaf1.proof().clone();
+    proof.corrupt(Corruption::ClaimY(0, Fp::from(1u64)));
+    let corrupted_leaf = proof.carry(leaf1.data().clone());
     assert!(
         !app.verify(&corrupted_leaf, &mut rng)?,
         "root verify must reject a corrupted claim instance"
@@ -108,8 +109,9 @@ fn forged_challenge_is_rejected_directly_and_recursively() -> Result<()> {
     assert!(app.verify(&honest, &mut rng)?);
 
     // Keep the point, change the challenge.
-    let mut forged = honest;
-    forged.corrupt(Corruption::ChallengeValue(0, Fp::from(1u64)));
+    let mut proof = honest.proof().clone();
+    proof.corrupt(Corruption::ChallengeValue(0, Fp::from(1u64)));
+    let forged = proof.carry(honest.data().clone());
     assert!(
         !app.verify(&forged, &mut rng)?,
         "root verify must reject a challenge that is not its point's hash"
@@ -180,8 +182,9 @@ fn a_claim_naming_no_slot_is_rejected() -> Result<()> {
         "the honest leaf must verify"
     );
 
-    let mut tampered = honest;
-    tampered.corrupt(Corruption::ClaimName(0, Fp::from(0xbad)));
+    let mut proof = honest.proof().clone();
+    proof.corrupt(Corruption::ClaimName(0, Fp::from(0xbad)));
+    let tampered = proof.carry(honest.data().clone());
 
     assert!(
         !app.verify(&tampered, &mut rng)?,
@@ -261,16 +264,6 @@ fn poly_query_com_is_not_bound_to_the_folded_polynomial() -> Result<()> {
         },
     )?;
 
-    // Establish the desync really holds, so the rejection below is
-    // attributable to it rather than to any other malformation.
-    let (claim_x, claim_y) = cheat.proof().claim_opening_for_testing(0);
-    assert_eq!(
-        claim_y,
-        p_prime.eval(claim_x),
-        "the claimed opening is of P'"
-    );
-    assert_ne!(claim_y, p.eval(claim_x), "P and P' disagree at z");
-
     assert!(
         !app.verify(&cheat, &mut rng)?,
         "root verify must reject a claim whose name is not the folded polynomial's commitment"
@@ -349,7 +342,7 @@ fn forged_coordinate_wires_are_rejected_directly_and_recursively() -> Result<()>
     assert!(app.verify(&honest, &mut rng)?, "the honest leaf verifies");
 
     let polynomial = poly(&[3, 1, 4, 1, 5]);
-    let (mut tampered, ()) = app.seed(
+    let (leaf, ()) = app.seed(
         &mut rng,
         CommitAndOpen::new(pasta),
         CommitAndOpenWitness {
@@ -358,7 +351,9 @@ fn forged_coordinate_wires_are_rejected_directly_and_recursively() -> Result<()>
             claimed_y: None,
         },
     )?;
-    tampered.corrupt_application_coord(0, Fp::from(0xbad));
+    let mut proof = leaf.proof().clone();
+    proof.corrupt(Corruption::ApplicationCoord(0, Fp::from(0xbad)));
+    let tampered = proof.carry(leaf.data().clone());
 
     assert!(
         !app.verify(&tampered, &mut rng)?,

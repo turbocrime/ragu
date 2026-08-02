@@ -34,6 +34,9 @@ pub enum Corruption<F> {
     ClaimY(usize, F),
     /// Perturb the first coordinate of the given claim slot's name so it matches no slot.
     ClaimName(usize, F),
+    /// Perturb one coordinate instance wire, leaving the recorded hosts and the
+    /// claim polynomials untouched.
+    ApplicationCoord(usize, F),
     /// Perturb the derived challenge in the given slot (the challenge-grinding shape).
     ChallengeValue(usize, F),
 }
@@ -73,37 +76,13 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             Corruption::ClaimName(slot, v) => {
                 self.application_claims[slot].coords[0] += v;
             }
+            Corruption::ApplicationCoord(index, v) => {
+                self.application_poly_coords[index] += v;
+            }
             Corruption::ChallengeValue(slot, v) => {
                 self.application_challenges[slot].challenge += v;
             }
         }
-    }
-}
-
-impl<C: Cycle, R: Rank> Proof<C, R> {
-    /// Replaces one coordinate instance wire's recorded value, leaving the
-    /// recorded hosts and the claim polynomials untouched.
-    pub fn corrupt_application_coord(&mut self, index: usize, value: C::CircuitField) {
-        self.application_poly_coords[index] = value;
-    }
-
-    /// The instance-bound opening $(x, y)$ this proof claims in `slot`, so a
-    /// test can establish what a proof claims before asserting rejection.
-    pub fn claim_opening_for_testing(&self, slot: usize) -> (C::CircuitField, C::CircuitField) {
-        let claim = &self.application_claims[slot];
-        (claim.x, claim.y)
-    }
-}
-
-impl<C: Cycle, R: Rank, H: crate::Header<C::CircuitField>> crate::Pcd<C, R, H> {
-    /// Apply a [`Corruption`] to the underlying proof.
-    pub fn corrupt(&mut self, corruption: Corruption<C::CircuitField>) {
-        self.proof_mut().corrupt(corruption);
-    }
-
-    /// Apply [`Proof::corrupt_application_coord`] to the underlying proof.
-    pub fn corrupt_application_coord(&mut self, index: usize, value: C::CircuitField) {
-        self.proof_mut().corrupt_application_coord(index, value);
     }
 }
 

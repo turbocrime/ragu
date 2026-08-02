@@ -25,6 +25,8 @@ use ragu_circuits::{
     registry::{CircuitIndex, Registry},
 };
 
+use crate::framework_hooks::HookLayout;
+
 /// Sum an iterator of polynomials, borrowing if only one element.
 ///
 /// Returns `Cow::Borrowed` for a single polynomial, `Cow::Owned` for multiple.
@@ -91,7 +93,7 @@ pub struct Builder<'m, 'rx, A, F: PrimeField, R: Rank> {
     pub b: Vec<Cow<'rx, sparse::Polynomial<F, R>>>,
     /// The application's slot capacity — the shape its registry was built
     /// with, and so the shape a nested claim resolves its circuit index from.
-    pub capacity: crate::framework_hooks::HookLayout,
+    pub hook_layout: HookLayout,
 }
 
 impl<'m, 'rx, A, F: PrimeField, R: Rank> Builder<'m, 'rx, A, F, R>
@@ -99,12 +101,7 @@ where
     A: Borrow<sparse::Polynomial<F, R>>,
 {
     /// Create a new claim builder.
-    pub fn new(
-        registry: &'m Registry<'m, F, R>,
-        y: F,
-        z: F,
-        capacity: crate::framework_hooks::HookLayout,
-    ) -> Self {
+    pub fn new(registry: &'m Registry<'m, F, R>, y: F, z: F, hook_layout: HookLayout) -> Self {
         Self {
             registry,
             y,
@@ -112,7 +109,7 @@ where
             tz: R::tz(z),
             a: Vec::new(),
             b: Vec::new(),
-            capacity,
+            hook_layout,
         }
     }
 
