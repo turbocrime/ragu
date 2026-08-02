@@ -503,21 +503,12 @@ impl<'a, 'dr, D: Driver<'dr>> Processor<&'a Element<'dr, D>, &'a Element<'dr, D>
         self.bx.push(b.clone());
     }
 
-    fn circuit_claim(
-        &mut self,
-        sy: &'a Element<'dr, D>,
-        rxs: impl Iterator<Item = &'a Element<'dr, D>>,
-    ) {
-        let mut sum = Element::zero(self.dr);
-        for rx in rxs {
-            sum = sum.add(self.dr, rx);
-        }
-
+    fn circuit_claim(&mut self, sy: &'a Element<'dr, D>, rx: &'a Element<'dr, D>) {
         // a(xz) = rx(xz)
-        self.ax.push(sum.clone());
+        self.ax.push(rx.clone());
 
         // b(x) = rx(xz) + s_y + t(xz)
-        self.bx.push(sum.add(self.dr, sy).add(self.dr, self.txz));
+        self.bx.push(rx.add(self.dr, sy).add(self.dr, self.txz));
     }
 
     fn internal_circuit_claim(

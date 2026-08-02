@@ -237,12 +237,11 @@ impl<'m, 'rx, F: PrimeField, R: Rank> Processor<Atom<'rx, FoldKey, F, R>, Circui
         self.b.push(Cow::Borrowed(b.poly));
     }
 
-    fn circuit_claim(
-        &mut self,
-        circuit_id: CircuitIndex,
-        rxs: impl Iterator<Item = Atom<'rx, FoldKey, F, R>>,
-    ) {
-        self.circuit_impl(circuit_id, TrackedPoly::sum(rxs));
+    fn circuit_claim(&mut self, circuit_id: CircuitIndex, rx: Atom<'rx, FoldKey, F, R>) {
+        self.circuit_impl(
+            circuit_id,
+            TrackedPoly::single(Cow::Borrowed(rx.poly), rx.key),
+        );
     }
 
     fn internal_circuit_claim(

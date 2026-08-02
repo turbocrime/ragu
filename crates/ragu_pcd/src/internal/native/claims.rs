@@ -65,7 +65,7 @@ pub trait Processor<Rx, AppCircuitId> {
 
     /// Process a single-trace application circuit claim
     /// ($k(y) = \text{application\_ky}$).
-    fn circuit_claim(&mut self, app_id: AppCircuitId, rxs: impl Iterator<Item = Rx>);
+    fn circuit_claim(&mut self, app_id: AppCircuitId, rx: Rx);
 
     /// Process an internal circuit claim whose trace is the sum of the given
     /// rxs ($k(y) = \text{internal\_ky}$).
@@ -109,12 +109,8 @@ impl<'m, 'rx, F: PrimeField, R: Rank> Processor<&'rx sparse::Polynomial<F, R>, C
         self.b.push(Cow::Borrowed(b));
     }
 
-    fn circuit_claim(
-        &mut self,
-        circuit_id: CircuitIndex,
-        rxs: impl Iterator<Item = &'rx sparse::Polynomial<F, R>>,
-    ) {
-        self.circuit_impl(circuit_id, sum_polynomials(rxs));
+    fn circuit_claim(&mut self, circuit_id: CircuitIndex, rx: &'rx sparse::Polynomial<F, R>) {
+        self.circuit_impl(circuit_id, Cow::Borrowed(rx));
     }
 
     fn internal_circuit_claim(
@@ -163,7 +159,7 @@ where
 
     // App circuits (interleaved per proof)
     for (app_id, rx) in source.app_circuits().zip(source.rx(Rx(Application))) {
-        processor.circuit_claim(app_id, core::iter::once(rx));
+        processor.circuit_claim(app_id, rx);
     }
 
     // Internal circuits and stages in canonical order.
