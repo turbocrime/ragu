@@ -9,9 +9,10 @@ use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::Result;
 use ragu_pasta::Pasta;
 use ragu_pcd::{AppHooks, ApplicationBuilder};
-use ragu_testing::pcd::poly_query::{CommitAndOpen, CommitAndOpenWitness, HEADER_SIZE, poly};
+use ragu_testing::pcd::poly_query::{CommitAndOpen, CommitAndOpenWitness, poly};
 
 type R = ProductionRank;
+const HEADER_SIZE: usize = 4;
 
 /// One honest polynomial at the pinned slotted shape, padding filling the
 /// second slot: duplicate padding names must resolve to exactly one one-hot
