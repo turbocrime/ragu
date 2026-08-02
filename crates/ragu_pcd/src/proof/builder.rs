@@ -599,7 +599,11 @@ impl<'params, C: Cycle, R: Rank, J: HookConfig> ProofBuilder<'params, C, R, J> {
         }
         let witness = nested::stages::eval::Witness {
             native_eval: self.native_eval_commitment(),
-            claims: self.claim_host_commitments().iter().copied().collect_fixed()?,
+            claims: self
+                .claim_host_commitments()
+                .iter()
+                .copied()
+                .collect_fixed()?,
         };
         let rx = nested::stages::eval::Stage::<C::HostCurve, R, J::PolyWitnesses>::rx(
             self.bridge_alpha_power(nested::RxIndex::BridgeEval),

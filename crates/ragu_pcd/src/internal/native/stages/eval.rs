@@ -87,7 +87,11 @@ impl<F: PrimeField, L: Len> ChildEvaluationsWitness<F, L> {
             b_poly: proof[RxComponent::AbB].eval(u),
             registry_xy_poly: proof.native_registry_xy_poly().eval(u),
             p_poly: proof.native_p_poly().eval(u),
-            claims: proof.claim_polys.iter().map(|p| p.eval(u)).collect_fixed()?,
+            claims: proof
+                .claim_polys
+                .iter()
+                .map(|p| p.eval(u))
+                .collect_fixed()?,
             q_poly: FixedVec::from_fn(|_| {
                 crate::internal::challenge::claim_coord_poly::<C, R>(proof.claim_host_commitments())
                     .expect("recorded hosts were decomposed once already, at witnessing")

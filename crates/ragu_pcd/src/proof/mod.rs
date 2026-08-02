@@ -726,16 +726,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: crate::framework_hooks::Hoo
         // cannot silently drift from the real prover path.
         let beta_endo = extract_endoscalar(C::CircuitField::ONE);
         // The claim-coordinate q for the padding hosts.
-        let padding_q: FixedVec<
-            C::HostCurve,
-            crate::internal::nested::QSlots<J::PolyWitnesses>,
-        > = FixedVec::from_fn(|_| {
-            crate::internal::challenge::claim_coord_commitment::<C, R>(
-                self.params,
-                core::iter::repeat_n(padding_host, self.hook_layout().polys),
-            )
-            .expect("the padding host has canonical coordinates")
-        });
+        let padding_q: FixedVec<C::HostCurve, crate::internal::nested::QSlots<J::PolyWitnesses>> =
+            FixedVec::from_fn(|_| {
+                crate::internal::challenge::claim_coord_commitment::<C, R>(
+                    self.params,
+                    core::iter::repeat_n(padding_host, self.hook_layout().polys),
+                )
+                .expect("the padding host has canonical coordinates")
+            });
         let p_commitment = {
             let mut points = Vec::with_capacity(crate::internal::nested::num_endoscaling_points(
                 self.hook_layout().polys,
