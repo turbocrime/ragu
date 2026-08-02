@@ -3,7 +3,7 @@ use ff::Field;
 use ragu_arithmetic::Cycle;
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_pasta::{Fp, Pasta};
-use ragu_pcd::{ApplicationBuilder, NoHooks};
+use ragu_pcd::ApplicationBuilder;
 use ragu_testing::pcd::nontrivial;
 use rand::{SeedableRng, rngs::StdRng};
 
@@ -13,7 +13,7 @@ fn registry_bench(c: &mut Criterion) {
 
     // Time finalize separately: build the ApplicationBuilder, then bench only finalize.
     let make_builder = || {
-        ApplicationBuilder::<Pasta, ProductionRank, 4, NoHooks>::new()
+        ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
             .register(nontrivial::WitnessLeaf { poseidon_params })
             .unwrap()
             .register(nontrivial::Hash2 { poseidon_params })

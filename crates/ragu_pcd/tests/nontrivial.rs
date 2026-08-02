@@ -2,14 +2,14 @@ use ragu_arithmetic::Cycle;
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::Result;
 use ragu_pasta::{Fp, Pasta};
-use ragu_pcd::{ApplicationBuilder, NoHooks};
+use ragu_pcd::ApplicationBuilder;
 use ragu_testing::pcd::nontrivial::{Hash2, WitnessLeaf};
 use rand::{SeedableRng, rngs::StdRng};
 
 #[test]
 fn various_merging_operations() -> Result<()> {
     let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4, NoHooks>::new()
+    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
         .register(WitnessLeaf {
             poseidon_params: Pasta::circuit_poseidon(pasta),
         })?

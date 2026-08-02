@@ -330,9 +330,9 @@ mod tests {
     type TestR = ProductionRank;
     const HEADER_SIZE: usize = 4;
 
-    fn create_test_app() -> crate::Application<'static, Pasta, TestR, HEADER_SIZE, crate::NoHooks> {
+    fn create_test_app() -> crate::Application<'static, Pasta, TestR, HEADER_SIZE> {
         let pasta = Pasta::baked();
-        ApplicationBuilder::<Pasta, TestR, HEADER_SIZE, crate::NoHooks>::new()
+        ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new()
             .finalize(pasta)
             .expect("failed to create test application")
     }

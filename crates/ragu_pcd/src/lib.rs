@@ -112,7 +112,13 @@ impl<const PW: usize, const PQ: usize, const CD: usize, const CW: usize> HookCon
 ///
 /// See [`framework_hooks::HookConfig`] for what each hook number prices;
 /// the crate docs say why capacity is declared.
-pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig> {
+pub struct ApplicationBuilder<
+    'params,
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    J: HookConfig = NoHooks,
+> {
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
     num_application_steps: usize,
@@ -282,7 +288,13 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
 }
 
 /// The recursion context that is used to create and verify proof-carrying data.
-pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig> {
+pub struct Application<
+    'params,
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    J: HookConfig = NoHooks,
+> {
     native_registry: Registry<'params, C::CircuitField, R>,
     nested_registry: Registry<'params, C::ScalarField, R>,
     params: &'params C::Params,

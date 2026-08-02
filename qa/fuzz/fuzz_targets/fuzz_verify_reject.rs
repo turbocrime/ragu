@@ -12,7 +12,7 @@ use libfuzzer_sys::fuzz_target;
 use pasta_curves::Fp;
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_pasta::Pasta;
-use ragu_pcd::{ApplicationBuilder, NoHooks, Proof, fuzz_utils::Corruption};
+use ragu_pcd::{ApplicationBuilder, Proof, fuzz_utils::Corruption};
 use rand::{SeedableRng, rngs::StdRng};
 
 use std::sync::LazyLock;
@@ -24,7 +24,7 @@ const HEADER_SIZE: usize = 4;
 /// Wrapper to satisfy `Sync` for `Application` (which contains a
 /// `OnceCell` field — `seeded_trivial` — for memoizing the trivial-proof
 /// fixture, breaking auto-`Sync`).
-struct SyncApp(ragu_pcd::Application<'static, C, R, HEADER_SIZE, NoHooks>);
+struct SyncApp(ragu_pcd::Application<'static, C, R, HEADER_SIZE>);
 // SAFETY: this fuzz body invokes `Application` exclusively through
 // `app.test_trivial_proof()` (which only reads from the application,
 // initializing `seeded_trivial` on the first call and reading it
@@ -38,7 +38,7 @@ unsafe impl Sync for SyncApp {}
 static APP: LazyLock<SyncApp> = LazyLock::new(|| {
     let pasta = Pasta::baked();
     SyncApp(
-        ApplicationBuilder::<C, R, HEADER_SIZE, NoHooks>::new()
+        ApplicationBuilder::<C, R, HEADER_SIZE>::new()
             .finalize(pasta)
             .expect("failed to create application"),
     )

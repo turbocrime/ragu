@@ -9,7 +9,7 @@ use ragu_core::{
 };
 use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::{
-    ApplicationBuilder, NoHooks,
+    ApplicationBuilder,
     header::{Header, Suffix},
     step::{Encoded, Index, Step, StepCtx},
 };
@@ -149,7 +149,7 @@ impl<C: Cycle> Step<C> for Step1 {
 #[test]
 fn rerandomization_flow() {
     let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4, NoHooks>::new()
+    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
         .register(Step0)
         .unwrap()
         .register(Step1)
@@ -178,7 +178,7 @@ fn rerandomization_flow() {
 #[test]
 fn multiple_rerandomizations_all_verify() {
     let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4, NoHooks>::new()
+    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
         .register(Step0)
         .unwrap()
         .finalize(pasta)
@@ -204,7 +204,7 @@ fn multiple_rerandomizations_all_verify() {
 #[test]
 fn rerandomization_preserves_header_data() {
     let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4, NoHooks>::new()
+    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
         .register(StepWithData)
         .unwrap()
         .finalize(pasta)
@@ -237,7 +237,7 @@ fn rerandomization_preserves_header_data() {
 #[test]
 fn rerandomized_fused_proof_verifies() {
     let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4, NoHooks>::new()
+    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
         .register(Step0)
         .unwrap()
         .register(Step1)
