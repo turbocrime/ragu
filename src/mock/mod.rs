@@ -9,13 +9,15 @@ pub use ctx::StepCtx;
 pub use domain::Domain;
 pub use header::{Header, Suffix};
 pub use hooks::FrameworkHooks;
-pub use polynomial::{Polynomial, poly_with_roots};
+pub use polynomial::Polynomial;
 pub use proof::{Pcd, Proof};
 pub use ragu_arithmetic::{Cycle, FixedGenerators};
 pub use ragu_core::{Error, Result};
 pub use ragu_pasta::{Pasta, VestaGenerators};
 pub use sponge::{Sponge, SpongeState};
 pub use step::{Index, Step};
+
+pub use ragu_arithmetic as arithmetic;
 
 pub mod application;
 pub mod constraint;
