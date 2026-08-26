@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 use core::borrow::Borrow;
 
 pub use ragu_arithmetic::poly_with_roots;
-use ragu_arithmetic::{Cycle, rand::CryptoRng};
+use ragu_arithmetic::{Cycle, ff::Field as _, poly_mul, rand::CryptoRng};
 use ragu_circuits::polynomials::{ProductionRank, Rank, sparse};
 use ragu_pasta::{Eq, EqAffine, Fp, Pasta};
 
@@ -113,6 +113,24 @@ impl core::ops::AddAssign<&Self> for Polynomial {
 impl core::ops::SubAssign<&Self> for Polynomial {
     fn sub_assign(&mut self, rhs: &Self) {
         Polynomial::sub_assign(self, rhs);
+    }
+}
+
+impl core::ops::Mul for Polynomial {
+    type Output = Self;
+    fn mul(self, rhs: Self) -> Self::Output {
+        let a = self.0.iter_coeffs().collect::<Vec<_>>();
+        let b = rhs.0.iter_coeffs().collect::<Vec<_>>();
+        let mut out = Vec::new();
+        poly_mul(&a, &b, &mut out);
+
+        let out_len = out
+            .iter()
+            .rposition(|&x| x != Fp::ZERO)
+            .map_or(0, |i| i + 1);
+        out.truncate(out_len);
+
+        Self::from_coeffs(out)
     }
 }
 
