@@ -24,31 +24,24 @@ default = ["multicore"]
 mock = [
   "dep:blake2b_simd",
   "dep:ragu_arithmetic",
-  "dep:ragu_circuits",
   "dep:ragu_core",
   "dep:ragu_pasta",
-  "dep:ragu_pcd",
-  "dep:ragu_primitives",
 ]
-multicore = [
-  "ragu_arithmetic?/multicore",
-  "ragu_circuits?/multicore",
-  "ragu_pcd?/multicore",
-]
+multicore = ["ragu_arithmetic?/multicore"]
 std = []
 
 [lib]
 bench = false
 
-# mock dependencies (pulled in only by the `mock` feature)
+# mock dependencies (pulled in only by the `mock` feature). The mock defines
+# only what a consumer cannot import from a real Ragu crate, so this list is
+# limited to the crates its own signatures name. Consumers depend on
+# `ragu_circuits`, `ragu_primitives` and the rest directly.
 [dependencies]
 blake2b_simd = { workspace = true, optional = true }
 ragu_arithmetic = { path = "crates/ragu_arithmetic", version = "0.0.0", default-features = false, features = ["alloc"], optional = true }
-ragu_circuits = { path = "crates/ragu_circuits", version = "0.0.0", default-features = false, features = ["alloc"], optional = true }
 ragu_core = { path = "crates/ragu_core", version = "0.0.0", default-features = false, features = ["alloc"], optional = true }
-ragu_pasta = { path = "crates/ragu_pasta", version = "0.0.0", default-features = false, features = ["alloc", "baked"], optional = true }
-ragu_pcd = { path = "crates/ragu_pcd", version = "0.0.0", default-features = false, features = ["alloc"], optional = true }
-ragu_primitives = { path = "crates/ragu_primitives", version = "0.0.0", default-features = false, features = ["alloc"], optional = true }
+ragu_pasta = { path = "crates/ragu_pasta", version = "0.0.0", default-features = false, features = ["alloc"], optional = true }
 
 [workspace]
 members = [

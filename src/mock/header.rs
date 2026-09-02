@@ -48,16 +48,11 @@ impl Suffix {
     /// Returns the encoded value mapping internal vs application into a
     /// single `u64` namespace. Internal values occupy
     /// `0..NUM_INTERNAL_SUFFIXES` and application values follow.
-    #[expect(
-        clippy::expect_used,
-        reason = "usize fits in u64 on all supported targets"
-    )]
     pub(crate) fn get(self) -> u64 {
-        let value_usize = match self.suffix {
-            HeaderSuffix::Internal(value) => value,
-            HeaderSuffix::Application(value) => value + NUM_INTERNAL_SUFFIXES,
-        };
-        u64::try_from(value_usize).expect("suffix value fits in u64")
+        match self.suffix {
+            HeaderSuffix::Internal(value) => value as u64,
+            HeaderSuffix::Application(value) => (value + NUM_INTERNAL_SUFFIXES) as u64,
+        }
     }
 }
 

@@ -6,7 +6,7 @@ use core::any::TypeId;
 use ragu_arithmetic::rand::CryptoRng;
 use ragu_core::{Error, Result};
 
-use crate::{
+use super::{
     ctx::StepCtx,
     header::{Header, Suffix},
     hooks::FrameworkHooks,

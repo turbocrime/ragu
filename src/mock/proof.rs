@@ -1,23 +1,10 @@
-//! Mock PCD proof and proof-carrying data.
-//!
-//! ## Serialized layout
-//!
-//! | Offset      | Size | Content                                            |
-//! |-------------|------|----------------------------------------------------|
-//! | 0..8        | 8    | step_index (u64 LE, value-space partitioned)       |
-//! | 8..40       | 32   | header hash                                        |
-//! | 40..72      | 32   | witness hash                                       |
-//! | 72..104     | 32   | binding hash                                       |
-//! | 104..136    | 32   | rerandomization tag                                |
-//! | 136..23000  | …    | zero padding                                       |
-
 use alloc::{boxed::Box, vec, vec::Vec};
 
-use ragu_arithmetic::{CurveAffine as _, ff::PrimeField as _, group::Curve as _};
+use ragu_arithmetic::{CurveAffine as _, CurveExt, ff::PrimeField as _};
 use ragu_core::{Error, Result};
 use ragu_pasta::{Ep, Eq, Fp, Fq};
 
-use crate::{
+use super::{
     header::{Header, Suffix},
     step::Index,
 };
@@ -227,41 +214,34 @@ pub(crate) fn compute_header_hash(
         }
     }
 
-    {
-        state.update(b"Ep");
-        state.update(&(eps.len() as u64).to_le_bytes());
-        for point in eps {
-            let coordinates = point
-                .to_affine()
-                .coordinates()
-                .into_option()
-                .ok_or_else(|| {
-                    Error::InvalidWitness("point at infinity cannot be witnessed".into())
-                })?;
-            state.update(coordinates.x().to_repr().as_ref());
-            state.update(coordinates.y().to_repr().as_ref());
-        }
-    }
-
-    {
-        state.update(b"Eq");
-        state.update(&(eqs.len() as u64).to_le_bytes());
-        for point in eqs {
-            let coordinates = point
-                .to_affine()
-                .coordinates()
-                .into_option()
-                .ok_or_else(|| {
-                    Error::InvalidWitness("point at infinity cannot be witnessed".into())
-                })?;
-            state.update(coordinates.x().to_repr().as_ref());
-            state.update(coordinates.y().to_repr().as_ref());
-        }
-    }
+    absorb_points(&mut state, b"Ep", eps)?;
+    absorb_points(&mut state, b"Eq", eqs)?;
 
     let mut out = [0u8; HASH_SIZE];
     out.copy_from_slice(state.finalize().as_bytes());
     Ok(out)
+}
+
+/// Absorbs `points` as affine coordinate pairs, rejecting the identity — which
+/// has no coordinates, and which real ragu's in-circuit `encode` could not
+/// witness either.
+fn absorb_points<G: CurveExt>(
+    state: &mut blake2b_simd::State,
+    tag: &[u8],
+    points: &[G],
+) -> Result<()> {
+    state.update(tag);
+    state.update(&(points.len() as u64).to_le_bytes());
+    for point in points {
+        let affine = point.to_affine();
+        let coordinates = affine
+            .coordinates()
+            .into_option()
+            .ok_or_else(|| Error::InvalidWitness("point at infinity cannot be witnessed".into()))?;
+        state.update(coordinates.x().to_repr().as_ref());
+        state.update(coordinates.y().to_repr().as_ref());
+    }
+    Ok(())
 }
 
 pub(crate) fn compute_witness_hash(witness_bytes: &[u8]) -> [u8; HASH_SIZE] {

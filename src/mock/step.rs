@@ -2,14 +2,14 @@
 
 use ragu_core::{Error, Result};
 
-use crate::{ctx::StepCtx, header::Header};
+use super::{ctx::StepCtx, header::Header};
 
 /// Number of internal step indexes reserved by mock_ragu.
 ///
 /// Mirrors real ragu's `InternalStepIndex` layout:
 /// - Slot 0: `Rerandomize` (reserved; mock rerandomize is a transformation, not
 ///   a Step, but the slot stays reserved for migration parity).
-/// - Slot 1: trivial step (used to seed [`crate::proof::Proof::trivial`]).
+/// - Slot 1: trivial step (used to seed [`crate::Proof::trivial`]).
 pub(crate) const NUM_INTERNAL_STEPS: usize = 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -45,16 +45,11 @@ impl Index {
     /// Returns the encoded value mapping internal vs application into a
     /// single `u64` namespace. Internal values occupy `0..NUM_INTERNAL_STEPS`
     /// and application values follow.
-    #[expect(
-        clippy::expect_used,
-        reason = "usize fits in u64 on all supported targets"
-    )]
     pub(crate) fn get(self) -> u64 {
-        let value_usize = match self.index {
-            StepIndex::Internal(value) => value,
-            StepIndex::Application(value) => value + NUM_INTERNAL_STEPS,
-        };
-        u64::try_from(value_usize).expect("step index fits in u64")
+        match self.index {
+            StepIndex::Internal(value) => value as u64,
+            StepIndex::Application(value) => (value + NUM_INTERNAL_STEPS) as u64,
+        }
     }
 
     /// Returns the application offset (0-based) if this is an application

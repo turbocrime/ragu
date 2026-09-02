@@ -1,12 +1,3 @@
-//! Context object threaded through
-//! [`Step::witness`](crate::step::Step::witness)
-//! — mirrors `ragu_pcd::step::StepCtx`.
-//!
-//! Real ragu's `StepCtx` bundles the circuit driver with the framework hooks.
-//! The mock has no driver, so it carries only the [`FrameworkHooks`] claim sink
-//! and exposes the two hooks a step body reaches for: recording
-//! polynomial-query opening claims and deriving Fiat-Shamir challenges.
-
 use blake2b_simd::Params;
 use ragu_arithmetic::{
     ff::FromUniformBytes as _,
@@ -15,12 +6,12 @@ use ragu_arithmetic::{
 use ragu_core::{Error, Result};
 use ragu_pasta::{Eq, Fp};
 
-use crate::hooks::FrameworkHooks;
+use super::hooks::FrameworkHooks;
 
 const CHALLENGE_LEN: usize = 64;
 
 /// Framework-side state threaded through
-/// [`Step::witness`](crate::step::Step::witness).
+/// [`Step::witness`](crate::Step::witness).
 pub struct StepCtx<'a> {
     hooks: &'a mut FrameworkHooks,
 }

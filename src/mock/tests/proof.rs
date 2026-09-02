@@ -5,11 +5,8 @@ use ragu_core::Result;
 use ragu_pasta::{Ep, Eq, Fp, Fq};
 
 use crate::{
-    application::{Application, ApplicationBuilder},
-    ctx::StepCtx,
-    header::{Header, Suffix},
-    proof::{PROOF_SIZE_COMPRESSED, Pcd, Proof},
-    step::{Index, Step},
+    Application, ApplicationBuilder, Header, Index, PROOF_SIZE_COMPRESSED, Pcd, Proof, Step,
+    StepCtx, Suffix,
 };
 
 /// Header carrying one field element, as an application header would.

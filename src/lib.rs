@@ -22,10 +22,6 @@
 )]
 #![cfg_attr(
     feature = "mock",
-    expect(clippy::module_name_repetitions, reason = "names mirror real ragu API")
-)]
-#![cfg_attr(
-    feature = "mock",
     expect(clippy::missing_const_for_fn, reason = "mirrors non-const ragu API")
 )]
 #![cfg_attr(
