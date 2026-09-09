@@ -2,7 +2,7 @@
 
 use ff::Field;
 use ragu_arithmetic::Cycle;
-use ragu_circuits::{polynomials::ProductionRank, registry::CircuitIndex};
+use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
@@ -92,19 +92,18 @@ impl<const K: usize> Step<Pasta> for HashK<K> {
     }
 }
 
-fn measure<const K: usize>() -> Result<(usize, usize)> {
+fn measure<const K: usize>() -> Result<()> {
     let pasta = Pasta::baked();
-    let app = ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE>::new()
+    ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE>::new()
         .register(HashK::<K>)?
         .finalize(pasta)?;
-    let last = CircuitIndex::new(app.native_registry().num_circuits() - 1);
-    Ok(app.native_registry().constraint_counts(last))
+    Ok(())
 }
 
 fn report<const K: usize>() -> Result<()> {
     match measure::<K>() {
-        Ok((g, c)) => {
-            std::println!("{K:>10}{g:>10}{c:>10}");
+        Ok(()) => {
+            std::println!("{K:>10}  fits");
             Ok(())
         }
         Err(e) => {
@@ -116,7 +115,7 @@ fn report<const K: usize>() -> Result<()> {
 
 #[test]
 fn k_sweep() {
-    std::println!("\n{:>10}{:>10}{:>10}", "K", "gates", "constr");
+    std::println!("\n{:>10}", "K");
 
     report::<1>().expect("should fit");
     report::<2>().expect("should fit");

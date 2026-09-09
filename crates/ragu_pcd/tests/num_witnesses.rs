@@ -17,7 +17,7 @@
 use std::time::{Duration, Instant};
 
 use ff::Field;
-use ragu_circuits::{polynomials::ProductionRank, registry::CircuitIndex};
+use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
@@ -248,11 +248,6 @@ fn sweep_point<const N: usize>() -> Result<()> {
         .register(RootFuse)?
         .finalize(pasta)?;
 
-    let reg = app.native_registry();
-    // Application circuits are the last three; the leaf is the first of them.
-    let (leaf_gates, leaf_constr) =
-        reg.constraint_counts(CircuitIndex::new(reg.num_circuits() - 3));
-
     let mut rng = StdRng::seed_from_u64(1234);
     for _ in 0..WARMUP {
         build_tree::<N>(&app, &mut rng)?;
@@ -266,7 +261,7 @@ fn sweep_point<const N: usize>() -> Result<()> {
     }
 
     let (min, mean) = summarize(&t);
-    std::println!("{N:>10}{leaf_gates:>10}{leaf_constr:>10}{min:>11.1}{mean:>11.1}");
+    std::println!("{N:>10}{min:>11.1}{mean:>11.1}");
     Ok(())
 }
 
@@ -277,14 +272,7 @@ fn sweep_point<const N: usize>() -> Result<()> {
 #[test]
 fn sweep_num_witnesses() -> Result<()> {
     std::println!("\n[iters={SWEEP_ITERS}]");
-    std::println!(
-        "{:>10}{:>10}{:>10}{:>11}{:>11}",
-        "witnesses",
-        "gates",
-        "constr",
-        "min(ms)",
-        "avg(ms)"
-    );
+    std::println!("{:>10}{:>11}{:>11}", "witnesses", "min(ms)", "avg(ms)");
     sweep_point::<1>()?;
     sweep_point::<{ 1 << 9 }>()?;
     sweep_point::<{ 1 << 10 }>()?;

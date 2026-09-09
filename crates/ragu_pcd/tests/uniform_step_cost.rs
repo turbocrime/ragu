@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 
 use ff::Field;
 use ragu_arithmetic::Cycle;
-use ragu_circuits::{polynomials::ProductionRank, registry::CircuitIndex};
+use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
@@ -424,15 +424,6 @@ fn sweep_point<
         .register(FuseF::<FUSE_F>)?
         .finalize(pasta)?;
 
-    // Application circuits are registered last (after internal circuits, masks,
-    // and internal steps), so the five step circuits are the final five indices
-    // in registration order: LeafA, LeafB, Fuse1, Fuse2, FuseF.
-    let reg = app.native_registry();
-    let base = reg.num_circuits() - 5;
-    let gate_counts: Vec<(usize, usize)> = (0..5)
-        .map(|i| reg.constraint_counts(CircuitIndex::new(base + i)))
-        .collect();
-
     let mut rng = StdRng::seed_from_u64(1234);
 
     // Warmup: also triggers any lazy one-time initialization for this fresh app.
@@ -477,44 +468,17 @@ fn sweep_point<
     // The step column carries each step's parameter (e.g. `LeafB<7>`), so the
     // whole configuration is visible by reading down the block.
     let rows = [
-        (
-            std::format!("LeafA={LEAF_A}"),
-            &gate_counts[0],
-            summarize(&leaf_a_t),
-        ),
-        (
-            std::format!("LeafB={LEAF_B}"),
-            &gate_counts[1],
-            summarize(&leaf_b_t),
-        ),
-        (
-            std::format!("Fuse1={FUSE_1}"),
-            &gate_counts[2],
-            summarize(&fuse1_t),
-        ),
-        (
-            std::format!("Fuse2={FUSE_2}"),
-            &gate_counts[3],
-            summarize(&fuse2_t),
-        ),
-        (
-            std::format!("FuseF={FUSE_F}"),
-            &gate_counts[4],
-            summarize(&fusef_t),
-        ),
+        (std::format!("LeafA={LEAF_A}"), summarize(&leaf_a_t)),
+        (std::format!("LeafB={LEAF_B}"), summarize(&leaf_b_t)),
+        (std::format!("Fuse1={FUSE_1}"), summarize(&fuse1_t)),
+        (std::format!("Fuse2={FUSE_2}"), summarize(&fuse2_t)),
+        (std::format!("FuseF={FUSE_F}"), summarize(&fusef_t)),
     ];
 
     std::println!("\n[iters={iters}]");
-    std::println!(
-        "{:<10}{:>10}{:>10}{:>11}{:>11}",
-        "step",
-        "gates",
-        "constr",
-        "min(ms)",
-        "avg(ms)"
-    );
-    for (name, (gates, constraints), (min, mean)) in rows {
-        std::println!("{name:<10}{gates:>10}{constraints:>10}{min:>11.1}{mean:>11.1}");
+    std::println!("{:<10}{:>11}{:>11}", "step", "min(ms)", "avg(ms)");
+    for (name, (min, mean)) in rows {
+        std::println!("{name:<10}{min:>11.1}{mean:>11.1}");
     }
     Ok(())
 }
