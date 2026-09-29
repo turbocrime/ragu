@@ -2,7 +2,7 @@
 
 use alloc::vec::Vec;
 
-use ragu_core::pasta::{Ep, Eq, Fp, Fq};
+use ragu_core::pasta::{EqAffine, Fp};
 
 /// Number of internal header suffixes reserved by mock_ragu.
 ///
@@ -96,10 +96,10 @@ pub trait Header: Send + Sync + 'static {
     type Data: Send + Clone;
 
     /// Decomposes header data into the in-circuit values it would carry, as
-    /// `(Fp elements, Fq elements, Pallas points, Vesta points)`. Pass points
-    /// as points, not coordinates: like real ragu's in-circuit `encode`, the
-    /// identity is rejected when these are hashed.
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>);
+    /// `(Fp elements, Vesta points)`. Pass points as points, not coordinates:
+    /// like real ragu's in-circuit `encode`, the identity is rejected when
+    /// these are hashed.
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<EqAffine>);
 }
 
 /// Header that encodes no data.
@@ -112,8 +112,8 @@ impl Header for () {
 
     const SUFFIX: Suffix = Suffix::internal(1);
 
-    fn encode(_data: &()) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        (Vec::new(), Vec::new(), Vec::new(), Vec::new())
+    fn encode(_data: &()) -> (Vec<Fp>, Vec<EqAffine>) {
+        (Vec::new(), Vec::new())
     }
 }
 

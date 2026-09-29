@@ -2,12 +2,9 @@ use alloc::{boxed::Box, vec, vec::Vec};
 
 use ragu_core::{
     Error, Result,
-    pasta::{Ep, Eq, Fp, Fq},
+    pasta::{EqAffine, Fp},
 };
-use udon::{
-    curve::{Affine as _, Projective},
-    field::Field,
-};
+use udon::{curve::Affine, field::Field};
 
 use super::{
     header::{Header, Suffix},
@@ -84,7 +81,7 @@ impl Proof {
         Self::new(
             <() as Header>::SUFFIX,
             Index::internal(1),
-            &(Vec::new(), Vec::new(), Vec::new(), Vec::new()),
+            &(Vec::new(), Vec::new()),
             &[],
         )
         .expect("empty header cannot fail to hash")
@@ -93,7 +90,7 @@ impl Proof {
     pub(crate) fn new(
         suffix: Suffix,
         step_index: Index,
-        encoded_header: &(Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>),
+        encoded_header: &(Vec<Fp>, Vec<EqAffine>),
         witness_data: &[u8],
     ) -> Result<Self> {
         let header_hash = compute_header_hash(suffix, encoded_header)?;
@@ -196,9 +193,9 @@ impl TryFrom<&[u8; PROOF_SIZE_COMPRESSED]> for Proof {
 
 pub(crate) fn compute_header_hash(
     suffix: Suffix,
-    encoded: &(Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>),
+    encoded: &(Vec<Fp>, Vec<EqAffine>),
 ) -> Result<[u8; HASH_SIZE]> {
-    let (fps, fqs, eps, eqs) = encoded;
+    let (fps, eqs) = encoded;
     let mut state = blake2b_simd::Params::new()
         .hash_length(HASH_SIZE)
         .personal(b"MkRagu_HdrHash_\0")
@@ -217,16 +214,7 @@ pub(crate) fn compute_header_hash(
         }
     }
 
-    {
-        state.update(b"Fq");
-        state.update(&(fqs.len() as u64).to_le_bytes());
-        for element in fqs {
-            state.update(element.to_bytes().as_ref());
-        }
-    }
-
-    absorb_points(&mut state, b"Ep", eps)?;
-    absorb_points(&mut state, b"Eq", eqs)?;
+    absorb_points(&mut state, b"EqAffine", eqs)?;
 
     let mut out = [0u8; HASH_SIZE];
     out.copy_from_slice(state.finalize().as_bytes());
@@ -236,16 +224,11 @@ pub(crate) fn compute_header_hash(
 /// Absorbs `points` as affine coordinate pairs, rejecting the identity — which
 /// has no coordinates, and which real ragu's in-circuit `encode` could not
 /// witness either.
-fn absorb_points<G: Projective<Base: Field>>(
-    state: &mut blake2b_simd::State,
-    tag: &[u8],
-    points: &[G],
-) -> Result<()> {
+fn absorb_points(state: &mut blake2b_simd::State, tag: &[u8], points: &[EqAffine]) -> Result<()> {
     state.update(tag);
     state.update(&(points.len() as u64).to_le_bytes());
     for point in points {
-        let affine = point.to_affine();
-        let coordinates = affine
+        let coordinates = point
             .coordinates()
             .ok_or_else(|| Error::InvalidWitness("point at infinity cannot be witnessed".into()))?;
         state.update(coordinates.0.to_bytes().as_ref());

@@ -2,10 +2,10 @@ use alloc::vec::Vec;
 
 use ragu_core::{
     Error, Result,
-    pasta::{Ep, Eq, Fp, Fq},
+    pasta::{EqAffine, Fp},
 };
 use rand::{SeedableRng as _, rngs::StdRng};
-use udon::curve::Projective;
+use udon::curve::Affine;
 
 use crate::{
     Application, ApplicationBuilder, Header, Index, PROOF_SIZE_COMPRESSED, Pcd, Proof, Step,
@@ -24,13 +24,8 @@ impl Header for TestHeader {
 
     const SUFFIX: Suffix = Suffix::new(0);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        (
-            alloc::vec![Fp::from(data.value)],
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        )
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<EqAffine>) {
+        (alloc::vec![Fp::from(data.value)], Vec::new())
     }
 }
 
@@ -443,13 +438,8 @@ impl Header for ConflictingHeader {
 
     const SUFFIX: Suffix = Suffix::new(0);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        (
-            alloc::vec![Fp::from(data.value)],
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        )
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<EqAffine>) {
+        (alloc::vec![Fp::from(data.value)], Vec::new())
     }
 }
 
@@ -609,13 +599,8 @@ fn verify_rejects_swapped_header_type() {
 
         const SUFFIX: Suffix = Suffix::new(99);
 
-        fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-            (
-                alloc::vec![Fp::from(data.value)],
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-            )
+        fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<EqAffine>) {
+            (alloc::vec![Fp::from(data.value)], Vec::new())
         }
     }
 
@@ -648,7 +633,7 @@ struct PointHeader;
 
 #[derive(Clone, Debug)]
 struct PointHeaderData {
-    commitment: Eq,
+    commitment: EqAffine,
 }
 
 impl Header for PointHeader {
@@ -656,13 +641,8 @@ impl Header for PointHeader {
 
     const SUFFIX: Suffix = Suffix::new(1);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        (
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            alloc::vec![data.commitment],
-        )
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<EqAffine>) {
+        (Vec::new(), alloc::vec![data.commitment])
     }
 }
 
@@ -674,7 +654,7 @@ impl Step for PointSeedStep {
     type Left = ();
     type Output = PointHeader;
     type Right = ();
-    type Witness<'source> = Eq;
+    type Witness<'source> = EqAffine;
 
     const INDEX: Index = Index::new(0);
 
@@ -732,7 +712,7 @@ fn header_with_point_round_trips() {
     let app = point_app();
 
     let (pcd, ()) = app
-        .seed(&mut rng, PointSeedStep, Eq::generator())
+        .seed(&mut rng, PointSeedStep, EqAffine::generator())
         .expect("seed with a non-identity point");
     assert!(app.verify(&pcd, &mut rng).expect("verify"));
 }
@@ -744,7 +724,7 @@ fn identity_point_in_output_header_fails_fuse() {
 
     assert!(
         matches!(
-            app.seed(&mut rng, PointSeedStep, Eq::identity()),
+            app.seed(&mut rng, PointSeedStep, EqAffine::identity()),
             Err(Error::InvalidWitness(_))
         ),
         "identity point in output header must fail"
@@ -763,7 +743,7 @@ fn identity_point_in_input_header_fails_fuse() {
         .expect("finalize");
 
     let bad_left = Proof::bootstrap().carry::<PointHeader>(PointHeaderData {
-        commitment: Eq::identity(),
+        commitment: EqAffine::identity(),
     });
     let right = Proof::bootstrap().carry::<()>(());
 
@@ -782,10 +762,10 @@ fn identity_point_in_carried_data_errors_verify() {
     let app = point_app();
 
     let (pcd, ()) = app
-        .seed(&mut rng, PointSeedStep, Eq::generator())
+        .seed(&mut rng, PointSeedStep, EqAffine::generator())
         .expect("seed with a non-identity point");
     let bad_pcd = pcd.proof.carry::<PointHeader>(PointHeaderData {
-        commitment: Eq::identity(),
+        commitment: EqAffine::identity(),
     });
 
     // Errs rather than returning `Ok(false)`: re-encoding such a header

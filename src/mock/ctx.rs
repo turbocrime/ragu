@@ -1,12 +1,9 @@
 use blake2b_simd::Params;
 use ragu_core::{
-    Error, Result,
-    pasta::{Eq, Fp},
+    Result,
+    pasta::{EqAffine, Fp},
 };
-use udon::{
-    curve::{Affine, Projective},
-    field::Field,
-};
+use udon::{curve::Affine, field::Field};
 
 use super::hooks::FrameworkHooks;
 
@@ -25,28 +22,32 @@ impl<'a> StepCtx<'a> {
 
     /// Records a polynomial-query opening claim. Errors if `com` is the
     /// identity, which real ragu cannot witness as a commitment `Point`.
-    pub fn enforce_poly_query(&mut self, com: Eq, x: Fp, y: Fp) -> Result<()> {
+    pub fn enforce_poly_query(&mut self, com: EqAffine, x: Fp, y: Fp) -> Result<()> {
         self.hooks.enforce_polynomial_query(com, x, y)
     }
 
-    /// Derives a Fiat-Shamir challenge from `commitments`. Errors on an
-    /// identity commitment, which real ragu could not have absorbed as a
-    /// `Point`.
-    pub fn derive_challenge(&mut self, commitments: &[Eq]) -> Result<Fp> {
-        for com in commitments {
-            if com.is_identity() {
-                return Err(Error::InvalidWitness(
-                    "point at infinity cannot be witnessed".into(),
-                ));
-            }
-        }
+    /// Derives a Fiat-Shamir challenge from `elements` and `points`, each
+    /// absorbed separately.
+    pub fn derive_challenge(&mut self, elements: &[Fp], points: &[EqAffine]) -> Result<Fp> {
         let mut state = Params::new()
             .hash_length(CHALLENGE_LEN)
             .personal(b"MkRagu_Challng_\0")
             .to_state();
-        for com in commitments {
-            state.update(com.to_affine().to_bytes().as_ref());
+
+        {
+            state.update(b"Fp");
+            for fp in elements {
+                state.update(fp.to_bytes().as_ref());
+            }
         }
+
+        {
+            state.update(b"EqAffine");
+            for eq in points {
+                state.update(eq.to_bytes().as_ref());
+            }
+        }
+
         let mut wide = [0u8; CHALLENGE_LEN];
         wide.copy_from_slice(state.finalize().as_bytes());
         Ok(Fp::from_uniform_bytes(&wide))

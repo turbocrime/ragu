@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 
 use ragu_core::{
     Result,
-    pasta::{Ep, Eq, Fp, Fq},
+    pasta::{EqAffine, Fp},
 };
 use rand::{SeedableRng as _, rngs::StdRng};
 
@@ -19,13 +19,8 @@ impl Header for ValueHeader {
 
     const SUFFIX: Suffix = Suffix::new(0);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        (
-            alloc::vec![Fp::from(*data)],
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        )
+    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<EqAffine>) {
+        (alloc::vec![Fp::from(*data)], Vec::new())
     }
 }
 

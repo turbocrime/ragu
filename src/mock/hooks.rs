@@ -2,11 +2,10 @@ use alloc::vec::Vec;
 
 use ragu_core::{
     Error, Result,
-    pasta::{Eq, Fp},
+    pasta::{EqAffine, Fp},
 };
-use udon::curve::Projective;
 
-pub(crate) type PolyQueryClaim = (Eq, Fp, Fp);
+pub(crate) type PolyQueryClaim = (EqAffine, Fp, Fp);
 
 /// Container for framework-side state threaded through a
 /// [`Step::witness`](crate::Step::witness) invocation.
@@ -24,8 +23,8 @@ impl FrameworkHooks {
 
     /// Records a polynomial-query opening claim. Errors if `com` is the
     /// identity, which real ragu cannot witness as a commitment `Point`.
-    pub(crate) fn enforce_polynomial_query(&mut self, com: Eq, x: Fp, y: Fp) -> Result<()> {
-        if com.is_identity() {
+    pub(crate) fn enforce_polynomial_query(&mut self, com: EqAffine, x: Fp, y: Fp) -> Result<()> {
+        if com.into_inner().is_identity() {
             return Err(Error::InvalidWitness(
                 "point at infinity cannot be witnessed".into(),
             ));
