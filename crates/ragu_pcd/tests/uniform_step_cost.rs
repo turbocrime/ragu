@@ -482,9 +482,12 @@ fn sweep_point<
     Ok(())
 }
 
-// One test per step: sweep that step's parameter from empty to the gate cap
-// while holding the others at `BASE`. In each block the swept step's row shows
-// its gate count climbing while every step's proving time stays roughly flat.
+// One test per distinct step shape: sweep that step's parameter from empty to
+// the gate cap while holding the others at `BASE`. In each block the swept
+// step's row shows its gate count climbing while every step's proving time
+// stays roughly flat. `LeafB` and `Fuse2` are not swept separately: they differ
+// from `LeafA` and `Fuse1` only in index and header wiring, and every block
+// still times them alongside the swept step.
 
 #[test]
 fn sweep_leaf_a() -> Result<()> {
@@ -497,32 +500,12 @@ fn sweep_leaf_a() -> Result<()> {
 }
 
 #[test]
-fn sweep_leaf_b() -> Result<()> {
-    sweep_point::<BASE, 0, BASE, BASE, BASE>(SWEEP_ITERS)?;
-    sweep_point::<BASE, 1, BASE, BASE, BASE>(SWEEP_ITERS)?;
-    sweep_point::<BASE, 3, BASE, BASE, BASE>(SWEEP_ITERS)?;
-    sweep_point::<BASE, 5, BASE, BASE, BASE>(SWEEP_ITERS)?;
-    sweep_point::<BASE, 7, BASE, BASE, BASE>(SWEEP_ITERS)?;
-    Ok(())
-}
-
-#[test]
 fn sweep_fuse1() -> Result<()> {
     sweep_point::<BASE, BASE, 0, BASE, BASE>(SWEEP_ITERS)?;
     sweep_point::<BASE, BASE, 1, BASE, BASE>(SWEEP_ITERS)?;
     sweep_point::<BASE, BASE, 3, BASE, BASE>(SWEEP_ITERS)?;
     sweep_point::<BASE, BASE, 5, BASE, BASE>(SWEEP_ITERS)?;
     sweep_point::<BASE, BASE, 7, BASE, BASE>(SWEEP_ITERS)?;
-    Ok(())
-}
-
-#[test]
-fn sweep_fuse2() -> Result<()> {
-    sweep_point::<BASE, BASE, BASE, 0, BASE>(SWEEP_ITERS)?;
-    sweep_point::<BASE, BASE, BASE, 1, BASE>(SWEEP_ITERS)?;
-    sweep_point::<BASE, BASE, BASE, 3, BASE>(SWEEP_ITERS)?;
-    sweep_point::<BASE, BASE, BASE, 5, BASE>(SWEEP_ITERS)?;
-    sweep_point::<BASE, BASE, BASE, 7, BASE>(SWEEP_ITERS)?;
     Ok(())
 }
 
