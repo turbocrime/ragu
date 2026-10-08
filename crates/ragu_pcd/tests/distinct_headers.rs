@@ -15,15 +15,14 @@
 
 use std::time::{Duration, Instant};
 
-use ff::Field;
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Kind},
     maybe::Maybe,
+    pasta::{Fp, Pasta},
 };
-use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::{
     Application, ApplicationBuilder,
     header::{Header, Suffix},
@@ -34,6 +33,7 @@ use ragu_primitives::{
     allocator::{Allocator, Standard},
 };
 use rand::{SeedableRng, rngs::StdRng};
+use udon::field::Field;
 
 const HEADER_SIZE: usize = 4;
 const WARMUP: usize = 1;
@@ -205,7 +205,7 @@ macro_rules! sweep {
 /// circuits = N + 16`, so N = 16 crosses the `log2` 5 → 6 boundary.
 #[test]
 fn sweep_distinct_headers() -> Result<()> {
-    let pasta = Pasta::baked();
+    let pasta = ragu_pcd::pasta::baked();
     std::println!("\n[distinct headers, iters={ITERS}]");
     std::println!(
         "{:>8}{:>8}{:>10}{:>6}{:>11}{:>11}",

@@ -15,15 +15,14 @@
 
 use std::time::{Duration, Instant};
 
-use ff::Field;
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Kind},
     maybe::Maybe,
+    pasta::{Fp, Pasta},
 };
-use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::{
     Application, ApplicationBuilder, Pcd,
     header::{Header, Suffix},
@@ -34,6 +33,7 @@ use ragu_primitives::{
     allocator::{Allocator, Standard},
 };
 use rand::{SeedableRng, rngs::StdRng};
+use udon::field::Field;
 
 const HEADER_SIZE: usize = 4;
 const WARMUP: usize = 1;
@@ -248,7 +248,7 @@ fn measure(app: &Application<'_, Pasta, ProductionRank, HEADER_SIZE>, depth: u32
 /// Sweep the tree depth (node count) with a fixed, reused step/header set.
 #[test]
 fn sweep_num_steps() -> Result<()> {
-    let pasta = Pasta::baked();
+    let pasta = ragu_pcd::pasta::baked();
     let app = ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE>::new()
         .register(Leaf)?
         .register(LeafFuse)?

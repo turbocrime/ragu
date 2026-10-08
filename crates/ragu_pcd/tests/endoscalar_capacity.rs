@@ -1,14 +1,13 @@
 //! How many endoscalar `group_scale` calls fit in one application step
 
-use ff::Field;
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Kind},
     maybe::Maybe,
+    pasta::{EpAffine, Fp, Pasta},
 };
-use ragu_pasta::{EpAffine, Fp, Pasta};
 use ragu_pcd::{
     ApplicationBuilder,
     header::{Header, Suffix},
@@ -18,6 +17,7 @@ use ragu_primitives::{
     Element, Endoscalar, Point,
     allocator::{Allocator, Standard},
 };
+use udon::field::Field;
 
 const HEADER_SIZE: usize = 2;
 
@@ -89,7 +89,7 @@ impl<const K: usize> Step<Pasta> for ScaleK<K> {
 }
 
 fn measure<const K: usize>() -> Result<()> {
-    let pasta = Pasta::baked();
+    let pasta = ragu_pcd::pasta::baked();
     ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE>::new()
         .register(ScaleK::<K>)?
         .finalize(pasta)?;

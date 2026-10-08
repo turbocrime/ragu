@@ -24,16 +24,14 @@
 
 use std::time::{Duration, Instant};
 
-use ff::Field;
-use ragu_arithmetic::Cycle;
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::{
-    Result,
+    Cycle, Result,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Kind},
     maybe::Maybe,
+    pasta::{Fp, Pasta},
 };
-use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::{
     ApplicationBuilder,
     header::{Header, Suffix},
@@ -45,6 +43,7 @@ use ragu_primitives::{
     poseidon::Sponge,
 };
 use rand::{SeedableRng, rngs::StdRng};
+use udon::field::Field;
 
 const HEADER_SIZE: usize = 4;
 
@@ -151,7 +150,7 @@ fn chain_poseidons<'dr, D: Driver<'dr, F = Fp>>(
     for _ in 0..k {
         let mut sponge = Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(
             dr,
-            Pasta::circuit_poseidon(Pasta::baked()),
+            Pasta::circuit_poseidon(ragu_pcd::pasta::baked()),
         );
         sponge.absorb(dr, &current)?;
         current = sponge.squeeze(dr)?;
@@ -174,7 +173,7 @@ fn fuse_elements<'dr, D: Driver<'dr, F = Fp>>(
     }
     let mut sponge = Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(
         dr,
-        Pasta::circuit_poseidon(Pasta::baked()),
+        Pasta::circuit_poseidon(ragu_pcd::pasta::baked()),
     );
     sponge.absorb(dr, left)?;
     sponge.absorb(dr, right)?;
@@ -415,7 +414,7 @@ fn sweep_point<
 >(
     iters: usize,
 ) -> Result<()> {
-    let pasta = Pasta::baked();
+    let pasta = ragu_pcd::pasta::baked();
     let app = ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE>::new()
         .register(LeafA::<LEAF_A>)?
         .register(LeafB::<LEAF_B>)?

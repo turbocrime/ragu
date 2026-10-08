@@ -98,10 +98,31 @@ name = "corruption"
 required-features = ["unstable-fuzzing"]
 
 [[test]]
+name = "distinct_headers"
+
+[[test]]
+name = "distinct_steps"
+
+[[test]]
+name = "endoscalar_capacity"
+
+[[test]]
 name = "nontrivial"
 
 [[test]]
+name = "num_steps"
+
+[[test]]
+name = "num_witnesses"
+
+[[test]]
 name = "pasta_parameters"
+
+[[test]]
+name = "poseidon_capacity"
+
+[[test]]
+name = "poseidon_squeeze_capacity"
 
 [[test]]
 name = "registration_errors"
@@ -111,3 +132,6 @@ name = "registry_tags"
 
 [[test]]
 name = "rerandomization"
+
+[[test]]
+name = "uniform_step_cost"

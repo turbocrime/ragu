@@ -1,15 +1,13 @@
 //! How many Poseidon permutations fit in one application step
 
-use ff::Field;
-use ragu_arithmetic::Cycle;
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::{
-    Result,
+    Cycle, Result,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Kind},
     maybe::Maybe,
+    pasta::{Fp, Pasta},
 };
-use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::{
     ApplicationBuilder,
     header::{Header, Suffix},
@@ -20,6 +18,7 @@ use ragu_primitives::{
     allocator::{Allocator, Standard},
     poseidon::Sponge,
 };
+use udon::field::Field;
 
 const HEADER_SIZE: usize = 2;
 
@@ -80,7 +79,7 @@ impl<const K: usize> Step<Pasta> for HashK<K> {
         for _ in 0..K {
             let mut sponge = Sponge::<'_, _, <Pasta as Cycle>::CircuitPoseidon>::new(
                 dr,
-                Pasta::circuit_poseidon(Pasta::baked()),
+                Pasta::circuit_poseidon(ragu_pcd::pasta::baked()),
             );
             sponge.absorb(dr, &current)?;
             current = sponge.squeeze(dr)?;
@@ -93,7 +92,7 @@ impl<const K: usize> Step<Pasta> for HashK<K> {
 }
 
 fn measure<const K: usize>() -> Result<()> {
-    let pasta = Pasta::baked();
+    let pasta = ragu_pcd::pasta::baked();
     ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE>::new()
         .register(HashK::<K>)?
         .finalize(pasta)?;

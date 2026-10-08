@@ -16,15 +16,14 @@
 
 use std::time::{Duration, Instant};
 
-use ff::Field;
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Kind},
     maybe::Maybe,
+    pasta::{Fp, Pasta},
 };
-use ragu_pasta::{Fp, Pasta};
 use ragu_pcd::{
     Application, ApplicationBuilder,
     header::{Header, Suffix},
@@ -35,6 +34,7 @@ use ragu_primitives::{
     allocator::{Allocator, Standard},
 };
 use rand::{SeedableRng, rngs::StdRng};
+use udon::field::Field;
 
 const HEADER_SIZE: usize = 4;
 const WARMUP: usize = 1;
@@ -241,7 +241,7 @@ fn build_tree<const N: usize>(
 /// building the whole tree. Prints witness count, the leaf's gate/constraint
 /// counts, and min/mean tree-proving time.
 fn sweep_point<const N: usize>() -> Result<()> {
-    let pasta = Pasta::baked();
+    let pasta = ragu_pcd::pasta::baked();
     let app = ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE>::new()
         .register(Leaf::<N>)?
         .register(MidFuse)?
